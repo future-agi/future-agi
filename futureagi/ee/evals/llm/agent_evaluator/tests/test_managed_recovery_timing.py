@@ -18,12 +18,26 @@ import pytest
 
 from ai_tools.base import ToolContext
 from ee.evals.llm.agent_evaluator import evaluator as evaluator_module
-from ee.evals.llm.agent_evaluator.evaluator import AgentEvaluator, GradingError
+from ee.evals.llm.agent_evaluator.evaluator import (
+    AGENT_RUN_TIMEOUT_SECONDS,
+    AgentEvaluator,
+    GradingError,
+)
 from ee.falcon_ai import llm_client
-from ee.licensing.activation_client import ServiceToken
+from ee.licensing.activation_client import (
+    MANAGED_STREAM_TIMEOUT_SECONDS,
+    MAX_RETRY_AFTER_SECONDS,
+    ServiceToken,
+)
 
 VALID = '{"result":"Pass","explanation":"Correct."}'
 SCALE = 0.003  # 300 seconds becomes 900 ms, without faking httpcore's timers.
+# Agent setup, loopback connects and thread hops cost the same at any SCALE, so
+# the scaled run deadline keeps a fixed allowance for them. Without it the 30 s
+# of production slack shrinks to ~90 ms and a busy CI runner fails the run on
+# time rather than on the behaviour under test. Each test asserts the
+# production budget itself exactly, not through the padded wall clock.
+UNSCALED_OVERHEAD_ALLOWANCE = 1.0
 
 
 def sse(content=VALID):
@@ -278,7 +292,9 @@ def live_gateway(managed, monkeypatch):
 
     def scaled_deadline(timeout):
         trace.deadlines.append(timeout)
-        return trace.deadline_override or timeout * SCALE
+        return trace.deadline_override or (
+            timeout * SCALE + UNSCALED_OVERHEAD_ALLOWANCE
+        )
 
     def result(future, timeout=None):
         trace.workers.append(future)
@@ -312,6 +328,9 @@ def test_elapsed_http_timeout_returns_recovered_verdict(managed, live_gateway):
     assert live_gateway.read_errors[0] >= live_gateway.http_timeouts[0] * SCALE * 0.9
     assert managed.evaluator.token_usage["total_tokens"] == 8
     assert all(worker.done() for worker in live_gateway.workers)
+    # Only the worker's whole-run deadline bounds the run: a caller deadline of
+    # one request timeout would cut recovery off after the first elapsed one.
+    assert live_gateway.deadlines == [AGENT_RUN_TIMEOUT_SECONDS]
 
 
 def test_fast_http_success_needs_no_recovery(managed, live_gateway):
@@ -323,7 +342,20 @@ def test_fast_http_success_needs_no_recovery(managed, live_gateway):
     assert managed.sleeps == []
 
 
-def test_elapsed_http_timeout_exhaustion_is_ungraded(managed, live_gateway):
+# A per-request delay stands in for a loaded CI runner: it adds wall-clock time
+# that SCALE does not shrink.
+@pytest.mark.parametrize("send_overhead", [0.0, 0.1])
+def test_elapsed_http_timeout_exhaustion_is_ungraded(
+    managed, live_gateway, monkeypatch, send_overhead
+):
+    scaled_client = httpx.AsyncClient
+
+    class LoadedRunnerClient(scaled_client):
+        async def send(self, *args, **kwargs):
+            await asyncio.sleep(send_overhead)
+            return await super().send(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", LoadedRunnerClient)
     live_gateway.hold_requests = 2
     with pytest.raises(GradingError) as exc:
         managed.evaluator.run()
@@ -332,6 +364,14 @@ def test_elapsed_http_timeout_exhaustion_is_ungraded(managed, live_gateway):
     assert len(live_gateway.read_errors) == 2
     assert live_gateway.completions == []
     assert managed.evaluator.token_usage["total_tokens"] == 0
+    # Production budget: two full request timeouts plus the longest backoff
+    # the client accepts fit inside the run deadline the worker asked for.
+    assert live_gateway.deadlines == [AGENT_RUN_TIMEOUT_SECONDS]
+    assert live_gateway.http_timeouts == [MANAGED_STREAM_TIMEOUT_SECONDS] * 2
+    assert sum(managed.sleeps) <= MAX_RETRY_AFTER_SECONDS
+    assert AGENT_RUN_TIMEOUT_SECONDS >= (
+        sum(live_gateway.http_timeouts) + MAX_RETRY_AFTER_SECONDS
+    )
 
 
 def test_deadline_cancels_rate_limit_backoff(managed, live_gateway, monkeypatch):
