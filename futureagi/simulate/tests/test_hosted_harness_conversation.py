@@ -12,7 +12,11 @@ from types import SimpleNamespace
 import pytest
 from rest_framework.test import APIClient
 
-from simulate.models import HostedHarnessConversationMessage, HostedHarnessJob
+from simulate.models import (
+    HarnessNudge,
+    HostedHarnessConversationMessage,
+    HostedHarnessJob,
+)
 from simulate.services import harness_usage
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -457,9 +461,17 @@ def test_a_turn_is_not_metered_without_usage_inside_an_attempt_or_for_a_rebuild(
         ).attempt
     if case == "rebuild turn":
         # A rebuild's turn is metered on its nudge.
+        nudge = HarnessNudge.no_workspace_objects.create(
+            job=job,
+            organization=job.organization,
+            workspace=job.workspace,
+            target="suite",
+            state="pending",
+            command_message=command,
+        )
         HostedHarnessConversationMessage.no_workspace_objects.filter(
             id=command.id
-        ).update(payload={**command.payload, "nudge_id": str(uuid.uuid4())})
+        ).update(payload={**command.payload, "nudge_id": str(nudge.id)})
     capability = issue_conversation_capability(
         conversation,
         endpoint_base_url="https://platform.example",

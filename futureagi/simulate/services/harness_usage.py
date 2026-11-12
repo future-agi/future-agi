@@ -500,17 +500,8 @@ def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
     price_fix_check_run(current.job_id)
 
 
-# Where a builder chat turn run outside any attempt is metered on its job, and what is kept
-# of the usage its turn event reports.
+# Where a builder chat turn run outside any attempt is metered on its job.
 BUILDER_TURN_USAGE_KEY = "builder_turn_usage"
-_TURN_USAGE_FIELDS = (
-    "tokens_in",
-    "tokens_out",
-    "tokens_cached",
-    "usd",
-    "unpriced_turns",
-    "models",
-)
 
 
 def meter_builder_turn(conversation_id: str, payload: dict) -> None:
@@ -520,6 +511,12 @@ def meter_builder_turn(conversation_id: str, payload: dict) -> None:
     nudge, a turn whose event reports no usage records nothing, and a turn already metered
     is not metered again.
     """
+    # The fields a rebuild's turn is metered with, so both meters keep the same ones.
+    from simulate.services.harness_versioning.rebuild import (
+        _USAGE_FIELDS,
+        nudge_for_command,
+    )
+
     try:
         usage = payload.get("usage")
         command_id = payload.get("command_message_id")
@@ -532,9 +529,9 @@ def meter_builder_turn(conversation_id: str, payload: dict) -> None:
             .filter(id=command_id, conversation_id=conversation_id)
             .first()
         )
-        if command is None or (command.payload or {}).get("nudge_id"):
+        if command is None or nudge_for_command(command) is not None:
             return
-        entry = {field: usage[field] for field in _TURN_USAGE_FIELDS if field in usage}
+        entry = {field: usage[field] for field in _USAGE_FIELDS if field in usage}
         if not entry:
             return
         with transaction.atomic():
