@@ -216,6 +216,13 @@ class Model(Base):
 
 
 class Operations(Base):
+    def do_GET(self):
+        # The same read-only ledger view the business server itself exposes; it
+        # arms no fault and never mutates a receipt.
+        if self.path != "/ledger":
+            return self.reply(404, {})
+        self.reply(200, BUSINESS.ledger())
+
     def do_POST(self):
         if self.path != "/operations":
             return self.reply(404, {})

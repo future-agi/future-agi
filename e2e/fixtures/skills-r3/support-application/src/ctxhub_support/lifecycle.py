@@ -112,6 +112,24 @@ def inspect(store, thread, client, binding_id):
     return {**result, "resumable": False, "reason": classify(status)}
 
 
+def close_thread(store, thread, client, binding_id, reason):
+    """Record an explicit closed receipt and mark the thread closed so ``run`` refuses it."""
+    with store.exclusive():
+        state = store.load(thread)
+        if state is None or state["phase"] == "closed":
+            raise ValueError("thread_not_closable")
+        report_closed(store, thread, client, binding_id, reason)
+        state["phase"] = "closed"
+        store.save(thread, state, "thread_closed")
+        return {
+            "thread": thread,
+            "closed": True,
+            "reason": reason,
+            "session_id": state["session"]["session_id"],
+            "checkpoint": state["checkpoint"],
+        }
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Inspect or close one durable thread")
     parser.add_argument("command", choices=["inspect", "close"])
@@ -131,22 +149,9 @@ def main(argv=None):
             stack.callback(client.close)
             result = inspect(store, args.thread, client, binding_id)
         else:
-            with store.exclusive():
-                state = store.load(args.thread)
-                if state is None or state["phase"] == "closed":
-                    raise ValueError("thread_not_closable")
-                client = _client("CTXHUB_REPORT_CREDENTIAL")
-                stack.callback(client.close)
-                report_closed(store, args.thread, client, binding_id, args.reason)
-                state["phase"] = "closed"
-                store.save(args.thread, state, "thread_closed")
-                result = {
-                    "thread": args.thread,
-                    "closed": True,
-                    "reason": args.reason,
-                    "session_id": state["session"]["session_id"],
-                    "checkpoint": state["checkpoint"],
-                }
+            client = _client("CTXHUB_REPORT_CREDENTIAL")
+            stack.callback(client.close)
+            result = close_thread(store, args.thread, client, binding_id, args.reason)
         fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             stream.write(canonical(result) + "\n")
