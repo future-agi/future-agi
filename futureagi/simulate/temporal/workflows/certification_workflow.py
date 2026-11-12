@@ -70,7 +70,7 @@ class ProductionCertificationWorkflow:
         resume_active = list(loaded.active_cases)
         max_active = max(1, loaded.max_active_cases)
         running = {}
-        cancel_signaled: set[str] = set()
+        cancel_handled = False
 
         async def wait_for_child(handle):
             return await handle
@@ -93,12 +93,9 @@ class ProductionCertificationWorkflow:
         while pending or running:
             while pending and len(running) < max_active and not self.cancel_requested:
                 await start_case(pending.pop(0))
-            if self.cancel_requested:
-                for case_input, handle in running.values():
-                    if case_input.case_id not in cancel_signaled:
-                        await handle.signal(CertificationCaseWorkflow.cancel)
-                        cancel_signaled.add(case_input.case_id)
-            if self.cancel_requested and pending:
+            if self.cancel_requested and not cancel_handled:
+                for _, handle in running.values():
+                    await handle.signal(CertificationCaseWorkflow.cancel)
                 for case_input in pending:
                     await workflow.execute_activity(
                         "certification_record_case_result",
@@ -112,13 +109,14 @@ class ProductionCertificationWorkflow:
                         retry_policy=_ACTIVITY_RETRY,
                     )
                 pending = []
+                cancel_handled = True
             if not running:
                 break
-            done, _ = await asyncio.wait(
-                running.keys(),
-                timeout=15.0,
-                return_when=asyncio.FIRST_COMPLETED,
+            await workflow.wait_condition(
+                lambda: (self.cancel_requested and not cancel_handled)
+                or any(task.done() for task in running)
             )
+            done = [task for task in running if task.done()]
             for task in done:
                 case_input, _ = running.pop(task)
                 try:

@@ -313,3 +313,35 @@ async def test_case_deadline_cancels_stuck_job_and_fails_case(
     assert acts.canceled == ["case-stuck"]
     assert ("case-stuck", "failed") in acts.recorded
     assert result.cases_failed == 1
+
+
+@pytest.mark.asyncio
+async def test_parent_history_does_not_grow_with_case_duration(
+    temporal_test_server_options,
+):
+    acts = RecordingActivities(
+        ["case-a", "case-b"],
+        done_after=24,
+        max_duration_seconds=7200,
+    )
+    async with await WorkflowEnvironment.start_time_skipping(
+        **temporal_test_server_options
+    ) as env:
+        async with Worker(
+            env.client,
+            task_queue=QUEUE_RUNNER,
+            workflows=[CertificationCaseWorkflow, ProductionCertificationWorkflow],
+            activities=acts.all(),
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await env.client.start_workflow(
+                ProductionCertificationWorkflow.run,
+                CertificationWorkflowInput(campaign_id="camp-long-running"),
+                id=f"cert-{uuid.uuid4()}",
+                task_queue=QUEUE_RUNNER,
+            )
+            result = await handle.result()
+            history = await handle.fetch_history()
+
+    assert result.cases_completed == 2
+    assert len(history.events) < 200
