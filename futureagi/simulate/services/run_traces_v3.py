@@ -43,6 +43,10 @@ class RunTrace:
 class RunTracesSource:
     job: HostedHarnessJob
     project_id: str
+    # The run's agent version names no tracing, so only the sandbox's own measuring can put
+    # its spans in the hidden project (the agent's exporters never reach it): any span there
+    # carries the model, tokens and timing, never a prompt or a reply.
+    measured_automatically: bool = False
 
 
 @dataclass(frozen=True)
@@ -76,7 +80,11 @@ def run_traces_source(execution: TestExecution) -> RunTracesSource | None:
     # The helper also returns a deleted project; its spans are not served.
     if project is None or project.deleted:
         return None
-    return RunTracesSource(job=job, project_id=str(project.id))
+    return RunTracesSource(
+        job=job,
+        project_id=str(project.id),
+        measured_automatically=summary.instrumentation == "none",
+    )
 
 
 class CallNotInRun(ValueError):
