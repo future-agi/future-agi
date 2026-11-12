@@ -15,16 +15,27 @@ test('all six jobs register existing prerequisite flows without claiming complet
   assert.deepEqual(manifest.job_integrations.map(({ job }) => job), JOBS.map(({ id }) => id));
   for (const job of JOBS) {
     const entry = manifest.job_integrations.find(({ job: id }) => job.id === id);
-    assert.deepEqual(entry, { job: job.id, driver_status: job.integration.status,
+    // The sealed qualification contract is the retained prerequisite snapshot.
+    // J1 and J6 now have executable, still-incomplete drivers; do not rewrite
+    // that historical snapshot or treat registering a module as qualification.
+    const sealedMissing = { J1: './drivers/j1.mjs', J6: './drivers/j6.mjs' };
+    const current = job.id in sealedMissing ? {
+      ...entry, driver_status: 'incomplete', driver_module: sealedMissing[job.id],
+    } : entry;
+    if (job.id in sealedMissing) assert.deepEqual(entry, {
+      job: job.id, driver_status: 'missing', driver_module: null,
+      flow_id: job.integration.flow_id, flow: job.integration.flow, complete_job_qualified: false,
+    });
+    assert.deepEqual(current, { job: job.id, driver_status: job.integration.status,
       driver_module: job.integration.module, flow_id: job.integration.flow_id,
       flow: job.integration.flow, complete_job_qualified: false });
     assert.equal(job.integration.complete_job_qualified, false);
     const flow = await readFile(new URL(`../../flows/skills/${entry.flow}`, import.meta.url), 'utf8');
     assert.ok(flow.includes(entry.flow_id));
-    if (entry.driver_module) {
-      const module = await import(new URL(entry.driver_module, benchmarkRoot).href);
+    if (current.driver_module) {
+      const module = await import(new URL(current.driver_module, benchmarkRoot).href);
       assert.equal(typeof module.createDriver, 'function');
-      assert.equal(entry.driver_status, 'incomplete');
+      assert.equal(current.driver_status, 'incomplete');
     } else {
       assert.equal(entry.driver_status, 'missing');
       // No placeholders are silently presented as complete drivers.
@@ -77,6 +88,31 @@ for (const jobId of JOBS.filter(({ integration }) => integration.status === 'mis
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
 }
+
+test('an unavailable explicit driver is recorded as not_measured with null counts and no ledger', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'skills-dispatch-explicit-'));
+  try {
+    const driverPath = join(directory, 'unavailable-driver.mjs');
+    await writeFile(driverPath, 'export function createDriver() { return null; }\n');
+    for (const cohort of ['cold', 'configured']) {
+      const path = join(directory, `${cohort}-input.json`);
+      await writeFile(path, JSON.stringify({ job: 'J1', cohort }));
+      const output = join(directory, cohort);
+      const args = ['run', 'J1', 'missing', path, driverPath, output];
+      assert.equal(await main(args), 1);
+      const report = JSON.parse(await readFile(join(output, 'missing.json'), 'utf8'));
+      assert.equal(report.status, 'not_measured');
+      assert.equal(report.cohort, cohort);
+      assert.equal(report.driver_status, 'explicit');
+      assert.equal(report.claim, 'Not qualified');
+      for (const key of ['operator_actions', 'screen_transitions', 'handoffs', 'reconciliations', 'action_ratio', 'ten_x_actions']) {
+        assert.equal(report[key], null);
+      }
+      assert.deepEqual(await readdir(output), ['missing.json'], 'unavailable runs have no invented ledger');
+      await assert.rejects(main(args), { code: 'EEXIST' }, 'never overwrite a prior attempt');
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 test('J6 registered driver refuses to run without its private owned-stack input and invents no ledger', async () => {
   const previous = process.env.J6_DRIVER_INPUT;

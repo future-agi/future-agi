@@ -3,12 +3,12 @@
   "status": "prerequisite_flows_integrated_complete_jobs_unqualified",
   "registered_driver_command": "node e2e/benchmarks/context-hub/cli.mjs run J1 RUN_ID REGISTRATION.json registered OUTPUT_DIR",
   "job_integrations": [
-    {"job":"J1","driver_status":"incomplete","driver_module":"./drivers/j1.mjs","flow_id":"SKILLS-E2E-010","flow":"j1-retained-subset.spec.ts","complete_job_qualified":false},
+    {"job":"J1","driver_status":"missing","driver_module":null,"flow_id":"SKILLS-E2E-010","flow":"j1-retained-subset.spec.ts","complete_job_qualified":false},
     {"job":"J2","driver_status":"incomplete","driver_module":"./drivers/j2.mjs","flow_id":"SKILLS-E2E-020","flow":"j2-historical-draft.spec.ts","complete_job_qualified":false},
     {"job":"J3","driver_status":"incomplete","driver_module":"./drivers/j3.mjs","flow_id":"SKILLS-E2E-030","flow":"j3-accepted-dependency.spec.ts","complete_job_qualified":false},
     {"job":"J4","driver_status":"incomplete","driver_module":"./drivers/j4.mjs","flow_id":"SKILLS-E2E-040","flow":"j4-reviewer-receipt.spec.ts","complete_job_qualified":false},
     {"job":"J5","driver_status":"incomplete","driver_module":"./drivers/j5.mjs","flow_id":"SKILLS-E2E-050","flow":"j5-inventory-gate.spec.ts","complete_job_qualified":false},
-    {"job":"J6","driver_status":"incomplete","driver_module":"./drivers/j6.mjs","flow_id":"SKILLS-E2E-060","flow":"j6-recovery-coverage.spec.ts","complete_job_qualified":false}
+    {"job":"J6","driver_status":"missing","driver_module":null,"flow_id":"SKILLS-E2E-060","flow":"j6-recovery-coverage.spec.ts","complete_job_qualified":false}
   ],
   "foundation_base": "3d15feb6a783dbd15fe905089ec91838de58aaa7",
   "foundation_contract": "F12-interfaces.md r3.2 plus F12b corrections: consumption/auth/lease, immutable persistence, selected-origin internal helpers, editor and source serializers exist. Complete context authoring/review/native/session endpoints and runtime qualification are not provided.",
