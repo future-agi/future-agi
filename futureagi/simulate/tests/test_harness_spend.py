@@ -111,11 +111,13 @@ def test_a_dying_sandbox_is_read_before_it_is_deleted(organization, monkeypatch)
     from simulate.services import hosted_harness_gateway as gateway
 
     job = _job(organization)
-    read = {}
+    read = []
 
     class _Files:
         def download_file(self, path):
-            read["path"] = path
+            read.append(path)
+            if path != "/work/authoring/cost.json":
+                raise FileNotFoundError(path)
             return b'{"total_usd": 0.42, "unpriced_turns": 0, "stages": []}'
 
     class _Sandbox:
@@ -131,7 +133,8 @@ def test_a_dying_sandbox_is_read_before_it_is_deleted(organization, monkeypatch)
     )
     gateway._read_harness_spend(_Attempt(), _Sandbox())
 
-    assert read["path"] == "/work/authoring/cost.json"
+    # Both ledgers are read: the build CLI's and the builder chat's.
+    assert read == ["/work/authoring/cost.json", "/work/builder-cost.json"]
     assert _spend(job)["total_usd"] == 0.42
 
 
