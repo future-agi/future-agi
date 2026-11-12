@@ -32,12 +32,17 @@ import django
 django.setup()
 
 from channels.routing import ProtocolTypeRouter, URLRouter  # noqa: E402
+from django.conf import settings  # noqa: E402
 
 # Import necessary modules AFTER setting up Django
 from django.core.asgi import get_asgi_application  # noqa: E402
 
 from sockets.routing import websocket_urlpatterns  # noqa: E402
-from tfc.asgi_startup import freeze_startup_heap, warm_http_urlconf  # noqa: E402
+from tfc.asgi_startup import (  # noqa: E402
+    freeze_startup_heap,
+    warm_http_urlconf,
+    warm_migration_modules,
+)
 from tfc.middleware.jwt_auth import JWTAuthMiddleware  # noqa: E402
 from tfc.temporal.embedded import get_embedded_worker  # noqa: E402
 from tfc.utils.api_errors import build_error_envelope  # noqa: E402
@@ -49,6 +54,8 @@ _django_app = get_asgi_application()
 # complete route graph now so a newly spawned worker cannot charge broad view
 # imports to its first customer request.
 warm_http_urlconf()
+if settings.STARTUP_SCHEMA_GUARD_ENABLED:
+    warm_migration_modules()
 # Every request otherwise re-walks the whole start-up heap on a full collection.
 freeze_startup_heap()
 
