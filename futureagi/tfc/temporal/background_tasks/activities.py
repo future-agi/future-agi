@@ -114,7 +114,7 @@ def prepare_compare_dataset_activity(
     """
     Prepare compare dataset JSON files.
 
-    This replicates the CompareDatasetsView.prepare_compare_dataset method.
+    Runs the same page writer as CompareDatasetsView.post.
     """
     from model_hub.views.develop_dataset import _prepare_compare_dataset_impl
 

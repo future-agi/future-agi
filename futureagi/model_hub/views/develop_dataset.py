@@ -533,7 +533,7 @@ def _process_other_datasets_impl(
     dynamic_sources,
     i,
 ):
-    """Standalone implementation of process_other_datasets for Temporal activities."""
+    """Build one compared dataset's cell for a compare row."""
     try:
         close_old_connections()
         ds_id = str(ds.id)
@@ -625,7 +625,7 @@ def _prepare_compare_dataset_impl(
     dataset_info,
     dynamic_sources,
 ):
-    """Standalone implementation of prepare_compare_dataset for Temporal activities."""
+    """Write a comparison's ten-row page files and its row-to-page metadata."""
     try:
         close_old_connections()
         # Build table rows using pre-fetched data
@@ -13716,75 +13716,6 @@ class CompareDatasetsView(APIView):
         finally:
             close_old_connections()
 
-    def process_other_datasets(
-        self,
-        base_val,
-        col_name,
-        og_cell,
-        columns_lookup,
-        data_by_dataset,
-        ds,
-        dynamic_sources,
-        i,
-    ):
-        try:
-            close_old_connections()
-            ds_id = str(ds.id)
-            if ds_id in data_by_dataset and base_val in data_by_dataset[ds_id]:
-                cells_dict = data_by_dataset[ds_id][base_val]
-                cell = cells_dict.get(col_name)
-                if cell:
-                    col_obj = columns_lookup.get(
-                        (ds.id, col_name)
-                    ) or Column.objects.get(dataset=ds, name=col_name)
-                    if col_obj.source in dynamic_sources:
-                        return None
-                    value_infos = (
-                        json.loads(cell.value_infos) if cell.value_infos else {}
-                    )
-                    metadata = {}
-                    if isinstance(value_infos, dict):
-                        metadata = value_infos.get("metadata") or {}
-                        if isinstance(metadata, str):
-                            metadata = json.loads(metadata)
-                    diff_value = None
-                    cell_value = cell.value
-                    included_sources = [
-                        SourceChoices.EXTRACTED_JSON.value,
-                        SourceChoices.CLASSIFICATION.value,
-                        SourceChoices.EXTRACTED_ENTITIES.value,
-                        SourceChoices.API_CALL.value,
-                        SourceChoices.PYTHON_CODE.value,
-                        SourceChoices.VECTOR_DB.value,
-                        SourceChoices.CONDITIONAL.value,
-                        SourceChoices.OTHERS.value,
-                        SourceChoices.RUN_PROMPT.value,
-                    ]
-                    if (
-                        not (i == 0 or "-reason" in col_name)
-                        and (col_obj.source in included_sources)
-                        and (
-                            col_obj.data_type
-                            not in [
-                                DataTypeChoices.AUDIO.value,
-                                DataTypeChoices.IMAGE.value,
-                            ]
-                        )
-                    ):
-                        diff_value = get_diff(og_cell.value, cell.value)
-                    return {
-                        "col_id": str(col_obj.id),
-                        "cell_value": cell_value,
-                        "cell_diff_value": diff_value,
-                        "status": cell.status,
-                        "value_infos": value_infos,
-                        "metadata": metadata,
-                        "cell_row_id": str(cell.row_id),
-                    }
-            return None
-        finally:
-            close_old_connections()
-
     def process_base_values(
         self, ds, common_base_values, dataset_info, base_column_name, columns_qs
     ):
@@ -13904,180 +13835,6 @@ class CompareDatasetsView(APIView):
             return {ds_id: base_val_to_row}, averages
         finally:
             connection.close()
-            close_old_connections()
-
-    def prepare_compare_dataset(
-        self,
-        dataset_id,
-        common_base_values,
-        base_column_name,
-        data_by_dataset,
-        comparison_datasets,
-        columns_lookup,
-        main_base_column,
-        common_columns,
-        compare_id,
-        column_config,
-        dataset_info,
-        dynamic_sources,
-    ):
-        try:
-            close_old_connections()
-            # Build table rows using pre-fetched data
-            table = []
-            main_ds_id = str(dataset_id)
-            metadata_path = get_compare_metadata_path(compare_id)
-            os.makedirs(get_compare_local_dir(compare_id), exist_ok=True)
-            with open(metadata_path, "w") as f:
-                json.dump(
-                    {
-                        "status": "processing",
-                        "total_rows": len(common_base_values),
-                        "total_pages": (len(common_base_values) + 9) // 10,
-                        "total_processed": 0,
-                        "dataset_info": dataset_info,
-                        "base_column_name": base_column_name,
-                        "base_dataset_id": main_ds_id,
-                        "comparison_datasets": [
-                            str(comparison_dataset.id)
-                            for comparison_dataset in comparison_datasets
-                        ],
-                        "common_column_names": list(
-                            common_columns.union({base_column_name})
-                        ),
-                    },
-                    f,
-                    indent=4,
-                )
-                f.truncate()
-
-            last_index_processed = None
-            rowid_in_file = {}
-            for index, base_val in enumerate(common_base_values):
-                row_data = {"row_id": str(uuid.uuid4())}
-                if (
-                    main_ds_id in data_by_dataset
-                    and base_val in data_by_dataset[main_ds_id]
-                ):
-                    main_cells = data_by_dataset[main_ds_id][base_val]
-                    main_cell = main_cells.get(base_column_name)
-                    if main_cell:
-                        value_infos = (
-                            json.loads(main_cell.value_infos)
-                            if main_cell.value_infos
-                            else {}
-                        )
-                        metadata = value_infos.get("metadata") or {}
-                        if isinstance(metadata, str):
-                            metadata = json.loads(metadata)
-                        row_data[str(main_base_column.id)] = {
-                            "cell_value": main_cell.value,
-                            "status": main_cell.status,
-                            "value_infos": value_infos,
-                            "metadata": metadata,
-                            "cell_row_id": str(main_cell.row_id),
-                        }
-
-                for col_name in common_columns:
-                    main_cells = data_by_dataset[main_ds_id][base_val]
-                    og_cell = main_cells.get(col_name)
-
-                    with ThreadPoolExecutor(max_workers=10) as executor:
-                        futures = []
-                        for i, ds in enumerate(comparison_datasets):
-                            future = executor.submit(
-                                self.process_other_datasets,
-                                base_val,
-                                col_name,
-                                og_cell,
-                                columns_lookup,
-                                data_by_dataset,
-                                ds,
-                                dynamic_sources,
-                                i,
-                            )
-                            futures.append(future)
-
-                        for future in as_completed(futures):
-                            try:
-                                result = future.result()
-                                if result is not None:
-                                    row_data[result.pop("col_id")] = result
-                            except Exception as e:
-                                logger.exception(
-                                    f"Error in processing other datasets: {str(e)}"
-                                )
-
-                table.append(row_data)
-                if index % 10 == 0 and index != 0:
-                    compare_json = {
-                        "column_config": column_config,
-                        "table": table[index - 10 : index],
-                    }
-
-                    logger.info(f"Writing page {index // 10} to file")
-                    rowid_in_file.update(
-                        {
-                            str(table["row_id"]): f"page_{index // 10}"
-                            for table in compare_json["table"]
-                        }
-                    )
-                    upload_compare_json_to_s3(
-                        compare_id=compare_id,
-                        compare_json=compare_json,
-                        page_name=f"page_{index // 10}.json",
-                    )
-
-                    with open(metadata_path, "r+") as f:
-                        metadata = json.load(f)
-                        metadata["total_processed"] = index // 10
-                        metadata["file_row_ids"] = rowid_in_file
-                        f.seek(0)
-                        json.dump(metadata, f, indent=4)
-                        f.truncate()  # Important to prevent potential file corruption if new data is shorter
-
-                    last_index_processed = index
-
-            leftover_compare_json = None
-            if last_index_processed and last_index_processed != index:
-                leftover_compare_json = {
-                    "column_config": column_config,
-                    "table": table[last_index_processed:],
-                }
-                rowid_in_file.update(
-                    {
-                        str(table["row_id"]): f"page_{index // 10 + 1}"
-                        for table in leftover_compare_json["table"]
-                    }
-                )
-            else:
-                leftover_compare_json = {"column_config": column_config, "table": table}
-                rowid_in_file.update(
-                    {
-                        str(table["row_id"]): f"page_{index // 10 + 1}"
-                        for table in leftover_compare_json["table"]
-                    }
-                )
-
-            if leftover_compare_json:
-                upload_compare_json_to_s3(
-                    compare_id=compare_id,
-                    compare_json=leftover_compare_json,
-                    page_name=f"page_{(index // 10) + 1}.json",
-                )
-
-            with open(metadata_path, "r+") as f:
-                metadata = json.load(f)
-                metadata["status"] = "completed"
-                metadata["total_processed"] = len(common_base_values) // 10
-                metadata["file_row_ids"] = rowid_in_file
-                f.seek(0)
-                json.dump(metadata, f, indent=4)
-                f.truncate()  # Important to prevent potential file corruption if new data is shorter
-
-        except Exception as e:
-            logger.exception(f"Error in preparing compare dataset: {str(e)}")
-        finally:
             close_old_connections()
 
     def get_paginated_compare_json(
