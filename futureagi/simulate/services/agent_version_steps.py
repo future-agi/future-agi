@@ -265,7 +265,11 @@ def reuse_parent_reading(version_id: Any) -> str | None:
     runtime = _side_row(version_id)
     if runtime is None or not runtime.parent_id or _has_stored_document(version_id):
         return None
-    parent = _side_row(runtime.parent_id)
+    parent = (
+        HarnessAgentVersionRuntime.no_workspace_objects.defer("credential_blob")
+        .filter(id=runtime.parent_id)
+        .first()
+    )
     if (
         parent is None
         or not _same_code(runtime, parent)
