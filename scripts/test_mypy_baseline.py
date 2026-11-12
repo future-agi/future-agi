@@ -476,21 +476,39 @@ class WorkflowTests(unittest.TestCase):
         push = re.search(r"(?ms)^  push:\n(.*?)(?=^  \S|\Z)", on)
         self.assertIsNotNone(pull_request)
         self.assertIsNotNone(push)
-        # No "edited": a body edit would cancel the run in progress.
+        # Retargets arrive as edited events, with changes.base populated.
         self.assertEqual(
-            pull_request.group(1).strip(), "types: [opened, synchronize, reopened]"
+            pull_request.group(1).strip(),
+            "types: [opened, synchronize, reopened, edited]",
         )
         self.assertEqual(push.group(1).strip(), "branches: [dev]")
         self.assertEqual(re.findall(r"(?m)^  (\S+):", on), ["pull_request", "push"])
         self.assertNotRegex(on, r"(?m)^\s*(paths|paths-ignore)\s*:")
         self.assertNotRegex(on, r"(?m)^\s*branches-ignore\s*:")
 
-    def test_a_push_to_dev_never_cancels_another_commits_run(self):
+    def test_only_ordinary_edits_get_an_isolated_concurrency_group(self):
         concurrency = top_level_block(self.text, "concurrency")
+        # Retargets and pushes share the PR group and cancel stale checks.
+        # Body/title edits get a unique group, so even a skipped run cannot
+        # cancel the active check. Dev pushes retain one group per commit.
         self.assertRegex(
             concurrency,
-            r"(?m)^  group: python-types-\$\{\{ github\.event_name == 'push' "
-            r"&& github\.sha \|\| github\.ref \}\}\s*$",
+            r"(?m)^  group: python-types-\$\{\{ github\.event\.action == 'edited' "
+            r"&& !github\.event\.changes\.base && github\.run_id "
+            r"\|\| github\.event_name == 'push' && github\.sha "
+            r"\|\| github\.ref \}\}\s*$",
+        )
+        self.assertRegex(concurrency, r"(?m)^  cancel-in-progress: true\s*$")
+
+    def test_ordinary_edits_skip_changes_and_the_fail_closed_summary(self):
+        guard = "github.event.action != 'edited' || github.event.changes.base"
+        changes = job_block(self.text, "changes")
+        summary = job_block(self.text, "python-types-pass")
+        self.assertRegex(changes, rf"(?m)^    if: {re.escape(guard)}\s*$")
+        # Without the same guard, always() would fail on deliberately skipped
+        # changes/mypy jobs and leave a red check on an ordinary body edit.
+        self.assertRegex(
+            summary, rf"(?m)^    if: always\(\) && \({re.escape(guard)}\)\s*$"
         )
 
     def test_the_header_says_it_is_advisory_and_names_the_summary(self):
@@ -506,11 +524,11 @@ class WorkflowTests(unittest.TestCase):
         self.assertRegex(changes, r"(?m)^      pull-requests: read\b")
         self.assertRegex(
             changes,
-            r"(?m)^      python: \$\{\{ github\.event_name == 'push' && 'true' "
+            r"(?m)^      python: \$\{\{ \(github\.event_name == 'push' "
+            r"\|\| github\.event\.changes\.base\) && 'true' "
             r"\|\| steps\.filter\.outputs\.python \}\}\s*$",
         )
-        self.assertNotRegex(changes, r"(?m)^    if:", "the changes job must always run")
-        # On a push the filter is skipped and the output is 'true': mypy runs.
+        # Pushes and retargets force mypy; other PR events use the path filter.
         steps = re.findall(r"(?ms)^      - (.*?)(?=^      - |\Z)", changes)
         self.assertEqual(len(steps), 2)
         for step in steps:
@@ -595,7 +613,7 @@ class WorkflowTests(unittest.TestCase):
         locked = re.search(r'(?m)^name = "mypy"\nversion = "([^"]+)"', lock).group(1)
         self.assertEqual(pinned, locked)
 
-    def test_the_summary_job_always_runs_after_both_jobs(self):
+    def test_the_summary_runs_after_both_jobs_except_on_ordinary_edits(self):
         names = re.findall(
             r"(?m)^    name: Python Types Pass\s*$", top_level_block(self.text, "jobs")
         )
@@ -606,7 +624,11 @@ class WorkflowTests(unittest.TestCase):
         self.assertRegex(summary, r"(?m)^    name: Python Types Pass\s*$")
         self.assertRegex(summary, r"(?m)^    needs: \[changes, mypy-baseline\]\s*$")
         # always(), not !cancelled(): a cancelled run must fail the check, not skip it.
-        self.assertRegex(summary, r"(?m)^    if: always\(\)\s*$")
+        self.assertRegex(
+            summary,
+            r"(?m)^    if: always\(\) && \(github\.event\.action != 'edited' "
+            r"\|\| github\.event\.changes\.base\)\s*$",
+        )
         self.assertRegex(
             summary, r"(?m)^          CHANGES: \$\{\{ needs\.changes\.result \}\}\s*$"
         )
