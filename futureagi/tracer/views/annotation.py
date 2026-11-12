@@ -558,11 +558,13 @@ class BulkAnnotationView(APIView):
             for record in records
             if record.get("observation_span_id")
         ]
+        # Primary: SDK clients annotate spans they exported a moment ago, which
+        # a lagging replica may not have yet ("Span not found" drops the record).
         span_map = {
             str(span.id): span
-            for span in ObservationSpan.objects.select_related(
-                "project", "project__workspace"
-            ).filter(
+            for span in ObservationSpan.objects.using("default")
+            .select_related("project", "project__workspace")
+            .filter(
                 _project_workspace_scope_q(request),
                 id__in=span_ids,
             )

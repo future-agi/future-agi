@@ -2090,7 +2090,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             # materialized entry (the manager already excludes soft-deleted),
             # so while a task is pending Total shows the full set and success/
             # errors start at 0 and climb as the drain executes.
-            counts = EvalLogger.objects.filter(
+            # The status above is read from the primary, so the counts, error
+            # groups and warnings are too: a replica behind the drain would pair
+            # "completed" with unfinished tallies, and the UI stops polling then.
+            entries = EvalLogger.objects.using("default")
+            counts = entries.filter(
                 eval_task_id=eval_task_id,
                 deleted=False,
             ).aggregate(
@@ -2142,7 +2146,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             # core-frontend/src/sections/common/EvalsTasks/classifyTaskError.js
             error_group_rows = list(
                 _bounded_eval_task_error_groups_queryset(
-                    EvalLogger.objects.filter(eval_task_id=eval_task_id)
+                    entries.filter(eval_task_id=eval_task_id)
                 )[: self._ERROR_GROUPS_LIMIT + 1]
             )
             error_groups = [
@@ -2162,7 +2166,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             warning_rows = list(
                 _bounded_eval_task_warning_rows_queryset(
-                    EvalLogger.objects.filter(eval_task_id=eval_task_id)
+                    entries.filter(eval_task_id=eval_task_id)
                 )[: self._WARNING_LOG_SCAN_LIMIT]
             )
             (

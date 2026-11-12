@@ -294,6 +294,55 @@ def test_c68_c69_annotate_just_created_root(
     )
 
 
+def test_bulk_annotation_annotates_span_created_after_freeze(
+    lagging_replica,  # noqa: F811
+    auth_client,
+    project,
+    annotation_label,
+    user,
+):
+    # The SDK annotation endpoint: a client creates a span and annotates it
+    # straight away. Not among the audited IDs; found while settling the opt-in.
+    trace_id = _bulk_trace(auth_client, project)
+    lagging_replica.freeze()
+    span_id = _create_span(auth_client, project, trace_id)
+    assert not ObservationSpan.objects.filter(pk=span_id).exists()
+    response = auth_client.post(
+        "/tracer/bulk-annotation/",
+        {
+            "records": [
+                {
+                    "observation_span_id": span_id,
+                    "annotations": [
+                        {
+                            "annotation_label_id": str(annotation_label.id),
+                            "value": "accepted",
+                        }
+                    ],
+                    "notes": [{"text": "bulk note"}],
+                }
+            ]
+        },
+        format="json",
+    )
+    assert response.status_code == 200, response.data
+    result = response.data["result"]
+    assert result["errors"] is None
+    assert (result["annotations_created"], result["notes_created"]) == (1, 1)
+    score = Score.no_workspace_objects.using("default").get(
+        observation_span_id=span_id,
+        label=annotation_label,
+        annotator=user,
+        deleted=False,
+    )
+    assert score.value == {"text": "accepted"}
+    assert (
+        SpanNotes.objects.using("default")
+        .filter(span_id=span_id, notes="bulk note")
+        .exists()
+    )
+
+
 def test_c73_session_delete_includes_unreplicated_trace_membership(
     lagging_replica,  # noqa: F811
     auth_client,

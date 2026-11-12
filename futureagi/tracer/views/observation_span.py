@@ -1730,7 +1730,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 raise Exception("Custom eval config not found")  # noqa: B904
 
             try:
-                EvalLogger.objects.get(
+                # Primary: the result the user gives feedback on is shown from
+                # ClickHouse and may be newer than a lagging replica.
+                EvalLogger.objects.using("default").get(
                     observation_span=observation_span,
                     custom_eval_config_id=custom_eval_config_id,
                     deleted=False,
@@ -1853,7 +1855,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             elif action_type == "recalculate":
                 try:
-                    eval_logger = EvalLogger.objects.get(
+                    # Primary: the live result may be newer than a lagging
+                    # replica (a fresh eval, or the previous recalculate's).
+                    eval_logger = EvalLogger.objects.using("default").get(
                         observation_span=observation_span,
                         custom_eval_config=custom_eval_config,
                         deleted=False,
