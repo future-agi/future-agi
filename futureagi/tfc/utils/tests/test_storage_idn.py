@@ -3,6 +3,7 @@
 import importlib
 import uuid
 from io import BytesIO
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 import pytest
@@ -24,6 +25,20 @@ def idn_storage(monkeypatch):
     storage.reset_storage_client()
     yield storage
     storage.reset_storage_client()
+
+
+@pytest.fixture
+def own_idn_storage(idn_storage, monkeypatch):
+    """The helpers that decide whether a stored URL is a first-party object."""
+    storage = importlib.import_module("tfc.utils.storage")
+
+    def configure(public_url):
+        # get_object_url reads the environment; storage.py bound MINIO_URL
+        # from settings when it was imported.
+        monkeypatch.setenv("MINIO_URL", public_url)
+        monkeypatch.setattr(storage, "MINIO_URL", public_url)
+
+    return SimpleNamespace(client=idn_storage, storage=storage, configure=configure)
 
 
 @pytest.mark.parametrize(
@@ -59,6 +74,118 @@ def test_existing_idn_url_rewrites_to_internal_endpoint(
     for other in ("other.example:9443", f"{stored_host}:9444"):
         foreign_url = f"https://{other}/uploads/notes.txt"
         assert idn_storage.server_reachable_url(foreign_url) == foreign_url
+
+
+@pytest.mark.parametrize("port", ["", ":9443"])
+@pytest.mark.parametrize("public_host", [*PUBLIC_HOSTS, "straße.example"])
+def test_generated_url_is_recognised_as_own_storage(
+    own_idn_storage, public_host, port
+):
+    own_idn_storage.configure(f"https://{public_host}{port}")
+    url = own_idn_storage.client.get_object_url("uploads", "images/synthetic.png")
+
+    # The configured host form is kept: own-storage matching compares it with
+    # the raw MINIO_URL setting, so a punycode rewrite made it look foreign.
+    assert url == f"https://{public_host}{port}/uploads/images/synthetic.png"
+    assert own_idn_storage.storage.is_own_storage_url(url, "uploads") is True
+    assert own_idn_storage.client.server_reachable_url(url) == (
+        "http://localhost:19005/uploads/images/synthetic.png"
+    )
+
+
+def test_upload_image_returns_own_generated_url_without_download(
+    own_idn_storage, monkeypatch
+):
+    own_idn_storage.configure("https://münchen.example:9443")
+    storage = own_idn_storage.storage
+    bucket = storage.UPLOAD_BUCKET_NAME
+    url = own_idn_storage.client.get_object_url(bucket, "images/synthetic.png")
+    downloads = []
+
+    def download(image_url, *args, **kwargs):
+        downloads.append(image_url)
+        raise RuntimeError("synthetic: foreign image download attempted")
+
+    def no_storage_client():
+        raise AssertionError("an own URL must not be re-uploaded")
+
+    monkeypatch.setattr(storage, "download_image_from_url", download)
+    monkeypatch.setattr(storage, "get_storage_client", no_storage_client)
+
+    assert storage.upload_image_to_s3(url, bucket_name=bucket) == url
+    assert downloads == []
+
+
+def test_audio_from_own_generated_url_reads_through_storage_client(
+    own_idn_storage, monkeypatch
+):
+    own_idn_storage.configure("https://münchen.example:9443")
+    storage = own_idn_storage.storage
+    bucket = storage.UPLOAD_BUCKET_NAME
+    url = own_idn_storage.client.get_object_url(bucket, "audio/synthetic.wav")
+    payload = b"RIFF-synthetic-audio"
+    reads, downloads = [], []
+
+    class Response:
+        def __init__(self):
+            self._chunks = [payload, b""]
+
+        def read(self, _size):
+            return self._chunks.pop(0)
+
+        def close(self):
+            pass
+
+        def release_conn(self):
+            pass
+
+    class Client:
+        def get_object(self, bucket_name, key):
+            reads.append((bucket_name, key))
+            return Response()
+
+    def download(**kwargs):
+        downloads.append(kwargs.get("audio_url"))
+        raise RuntimeError("synthetic: public-host HTTP download attempted")
+
+    monkeypatch.setattr(storage, "get_storage_client", Client)
+    monkeypatch.setattr(storage, "download_audio_from_url", download)
+
+    audio = storage._audio_bytes_from_url(
+        url, min_duration_seconds=None, pad_silence=False, timeout=5
+    )
+
+    assert audio == payload
+    assert reads == [(bucket, "audio/synthetic.wav")]
+    assert downloads == []
+
+
+@pytest.mark.django_db
+def test_dataset_image_conversion_links_own_generated_url(
+    own_idn_storage, monkeypatch
+):
+    own_idn_storage.configure("https://münchen.example:9443")
+    develop_dataset = importlib.import_module("model_hub.views.develop_dataset")
+    converter_cls = develop_dataset.DatatypeConverter
+    bucket = converter_cls._OWN_S3_BUCKETS[0]
+    url = own_idn_storage.client.get_object_url(bucket, "images/synthetic.png")
+    validated, uploaded = [], []
+
+    def validate(value, kind):
+        validated.append((value, kind))
+        raise ValueError("synthetic: private storage host blocked")
+
+    def upload(*args, **kwargs):
+        uploaded.append(args)
+        return "https://example.invalid/duplicate.png"
+
+    monkeypatch.setattr(develop_dataset, "validate_file_url", validate)
+    monkeypatch.setattr(develop_dataset, "upload_image_to_s3", upload)
+    converter = converter_cls("image", dataset_id=uuid.uuid4())
+
+    assert converter._convert_cell_to_image(SimpleNamespace(value=url)) == (url, {})
+    assert validated == []
+    assert uploaded == []
 
 
 @pytest.mark.integration

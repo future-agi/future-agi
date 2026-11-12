@@ -66,8 +66,10 @@ def _parse_endpoint(raw_endpoint: str) -> tuple[str, bool | None]:
             host = f"[{host}]"
         else:
             # Public MinIO hosts may be internationalized even when the SDK
-            # connects to an ASCII internal endpoint. Validate the IDNA form
-            # and use it consistently for generated URLs and stored-URL matching.
+            # connects to an ASCII internal endpoint. Validate the IDNA form;
+            # the SDK connection and server_reachable_url's host comparison use
+            # it. Generated object URLs keep the configured form instead (see
+            # _configured_authority).
             if not host.isascii():
                 host = idna.encode(host, uts46=True).decode("ascii")
             if any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-._" for c in host):
@@ -78,6 +80,21 @@ def _parse_endpoint(raw_endpoint: str) -> tuple[str, bool | None]:
         raise ValueError(error) from None
     authority = f"{host}:{parsed.port}" if parsed.port is not None else host
     return authority, parsed.scheme == "https" if has_scheme else None
+
+
+def _configured_authority(raw_endpoint: str) -> tuple[str, bool | None]:
+    """Validate like _parse_endpoint, but keep the host[:port] as configured.
+
+    Stored object URLs are recognised as first-party by comparing their host
+    with the raw MINIO_URL setting (tfc.utils.storage.is_own_storage_url), and
+    Falcon builds its upload URLs from that setting directly. An IDN MINIO_URL
+    must therefore stay in its configured (Unicode) form in generated URLs;
+    HTTP clients and browsers apply IDNA themselves when they connect.
+    """
+    _, scheme_hint = _parse_endpoint(raw_endpoint)
+    has_scheme = "://" in raw_endpoint
+    netloc = urlparse(raw_endpoint if has_scheme else "//" + raw_endpoint).netloc
+    return netloc, scheme_hint
 
 
 def _is_loopback(host: str | None) -> bool:
@@ -212,7 +229,7 @@ def get_object_url(bucket_name: str, object_key: str) -> str:
         return f"https://storage.googleapis.com/{bucket_name}/{object_key}"
 
     if STORAGE_BACKEND == "minio":
-        host, scheme_hint = _parse_endpoint(
+        host, scheme_hint = _configured_authority(
             os.getenv("MINIO_URL", "http://localhost:9005")
         )
         scheme = "https" if scheme_hint else "http"
