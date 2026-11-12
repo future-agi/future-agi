@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
+import { useQueryClient } from "@tanstack/react-query";
 import { CONNECTED_AGENTS_PATH } from "../agentsTabs";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
@@ -20,6 +21,8 @@ import {
 } from "src/api/agents/connectedAgents";
 import {
   CONNECTED_AGENT_FILTER_FIELDS,
+  deleteBlockedReason,
+  deleteConfirmText,
   deleteResultMessage,
   filtersToRows,
   modalityIcon,
@@ -169,6 +172,7 @@ const columns = [
  */
 export default function ConnectedAgentsView({ onConnect }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(PAGE_SIZE_DEFAULT);
@@ -183,18 +187,26 @@ export default function ConnectedAgentsView({ onConnect }) {
     search,
     filters,
   });
-  const items = data?.items ?? [];
+  const items = useMemo(() => data?.items ?? [], [data]);
   const total = data?.total ?? 0;
   // One-line rows: the name only.
   const rowHeight = ROW_HEIGHT.default;
 
-  const [rowSelection, setRowSelection] = useState({});
+  const [selected, setSelected] = useState([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deleteAgents = useDeleteConnectedAgents();
-  const selected = items.filter((_, index) => rowSelection[index]);
+  const rowSelection = useMemo(() => {
+    const ids = new Set(selected.map((agent) => agent.id));
+    return Object.fromEntries(
+      items.flatMap((agent, index) =>
+        ids.has(agent.id) ? [[index, true]] : [],
+      ),
+    );
+  }, [items, selected]);
+  const inUse = selected.filter((agent) => agent.environmentCount > 0);
 
   useEffect(() => {
-    setRowSelection({});
+    setSelected([]);
   }, [page, pageSize, search, filters]);
 
   const handleDelete = () => {
@@ -203,20 +215,29 @@ export default function ConnectedAgentsView({ onConnect }) {
       {
         onSuccess: ({ data: result }) => {
           const deleted = result.agents_updated ?? 0;
-          enqueueSnackbar(
-            deleteResultMessage({
-              deleted,
-              skipped: result.skipped_agent_ids?.length ?? 0,
-            }),
-            { variant: deleted ? "success" : "warning" },
+          const lastPage = Math.max(
+            0,
+            Math.ceil((total - deleted) / pageSize) - 1,
           );
-          setRowSelection({});
+          const pageGone = page > lastPage;
+          if (pageGone) setPage(lastPage);
+          queryClient.invalidateQueries({
+            queryKey: ["agents", "connected"],
+            refetchType: pageGone ? "none" : "active",
+          });
+          enqueueSnackbar(deleteResultMessage(deleted), {
+            variant: deleted ? "success" : "warning",
+          });
+          setSelected([]);
           setConfirmDelete(false);
         },
-        onError: () => {
-          enqueueSnackbar("Couldn't delete the selected agents", {
-            variant: "error",
-          });
+        onError: (error) => {
+          enqueueSnackbar(
+            error?.statusCode === 409 && error?.message
+              ? error.message
+              : "Couldn't delete the selected agents",
+            { variant: "error" },
+          );
         },
       },
     );
@@ -284,12 +305,15 @@ export default function ConnectedAgentsView({ onConnect }) {
         {selected.length > 0 ? (
           <SelectionBar
             count={selected.length}
-            onCancel={() => setRowSelection({})}
+            onCancel={() => setSelected([])}
             actions={[
               {
                 label: "Delete",
                 icon: "solar:trash-bin-trash-linear",
                 onClick: () => setConfirmDelete(true),
+                disabled: inUse.length > 0,
+                tooltip:
+                  inUse.length > 0 ? deleteBlockedReason(inUse) : undefined,
               },
             ]}
           />
@@ -308,7 +332,9 @@ export default function ConnectedAgentsView({ onConnect }) {
         rowHeight={rowHeight}
         enableSelection
         rowSelection={rowSelection}
-        onRowSelectionChange={setRowSelection}
+        onRowSelectionChange={(selection) =>
+          setSelected(items.filter((_, index) => selection[index]))
+        }
         onRowClick={(r) => navigate(`${CONNECTED_AGENTS_PATH}/${r.id}`)}
         emptyMessage={
           isError
@@ -329,8 +355,12 @@ export default function ConnectedAgentsView({ onConnect }) {
       <ConfirmDialog
         open={confirmDelete}
         onClose={() => setConfirmDelete(false)}
-        title={`Delete ${selected.length === 1 ? "agent" : `${selected.length} agents`}?`}
-        content="Agents still used in an environment are skipped. The rest are deleted with all their versions."
+        title={
+          selected.length === 1
+            ? `Delete ${selected[0].name}?`
+            : `Delete ${selected.length} agents?`
+        }
+        content={deleteConfirmText(selected)}
         action={
           <LoadingButton
             variant="contained"

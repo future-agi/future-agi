@@ -1,9 +1,4 @@
-import {
-  keepPreviousData,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { paramsSerializer } from "src/utils/utils";
 
@@ -80,13 +75,11 @@ export function useConnectedAgents({ page, pageSize, search, filters }) {
 }
 
 export function useDeleteConnectedAgents() {
-  const queryClient = useQueryClient();
   return useMutation({
+    meta: { errorHandled: true },
     mutationFn: (agentIds) =>
       axios.delete(endpoints.agentDefinitions.delete, {
         data: { agent_ids: agentIds },
       }),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["agents", "connected"] }),
   });
 }

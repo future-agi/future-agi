@@ -98,17 +98,31 @@ export const usedInLabel = ({ environments, environmentCount }) => {
 
 const agentsCount = (count) => `${count} agent${count === 1 ? "" : "s"}`;
 
-export const deleteResultMessage = ({ deleted, skipped }) => {
-  const parts = [];
-  if (deleted) parts.push(`${agentsCount(deleted)} deleted.`);
-  if (skipped) {
-    parts.push(
-      `${agentsCount(skipped)} skipped: still used in ${
-        skipped === 1 ? "an environment" : "environments"
-      }.`,
-    );
+export const deleteResultMessage = (deleted) =>
+  `${agentsCount(deleted)} deleted.`;
+
+export const agentNames = (agents) => {
+  const names = agents.map((agent) => agent.name);
+  if (names.length > 3) {
+    return `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`;
   }
-  return parts.join(" ");
+  if (names.length <= 1) return names.join("");
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+};
+
+export const deleteConfirmText = (agents) =>
+  `This deletes ${agentNames(agents)} with all ${
+    agents.length === 1 ? "its" : "their"
+  } versions.`;
+
+export const deleteBlockedReason = (agents) => {
+  const environments = agents.reduce(
+    (sum, agent) => sum + (agent.environmentCount ?? 0),
+    0,
+  );
+  return `${agentNames(agents)} ${agents.length === 1 ? "is" : "are"} still used in ${
+    environments === 1 ? "an environment" : "environments"
+  }. Delete those environments first.`;
 };
 
 export const versionsParts = ({ latestLabel, versionCount }) => {

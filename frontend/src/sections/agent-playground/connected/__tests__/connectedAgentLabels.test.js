@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
+  agentNames,
+  deleteBlockedReason,
+  deleteConfirmText,
   deleteResultMessage,
   filtersToRows,
   modalityIcon,
@@ -139,20 +142,45 @@ describe("versionsParts", () => {
 
 describe("deleteResultMessage", () => {
   it("says how many were deleted", () => {
-    expect(deleteResultMessage({ deleted: 1, skipped: 0 })).toBe(
-      "1 agent deleted.",
+    expect(deleteResultMessage(1)).toBe("1 agent deleted.");
+    expect(deleteResultMessage(3)).toBe("3 agents deleted.");
+  });
+});
+
+describe("agentNames", () => {
+  const agents = (...names) => names.map((name) => ({ name }));
+
+  it("lists up to three names and counts the rest", () => {
+    expect(agentNames(agents("Clinic"))).toBe("Clinic");
+    expect(agentNames(agents("Clinic", "Billing"))).toBe("Clinic and Billing");
+    expect(agentNames(agents("Clinic", "Billing", "Returns"))).toBe(
+      "Clinic, Billing and Returns",
     );
-    expect(deleteResultMessage({ deleted: 3, skipped: 0 })).toBe(
-      "3 agents deleted.",
+    expect(agentNames(agents("Clinic", "Billing", "Returns", "Refunds"))).toBe(
+      "Clinic, Billing and 2 more",
     );
   });
 
-  it("names the ones skipped for still being in an environment", () => {
-    expect(deleteResultMessage({ deleted: 2, skipped: 1 })).toBe(
-      "2 agents deleted. 1 agent skipped: still used in an environment.",
+  it("names the agents a delete removes", () => {
+    expect(deleteConfirmText(agents("Clinic"))).toBe(
+      "This deletes Clinic with all its versions.",
     );
-    expect(deleteResultMessage({ deleted: 0, skipped: 2 })).toBe(
-      "2 agents skipped: still used in environments.",
+    expect(deleteConfirmText(agents("Clinic", "Billing"))).toBe(
+      "This deletes Clinic and Billing with all their versions.",
+    );
+  });
+
+  it("names the agents that block a delete", () => {
+    expect(deleteBlockedReason([{ name: "Clinic", environmentCount: 1 }])).toBe(
+      "Clinic is still used in an environment. Delete those environments first.",
+    );
+    expect(
+      deleteBlockedReason([
+        { name: "Clinic", environmentCount: 1 },
+        { name: "Billing", environmentCount: 2 },
+      ]),
+    ).toBe(
+      "Clinic and Billing are still used in environments. Delete those environments first.",
     );
   });
 });
