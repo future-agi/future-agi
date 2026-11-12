@@ -1219,7 +1219,8 @@ def receipt_outcome_status(body: dict[str, Any]) -> str:
     results = {
         sub_goal_result(one)
         for one in body.get("sub_goals") or []
-        if isinstance(one, dict) and not str(one.get("subject") or "").startswith("worker:")
+        if isinstance(one, dict)
+        and not str(one.get("subject") or "").startswith("worker:")
     }
     decided = any(
         isinstance(one, dict)
@@ -1269,7 +1270,11 @@ def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
                 "reason": str(goal.get("reason") or ""),
                 **({"result": result} if result not in ("pass", "fail") else {}),
                 # A worker's own check, reported beside the task's: kept apart wherever results are listed.
-                **({"subject": str(goal["subject"])} if str(goal.get("subject") or "").startswith("worker:") else {}),
+                **(
+                    {"subject": str(goal["subject"])}
+                    if str(goal.get("subject") or "").startswith("worker:")
+                    else {}
+                ),
             }
         )
     for evaluation in body.get("evaluations") or []:

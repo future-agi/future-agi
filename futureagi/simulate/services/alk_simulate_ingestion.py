@@ -1908,7 +1908,11 @@ def _apply_harness_evaluation_outputs(
         subject = str(evaluation.get("subject") or "")
         worker = subject[len("worker:") :] if subject.startswith("worker:") else ""
         # A worker's own check is never the task's column: it gets its own id and no error localizer.
-        template = None if worker else _resolve_harness_eval_template(run_test, evaluation, name)
+        template = (
+            None
+            if worker
+            else _resolve_harness_eval_template(run_test, evaluation, name)
+        )
         config = None
         if template is not None:
             config = _get_or_create_harness_eval_config(run_test, template, name)
@@ -1917,7 +1921,9 @@ def _apply_harness_evaluation_outputs(
             output_id = str(
                 uuid.uuid5(
                     _HARNESS_EVAL_NAMESPACE,
-                    f"{run_test.id}:{kind}:{subject}:{name}" if worker else f"{run_test.id}:{kind}:{name}",
+                    f"{run_test.id}:{kind}:{subject}:{name}"
+                    if worker
+                    else f"{run_test.id}:{kind}:{name}",
                 )
             )
 
@@ -1944,7 +1950,9 @@ def _apply_harness_evaluation_outputs(
             "output_type": output_type,
             **({"result": evaluation["result"]} if evaluation.get("result") else {}),
             # A worker's own check says so wherever the reason is shown; the task's verdict never includes it.
-            "reason": (f"Worker {worker}'s own check. {reason}".strip() if worker else reason)[:10000],
+            "reason": (
+                f"Worker {worker}'s own check. {reason}".strip() if worker else reason
+            )[:10000],
             **({"subject": subject} if worker else {}),
             "status": "completed",
             "source": "harness",
