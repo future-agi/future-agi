@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import uuid4, uuid5
 
 import pytest
 from rest_framework.test import APIClient
@@ -35,10 +35,17 @@ def hosted_attempt(organization):
 @pytest.fixture
 def metered_attempt(hosted_attempt, monkeypatch):
     from ee.usage.services import emitter
+    from simulate.tasks.hosted_harness_usage import seal_hosted_harness_usage
 
     events = []
     monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
     monkeypatch.setattr(emitter, "emit", events.append)
+    # Cleanup enqueues the seal after commit; run it inline so these tests see its events.
+    monkeypatch.setattr(
+        seal_hosted_harness_usage,
+        "apply_async",
+        lambda args, **_: seal_hosted_harness_usage._original_func(*args),
+    )
     return hosted_attempt, events
 
 
@@ -98,7 +105,7 @@ def _report(records):
     }
 
 
-def _receipt(attempt, *, failure_domain="simulator"):
+def _receipt(attempt, *, failure_domain="simulator", started=True):
     registration = attempt.job.scenario_registrations.get()
     return HostedHarnessReceipt.objects.create(
         job=attempt.job,
@@ -108,7 +115,7 @@ def _receipt(attempt, *, failure_domain="simulator"):
         status="errored",
         digest="sha256:" + "0" * 64,
         body={
-            "call": {"duration_ms": 15000},
+            "call": {"duration_ms": 15000} if started else None,
             "failure": {"domain": failure_domain, "code": "run_failed"},
         },
     )
@@ -294,7 +301,9 @@ def test_unpriceable_live_authoring_is_unavailable_not_zero(metered_attempt):
 
 @pytest.mark.django_db
 @pytest.mark.requires_ee
-def test_cleanup_finalizes_when_live_authoring_is_unpriced(metered_attempt):
+def test_cleanup_finalizes_when_live_authoring_is_unpriced(
+    metered_attempt, django_capture_on_commit_callbacks
+):
     capability, events = metered_attempt
     job = capability.attempt.job
     job.payload["metadata"] = {
@@ -304,7 +313,7 @@ def test_cleanup_finalizes_when_live_authoring_is_unpriced(metered_attempt):
                     "stages": [
                         {
                             "stage": "understand-agent",
-                            "models": ["gemini-3.8-flash-unlisted"],
+                            "models": ["not-a-priced-model"],
                             "tokens_in": 1000,
                             "tokens_out": 100,
                         }
@@ -315,17 +324,41 @@ def test_cleanup_finalizes_when_live_authoring_is_unpriced(metered_attempt):
     }
     job.save(update_fields=["payload"])
 
-    record_cleanup(
-        capability.attempt.id,
-        provider_ref="",
-        verified_absent=True,
-    )
+    with django_capture_on_commit_callbacks(execute=True):
+        record_cleanup(
+            capability.attempt.id,
+            provider_ref="",
+            verified_absent=True,
+        )
 
     capability.attempt.refresh_from_db()
     job.refresh_from_db()
     assert capability.attempt.cleanup_verified_at is not None
     assert job.state == job.State.FAILED
     assert events == []
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+def test_cleanup_seals_measured_calls_through_the_backend_job(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    attempt = capability.attempt
+    _provision(attempt)
+    record = _record("voice_call", amount=2)
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.record_harness_usage(attempt, _report([record]))
+    _receipt(attempt)
+    assert events == []
+
+    with django_capture_on_commit_callbacks(execute=True):
+        record_cleanup(attempt.id, provider_ref="", verified_absent=True)
+
+    assert [(event.event_type, float(event.amount)) for event in events] == [
+        ("voice_call", 2.0)
+    ]
+    assert events[0].event_id == str(uuid5(attempt.id, record["id"]))
 
 
 @pytest.mark.django_db
@@ -465,6 +498,36 @@ def test_simulator_failure_remains_billable_as_measured_usage(
     assert {(event.event_type, float(event.amount)) for event in events} == {
         ("voice_call", 0.25)
     }
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+def test_a_call_that_never_started_is_not_billed_whatever_the_domain(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    attempt = capability.attempt
+    _provision(attempt)
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.record_harness_usage(
+            attempt,
+            _report(
+                [
+                    _record(
+                        "voice_call",
+                        amount=0.25,
+                        outcome="failed",
+                        failure_domain="simulator",
+                    )
+                ]
+            ),
+        )
+    # The simulator's setup broke before the call started: billable domain, no call.
+    _receipt(attempt, failure_domain="simulator", started=False)
+
+    harness_usage.replay_harness_usage(attempt)
+
+    assert events == []
 
 
 @pytest.mark.django_db

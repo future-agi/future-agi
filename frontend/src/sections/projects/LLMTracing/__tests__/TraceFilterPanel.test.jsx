@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import PropTypes from "prop-types";
-import { act, fireEvent, render, screen, waitFor } from "src/utils/test-utils";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "src/utils/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   buildApiFilterFromPanelRow,
@@ -1846,7 +1853,7 @@ describe("voice-call property search aliases", () => {
     document.body.removeChild(anchorEl);
   });
 
-  it("exposes the complete property name when a picker row is truncated", () => {
+  it("exposes the complete property name when a picker row is truncated", async () => {
     const longPropertyName =
       "cost_breakdown.analysisCostBreakdown.structuredOutputPromptTokens";
     const { anchorEl } = renderPanel({
@@ -1863,9 +1870,18 @@ describe("voice-call property search aliases", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Property" }));
 
-    expect(screen.getByText(longPropertyName)).toHaveAttribute(
-      "title",
-      longPropertyName,
+    // jsdom has no layout; give the row the box of a clipped line. The full
+    // name opens in a hover tooltip (the picker is itself a role="tooltip"
+    // popper, so read MUI's tooltip element).
+    const label = screen.getByText(longPropertyName);
+    Object.defineProperty(label, "scrollWidth", { value: 420 });
+    Object.defineProperty(label, "clientWidth", { value: 220 });
+    fireEvent.mouseOver(label);
+    fireEvent.mouseEnter(label);
+    await waitFor(() =>
+      expect(document.querySelector(".MuiTooltip-tooltip")).toHaveTextContent(
+        longPropertyName,
+      ),
     );
     document.body.removeChild(anchorEl);
   });
@@ -3927,6 +3943,156 @@ describe("voice-call property search aliases", () => {
       document.querySelector('[data-filter-value-option="ended"]'),
     ).not.toBeInTheDocument();
     expect(screen.getAllByText("completed").length).toBeGreaterThan(0);
+
+    document.body.removeChild(anchorEl);
+  });
+
+  const hoverTooltip = () => document.querySelector(".MuiTooltip-tooltip");
+
+  it("shows a cut-off value's full name on hover, and no tooltip for one that fits", async () => {
+    const long = "dfd8e932-aadf-4f7b-8f4d-5f97c7dabfd8-deep-research-agent";
+    dashboardFilterValuesMock.mockReturnValue({
+      ...defaultDashboardFilterValues(),
+      data: [
+        { value: long, label: long },
+        { value: "ended", label: "ended" },
+      ],
+    });
+    const { anchorEl } = renderPanel({
+      properties,
+      currentFilters: [
+        {
+          field: "agent_name",
+          fieldName: "agent_name",
+          fieldCategory: "attribute",
+          fieldType: "string",
+          apiColType: "SPAN_ATTRIBUTE",
+          operator: "in",
+          value: [],
+        },
+      ],
+      projectId: "project-1",
+    });
+    fireEvent.click(
+      document.querySelector('[data-filter-value-trigger="agent_name"]'),
+    );
+
+    // jsdom has no layout; give the long label the box of a clipped line.
+    const longLabel = within(
+      document.querySelector(`[data-filter-value-option="${long}"]`),
+    ).getByText(long);
+    Object.defineProperty(longLabel, "scrollWidth", { value: 420 });
+    Object.defineProperty(longLabel, "clientWidth", { value: 220 });
+    fireEvent.mouseOver(longLabel);
+    fireEvent.mouseEnter(longLabel);
+    await waitFor(() => expect(hoverTooltip()).toHaveTextContent(long));
+    fireEvent.mouseLeave(longLabel);
+    fireEvent.mouseOut(longLabel);
+    await waitFor(() => expect(hoverTooltip()).toBeNull());
+
+    const shortLabel = within(
+      document.querySelector('[data-filter-value-option="ended"]'),
+    ).getByText("ended");
+    fireEvent.mouseOver(shortLabel);
+    fireEvent.mouseEnter(shortLabel);
+    await new Promise((r) => setTimeout(r, 400));
+    expect(hoverTooltip()).toBeNull();
+
+    document.body.removeChild(anchorEl);
+  });
+
+  // jsdom has no layout: give an element the box of a clipped line, then hover.
+  const clip = (el) => {
+    Object.defineProperty(el, "scrollWidth", { value: 420 });
+    Object.defineProperty(el, "clientWidth", { value: 220 });
+    return el;
+  };
+  const hover = (el) => {
+    fireEvent.mouseOver(el);
+    fireEvent.mouseEnter(el);
+  };
+  const tooltipCount = () =>
+    document.querySelectorAll(".MuiTooltip-tooltip").length;
+  const rawFilter = (overrides) => ({
+    field: "agent_name",
+    fieldName: "agent_name",
+    fieldCategory: "attribute",
+    fieldType: "string",
+    apiColType: "SPAN_ATTRIBUTE",
+    operator: "in",
+    value: [],
+    ...overrides,
+  });
+
+  it("names a chip in full on hover only when the chip cuts it off", async () => {
+    const long = "dfd8e932-aadf-4f7b-8f4d-5f97c7dabfd8-deep-research-agent";
+    dashboardFilterValuesMock.mockReturnValue({
+      ...defaultDashboardFilterValues(),
+      data: [
+        { value: long, label: long },
+        { value: "ended", label: "ended" },
+      ],
+    });
+    const { anchorEl } = renderPanel({
+      properties,
+      currentFilters: [rawFilter({ value: [long, "ended"] })],
+      projectId: "project-1",
+    });
+    const chipOf = (text) => screen.getByText(text).closest(".MuiChip-root");
+    expect(chipOf(long)).not.toHaveAttribute("title");
+
+    hover(chipOf("ended"));
+    await new Promise((r) => setTimeout(r, 400));
+    expect(tooltipCount()).toBe(0);
+    fireEvent.mouseLeave(chipOf("ended"));
+
+    clip(chipOf(long).querySelector(".MuiChip-label"));
+    hover(chipOf(long));
+    await waitFor(() => expect(hoverTooltip()).toHaveTextContent(long));
+
+    document.body.removeChild(anchorEl);
+  });
+
+  it("names a cut-off chosen field once on its button, and not at all when it fits", async () => {
+    const longField =
+      "customer.organization.display_name_for_billing_and_compliance_reporting";
+    const { anchorEl } = renderPanel({
+      properties,
+      currentFilters: [
+        rawFilter({ field: longField, fieldName: longField }),
+        rawFilter({ value: ["ended"] }),
+      ],
+      projectId: "project-1",
+    });
+
+    hover(screen.getByText("agent_name"));
+    await new Promise((r) => setTimeout(r, 400));
+    expect(tooltipCount()).toBe(0);
+    fireEvent.mouseLeave(screen.getByText("agent_name"));
+
+    hover(clip(screen.getByText(longField)));
+    await waitFor(() => expect(hoverTooltip()).toHaveTextContent(longField));
+    expect(tooltipCount()).toBe(1);
+
+    document.body.removeChild(anchorEl);
+  });
+
+  it("names a cut-off single chosen value in full on hover", async () => {
+    const long = "dfd8e932-aadf-4f7b-8f4d-5f97c7dabfd8-deep-research-agent";
+    dashboardFilterValuesMock.mockReturnValue({
+      ...defaultDashboardFilterValues(),
+      data: [{ value: long, label: long }],
+    });
+    const { anchorEl } = renderPanel({
+      properties,
+      currentFilters: [rawFilter({ operator: "equals", value: long })],
+      projectId: "project-1",
+    });
+    const label = screen.getByText(long);
+    expect(label).not.toHaveAttribute("title");
+    hover(clip(label));
+    await waitFor(() => expect(hoverTooltip()).toHaveTextContent(long));
+    expect(tooltipCount()).toBe(1);
 
     document.body.removeChild(anchorEl);
   });

@@ -1,12 +1,15 @@
 import math
 
 import structlog
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.utils import get_request_organization
+from simulate.models import AgentDefinition
 from simulate.services.agent_definition import (
     is_masked,
     resolve_stored_api_key,
@@ -25,6 +28,11 @@ from tracer.serializers.observability_provider import (
     VerifyResponseSerializer,
 )
 from tracer.services.observability_providers import ObservabilityService
+from tracer.services.observability_switch import (
+    ObservabilityRefused,
+    check_observability_prerequisites,
+    refusal_body,
+)
 from tracer.utils.otel import get_or_create_project
 
 logger = structlog.get_logger(__name__)
@@ -128,8 +136,16 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             serializer = self.get_serializer(instance, data=request.data, partial=True)
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
+            if serializer.validated_data.get("enabled") and not instance.enabled:
+                agent = AgentDefinition.no_workspace_objects.filter(
+                    observability_provider=instance
+                ).first()
+                if agent is not None:
+                    check_observability_prerequisites(agent)
             self.perform_update(serializer)
             return self._gm.success_response(serializer.data)
+        except ObservabilityRefused as error:
+            return Response(refusal_body(error), status=status.HTTP_400_BAD_REQUEST)
         except ValidationError as e:
             return self._gm.bad_request(e.detail)
         except Exception as e:

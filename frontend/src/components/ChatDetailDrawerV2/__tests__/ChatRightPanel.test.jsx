@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "src/utils/test-utils";
+import { render, screen, userEvent } from "src/utils/test-utils";
 
 import ChatRightPanel from "../ChatRightPanel";
 
@@ -12,6 +12,21 @@ const renderPanel = (data) =>
   );
 
 const base = { id: "chat-1", module: "simulate", status: "completed", messages: [], scenario_columns: {} };
+
+describe("ChatRightPanel Evals tab", () => {
+  it("lists the call's evals but not its sub-goal checks", async () => {
+    renderPanel({
+      ...base,
+      eval_metrics: {
+        "ev-1": { name: "tone_check", value: "Passed", type: "Pass/Fail", kind: "evaluation" },
+        "sg-1": { name: "pin_verified", value: "Passed", type: "Pass/Fail", kind: "sub_goal" },
+      },
+    });
+    await userEvent.click(screen.getByRole("tab", { name: /Evals/ }));
+    expect(screen.getByText("tone_check")).toBeInTheDocument();
+    expect(screen.queryByText("pin_verified")).toBeNull();
+  });
+});
 
 describe("ChatRightPanel Scenario tab", () => {
   it("shows for a call with a persona but no scenario columns", () => {

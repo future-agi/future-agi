@@ -1,12 +1,15 @@
-# Multi-stage build — distroless runtime with no shell or package manager.
-# The build stage uses the official golang image so
-# we get the toolchain + git for module fetch; the runtime stage strips
-# everything except the three static commands and collector config.
+# Multi-stage build: distroless runtime with no shell or package manager.
+# The build stage starts from fi-collector-base (golang + `go mod download`
+# already baked in, see Dockerfile.base) so source edits never re-download
+# modules; republish it (base-image-publish.yml) when go.mod/go.sum change,
+# then bump the tag and digest together. The runtime stage strips everything except the static commands and
+# collector config.
 # Conventions shared by every futureagi/* image: TESTING.md › Image conventions.
 
-# The toolchain tag floats on the 1.24 minor on purpose: Go patch releases
-# carry standard-library security fixes that are compiled into the binaries.
-# Build stages only, never shipped.
+# The healthcheck probe keeps the plain toolchain, whose tag floats on the
+# 1.24 minor on purpose: Go patch releases carry standard-library security
+# fixes that are compiled into the binaries. Build stages only, never shipped.
+ARG BUILD_IMAGE=futureagi/fi-collector-base:v1.0.0@sha256:063fecad580320789034d10a1359fcac356c7dc9df553a7bc5a0dd7be3bee74c
 ARG GO_IMAGE=golang:1.24-alpine
 # distroless static (no libc, no shell), user nonroot (65532). Pinned by
 # digest (multi-arch index); base-digest-check.yml reports when it moves.
@@ -15,16 +18,10 @@ ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c8918
 # Cross-compile on the build host ($BUILDPLATFORM): the Go toolchain never runs
 # under QEMU for linux/arm64. The binaries are static, so this changes CI time
 # only.
-FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS build
+FROM --platform=$BUILDPLATFORM ${BUILD_IMAGE} AS build
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
-
-# Cache module downloads in a separate layer so source edits don't
-# re-trigger `go mod download`.
-COPY go.mod ./
-COPY go.sum* ./
-RUN go mod download
 
 COPY . .
 

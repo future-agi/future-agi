@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Box,
+  Checkbox,
   Stack,
   Typography,
   Table,
@@ -9,7 +10,6 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  Button,
   tableBodyClasses,
   tableCellClasses,
   tableHeadClasses,
@@ -18,19 +18,33 @@ import {
 
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import {
   defaultTraceColumns,
   headCellSx,
+  bandCellSx,
+  GROUP_BAND_PX,
+  TRACE_COLUMNS,
   HEAD_ROW_PX,
   GROUP_ROW_PX,
   numCellSx,
   bodyCellSx,
   runOutcome,
-  CALL_STATUS_CHIPS,
+  CLOSED_GROUP_VIEW,
+  neutralCheckboxSx,
+  pinnedLeftSx,
 } from "./traceTable.constants";
-import StatusChip from "../../StatusChip";
-import { MetricValue, Score, Field, UnscoredEval } from "./traceCells";
+import {
+  SubTasksCell,
+  TruncTooltip,
+} from "../../../scenarios/ScenarioTableCells";
+import {
+  CsatValue,
+  MetricValue,
+  Score,
+  Field,
+  UnscoredEval,
+} from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
 
 // The theme hides every border on a table's last row, which here is the head
@@ -59,7 +73,12 @@ const lastRowDividersSx = {
 const TEXT_COL_WIDTH = { long: 260, short: 200 };
 // A call still in flight — its eval cells can only be waiting. `analyzing`
 // is a finished conversation whose evals are grading (the chat path).
-const LIVE_CALL_STATUSES = new Set(["pending", "queued", "ongoing", "analyzing"]);
+const LIVE_CALL_STATUSES = new Set([
+  "pending",
+  "queued",
+  "ongoing",
+  "analyzing",
+]);
 const textCellSx = (width) => ({
   ...bodyCellSx,
   width,
@@ -68,6 +87,25 @@ const textCellSx = (width) => ({
   typography: "s2",
   color: "text.secondary",
 });
+// The narrow first column that holds a call's tick when rows can be selected.
+const checkboxCellSx = {
+  ...bodyCellSx,
+  ...pinnedLeftSx,
+  zIndex: 1,
+  width: 44,
+  minWidth: 44,
+  px: 1,
+  textAlign: "center",
+};
+// The head row centres its labels, so its box is centred too, level with
+// "Use case" rather than at the top like the call rows' boxes.
+const checkboxHeadSx = {
+  width: 44,
+  minWidth: 44,
+  px: 1,
+  textAlign: "center",
+  verticalAlign: "middle",
+};
 const clampSx = {
   display: "-webkit-box",
   WebkitLineClamp: 4,
@@ -85,28 +123,88 @@ export default function TraceTable({
   groups,
   rows = null,
   evals,
+  subGoalEvals = [],
+  firstColumnLabel = "Run details",
   onOpen,
   columns,
   activeCallId = null,
   scrollRef,
+  groupView: groupViewProp,
+  onGroupViewChange,
+  expandedForRef: expandedForRefProp,
+  runActive = false,
+  renderEvalHeaderAction = null,
+  selection = null,
 }) {
-  const [collapsed, setCollapsed] = useState(null);
+  // A parent that unmounts this table (a filter's loading or empty state)
+  // passes the open/closed groups in, so they survive the remount. Without
+  // one, the table keeps them itself.
+  const [ownGroupView, setOwnGroupView] = useState(CLOSED_GROUP_VIEW);
+  const groupView = onGroupViewChange
+    ? groupViewProp ?? CLOSED_GROUP_VIEW
+    : ownGroupView;
+  const setGroupView = onGroupViewChange || setOwnGroupView;
   const activeRowRef = useRef(null);
   // The call already expanded for, so a group the user collapses afterwards
   // stays collapsed across refetches.
-  const expandedForRef = useRef(null);
+  const ownExpandedForRef = useRef(null);
+  const expandedForRef = expandedForRefProp || ownExpandedForRef;
   const visible = columns || defaultTraceColumns();
   const show = (key) => visible.has(key);
-  const showEvals = show("evals");
+  const showSubGoalEvals = show("subGoalEvals");
+  const scoredColumns = [...(showSubGoalEvals ? subGoalEvals : []), ...evals];
+  // The band above the head row: one segment per run of columns sharing a
+  // group, in column order, then the scored columns under their own names.
+  const bandSegments = TRACE_COLUMNS.filter(
+    (c) => c.key !== "subGoalEvals" && show(c.key),
+  ).reduce((acc, c) => {
+    const last = acc[acc.length - 1];
+    if (last && last.name === c.group) last.span += 1;
+    else acc.push({ name: c.group, span: 1 });
+    return acc;
+  }, []);
+  if (showSubGoalEvals && subGoalEvals.length)
+    bandSegments.push({ name: "Sub-goal Results", span: subGoalEvals.length });
+  if (evals.length)
+    bandSegments.push({ name: "Evaluations", span: evals.length });
+  const headSx = { ...headCellSx, top: GROUP_BAND_PX };
+  // The server's group figures can't tell a call still running from one with no
+  // value. So a group counts as still coming while one of its calls here is
+  // live, or, while the run goes on, while some of its calls are on other pages.
+  const groupLive = (g) =>
+    g.rows.some((t) => LIVE_CALL_STATUSES.has(t.executionStatus)) ||
+    (runActive && g.rows.length < g.count);
 
-  const collapsedSet = collapsed ?? new Set(groups.map((g) => g.label));
-  const toggleCollapsed = (label) =>
-    setCollapsed(() => {
-      const next = new Set(collapsedSet);
-      if (next.has(label)) next.delete(label);
-      else next.add(label);
-      return next;
+  const isOpen = (label) => groupView.all || groupView.expanded.has(label);
+  // Closing a group ends Expand all, but the groups it opened stay open.
+  const toggleGroup = (label) =>
+    setGroupView((prev) => {
+      const expanded = new Set(prev.expanded);
+      if (prev.all || expanded.has(label)) {
+        if (prev.all) groups.forEach((g) => expanded.add(g.label));
+        expanded.delete(label);
+        return { all: false, expanded };
+      }
+      expanded.add(label);
+      return { ...prev, expanded };
     });
+  // Under Expand all, groups that turn up from another filter or page open
+  // too. Record them, so closing one later leaves these open.
+  useEffect(() => {
+    if (!groupView.all || groups.every((g) => groupView.expanded.has(g.label)))
+      return;
+    setGroupView((prev) =>
+      prev.all
+        ? {
+            ...prev,
+            expanded: new Set([
+              ...prev.expanded,
+              ...groups.map((g) => g.label),
+            ]),
+          }
+        : prev,
+    );
+  }, [groupView, groups, setGroupView]);
   // The open call's row must be visible: expand its group once per call, then
   // bring the row into view.
   const activeGroupLabel = activeCallId
@@ -115,25 +213,18 @@ export default function TraceTable({
   useEffect(() => {
     if (!activeGroupLabel || expandedForRef.current === activeCallId) return;
     expandedForRef.current = activeCallId;
-    setCollapsed((prev) => {
-      const next = new Set(prev ?? groups.map((g) => g.label));
-      next.delete(activeGroupLabel);
-      return next;
-    });
-  }, [activeCallId, activeGroupLabel, groups]);
+    setGroupView((prev) =>
+      prev.all || prev.expanded.has(activeGroupLabel)
+        ? prev
+        : { ...prev, expanded: new Set([...prev.expanded, activeGroupLabel]) },
+    );
+  }, [activeCallId, activeGroupLabel, expandedForRef, setGroupView]);
   // Its row only mounts once its group expands, so scroll again when that
   // happens — not just when the call changes.
-  const activeGroupCollapsed = collapsedSet.has(activeGroupLabel);
+  const activeGroupCollapsed = !isOpen(activeGroupLabel);
   useEffect(() => {
     activeRowRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [activeCallId, activeGroupLabel, activeGroupCollapsed]);
-
-  const allCollapsed =
-    groups.length > 0 && groups.every((g) => collapsedSet.has(g.label));
-  const toggleAllGroups = () =>
-    setCollapsed(
-      allCollapsed ? new Set() : new Set(groups.map((g) => g.label)),
-    );
 
   const renderRow = (t) => {
     const outcome = runOutcome(t.status);
@@ -148,9 +239,33 @@ export default function TraceTable({
           cursor: "pointer",
           bgcolor: active ? "action.selected" : "transparent",
           // Scrolled into view below the pinned head and group rows, not under.
-          scrollMarginTop: HEAD_ROW_PX + GROUP_ROW_PX,
+          scrollMarginTop: GROUP_BAND_PX + HEAD_ROW_PX + GROUP_ROW_PX,
         }}
       >
+        {selection && (
+          // The tick is its own control: this cell has no open-the-call click,
+          // and a row click elsewhere opens the call without touching it.
+          <TableCell
+            sx={{
+              ...checkboxCellSx,
+              // The row's open-call tint, layered over the opaque base.
+              ...(active && {
+                backgroundImage: (th) =>
+                  `linear-gradient(${th.palette.action.selected}, ${th.palette.action.selected})`,
+              }),
+            }}
+          >
+            {selection.canSelect(t) && (
+              <Checkbox
+                size="small"
+                checked={selection.isSelected(t.id)}
+                onChange={() => selection.onToggle(t)}
+                inputProps={{ "aria-label": `Select ${t.scenario}` }}
+                sx={{ p: 0.25, ...neutralCheckboxSx }}
+              />
+            )}
+          </TableCell>
+        )}
         {show("callDetails") && (
           // Indented past the group row's chevron so a call reads as nested
           // under its group, lined up with the group name.
@@ -182,22 +297,19 @@ export default function TraceTable({
                       <Iconify
                         icon="solar:danger-triangle-bold"
                         width={12}
-                        sx={{ color: BUILD_TONES.red }}
+                        sx={{ color: "status.danger.solid" }}
                       />
                     </Box>
                   </CustomTooltip>
                 )}
               </Stack>
               <Stack direction="row" alignItems="center" spacing={0.75}>
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    fontWeight: "fontWeightSemiBold",
-                    color: outcome.color,
-                  }}
-                >
-                  {outcome.label}
-                </Typography>
+                <StatusBadge
+                  status={t.status}
+                  label={outcome.label}
+                  role={outcome.role}
+                  variant="dot"
+                />
                 {t.durationMs != null && (
                   <>
                     <Box
@@ -216,24 +328,54 @@ export default function TraceTable({
                   </>
                 )}
               </Stack>
+              {t.subGoalResults?.length > 0 && (
+                <Stack spacing={0.5} sx={{ mt: 1 }}>
+                  {t.subGoalResults.map((goal, goalIndex) => {
+                    const verdict = runOutcome(
+                      goal.passed === true
+                        ? "passed"
+                        : goal.passed === false
+                          ? "failed"
+                          : "inconclusive",
+                    );
+                    return (
+                      <Stack
+                        key={`${goal.name}-${goalIndex}`}
+                        direction="row"
+                        alignItems="center"
+                        spacing={0.75}
+                      >
+                        <Typography
+                          sx={{ typography: "s3", color: "text.secondary" }}
+                        >
+                          {goal.name}
+                        </Typography>
+                        {goal.passed == null ? (
+                          <Typography
+                            sx={{ typography: "s3", color: verdict.color }}
+                          >
+                            {verdict.label}
+                          </Typography>
+                        ) : (
+                          <Box
+                            role="img"
+                            aria-label={verdict.label}
+                            title={verdict.label}
+                            sx={{ display: "flex", color: verdict.color }}
+                          >
+                            <Iconify
+                              icon={goal.passed ? "solar:check-linear" : "solar:close-linear"}
+                              width={16}
+                              aria-hidden="true"
+                            />
+                          </Box>
+                        )}
+                      </Stack>
+                    );
+                  })}
+                </Stack>
+              )}
             </Box>
-          </TableCell>
-        )}
-
-        {show("status") && (
-          <TableCell sx={bodyCellSx} onClick={() => onOpen(t)}>
-            {CALL_STATUS_CHIPS[t.executionStatus] ? (
-              <Box sx={{ display: "inline-flex" }}>
-                <StatusChip
-                  status={CALL_STATUS_CHIPS[t.executionStatus].chip}
-                  label={CALL_STATUS_CHIPS[t.executionStatus].label}
-                />
-              </Box>
-            ) : (
-              <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-                -
-              </Typography>
-            )}
           </TableCell>
         )}
 
@@ -275,7 +417,29 @@ export default function TraceTable({
             sx={textCellSx(TEXT_COL_WIDTH.long)}
             onClick={() => onOpen(t)}
           >
-            <Box sx={clampSx}>{t.scenarioDetails || t.scenario || "-"}</Box>
+            <Box sx={clampSx}>{t.scenario || "-"}</Box>
+          </TableCell>
+        )}
+
+        {show("situation") && (
+          <TableCell
+            sx={textCellSx(TEXT_COL_WIDTH.long)}
+            onClick={() => onOpen(t)}
+          >
+            <TruncTooltip title={t.scenarioDetails}>
+              <Box sx={clampSx}>{t.scenarioDetails || "-"}</Box>
+            </TruncTooltip>
+          </TableCell>
+        )}
+
+        {show("subGoals") && (
+          <TableCell
+            sx={textCellSx(TEXT_COL_WIDTH.long)}
+            onClick={() => onOpen(t)}
+          >
+            <SubTasksCell
+              subTasks={(t.subGoalResults || []).map((goal) => goal.name)}
+            />
           </TableCell>
         )}
 
@@ -284,7 +448,9 @@ export default function TraceTable({
             sx={textCellSx(TEXT_COL_WIDTH.long)}
             onClick={() => onOpen(t)}
           >
-            <Box sx={clampSx}>{t.idealOutcome || "-"}</Box>
+            <TruncTooltip title={t.idealOutcome}>
+              <Box sx={clampSx}>{t.idealOutcome || "-"}</Box>
+            </TruncTooltip>
           </TableCell>
         )}
 
@@ -299,7 +465,12 @@ export default function TraceTable({
 
         {show("csat") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="csat" value={t.csat} loading={callLive} />
+            <CsatValue
+              value={t.csat}
+              status={t.csatStatus}
+              reason={t.csatReason}
+              callLive={callLive}
+            />
           </TableCell>
         )}
         {show("turns") && (
@@ -309,7 +480,31 @@ export default function TraceTable({
         )}
         {show("latency") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="latency" value={t.latencyMs} suffix="ms" loading={callLive} />
+            <MetricValue
+              metric="latency"
+              value={t.latencyMs}
+              suffix="ms"
+              loading={callLive}
+            />
+          </TableCell>
+        )}
+        {show("stopLatency") && (
+          <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
+            <MetricValue
+              metric="stopLatency"
+              value={t.stopLatencyMs}
+              suffix="ms"
+              loading={callLive}
+            />
+          </TableCell>
+        )}
+        {show("aiInterruptions") && (
+          <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
+            <MetricValue
+              metric="aiInterruptions"
+              value={t.aiInterruptions}
+              loading={callLive}
+            />
           </TableCell>
         )}
         {show("tokens") && (
@@ -318,137 +513,166 @@ export default function TraceTable({
           </TableCell>
         )}
 
-        {showEvals &&
-          evals.map((e) => {
-            const r = t.evalResults?.find((x) => x.id === e.id);
-            return (
-              <TableCell
-                key={e.id}
-                sx={{ ...bodyCellSx, p: 0, position: "relative" }}
-                onClick={() => onOpen(t)}
-              >
-                {r?.score != null || r?.label ? (
-                  <Score result={r} />
-                ) : (
-                  <UnscoredEval
-                    result={r}
-                    callLive={callLive}
-                    callStatus={t.executionStatus}
-                  />
-                )}
-              </TableCell>
-            );
-          })}
+        {scoredColumns.map((e) => {
+          const r = t.evalResults?.find((x) => x.id === e.id);
+          return (
+            <TableCell
+              key={e.id}
+              sx={{ ...bodyCellSx, p: 0, position: "relative" }}
+              onClick={() => onOpen(t)}
+            >
+              {r?.score != null || r?.label ? (
+                <Score result={r} />
+              ) : (
+                <UnscoredEval
+                  result={r}
+                  callLive={callLive}
+                  callStatus={t.executionStatus}
+                />
+              )}
+            </TableCell>
+          );
+        })}
       </TableRow>
     );
   };
 
-  // The table scrolls both ways in its own box, below the "Collapse all" bar,
-  // so the head and group rows stick to it rather than to the page.
+  // The table scrolls both ways in its own box, so the head and group rows
+  // stick to it rather than to the page.
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      {!rows && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1}
-          sx={{
-            flexShrink: 0,
-            px: 1.5,
-            py: 1,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Button
-            size="small"
-            variant="text"
-            onClick={toggleAllGroups}
-            startIcon={
-              <Iconify
-                icon={
-                  allCollapsed
-                    ? "solar:alt-arrow-down-linear"
-                    : "solar:alt-arrow-right-linear"
-                }
-                width={14}
-              />
-            }
-            sx={{
-              typography: "s3",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.secondary",
-              "&:hover": { bgcolor: "action.hover" },
-            }}
-          >
-            {allCollapsed ? "Expand all" : "Collapse all"}
-          </Button>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {groups.length} {groups.length === 1 ? "group" : "groups"}
-          </Typography>
-        </Stack>
-      )}
       <Box ref={scrollRef} sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         <Table size="small" sx={lastRowDividersSx}>
           <TableHead>
+            {bandSegments.length > 0 && (
+              <TableRow>
+                {selection && (
+                  <TableCell
+                    sx={{ ...bandCellSx, ...pinnedLeftSx, zIndex: 4 }}
+                  />
+                )}
+                {bandSegments.map((segment) => (
+                  <TableCell
+                    key={segment.name}
+                    colSpan={segment.span}
+                    sx={bandCellSx}
+                  >
+                    {segment.name}
+                  </TableCell>
+                ))}
+              </TableRow>
+            )}
             <TableRow>
-              {show("callDetails") && (
-                <TableCell sx={{ ...headCellSx, width: 200 }}>
-                  Run details
+              {selection && (
+                <TableCell
+                  sx={{
+                    ...headSx,
+                    ...checkboxHeadSx,
+                    ...pinnedLeftSx,
+                    zIndex: 4,
+                  }}
+                >
+                  <Checkbox
+                    size="small"
+                    checked={selection.pageChecked}
+                    indeterminate={selection.pageIndeterminate}
+                    disabled={!selection.pageSelectable}
+                    onChange={(e) => selection.onTogglePage(e.target.checked)}
+                    inputProps={{
+                      "aria-label": "Select all calls on this page",
+                    }}
+                    sx={{ p: 0.25, ...neutralCheckboxSx }}
+                  />
                 </TableCell>
               )}
-              {show("status") && (
-                <TableCell sx={{ ...headCellSx, width: 120 }}>
-                  Status
+              {show("callDetails") && (
+                <TableCell sx={{ ...headSx, width: 200 }}>
+                  {firstColumnLabel}
                 </TableCell>
               )}
               {show("persona") && (
-                <TableCell sx={{ ...headCellSx, width: 200 }}>
-                  Persona
-                </TableCell>
+                <TableCell sx={{ ...headSx, width: 200 }}>Persona</TableCell>
               )}
               {show("scenario") && (
-                <TableCell sx={{ ...headCellSx, width: TEXT_COL_WIDTH.long }}>
+                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
                   Scenario
                 </TableCell>
               )}
+              {show("situation") && (
+                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
+                  Situation
+                </TableCell>
+              )}
+              {show("subGoals") && (
+                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
+                  Sub-goals
+                </TableCell>
+              )}
               {show("idealOutcome") && (
-                <TableCell sx={{ ...headCellSx, width: TEXT_COL_WIDTH.long }}>
+                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.long }}>
                   Ideal outcome
                 </TableCell>
               )}
               {show("conversationBranch") && (
-                <TableCell sx={{ ...headCellSx, width: TEXT_COL_WIDTH.short }}>
+                <TableCell sx={{ ...headSx, width: TEXT_COL_WIDTH.short }}>
                   Conversation branch
                 </TableCell>
               )}
               {show("csat") && (
-                <TableCell sx={{ ...headCellSx, width: 84 }}>CSAT</TableCell>
+                <TableCell sx={{ ...headSx, width: 84 }}>CSAT</TableCell>
               )}
               {show("turns") && (
-                <TableCell sx={{ ...headCellSx, width: 92 }}>Turns</TableCell>
+                <TableCell sx={{ ...headSx, width: 92 }}>Turns</TableCell>
               )}
               {show("latency") && (
-                <TableCell sx={{ ...headCellSx, width: 96 }}>Latency</TableCell>
+                <TableCell sx={{ ...headSx, width: 96 }}>Latency</TableCell>
+              )}
+              {show("stopLatency") && (
+                <TableCell sx={{ ...headSx, width: 140 }}>
+                  Stop latency
+                </TableCell>
+              )}
+              {show("aiInterruptions") && (
+                <TableCell sx={{ ...headSx, width: 150 }}>
+                  AI interruptions
+                </TableCell>
               )}
               {show("tokens") && (
-                <TableCell sx={{ ...headCellSx, width: 120 }}>Tokens</TableCell>
+                <TableCell sx={{ ...headSx, width: 120 }}>Tokens</TableCell>
               )}
-              {showEvals &&
-                evals.map((e) => (
-                  <TableCell key={e.id} sx={{ ...headCellSx, width: 150 }}>
-                    <Typography
-                      noWrap
-                      sx={{
-                        typography: "s2",
-                        fontWeight: "fontWeightMedium",
-                        color: "text.secondary",
-                      }}
-                    >
-                      {e.name}
-                    </Typography>
+              {scoredColumns.map((e) => {
+                // Sub-goal columns share this row but aren't evals, so only
+                // an eval's own column gets the action.
+                const action =
+                  renderEvalHeaderAction && evals.includes(e)
+                    ? renderEvalHeaderAction(e)
+                    : null;
+                const name = (
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s2",
+                      fontWeight: "fontWeightMedium",
+                      color: "text.secondary",
+                      ...(action && { flex: 1, minWidth: 0 }),
+                    }}
+                  >
+                    {e.name}
+                  </Typography>
+                );
+                return (
+                  <TableCell key={e.id} sx={{ ...headSx, width: 150 }}>
+                    {action ? (
+                      <Stack direction="row" alignItems="center" spacing={0.5}>
+                        {name}
+                        <Box sx={{ flexShrink: 0 }}>{action}</Box>
+                      </Stack>
+                    ) : (
+                      name
+                    )}
                   </TableCell>
-                ))}
+                );
+              })}
             </TableRow>
           </TableHead>
           <TableBody>
@@ -458,13 +682,22 @@ export default function TraceTable({
                   <React.Fragment key={g.label}>
                     <TraceGroupHeaderRow
                       group={g}
-                      collapsed={collapsedSet.has(g.label)}
-                      onToggle={() => toggleCollapsed(g.label)}
+                      loading={groupLive(g)}
+                      collapsed={!isOpen(g.label)}
+                      onToggle={() => toggleGroup(g.label)}
+                      top={GROUP_BAND_PX + HEAD_ROW_PX}
                       show={show}
-                      showEvals={showEvals}
-                      evals={evals}
+                      showEvals={scoredColumns.length > 0}
+                      evals={scoredColumns}
+                      leadingCell={!!selection}
+                      checkbox={
+                        selection && {
+                          ...selection.groupState(g),
+                          onChange: () => selection.onToggleGroup(g),
+                        }
+                      }
                     />
-                    {!collapsedSet.has(g.label) && g.rows.map(renderRow)}
+                    {isOpen(g.label) && g.rows.map(renderRow)}
                   </React.Fragment>
                 ))}
           </TableBody>
@@ -477,8 +710,35 @@ TraceTable.propTypes = {
   groups: PropTypes.array.isRequired,
   rows: PropTypes.array,
   evals: PropTypes.array.isRequired,
+  subGoalEvals: PropTypes.array,
+  // The head of the first column: the axis the rows are grouped by.
+  firstColumnLabel: PropTypes.string,
   onOpen: PropTypes.func,
   columns: PropTypes.instanceOf(Set),
   activeCallId: PropTypes.string,
   scrollRef: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+  // Which groups are open: `all` while Expand all is on, plus the labels
+  // opened. Pass both, or neither and the table keeps its own.
+  groupView: PropTypes.shape({
+    all: PropTypes.bool,
+    expanded: PropTypes.instanceOf(Set),
+  }),
+  onGroupViewChange: PropTypes.func,
+  expandedForRef: PropTypes.shape({ current: PropTypes.any }),
+  runActive: PropTypes.bool,
+  // Optional per-eval node shown after the eval's name in its header cell.
+  renderEvalHeaderAction: PropTypes.func,
+  // Present when calls can be ticked: adds a checkbox column. `canSelect`
+  // decides per call; the page box covers this page's selectable calls.
+  selection: PropTypes.shape({
+    isSelected: PropTypes.func.isRequired,
+    canSelect: PropTypes.func.isRequired,
+    onToggle: PropTypes.func.isRequired,
+    onTogglePage: PropTypes.func.isRequired,
+    groupState: PropTypes.func.isRequired,
+    onToggleGroup: PropTypes.func.isRequired,
+    pageChecked: PropTypes.bool,
+    pageIndeterminate: PropTypes.bool,
+    pageSelectable: PropTypes.bool,
+  }),
 };

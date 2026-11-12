@@ -17,6 +17,14 @@ on:
         type: choice
         options: [distributed, standalone]
         default: standalone
+      host_update_fallibility:
+        description: Prove SET-E2E-002 assertion fallibility after the normal suite (distributed only)
+        type: boolean
+        default: false
+      sdk-ref:
+        description: "futureagi-sdk branch, tag or full 40-character SHA. Automatic selection requires live-test prerequisites; explicit overrides fail closed."
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -44,6 +52,11 @@ jobs:
       gateway: ${{ steps.filter.outputs.gateway || steps.always.outputs.gateway }}
       stacks: ${{ steps.stacks.outputs.stacks }}
     steps:
+      - name: Validate host update fallibility opt-in
+        if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack != 'distributed'
+        run: |
+          printf '%s\n' '::error::host_update_fallibility=true requires stack=distributed; no builds were started.'
+          exit 1
       - uses: actions/checkout@v4
       - id: filter
         if: github.event_name == 'pull_request'
@@ -74,6 +87,8 @@ jobs:
               - 'bin/uninstall'
               - 'scripts/reclaim-runner-disk.sh'
               - '.github/workflows/e2e-ci.yml'
+              - '.github/scripts/resolve-sdk-test-ref.py'
+              - '.github/scripts/test_resolve_sdk_test_ref.py'
       - id: always
         if: github.event_name != 'pull_request'
         run: |
@@ -114,7 +129,10 @@ jobs:
       matrix:
         stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Image builds (~20 min), the Playwright suite (~70 min and growing with
+    # the flow catalog) and the SDK live suites run in this one job. Dev runs
+    # already finish at 66-89 min, so 90 min cancels healthy runs mid-SDK-suite.
+    timeout-minutes: 120
     permissions:
       contents: read
       packages: write # ghcr build-cache: read on PRs, written on pushes
@@ -200,6 +218,14 @@ jobs:
             ${{ matrix.stack == 'standalone' && format('type=registry,ref={0}:backend-slim-amd64', env.BUILD_CACHE) || '' }}
           cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:backend,mode=max', env.CACHE_REPO) || '' }}
 
+      - name: Add E2E-only Error Feed fixtures to distributed backend image
+        if: matrix.stack == 'distributed' && env.BUILD_BACKEND == 'true'
+        run: >
+          docker build
+          --build-arg BASE_TAG="$IMAGE_TAG"
+          -t "futureagi/future-agi:$IMAGE_TAG"
+          -f e2e/stack/backend/Dockerfile .
+
       - name: Build fi-collector image from PR code
         if: env.BUILD_BACKEND == 'true'
         uses: docker/build-push-action@v5
@@ -266,6 +292,13 @@ jobs:
             printf '\n%s\n' "AGENTCC_GATEWAY_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
           fi
 
+      - name: Prepare public host status directory
+        if: matrix.stack == 'distributed'
+        run: |
+          status_dir="$HOME/.cache/futureagi-e2e/futureagi-e2e/host-update-status"
+          install -d -m 0755 "$status_dir"
+          echo "E2E_HOST_UPDATE_STATUS_DIR=$status_dir" >> "$GITHUB_ENV"
+
       - name: Prefetch vendor images
         # fi-collector, agentcc-gateway and the app images are deliberately
         # absent: their tag is the locally built IMAGE_TAG and a pull would
@@ -275,7 +308,7 @@ jobs:
           if [ "$E2E_STACK" = standalone ]; then
             services=(postgres clickhouse mock-llm)
           else
-            services=(postgres clickhouse redis minio temporal mock-llm
+            services=(postgres clickhouse redis minio temporal mock-llm mock-slack
               peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
               peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-temporal-init
               peerdb-minio)
@@ -314,11 +347,67 @@ jobs:
         working-directory: e2e
         run: yarn catalog:check
 
+      # The @saml flows start e2e/lib/saml_idp_server.py on the runner. It
+      # signs with the backend's own pysaml2 fixtures, which need pysaml2,
+      # cryptography and the xmlsec1 binary; the runner's python3 lacks pysaml2
+      # and xmlsec1. Versions match futureagi/uv.lock.
+      - name: Install the local SAML IdP's dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xmlsec1
+          python3 -m venv "$RUNNER_TEMP/saml-idp"
+          "$RUNNER_TEMP/saml-idp/bin/pip" install --quiet pysaml2==7.5.0 cryptography==46.0.5
+          echo "E2E_SAML_PYTHON=$RUNNER_TEMP/saml-idp/bin/python" >> "$GITHUB_ENV"
+
       - name: Boot the e2e stack
+        id: boot
         run: bin/e2e up
 
+      - name: Start Redis diagnostics
+        continue-on-error: true
+        run: node e2e/scripts/redis-diagnostics.mjs start --output-dir "$RUNNER_TEMP/redis-diagnostics"
+
       - name: Run E2E suite
+        id: suite
         run: bin/e2e test
+
+      - name: Prove host update assertion fallibility
+        id: host-update-fallibility
+        if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && matrix.stack == 'distributed'
+        # Default success() gating: the unchanged normal suite must pass first.
+        # Driver: 20m aggregate cap, 360s per child, <=7s termination grace.
+        timeout-minutes: 22
+        env:
+          HOST_UPDATE_FALLIBILITY: ${{ inputs.host_update_fallibility }}
+        run: node e2e/scripts/host-update-fallibility.mjs --output-dir "$RUNNER_TEMP/host-update-fallibility"
+
+      - name: Upload host update fallibility evidence
+        if: >-
+          !cancelled() && github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility
+          && matrix.stack == 'distributed' && steps.host-update-fallibility.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-update-fallibility-distributed
+          path: ${{ runner.temp }}/host-update-fallibility
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Stop Redis diagnostics
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          SUITE_OUTCOME: ${{ steps.suite.outcome }}
+        run: node e2e/scripts/redis-diagnostics.mjs stop --output-dir "$RUNNER_TEMP/redis-diagnostics" --suite-outcome "$SUITE_OUTCOME"
+
+      - name: Upload Redis diagnostics
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: redis-diagnostics-${{ matrix.stack }}
+          path: ${{ runner.temp }}/redis-diagnostics/redis-diagnostics.json
+          retention-days: 3
+          if-no-files-found: warn
 
       - name: Upload report
         if: ${{ !cancelled() }}
@@ -330,6 +419,92 @@ jobs:
           # A job that dies before the suite runs has no report; the real
           # failure is upstream and must not be buried by an upload error.
           if-no-files-found: warn
+
+      # --- SDK live suites -------------------------------------------------
+      # The futureagi-sdk repository's E2E tests against this stack, so a
+      # backend change that breaks the SDKs fails here, before a release:
+      # python/tests/platform calls every operation of the generated client,
+      # src/platform/__tests__/live.test.ts covers the TypeScript transport.
+      # Resolve a full SDK commit with the required live suites. Explicit refs
+      # fail closed; defaults lacking the harness use the pinned bootstrap from
+      # SDK PR #35. Both suites still run after Playwright on a booted stack.
+      - name: Resolve the futureagi-sdk ref
+        id: sdk-ref
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        env:
+          SDK_REF_INPUT: ${{ inputs.sdk-ref }}
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+          BASE_REF: ${{ github.base_ref || github.ref_name }}
+        run: |
+          python3 -I .github/scripts/test_resolve_sdk_test_ref.py
+          python3 -I .github/scripts/resolve-sdk-test-ref.py
+
+      - name: Check out futureagi-sdk
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        uses: actions/checkout@v4
+        with:
+          repository: future-agi/futureagi-sdk
+          ref: ${{ steps.sdk-ref.outputs.ref }}
+          path: futureagi-sdk
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        with:
+          python-version: "3.12"
+
+      - name: Install the Python SDK and sign up an account on the stack
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        working-directory: futureagi-sdk
+        run: |
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet -e ./python pytest pyyaml
+          # Writes futureagi-sdk/.env.local, which both suites read. :8100 is
+          # BACKEND_PORT in both e2e/stack/e2e.env and standalone-e2e.env.
+          python sdkgen/local_api_key.py --signup --base-url http://localhost:8100 --label "gh${{ github.run_id }}"
+
+      - name: Python SDK live suite
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        working-directory: futureagi-sdk
+        env:
+          FI_E2E_REQUIRED: "1"
+        run: PYTHONPATH=python pytest -q python/tests/platform
+
+      - name: TypeScript SDK live suite
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        working-directory: futureagi-sdk/typescript/futureagi
+        env:
+          FI_E2E_REQUIRED: "1"
+        run: |
+          npx --yes pnpm@8.15.0 install --ignore-workspace --frozen-lockfile --ignore-scripts
+          npx --yes pnpm@8.15.0 run test:live
+
+      - name: SDK operation names match the MCP tools (warning only)
+        # The SDK catalog records, per operation, the MCP tool it corresponds
+        # to; the tool list itself is generated here (scripts/generate-mcp-tools.py).
+        # A tool added or renamed here that the SDK catalog does not know yet is
+        # reported as a warning, never a failure: the SDK calls the REST endpoints,
+        # not the tools, so a name gap breaks no SDK call, and the SDK's own CI
+        # enforces parity at the backend release it is pinned to
+        # (futureagi-sdk: sdkgen/check_mcp_parity.py). A tool this tree gained
+        # since that release shows up here first, as the reminder to add its
+        # catalog entry.
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 - <<'EOF'
+          import json, yaml
+          tools = {t["name"] for t in json.load(open("futureagi/mcp_server/catalog/tools.generated.json"))["tools"]}
+          catalog = yaml.safe_load(open("futureagi-sdk/sdkgen/catalog/operations.yaml"))["operations"]
+          sdk = {(e["surfaces"]["mcp"].get("name") or e["id"].replace(".", "_"))
+                 for e in catalog if e.get("surfaces", {}).get("mcp") not in (None, False)}
+          if tools - sdk:
+              print(f"::warning title=MCP tools without an SDK catalog entry::{', '.join(sorted(tools - sdk))} (add them to futureagi-sdk/sdkgen/catalog/operations.yaml)")
+          if sdk - tools:
+              print(f"::warning title=SDK catalog entries without an MCP tool::{', '.join(sorted(sdk - tools))}")
+          if tools == sdk:
+              print(f"{len(tools)} MCP tools, same names in the SDK catalog")
+          EOF
 
       - name: Dump stack state on failure
         if: failure()

@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import csv
+import functools
 import json
 import uuid
 from collections.abc import Iterator
+from dataclasses import asdict
 from itertools import islice
 from typing import Any
 
+import structlog
+from django.db.models import QuerySet
 from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status
@@ -19,25 +24,54 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from simulate.models import CallExecution, TestExecution
+from simulate.selectors.run_resume import resume_state
+from simulate.selectors.runs import user_executions
+from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
+from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
+from simulate.services.harness_evals import runnable_eval_config_ids
+from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
+    OUTCOME_LABELS,
     build_call_rows,
     build_evaluation_catalog,
     function_calls,
+    receipt_sub_goal_names,
+)
+from simulate.services.run_results_v3_page import (
+    page_calls,
+    page_groups,
+    run_calls_page,
 )
 from simulate.services.run_results_v3_queries import (
     GROUP_FIELDS,
     apply_run_call_query,
     build_run_analytics,
-    group_run_calls,
+    build_run_reliability,
     run_call_facets,
+    run_call_rows_queryset,
     run_calls_queryset,
-    summarize_run_calls,
+)
+from simulate.services.run_results_v3_scan import scan_call_values
+from simulate.services.run_results_v3_scoring import LiveEvals, live_eval_specs
+from simulate.services.run_traces_v3 import CallNotInRun, list_run_traces
+from simulate.services.scoring_status import (
+    CSAT_STATUSES,
+    EVAL_STATUSES,
+    SCORING_STATUSES,
+    scoring_counts,
 )
 from simulate.services.test_executor import build_eval_configs_map
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
+from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.serializer_fields import JsonValueField
+from tracer.services.clickhouse.client import CHError
+
+logger = structlog.get_logger(__name__)
 
 
 class JsonObjectField(serializers.JSONField):
@@ -85,7 +119,16 @@ class RunCallFiltersSerializer(serializers.Serializer):
     )
 
     def validate_filters(self, value):
-        allowed = {"goal", "sub_goal", "status", "call_execution_id"}
+        allowed = {
+            "goal",
+            "goal_not",
+            "sub_goal",
+            "sub_goal_not",
+            "status",
+            "status_not",
+            "goal_outcome",
+            "call_execution_id",
+        }
         unknown = set(value) - allowed
         if unknown:
             raise serializers.ValidationError(
@@ -98,15 +141,19 @@ class RunCallFiltersSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     f"Filter '{field}' must be a list of strings."
                 )
-        invalid_statuses = set(value.get("status", [])) - {
-            "passed",
-            "failed",
-            "error",
-            "inconclusive",
-        }
+        invalid_statuses = {
+            *value.get("status", []),
+            *value.get("status_not", []),
+        } - set(OUTCOME_LABELS)
         if invalid_statuses:
             raise serializers.ValidationError(
                 f"Unsupported statuses: {', '.join(sorted(invalid_statuses))}."
+            )
+        invalid_goal_outcomes = set(value.get("goal_outcome", [])) - set(GOAL_OUTCOMES)
+        if invalid_goal_outcomes:
+            raise serializers.ValidationError(
+                "Unsupported goal outcomes: "
+                f"{', '.join(sorted(invalid_goal_outcomes))}."
             )
         for call_id in value.get("call_execution_id", []):
             try:
@@ -149,6 +196,8 @@ class TotalMetricStatsSerializer(MetricStatsSerializer):
 
 
 class OutcomeCountsSerializer(serializers.Serializer):
+    queued = serializers.IntegerField()
+    in_progress = serializers.IntegerField()
     passed = serializers.IntegerField()
     failed = serializers.IntegerField()
     error = serializers.IntegerField()
@@ -166,6 +215,47 @@ class RunSummarySerializer(serializers.Serializer):
     cost_cents = TotalMetricStatsSerializer()
 
 
+class ScoringCountsSerializer(serializers.Serializer):
+    not_applicable = serializers.IntegerField(min_value=0)
+    pending = serializers.IntegerField(min_value=0)
+    succeeded = serializers.IntegerField(min_value=0)
+    failed = serializers.IntegerField(min_value=0)
+    timed_out = serializers.IntegerField(min_value=0)
+
+    class Meta:
+        ref_name = "SimulateRunV3ScoringCounts"
+
+
+class RunCallsSummarySerializer(RunSummarySerializer):
+    scoring = ScoringCountsSerializer()
+
+    class Meta:
+        ref_name = "SimulateRunV3CallsSummary"
+
+
+class RunFixRunSerializer(serializers.Serializer):
+    """The fix that started a check run."""
+
+    id = serializers.UUIDField()
+    # The engine's name for the run ("baseline", "c2-target").
+    label = serializers.CharField(allow_blank=True)
+
+
+class RunResumeEntrySerializer(serializers.Serializer):
+    at = serializers.DateTimeField()
+    by = serializers.UUIDField(allow_null=True)
+    calls = serializers.IntegerField()
+
+
+class RunResumeSerializer(serializers.Serializer):
+    # True when the run's job stopped or failed with a call left unfinished.
+    resumable = serializers.BooleanField()
+    # Calls that finished and calls that did not; null unless the run can resume.
+    finished = serializers.IntegerField(allow_null=True)
+    unfinished = serializers.IntegerField(allow_null=True)
+    history = RunResumeEntrySerializer(many=True)
+
+
 class RunExecutionSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     run_test_id = serializers.UUIDField()
@@ -175,12 +265,20 @@ class RunExecutionSerializer(serializers.Serializer):
     completed_at = serializers.DateTimeField(allow_null=True)
     ordinal = serializers.IntegerField()
     agent_version = serializers.CharField(allow_null=True)
+    environment_version = RunVersionLabelSerializer(allow_null=True, required=False)
+    suite_version = RunVersionLabelSerializer(allow_null=True, required=False)
+    # ``agent_version`` is the version's name; this is the run's agent pin.
+    pinned_agent_version = RunVersionLabelSerializer(allow_null=True, required=False)
+    agent_differs = serializers.BooleanField(required=False, default=False)
     selected_scenario_keys = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
     trials = serializers.IntegerField(required=False, min_value=1, default=1)
     agent_type = serializers.CharField(allow_null=True)
+    resume = RunResumeSerializer()
     summary = RunSummarySerializer()
+    # Set on a fix's check run, which is not one of the user's runs; null otherwise.
+    fix_run = RunFixRunSerializer(allow_null=True, required=False)
 
 
 class PersonaDetailsSerializer(serializers.Serializer):
@@ -193,12 +291,14 @@ class PersonaDetailsSerializer(serializers.Serializer):
 class EvaluationResultSerializer(serializers.Serializer):
     id = serializers.CharField()
     name = serializers.CharField()
-    type = serializers.CharField()
-    value = serializers.JSONField(allow_null=True)
+    # Blank on an entry with no stored output type: pending, timed out, skipped.
+    type = serializers.CharField(allow_blank=True)
+    # An eval's output: a string, a number, a boolean or an object.
+    value = JsonValueField(allow_null=True)
     score = serializers.FloatField(allow_null=True)
     passed = serializers.BooleanField(allow_null=True)
     reason = serializers.CharField(allow_blank=True)
-    status = serializers.CharField()
+    status = serializers.ChoiceField(choices=EVAL_STATUSES)
 
     class Meta:
         ref_name = "SimulateRunV3EvaluationResult"
@@ -212,6 +312,11 @@ class CostBreakdownSerializer(serializers.Serializer):
     customer = serializers.FloatField(allow_null=True)
 
 
+class SubGoalResultSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    passed = serializers.BooleanField(allow_null=True)
+
+
 class RunCallSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     scenario = serializers.CharField()
@@ -222,12 +327,11 @@ class RunCallSerializer(serializers.Serializer):
     persona = serializers.CharField(allow_null=True)
     persona_details = PersonaDetailsSerializer(allow_null=True)
     sub_goals = serializers.ListField(child=serializers.CharField())
+    sub_goal_results = SubGoalResultSerializer(many=True)
     harness_outcome_status = serializers.CharField(allow_null=True)
     source_scenario_key = serializers.CharField(allow_null=True)
     trial_index = serializers.IntegerField(allow_null=True)
-    outcome = serializers.ChoiceField(
-        choices=["passed", "failed", "error", "inconclusive"]
-    )
+    outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
     execution_status = serializers.CharField()
     modality = serializers.CharField()
     provider = serializers.CharField(allow_null=True)
@@ -235,14 +339,27 @@ class RunCallSerializer(serializers.Serializer):
     completed_at = serializers.DateTimeField(allow_null=True)
     duration_seconds = serializers.FloatField(allow_null=True)
     latency_ms = serializers.FloatField(allow_null=True)
+    avg_stop_time_after_interruption = serializers.IntegerField(
+        allow_null=True,
+        help_text="Average stop time after caller interruption in milliseconds.",
+    )
+    ai_interruption_count = serializers.IntegerField(allow_null=True)
     turn_count = serializers.IntegerField(allow_null=True)
     tokens = serializers.IntegerField(allow_null=True)
     cost_cents = serializers.FloatField(allow_null=True)
     cost_breakdown_cents = CostBreakdownSerializer()
     csat = serializers.FloatField(allow_null=True)
-    ended_reason = serializers.CharField(allow_null=True)
-    error_message = serializers.CharField(allow_null=True)
+    # Blank on a call that ended without a reason or an error.
+    ended_reason = serializers.CharField(allow_null=True, allow_blank=True)
+    error_message = serializers.CharField(allow_null=True, allow_blank=True)
     evaluations = EvaluationResultSerializer(many=True)
+    scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
+    csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
+    csat_reason = serializers.CharField(allow_null=True)
+    failure_domain = serializers.ChoiceField(
+        choices=HARNESS_FAILURE_DOMAINS, allow_null=True
+    )
+    failure_code = serializers.CharField(allow_null=True)
 
 
 class FacetValueSerializer(serializers.Serializer):
@@ -259,12 +376,21 @@ class RunFacetsSerializer(serializers.Serializer):
 class EvaluationColumnSerializer(serializers.Serializer):
     id = serializers.CharField()
     name = serializers.CharField()
+    kind = serializers.ChoiceField(choices=["evaluation", "sub_goal"])
 
 
 class GroupAggregatesSerializer(serializers.Serializer):
     csat = serializers.FloatField(allow_null=True)
     turns = serializers.FloatField(allow_null=True)
     latency_ms = serializers.FloatField(allow_null=True)
+    avg_stop_time_after_interruption = serializers.FloatField(
+        allow_null=True,
+        help_text="Mean call stop latency in milliseconds, excluding unmeasured calls.",
+    )
+    ai_interruptions = serializers.FloatField(
+        allow_null=True,
+        help_text="Mean AI interruption count per call, excluding unmeasured calls.",
+    )
     tokens = serializers.FloatField(allow_null=True)
     evaluations = serializers.JSONField()
 
@@ -278,7 +404,7 @@ class RunGroupSerializer(RunSummarySerializer):
 
 class RunCallsV3ResponseSerializer(serializers.Serializer):
     execution = RunExecutionSerializer()
-    summary = RunSummarySerializer()
+    summary = RunCallsSummarySerializer()
     count = serializers.IntegerField()
     page = serializers.IntegerField()
     page_size = serializers.IntegerField()
@@ -286,7 +412,27 @@ class RunCallsV3ResponseSerializer(serializers.Serializer):
     results = RunCallSerializer(many=True)
     groups = RunGroupSerializer(many=True)
     facets = RunFacetsSerializer()
+    # Outcome counts under every filter but the status ones, for the status chips.
+    status_counts = OutcomeCountsSerializer()
     evaluation_columns = EvaluationColumnSerializer(many=True)
+
+
+class RunTraceSerializer(serializers.Serializer):
+    trace_id = serializers.CharField()
+    name = serializers.CharField(allow_null=True, allow_blank=True)
+    start_time = serializers.DateTimeField(allow_null=True)
+    status = serializers.CharField(allow_null=True, allow_blank=True)
+    latency_ms = serializers.IntegerField(allow_null=True)
+    call_execution_id = serializers.UUIDField(allow_null=True)
+
+
+class RunTracesV3QuerySerializer(serializers.Serializer):
+    call_execution_id = serializers.UUIDField()
+
+
+class RunTracesV3ResponseSerializer(serializers.Serializer):
+    project_id = serializers.UUIDField(allow_null=True)
+    traces = RunTraceSerializer(many=True)
 
 
 class AnalyticsExecutionSerializer(serializers.Serializer):
@@ -301,7 +447,49 @@ class AnalyticsSummarySerializer(RunSummarySerializer):
 
 
 class RiskSerializer(RunSummarySerializer):
-    goal = serializers.CharField()
+    scenario = serializers.CharField()
+    scenario_key = serializers.CharField()
+
+
+class ReliabilityIntervalSerializer(serializers.Serializer):
+    low = serializers.FloatField()
+    high = serializers.FloatField()
+    effective_n = serializers.FloatField()
+    scenarios = serializers.IntegerField()
+    evaluated = serializers.IntegerField()
+
+
+class ReliabilityRowSerializer(OutcomeCountsSerializer):
+    scenario = serializers.CharField()
+    scenario_key = serializers.CharField()
+    runs = serializers.IntegerField()
+    evaluated = serializers.IntegerField()
+    pass_rate = serializers.FloatField(allow_null=True)
+    verdict = serializers.ChoiceField(
+        choices=["passed", "failed", "flaky", "not_evaluated"]
+    )
+    call_ids = serializers.ListField(child=serializers.CharField())
+
+
+class ReliabilitySerializer(serializers.Serializer):
+    trials = serializers.IntegerField()
+    scenarios = serializers.IntegerField()
+    consistent_pass = serializers.IntegerField()
+    passed_at_least_once = serializers.IntegerField()
+    repeated = serializers.IntegerField()
+    flaky = serializers.IntegerField()
+    flip_rate = serializers.FloatField(allow_null=True)
+    k = serializers.IntegerField(allow_null=True)
+    inconclusive = serializers.IntegerField()
+    pass_hat_1 = serializers.FloatField(allow_null=True)
+    pass_hat_k = serializers.FloatField(allow_null=True)
+    pass_hat_k_scenarios = serializers.IntegerField()
+    pass_hat_k_passed = serializers.IntegerField()
+    pass_hat_k_excluded = serializers.IntegerField()
+    trials_passed = serializers.IntegerField()
+    trials_evaluated = serializers.IntegerField()
+    pass_rate_interval = ReliabilityIntervalSerializer(allow_null=True)
+    rows = ReliabilityRowSerializer(many=True)
 
 
 class TurnDistributionSerializer(OutcomeCountsSerializer):
@@ -314,6 +502,7 @@ class EvaluationSummarySerializer(serializers.Serializer):
     passed = serializers.IntegerField()
     failed = serializers.IntegerField()
     measured = serializers.IntegerField()
+    errored = serializers.IntegerField()
     missing = serializers.IntegerField()
     pass_rate = serializers.FloatField(allow_null=True)
     average_score = serializers.FloatField(allow_null=True)
@@ -364,6 +553,7 @@ class RunAnalyticsV3ResponseSerializer(serializers.Serializer):
     execution = AnalyticsExecutionSerializer()
     summary = AnalyticsSummarySerializer()
     scenario_risk = RiskSerializer(many=True)
+    reliability = ReliabilitySerializer()
     turn_distribution = TurnDistributionSerializer(many=True)
     evaluations = EvaluationSummarySerializer(many=True)
     failure_breakdown = FailureBreakdownSerializer(many=True)
@@ -395,12 +585,14 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     persona = serializers.CharField(allow_null=True)
     persona_details = PersonaDetailsSerializer(allow_null=True)
     sub_goals = serializers.ListField(child=serializers.CharField())
-    outcome = serializers.ChoiceField(
-        choices=["passed", "failed", "error", "inconclusive"]
-    )
+    sub_goal_results = SubGoalResultSerializer(many=True)
+    outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
+    scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
+    csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
+    csat_reason = serializers.CharField(allow_null=True)
 
     class Meta(CallExecutionDetailSerializer.Meta):
         fields = [
@@ -412,10 +604,14 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "persona",
             "persona_details",
             "sub_goals",
+            "sub_goal_results",
             "outcome",
             "cost_breakdown_cents",
             "evaluations",
             "function_calls",
+            "scoring_status",
+            "csat_status",
+            "csat_reason",
         ]
 
 
@@ -425,7 +621,11 @@ def _execution_for_request(request, execution_id) -> TestExecution:
     )
     return get_object_or_404(
         TestExecution.objects.select_related(
-            "run_test", "agent_definition", "agent_version", "run_test__agent_version"
+            "run_test",
+            "agent_definition",
+            "agent_version",
+            "run_test__agent_version",
+            "hosted_harness_job",
         ),
         run_test_workspace_filter(request, "run_test"),
         id=execution_id,
@@ -438,9 +638,19 @@ def _execution_payload(
     execution: TestExecution, summary: dict[str, Any]
 ) -> dict[str, Any]:
     version = execution.agent_version or execution.run_test.agent_version
-    ordinal = TestExecution.objects.filter(
-        run_test=execution.run_test, created_at__lte=execution.created_at
-    ).count()
+    pinned = run_version_labels([execution.id]).get(str(execution.id)) or {}
+    ordinal = (
+        user_executions()
+        .filter(run_test=execution.run_test, created_at__lte=execution.created_at)
+        .count()
+    )
+    # A check run is not counted among the user's runs, so it names its fix instead.
+    job = getattr(execution, "hosted_harness_job", None)
+    fix_run = (
+        {"id": str(job.fix_run_id), "label": job.fix_label}
+        if job is not None and job.fix_run_id
+        else None
+    )
     return {
         "id": str(execution.id),
         "run_test_id": str(execution.run_test_id),
@@ -450,6 +660,10 @@ def _execution_payload(
         "completed_at": execution.completed_at,
         "ordinal": ordinal,
         "agent_version": getattr(version, "version_name", None),
+        "environment_version": pinned.get("environment_version"),
+        "suite_version": pinned.get("suite_version"),
+        "pinned_agent_version": pinned.get("agent_version"),
+        "agent_differs": bool(pinned.get("agent_differs")),
         "agent_type": (
             execution.agent_definition.agent_type
             if execution.agent_definition
@@ -459,8 +673,79 @@ def _execution_payload(
             (execution.execution_metadata or {}).get("selected_scenario_keys") or []
         ),
         "trials": execution.trials or 1,
+        "resume": asdict(resume_state(execution)),
         "summary": summary,
+        "fix_run": fix_run,
     }
+
+
+class RunTracesV3View(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        query_serializer=RunTracesV3QuerySerializer,
+        responses={
+            200: RunTracesV3ResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        },
+        operation_id="simulate_v3_test_execution_traces",
+    )
+    def get(self, request, test_execution_id, *args, **kwargs):
+        execution = _execution_for_request(request, test_execution_id)
+        try:
+            result = list_run_traces(
+                execution,
+                call_execution_id=request.validated_query_data["call_execution_id"],
+            )
+        except CallNotInRun:
+            return GeneralMethods(request=request).bad_request(
+                "call_execution_id is not a call of this run."
+            )
+        except (CHError, TimeoutError) as exc:
+            logger.warning(
+                "run_traces_read_failed",
+                test_execution_id=str(execution.id),
+                error=type(exc).__name__,
+            )
+            return GeneralMethods(request=request).custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Traces are unavailable right now",
+                code="run_traces_unavailable",
+            )
+        return Response(RunTracesV3ResponseSerializer(asdict(result)).data)
+
+
+def _facet_rows(
+    calls_page: dict[str, Any],
+    execution: TestExecution,
+    call_ids: list[str] | None,
+    live_evals: LiveEvals,
+) -> list[dict[str, Any]]:
+    """The run's call values, narrowed to a hand-off's calls.
+
+    Cached page rows can lag the calls, so facets scan them unless this
+    request already read them.
+    """
+    if not calls_page["execution_rows_fresh"]:
+        return scan_call_values(
+            execution,
+            [],
+            live_evals=live_evals,
+            call_ids=call_ids or None,
+            scoring=False,
+        )
+    rows = calls_page["execution_rows"]
+    if not call_ids:
+        return rows
+    scoped = {str(uuid.UUID(call_id)) for call_id in call_ids}
+    return [row for row in rows if row["id"] in scoped]
+
+
+def _facet_calls(
+    execution: TestExecution, call_ids: list[str] | None
+) -> QuerySet[CallExecution]:
+    calls = CallExecution.objects.filter(test_execution=execution)
+    return calls.filter(id__in=call_ids) if call_ids else calls
 
 
 class RunCallsV3View(APIView):
@@ -474,55 +759,79 @@ class RunCallsV3View(APIView):
     def get(self, request, test_execution_id, *args, **kwargs):
         query = request.validated_query_data
         execution = _execution_for_request(request, test_execution_id)
-        base_queryset = run_calls_queryset(execution)
-        filtered_queryset = apply_run_call_query(base_queryset, query)
         page = query["page"]
         page_size = query["page_size"]
-        start = (page - 1) * page_size
-        filtered_summary = summarize_run_calls(
-            filtered_queryset, include_percentiles=False
-        )
-        count = filtered_summary["total"]
+
+        live_evals = live_eval_specs(execution.run_test_id)
+
+        @functools.cache
+        def base_queryset():
+            return run_calls_queryset(execution, live_evals=live_evals)
+
         columns, live_eval_ids = build_evaluation_catalog(execution)
-        page_calls = list(filtered_queryset[start : start + page_size])
+        calls_page = run_calls_page(
+            execution, query, columns, base_queryset, live_evals
+        )
+        count = calls_page["count"]
+        # One clock and one runnable set per request, shared by the rows and the
+        # scoring counts. A finished run's pass can be minutes old, but it holds
+        # stored state only, so both still read the scoring clocks as of now.
+        now = timezone.now()
+        # The live configs are loaded once per request; a runnable one has a
+        # mapping, as ``runnable_eval_config_ids`` reads it.
+        runnable_ids = {
+            eval_id for eval_id, live in live_evals.items() if live.config.mapping
+        }
         page_rows, columns = build_call_rows(
-            execution, page_calls, columns, live_eval_ids
-        )
-        has_subset = bool(
-            query.get("search")
-            or query.get("filters")
-            or query.get("group_key") is not None
-        )
-        execution_summary = (
-            summarize_run_calls(base_queryset, include_percentiles=False)
-            if has_subset
-            else filtered_summary
+            execution,
+            page_calls(calls_page, execution),
+            columns,
+            live_eval_ids,
+            live_evals,
+            runnable_ids=runnable_ids,
+            now=now,
         )
         facets_cache_key = None
         # Facets span the whole run so filter options never vanish, except under
         # a hand-off of specific calls, which scopes the counts too.
-        facet_queryset = base_queryset
-        if call_ids := (query.get("filters") or {}).get("call_execution_id"):
-            facet_queryset = apply_run_call_query(
-                base_queryset, {"filters": {"call_execution_id": call_ids}}
-            )
-        elif execution.status == TestExecution.ExecutionStatus.COMPLETED:
+        call_ids = (query.get("filters") or {}).get("call_execution_id")
+        if not call_ids and execution.status == TestExecution.ExecutionStatus.COMPLETED:
             version = execution.completed_at or execution.updated_at
+            # A deleted call moves the run's total and nothing else in this key.
             facets_cache_key = (
-                f"simulate:v3:facets:{execution.id}:{version.timestamp()}"
+                f"simulate:v3:facets:outcomes-v2:{execution.id}:{version.timestamp()}"
+                f":{calls_page['execution_summary']['total']}"
             )
         response = {
-            "execution": _execution_payload(execution, execution_summary),
-            "summary": filtered_summary,
+            "execution": _execution_payload(execution, calls_page["execution_summary"]),
+            "summary": {
+                **calls_page["summary"],
+                # Counted over the pass the rest of the summary reads, so the
+                # counts add up to its total. A call on this page counts as its
+                # row reads, so no row of a response disagrees with the counts.
+                "scoring": scoring_counts(
+                    calls_page["rows"],
+                    visible_ids=live_eval_ids,
+                    runnable_ids=runnable_ids,
+                    run_status=execution.status,
+                    now=now,
+                    derived={row["id"]: row["scoring_status"] for row in page_rows},
+                ),
+            },
             "count": count,
             "page": page,
             "page_size": page_size,
             "total_pages": max(1, (count + page_size - 1) // page_size),
             "results": page_rows,
-            "groups": group_run_calls(
-                filtered_queryset, query.get("group_by"), page_rows, columns
+            "groups": page_groups(
+                execution, calls_page, query, columns, base_queryset, live_evals
             ),
-            "facets": run_call_facets(facet_queryset, facets_cache_key),
+            "facets": run_call_facets(
+                lambda: _facet_rows(calls_page, execution, call_ids, live_evals),
+                lambda: _facet_calls(execution, call_ids),
+                facets_cache_key,
+            ),
+            "status_counts": calls_page["status_counts"],
             "evaluation_columns": columns,
         }
         return Response(response)
@@ -549,6 +858,14 @@ def build_call_execution_detail(
         ).data
     )
     normalized = row[0]
+    # A sub-goal check is a harness verdict too, but it belongs to the
+    # scenario, not the eval list. Tag each metric so the UI can tell.
+    sub_goal_names = receipt_sub_goal_names(call.call_metadata)
+    for metric in (data.get("eval_metrics") or {}).values():
+        if isinstance(metric, dict) and metric:
+            metric["kind"] = (
+                "sub_goal" if metric.get("name") in sub_goal_names else "evaluation"
+            )
     data.update(
         {
             "goal": normalized["goal"],
@@ -558,10 +875,16 @@ def build_call_execution_detail(
             "persona": normalized["persona"],
             "persona_details": normalized["persona_details"],
             "sub_goals": normalized["sub_goals"],
+            "sub_goal_results": normalized["sub_goal_results"],
             "outcome": normalized["outcome"],
+            "overall_score": normalized["csat"],
+            "csat_score": normalized["csat"],
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
             "function_calls": function_calls(call),
+            "scoring_status": normalized["scoring_status"],
+            "csat_status": normalized["csat_status"],
+            "csat_reason": normalized["csat_reason"],
         }
     )
     return data
@@ -603,6 +926,20 @@ class RunAnalyticsV3View(APIView):
     def get(self, request, test_execution_id, *args, **kwargs):
         execution = _execution_for_request(request, test_execution_id)
         return Response(build_run_analytics(execution))
+
+
+class RunReliabilityV3View(APIView):
+    """The reliability block alone, for the run header."""
+
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        responses={200: ReliabilitySerializer},
+        operation_id="simulate_v3_test_execution_reliability",
+    )
+    def get(self, request, test_execution_id, *args, **kwargs):
+        execution = _execution_for_request(request, test_execution_id)
+        return Response(build_run_reliability(execution))
 
 
 class _CsvEcho:
@@ -649,6 +986,16 @@ def _csv_rows(
     yield writer.writerow([_escape_csv_cell(value) for value in headers])
     for row in rows:
         evaluations = {item["id"]: item.get("value") for item in row["evaluations"]}
+        sub_goals = []
+        for goal in row["sub_goal_results"]:
+            verdict = (
+                "passed"
+                if goal["passed"] is True
+                else "failed"
+                if goal["passed"] is False
+                else "inconclusive"
+            )
+            sub_goals.append(f"{goal['name']} ({OUTCOME_LABELS[verdict]})")
         yield writer.writerow(
             [
                 _escape_csv_cell(value)
@@ -659,7 +1006,7 @@ def _csv_rows(
                     row["goal"],
                     row["ideal_outcome"],
                     row["conversation_branch"],
-                    ", ".join(row["sub_goals"]),
+                    ", ".join(sub_goals),
                     row["persona"],
                     row["outcome"],
                     row["execution_status"],
@@ -681,10 +1028,20 @@ def _csv_rows(
 
 def _csv_rows_from_queryset(execution: TestExecution, queryset) -> Iterator[str]:
     columns, live_eval_ids = build_evaluation_catalog(execution)
+    # Read once for the whole export, not once per 500-row chunk.
+    runnable_ids = set(runnable_eval_config_ids(execution.run_test_id))
+    now = timezone.now()
     yield from _csv_rows([], columns)
-    iterator = queryset.iterator(chunk_size=500)
+    iterator = run_call_rows_queryset(queryset).iterator(chunk_size=500)
     while chunk := list(islice(iterator, 500)):
-        rows, _ = build_call_rows(execution, chunk, columns, live_eval_ids)
+        rows, _ = build_call_rows(
+            execution,
+            chunk,
+            columns,
+            live_eval_ids,
+            runnable_ids=runnable_ids,
+            now=now,
+        )
         chunk_rows = _csv_rows(rows, columns)
         next(chunk_rows)
         yield from chunk_rows

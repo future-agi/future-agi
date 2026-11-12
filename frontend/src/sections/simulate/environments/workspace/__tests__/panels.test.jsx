@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import PropTypes from "prop-types";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -33,8 +33,25 @@ OverviewPanelStub.propTypes = { envState: PropTypes.object, onGo: PropTypes.func
 vi.mock("../overview/OverviewPanel", () => ({ default: OverviewPanelStub }));
 vi.mock("../contract/RlContractPanel", () => ({ default: () => <div>contract-body</div> }));
 vi.mock("../scenarios/ScenariosStep", () => ({ default: () => <div>scenarios-body</div> }));
-vi.mock("../evals/EvalsStep", () => ({ default: () => <div>evals-body</div> }));
+vi.mock("../evals/EvalsStep", () => ({
+  // eslint-disable-next-line react/prop-types
+  default: ({ grading }) => <div>{`evals-body:grading=${grading}`}</div>,
+}));
 vi.mock("../runs/summary/RunsSummary", () => ({ default: () => <div>runs-body</div> }));
+vi.mock("../versions/VersionsPanel", () => ({ default: () => <div>versions-body</div> }));
+vi.mock("../improvements/ImprovementsPanel", () => ({
+  default: () => <div>improvements-body</div>,
+}));
+
+// No fixes unless an Improvements case says otherwise.
+const NO_FIXES = { fixes: [], count: 0, isLoading: false };
+const fixRuns = vi.hoisted(() => ({ value: null }));
+vi.mock("src/api/simulate-environments/fixRuns", () => ({
+  useEnvironmentFixRuns: () => fixRuns.value,
+}));
+beforeEach(() => {
+  fixRuns.value = NO_FIXES;
+});
 
 // The real runs hook by default; the loading cases override it.
 vi.mock("src/api/simulate-environments/runs", async (importOriginal) => {
@@ -86,6 +103,23 @@ describe("WorkspacePanels", () => {
     });
   });
 
+  it.each([
+    ["while a run is being graded", "Evaluating", true],
+    ["while no run is being graded", "Running", false],
+  ])("tells the Evaluations tab %s", (_label, status, grading) => {
+    runsApi.useEnvironmentRuns.mockReturnValue({
+      runs: [
+        runsApi.executionToRun({ id: "r1", status: "Completed" }),
+        runsApi.executionToRun({ id: "r2", status }),
+      ],
+      isLoading: false,
+    });
+    renderPanels({ tab: "evals" });
+    expect(
+      screen.getByText(`evals-body:grading=${grading}`),
+    ).toBeInTheDocument();
+  });
+
   it("hides the Runs tab until the environment has a run", () => {
     renderPanels();
     expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
@@ -126,6 +160,66 @@ describe("WorkspacePanels", () => {
     expect(screen.getByRole("tab", { name: /Runs 3/ })).toBeInTheDocument();
   });
 
+  // The runs list's total is what the tab lists; the environment's own count
+  // arrives first and stands in only until the list loads.
+  it("badges runs from the runs list's total once it loads, not the first page", () => {
+    runsApi.useEnvironmentRuns.mockReturnValue({
+      runs: Array.from({ length: 10 }, (_, i) => ({ id: `r${i}` })),
+      count: 23,
+      isLoading: false,
+    });
+    renderPanels({
+      counts: { scenarios: 5, evals: 2 },
+      overviewCounts: { runs: 23 },
+    });
+    expect(screen.getByRole("tab", { name: /Runs 23/ })).toBeInTheDocument();
+  });
+
+  // A deleted run leaves its job behind, so the environment's count can run
+  // higher than the runs the tab lists.
+  it("follows the runs list over a higher environment count once it loads", () => {
+    runsApi.useEnvironmentRuns.mockReturnValue({
+      runs: [{ id: "r1" }, { id: "r2" }],
+      count: 2,
+      isLoading: false,
+    });
+    renderPanels({
+      counts: { scenarios: 5, evals: 2 },
+      overviewCounts: { runs: 5 },
+    });
+    expect(screen.getByRole("tab", { name: /Runs 2/ })).toBeInTheDocument();
+  });
+
+  it("hides the Runs tab once every run is deleted, whatever the environment still counts", () => {
+    runsApi.useEnvironmentRuns.mockReturnValue({
+      runs: [],
+      count: 0,
+      isLoading: false,
+    });
+    renderPanels({
+      counts: { scenarios: 5, evals: 2 },
+      overviewCounts: { runs: 3 },
+    });
+    expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
+  });
+
+  it("shows the Runs tab from the environment's run count while the runs list loads", () => {
+    runsApi.useEnvironmentRuns.mockReturnValue({ runs: [], isLoading: true });
+    renderPanels({
+      counts: { scenarios: 5, evals: 2 },
+      overviewCounts: { runs: 4 },
+    });
+    expect(screen.getByRole("tab", { name: /Runs 4/ })).toBeInTheDocument();
+  });
+
+  it("hides the Runs tab when the environment's run count is zero", () => {
+    renderPanels({
+      counts: { scenarios: 5, evals: 2 },
+      overviewCounts: { runs: 0 },
+    });
+    expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
+  });
+
   it("shows no numeric badges when counts is omitted (builder still streaming)", () => {
     renderPanels({
       envState: baseEnvState({ runs: [{ id: "r1" }] }),
@@ -136,16 +230,18 @@ describe("WorkspacePanels", () => {
     expect(screen.queryByRole("tab", { name: /Runs \d/ })).toBeNull();
   });
 
-  it("shows a gap badge whose tooltip lists the missing pieces", async () => {
+  it("shows neither the hint nor the gap list when a gap tab is hovered", async () => {
     const user = userEvent.setup();
     renderPanels({
       gapsByTab: { evals: [{ id: "no-evals", title: "No evaluations added" }] },
       counts: { scenarios: 2, evals: 0 },
     });
-
     await user.hover(screen.getByText("Evaluations"));
-    expect(await screen.findByText("Needs your input before you can run:")).toBeInTheDocument();
-    expect(screen.getByText(/No evaluations added/)).toBeInTheDocument();
+    // Wait past a tooltip's open delay so one would have shown by now.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(screen.queryByText(/These decide whether each task passed/)).toBeNull();
+    expect(screen.queryByText("Needs your input before you can run:")).toBeNull();
   });
 
   it("falls back to the Overview body for an unknown tab", () => {
@@ -285,3 +381,52 @@ describe("useWorkspaceTab", () => {
     expect(screen.getByTestId("param")).toHaveTextContent("runs");
   });
 });
+
+describe("Versions tab", () => {
+  it("is hidden while versioning is off", () => {
+    renderPanels();
+    expect(screen.queryByRole("tab", { name: /Versions/ })).toBeNull();
+  });
+
+  it("is shown and renders the versions body when versioning is on", () => {
+    renderPanels({
+      env: { ...ENV, versioning: { enabled: true, nudges_enabled: false } },
+      tab: "versions",
+    });
+    expect(screen.getByRole("tab", { name: /Versions/ })).toBeInTheDocument();
+    expect(screen.getByText("versions-body")).toBeInTheDocument();
+  });
+
+  it("falls back to the Overview when versions is deep-linked with versioning off", () => {
+    renderPanels({ tab: "versions" });
+    expect(screen.queryByText("versions-body")).toBeNull();
+    expect(screen.getByText(/overview-body/)).toBeInTheDocument();
+  });
+});
+
+describe("Improvements tab", () => {
+  it("is hidden until the environment has a fix", () => {
+    renderPanels({ tab: "improvements" });
+    expect(screen.queryByRole("tab", { name: /Improvements/ })).toBeNull();
+    expect(screen.queryByText("improvements-body")).toBeNull();
+  });
+
+  it("shows with its count and renders its panel once there are fixes", () => {
+    fixRuns.value = { fixes: [{}, {}, {}], count: 3, isLoading: false };
+    renderPanels({ tab: "improvements", counts: { scenarios: 0, evals: 0 } });
+    const tab = screen.getByRole("tab", { name: /Improvements/ });
+    expect(within(tab).getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("improvements-body")).toBeInTheDocument();
+  });
+
+  it("keeps the tab for ?tab=improvements while the list loads", () => {
+    fixRuns.value = { ...NO_FIXES, isLoading: true };
+    renderPanels({ tab: "improvements" });
+    expect(screen.getByRole("tab", { name: /Improvements/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("improvements-body")).toBeInTheDocument();
+  });
+});
+

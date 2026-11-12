@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import {
   Box,
+  Checkbox,
   Stack,
   Typography,
   TableCell,
@@ -10,26 +10,28 @@ import {
 
 import Iconify from "src/components/iconify";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
-import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
-import { HEAD_ROW_PX, isBad } from "./traceTable.constants";
+import { SCORING_STATUS } from "../../runs.constants";
+import {
+  HEAD_ROW_PX,
+  isBad,
+  neutralCheckboxSx,
+  pinnedLeftSx,
+} from "./traceTable.constants";
+import { CellSkeleton } from "./traceCells";
 
 const DESC_KEYS = [
   "callDetails",
-  "status",
   "persona",
   "scenario",
+  "situation",
+  "subGoals",
   "idealOutcome",
   "conversationBranch",
 ];
-const rowHover = (t) => {
-  const tint = alpha(
-    t.palette.text.primary,
-    t.palette.mode === "dark" ? 0.04 : 0.025,
-  );
-  return `linear-gradient(${tint}, ${tint})`;
-};
+const rowHover = (t) =>
+  `linear-gradient(${t.palette.action.hover}, ${t.palette.action.hover})`;
 
-// The collapsible group header: chevron + label + count on the first descriptive
+// The collapsible group header: chevron + label on the first descriptive
 // column, a per-column aggregate summary on the rest, and a heat-tinted mean
 // score per eval column. Clicking anywhere toggles the group.
 export default function TraceGroupHeaderRow({
@@ -39,13 +41,17 @@ export default function TraceGroupHeaderRow({
   show,
   showEvals,
   evals,
+  top = HEAD_ROW_PX,
+  loading = false,
+  leadingCell = false,
+  checkbox = null,
 }) {
   // Pinned under the head row while its group's calls scroll past; the next
   // group's row slides over it. Opaque for that, so the hover tint layers over
   // the paper instead of replacing it.
   const cellSx = {
     position: "sticky",
-    top: HEAD_ROW_PX,
+    top,
     zIndex: 2,
     bgcolor: "background.paper",
     borderBottom: "1px solid",
@@ -56,7 +62,10 @@ export default function TraceGroupHeaderRow({
     ".MuiTableRow-root:hover &": { backgroundImage: rowHover },
     // The same column dividers as the head and call rows, so the grid runs
     // unbroken through the group row.
-    "&:not(:first-of-type)": { borderLeft: "1px solid", borderColor: "divider" },
+    "&:not(:first-of-type)": {
+      borderLeft: "1px solid",
+      borderColor: "divider",
+    },
   };
   const numCellSx = { ...cellSx, textAlign: "left" };
 
@@ -66,21 +75,28 @@ export default function TraceGroupHeaderRow({
   const personaCount = uniqueBy((t) => t.persona);
 
   const descSummary = (key) => {
-    if (key === "status") {
-      // The group's calls load a page at a time, so only count once all of
-      // them are here — a partial count would read as the whole group.
-      if (group.rows.length < group.count) return "-";
-      const done = group.rows.filter(
-        (t) => t.executionStatus === "completed",
-      ).length;
-      return `${done}/${group.count} completed`;
-    }
     if (key === "persona")
       return personaCount
         ? `${personaCount} persona${personaCount === 1 ? "" : "s"}`
         : "-";
-    if (key === "scenario")
-      return `${group.count} scenario${group.count === 1 ? "" : "s"}`;
+    // Left empty: a scenario count would repeat the task count (one call per
+    // scenario trial).
+    if (key === "scenario") return null;
+    if (key === "situation")
+      return `${group.count} situation${group.count === 1 ? "" : "s"}`;
+    if (key === "subGoals") {
+      // Counted from the rows here, so only once every call in the group is
+      // on this page: a page's share would read as the whole group's.
+      if (group.rows.length < group.count) return "-";
+      const subGoalCount = new Set(
+        group.rows.flatMap((t) =>
+          (t.subGoalResults || []).map((goal) => goal.name),
+        ),
+      ).size;
+      return subGoalCount
+        ? `${subGoalCount} sub-goal${subGoalCount === 1 ? "" : "s"}`
+        : "-";
+    }
     if (key === "idealOutcome")
       return `${group.count} outcome${group.count === 1 ? "" : "s"}`;
     if (key === "conversationBranch")
@@ -94,7 +110,9 @@ export default function TraceGroupHeaderRow({
       : false;
     return (
       <TableCell sx={numCellSx}>
-        {value == null ? (
+        {value == null && loading ? (
+          <CellSkeleton />
+        ) : value == null ? (
           <Typography sx={{ typography: "s3", color: "text.disabled" }}>
             -
           </Typography>
@@ -105,15 +123,15 @@ export default function TraceGroupHeaderRow({
                 <Iconify
                   icon="solar:danger-triangle-bold"
                   width={13}
-                  sx={{ color: BUILD_TONES.red, flexShrink: 0 }}
+                  sx={{ color: "status.danger.solid", flexShrink: 0 }}
                 />
               )}
               <Typography
                 sx={{
                   typography: "s2",
-                  fontWeight: "fontWeightBold",
+                  fontWeight: "fontWeightSemiBold",
                   fontVariantNumeric: "tabular-nums",
-                  color: bad ? BUILD_TONES.red : "text.primary",
+                  color: bad ? "status.danger.fg" : "text.primary",
                 }}
               >
                 {typeof value === "number"
@@ -153,33 +171,50 @@ export default function TraceGroupHeaderRow({
         noWrap
         sx={{
           typography: "s2",
-          fontWeight: "fontWeightBold",
+          fontWeight: "fontWeightSemiBold",
           color: "text.primary",
         }}
       >
         {group.label}
       </Typography>
-      <Typography
-        sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap" }}
-      >
-        · {group.count} task{group.count === 1 ? "" : "s"}
-      </Typography>
     </Stack>
   );
 
-
   return (
     <TableRow onClick={onToggle}>
+      {/* Keeps the grid aligned under the call rows' checkbox column. */}
+      {leadingCell && (
+        <TableCell
+          sx={{
+            ...cellSx,
+            ...pinnedLeftSx,
+            zIndex: 3,
+            px: 1,
+            width: 44,
+            textAlign: "center",
+          }}
+        >
+          {checkbox?.selectable && (
+            <Checkbox
+              size="small"
+              checked={checkbox.checked}
+              indeterminate={checkbox.indeterminate}
+              // Ticks the group's calls; folding is the rest of the row's job.
+              onClick={(e) => e.stopPropagation()}
+              onChange={checkbox.onChange}
+              inputProps={{ "aria-label": `Select calls in ${group.label}` }}
+              sx={{ p: 0.25, ...neutralCheckboxSx }}
+            />
+          )}
+        </TableCell>
+      )}
       {descColumns.length === 0 ? (
         <TableCell sx={{ ...cellSx, pl: 2, overflow: "hidden" }}>
           {label}
         </TableCell>
       ) : (
         descColumns.map((key, i) => (
-          <TableCell
-            key={key}
-            sx={{ ...cellSx, overflow: "hidden" }}
-          >
+          <TableCell key={key} sx={{ ...cellSx, overflow: "hidden" }}>
             {i === 0 ? (
               label
             ) : (
@@ -196,26 +231,35 @@ export default function TraceGroupHeaderRow({
       {show("csat") && numCell(a.csat, "", "csat")}
       {show("turns") && numCell(a.turns, "", "turns")}
       {show("latency") && numCell(a.latency, "ms", "latency")}
+      {show("stopLatency") && numCell(a.stopLatency, "ms")}
+      {show("aiInterruptions") && numCell(a.aiInterruptions)}
       {show("tokens") && numCell(a.tokens, "", undefined, "Total")}
       {showEvals &&
         evals.map((e) => {
           const ea = a.evals?.[e.id];
           if (!ea || !ea.scored) {
+            // A finished call can still be waiting on this eval's grade.
+            const grading = group.rows.some((t) =>
+              t.evalResults?.some(
+                (r) => r.id === e.id && r.status === SCORING_STATUS.PENDING,
+              ),
+            );
             return (
               <TableCell key={`eval-${e.id}`} sx={numCellSx}>
-                <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-                  -
-                </Typography>
+                {loading || grading ? (
+                  <CellSkeleton />
+                ) : (
+                  <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+                    -
+                  </Typography>
+                )}
               </TableCell>
             );
           }
           const meanScore = ea.scoreSum / ea.scored;
           const rate = Math.round(meanScore * 100);
           return (
-            <TableCell
-              key={`eval-${e.id}`}
-              sx={{ ...numCellSx, p: 0 }}
-            >
+            <TableCell key={`eval-${e.id}`} sx={{ ...numCellSx, p: 0 }}>
               <Box
                 sx={{
                   position: "absolute",
@@ -257,4 +301,14 @@ TraceGroupHeaderRow.propTypes = {
   show: PropTypes.func,
   showEvals: PropTypes.bool,
   evals: PropTypes.array,
+  top: PropTypes.number,
+  loading: PropTypes.bool,
+  leadingCell: PropTypes.bool,
+  // The group's tick: whether it has calls to tick, and their state.
+  checkbox: PropTypes.shape({
+    selectable: PropTypes.bool,
+    checked: PropTypes.bool,
+    indeterminate: PropTypes.bool,
+    onChange: PropTypes.func,
+  }),
 };

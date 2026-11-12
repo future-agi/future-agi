@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1055,
+  endpointCount: 1139,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -2414,7 +2414,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/TeamCreateResponse",
           },
           400: {
-            $ref: "#/definitions/AccountsErrorResponse",
+            $ref: "#/definitions/TeamCreateErrorResponse",
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -2508,7 +2508,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/TeamCreateResponse",
           },
           400: {
-            $ref: "#/definitions/AccountsErrorResponse",
+            $ref: "#/definitions/TeamCreateErrorResponse",
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -5173,7 +5173,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              format: "uuid",
+              maxLength: 255,
             },
           },
         },
@@ -6046,7 +6046,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/GatewayHealthResponse",
           },
           400: {
-            $ref: "#/definitions/AgentccErrorResponse",
+            $ref: "#/definitions/GatewayHealthErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -7342,7 +7342,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              format: "uuid",
+              maxLength: 255,
             },
           },
           request_id: {
@@ -8765,6 +8765,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/api/host-update-status/": {
+      get: {
+        operationId: "api_host-update-status_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HostUpdateStatusResponse",
+          },
+          400: {
+            $ref: "#/definitions/HostUpdateStatusError",
+          },
+          401: {
+            $ref: "#/definitions/HostUpdateStatusError",
+          },
+          403: {
+            $ref: "#/definitions/HostUpdateStatusError",
+          },
+          404: {
+            $ref: "#/definitions/HostUpdateStatusError",
+          },
+          405: {
+            $ref: "#/definitions/HostUpdateStatusError",
+          },
+          503: {
+            $ref: "#/definitions/HostUpdateStatusError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/api/public/health": {
       get: {
         operationId: "api_public_health_list",
@@ -9836,6 +9871,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/integrations/connections/{connection_id}/slack/channels/": {
+      get: {
+        operationId: "integrations_connections_slack_channels_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          cursor: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 512,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SlackChannelsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/integrations/connections/{id}/": {
       get: {
         operationId: "integrations_connections_read",
@@ -10015,6 +10075,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           500: {
             $ref: "#/definitions/IntegrationErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/integrations/slack/install/": {
+      post: {
+        operationId: "integrations_slack_install_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SlackInstall",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SlackInstallResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -10444,6 +10523,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/MCPOAuthTokenErrorResponse",
           },
           401: {
+            $ref: "#/definitions/MCPOAuthTokenErrorResponse",
+          },
+          429: {
             $ref: "#/definitions/MCPOAuthTokenErrorResponse",
           },
           default: {
@@ -13159,13 +13241,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/model-hub/api/models_list/": {
       get: {
         operationId: "model-hub_api_models_list_list",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          model_type: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          exclude_providers: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+            },
+          },
+        },
         responses: {
           200: {
-            $ref: "#/definitions/ModelHubPaginatedResponse",
+            $ref: "#/definitions/ModelListResponse",
           },
           400: {
             $ref: "#/definitions/ModelHubErrorResponse",
@@ -15643,11 +15753,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/model-hub/develops/delete_dataset/": {
       delete: {
         operationId: "model-hub_develops_delete_dataset_delete",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
-        requestBody: null,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DatasetDelete",
+        },
         queryParameters: {},
         responses: {
+          200: {
+            $ref: "#/definitions/DevelopDatasetMessageResponse",
+          },
+          400: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ModelHubErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -26172,6 +26302,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/saml2_auth/complete/": {
+      get: {
+        operationId: "saml2_auth_complete_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {
+          c: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+        },
+        responses: {
+          400: {
+            $ref: "#/definitions/SAMLErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/saml2_auth/github/callback/": {
       get: {
         operationId: "saml2_auth_github_callback_list",
@@ -27016,7 +27170,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         queryParameters: {},
         responses: {
           200: {
-            $ref: "#/definitions/AgentDefinitionResponse",
+            $ref: "#/definitions/AgentDefinitionDetailResponse",
           },
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
@@ -27073,6 +27227,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/runs/": {
+      get: {
+        operationId: "simulate_agent-definitions_runs_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 20,
+              default: 5,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentRunsResponse",
+          },
+          404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           default: {
@@ -27170,6 +27354,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/AgentVersionActivateResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/agent/": {
+      get: {
+        operationId: "simulate_agent-definitions_versions_agent_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/StoredAgentResponse",
           },
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
@@ -27486,6 +27693,314 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           500: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-engine/{id}/brief/": {
+      get: {
+        operationId: "simulate_api_agent-fix-engine_brief",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-engine/{id}/candidates/": {
+      post: {
+        operationId: "simulate_api_agent-fix-engine_candidates",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/AgentFixCandidateCreated",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-engine/{id}/check-runs/": {
+      post: {
+        operationId: "simulate_api_agent-fix-engine_check_runs",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentFixCheckRunRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/AgentFixCheckRunCreated",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-engine/{id}/check-runs/{run_id}/": {
+      get: {
+        operationId: "simulate_api_agent-fix-engine_check_run",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-engine/{id}/report/": {
+      post: {
+        operationId: "simulate_api_agent-fix-engine_report",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentFixEngineReport",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixEngineState",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-engine/{id}/source/": {
+      get: {
+        operationId: "simulate_api_agent-fix-engine_source",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-engine/{id}/v1/chat/completions": {
+      post: {
+        operationId: "simulate_api_agent-fix-engine_v1_chat_completions_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          type: "object",
+          additionalProperties: true,
+        },
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-runs/": {
+      get: {
+        operationId: "simulate_api_agent-fix-runs_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          environment_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixRunList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "simulate_api_agent-fix-runs_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentFixLaunch",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/AgentFixRun",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-runs/launch-options/": {
+      get: {
+        operationId: "simulate_api_agent-fix-runs_launch_options",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          source_run_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixLaunchOptions",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-runs/{id}/": {
+      get: {
+        operationId: "simulate_api_agent-fix-runs_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixRunDetail",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/make-default/":
+      {
+        post: {
+          operationId: "simulate_api_agent-fix-runs_candidates_make_default",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/AgentFixShip",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentFixMakeDefault",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/patch/": {
+      get: {
+        operationId: "simulate_api_agent-fix-runs_candidates_candidate_patch",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            type: "string",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/pull-request/":
+      {
+        post: {
+          operationId: "simulate_api_agent-fix-runs_candidates_pull_request",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/AgentFixShip",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentFixPullRequest",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/agent-fix-runs/{id}/retry/": {
+      post: {
+        operationId: "simulate_api_agent-fix-runs_retry",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/AgentFixRun",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-runs/{id}/stop/": {
+      post: {
+        operationId: "simulate_api_agent-fix-runs_stop",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixRun",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -28055,6 +28570,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               maximum: 100,
             },
           },
+          agent_definition_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
         },
         responses: {
           200: {
@@ -28101,6 +28623,88 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       delete: {
         operationId: "simulate_api_harness-environments_delete",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/compare/": {
+      get: {
+        operationId: "simulate_api_harness-environments_compare",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          execution_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          against_execution_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessCompare",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/drafts/": {
+      get: {
+        operationId: "simulate_api_harness-environments_drafts",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessDrafts",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/drafts/save/": {
+      post: {
+        operationId: "simulate_api_harness-environments_drafts_save_drafts",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessDraftSave",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessDraftSaveResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/drafts/{piece}/": {
+      delete: {
+        operationId: "simulate_api_harness-environments_discard_draft",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
@@ -28170,6 +28774,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/": {
+      patch: {
+        operationId: "simulate_api_harness-environments_edit_evaluation",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessEnvironmentEvalEdit",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SimulateEvalConfigResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
       delete: {
         operationId: "simulate_api_harness-environments_remove_evaluation",
         runtimeRequestValidation: false,
@@ -28177,6 +28798,111 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/nudges/": {
+      get: {
+        operationId: "simulate_api_harness-environments_nudges",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          state: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        responses: {
+          200: {
+            type: "array",
+            items: {
+              $ref: "#/definitions/HarnessNudge",
+            },
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/answer/": {
+      post: {
+        operationId: "simulate_api_harness-environments_nudges_answer_nudge",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessNudgeAnswer",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessNudge",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/stop/": {
+      post: {
+        operationId: "simulate_api_harness-environments_nudges_stop_nudge",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessNudge",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/run-plan/": {
+      get: {
+        operationId: "simulate_api_harness-environments_run_plan",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          agent_version_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          environment_version_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          suite_version_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessRunPlan",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -28216,6 +28942,212 @@ export const OPENAPI_CONTRACT = Object.freeze({
           responses: {
             202: {
               $ref: "#/definitions/HarnessEnvironmentRunEvaluationQueued",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_runs_evaluations_run_evaluations",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessEnvironmentRunEvaluations",
+          },
+          queryParameters: {},
+          responses: {
+            202: {
+              $ref: "#/definitions/HarnessEnvironmentRunEvaluationsQueued",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/verify/": {
+      post: {
+        operationId: "simulate_api_harness-environments_verify",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessVerifyCreate",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessVerifyCreateResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/verify/{verify_id}/": {
+      get: {
+        operationId: "simulate_api_harness-environments_verify_detail",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessVerifyResult",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/versions/": {
+      get: {
+        operationId: "simulate_api_harness-environments_versions",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessVersions",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/versions/agent/": {
+      post: {
+        operationId:
+          "simulate_api_harness-environments_versions_create_agent_version",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessAgentVersionCreate",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessAgentCredentialsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/versions/agent/{version_id}/discard/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_versions_agent_discard_agent_version",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/EmptyRequest",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/HarnessVersions",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/versions/agent/{version_id}/retry/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_versions_agent_retry_agent_version",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/EmptyRequest",
+          },
+          queryParameters: {},
+          responses: {
+            202: {
+              $ref: "#/definitions/HarnessVersions",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/":
+      {
+        get: {
+          operationId:
+            "simulate_api_harness-environments_versions_suite_suite_members",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {},
+          responses: {
+            200: {
+              type: "array",
+              items: {
+                $ref: "#/definitions/HarnessSuiteMember",
+              },
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/default/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_versions_move_default",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessDefaultMove",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/HarnessVersions",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/diff/":
+      {
+        get: {
+          operationId:
+            "simulate_api_harness-environments_versions_version_diff",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            against: {
+              required: false,
+              schema: {
+                type: "string",
+                format: "uuid",
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/HarnessVersionDiff",
             },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -28314,14 +29246,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       post: {
         operationId: "simulate_api_harness-jobs_secret_values",
         runtimeRequestValidation: true,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: {
           $ref: "#/definitions/HarnessSecretValues",
         },
         queryParameters: {},
         responses: {
-          201: {
-            $ref: "#/definitions/HarnessSecretValues",
+          202: {
+            $ref: "#/definitions/HarnessAgentCredentialsResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -28711,6 +29643,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness/conversations/{id}/overview/": {
+      post: {
+        operationId: "simulate_api_harness_conversations_overview",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessConversationOverviewQuery",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessConversationOverview",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness/conversations/{id}/publish/": {
+      post: {
+        operationId: "simulate_api_harness_conversations_publish",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          $ref: "#/definitions/HarnessConversationPublish",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessConversationPublish",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness/conversations/{id}/rerun/": {
       post: {
         operationId: "simulate_api_harness_conversations_rerun",
@@ -28740,6 +29710,63 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessConversationRunStatus",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness/conversations/{id}/runs/": {
+      post: {
+        operationId: "simulate_api_harness_conversations_runs",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          $ref: "#/definitions/HarnessConversationRunsQuery",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessConversationRunsQuery",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness/conversations/{id}/runs/start/": {
+      post: {
+        operationId: "simulate_api_harness_conversations_runs_start_run",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          $ref: "#/definitions/HarnessConversationRunStart",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessConversationRunStart",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness/conversations/{id}/scenarios/": {
+      post: {
+        operationId: "simulate_api_harness_conversations_scenarios",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          $ref: "#/definitions/HarnessConversationScenarioQuery",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessConversationScenarioQuery",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -28820,6 +29847,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessConversationWorkspaceResponse",
           },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness/github/webhook/": {
+      post: {
+        operationId: "simulate_api_harness_github_webhook_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          $ref: "#/definitions/HarnessGitHubPush",
+        },
+        queryParameters: {},
+        responses: {
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -30900,6 +31943,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           404: {
             $ref: "#/definitions/EvalErrorResponse",
           },
+          409: {
+            $ref: "#/definitions/EvalErrorResponse",
+          },
           500: {
             $ref: "#/definitions/EvalErrorResponse",
           },
@@ -31510,6 +32556,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           404: {
             $ref: "#/definitions/ErrorResponse",
           },
+          409: {
+            $ref: "#/definitions/ErrorResponse",
+          },
           500: {
             $ref: "#/definitions/ErrorResponse",
           },
@@ -31865,7 +32914,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           404: {
             $ref: "#/definitions/ErrorResponse",
           },
+          409: {
+            $ref: "#/definitions/ErrorResponse",
+          },
           500: {
+            $ref: "#/definitions/ErrorResponse",
+          },
+          503: {
             $ref: "#/definitions/ErrorResponse",
           },
           default: {
@@ -32045,6 +33100,51 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/v3/test-executions/{test_execution_id}/reliability/": {
+      get: {
+        operationId: "simulate_v3_test_execution_reliability",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/Reliability",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/v3/test-executions/{test_execution_id}/traces/": {
+      get: {
+        operationId: "simulate_v3_test_execution_traces",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          call_execution_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/RunTracesV3Response",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/telemetry/heartbeat/": {
       post: {
         operationId: "telemetry_heartbeat_create",
@@ -32076,6 +33176,141 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/DeploymentRegistrationResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/alerts/": {
+      get: {
+        operationId: "tracer_alerts_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          kind: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["metric", "error_feed"],
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AlertListResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_alerts_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AlertWriteRequest",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/AlertItemResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/alerts/error_feed/{alert_id}/test/": {
+      post: {
+        operationId: "tracer_alerts_error_feed_test_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AlertTestRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AlertTestResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/alerts/options/": {
+      get: {
+        operationId: "tracer_alerts_options_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          kind: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["metric", "error_feed"],
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AlertOptionsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/alerts/{kind}/{alert_id}/": {
+      get: {
+        operationId: "tracer_alerts_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AlertItemResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      patch: {
+        operationId: "tracer_alerts_partial_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AlertWriteRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AlertItemResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      delete: {
+        operationId: "tracer_alerts_delete",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AlertDeletedResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -34369,6 +35604,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/feed/issues/{cluster_id}/redirect/": {
+      get: {
+        operationId: "tracer_feed_issues_redirect_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/FeedRedirectApiResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/feed/issues/{cluster_id}/root-cause/": {
       get: {
         operationId: "tracer_feed_issues_root-cause_list",
@@ -34637,6 +35909,1310 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/insights/configs/": {
+      get: {
+        operationId: "tracer_insights_configs_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightConfigListResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/configs/{config_id}/": {
+      get: {
+        operationId: "tracer_insights_configs_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightConfigResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      patch: {
+        operationId: "tracer_insights_configs_partial_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InsightConfigPatch",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightConfigResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      delete: {
+        operationId: "tracer_insights_configs_delete",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightConfigResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/draft/": {
+      post: {
+        operationId: "tracer_insights_draft_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InsightDraft",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightDraftResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/estimate/": {
+      post: {
+        operationId: "tracer_insights_estimate_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InsightEstimateRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightEstimateResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          422: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/preview/": {
+      post: {
+        operationId: "tracer_insights_preview_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InsightPreview",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightPreviewResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/runs/": {
+      post: {
+        operationId: "tracer_insights_runs_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InsightRunCreate",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightRunCreatedResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/runs/{run_id}/": {
+      get: {
+        operationId: "tracer_insights_runs_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightRunResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/runs/{run_id}/ask/": {
+      post: {
+        operationId: "tracer_insights_runs_ask_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InsightAsk",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightAskResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/runs/{run_id}/media/": {
+      get: {
+        operationId: "tracer_insights_runs_media_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          unit_id: {
+            required: true,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 255,
+            },
+          },
+          media: {
+            required: true,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        responses: {
+          200: {
+            type: "file",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/runs/{run_id}/stop/": {
+      post: {
+        operationId: "tracer_insights_runs_stop_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightRunStopResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/runs/{run_id}/units/": {
+      get: {
+        operationId: "tracer_insights_runs_units_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          category_id: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 64,
+            },
+          },
+          sub_category_id: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 64,
+            },
+          },
+          unit_ids: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 4000,
+            },
+          },
+          offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              maximum: 1000,
+              default: 0,
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 200,
+              default: 50,
+            },
+          },
+          include_content: {
+            required: false,
+            schema: {
+              type: "boolean",
+              default: false,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightUnitsResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/instant-eval/control/": {
+      post: {
+        operationId: "tracer_instant-eval_control_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InstantEvalControlRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InstantEvalControlResponse",
+          },
+          400: {
+            $ref: "#/definitions/InstantEvalBadRequest",
+          },
+          402: {
+            $ref: "#/definitions/InstantEvalLimitError",
+          },
+          403: {
+            $ref: "#/definitions/InstantEvalLimitError",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/InstantEvalLimitError",
+          },
+          422: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/InstantEvalLimitError",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/instant-eval/estimate/": {
+      post: {
+        operationId: "tracer_instant-eval_estimate_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InstantEvalEstimateRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InstantEvalEstimateResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          422: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/instant-eval/export/": {
+      get: {
+        operationId: "tracer_instant-eval_export_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          eval_task_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          unit: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["traces", "spans", "sessions", "users"],
+            },
+          },
+          config_ids: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 2000,
+            },
+          },
+          tz: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 64,
+              default: "UTC",
+            },
+          },
+          config_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          answer: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 500,
+            },
+          },
+          answers: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 4000,
+            },
+          },
+          time_from: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 64,
+            },
+          },
+          time_to: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 64,
+            },
+          },
+          group: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+                maxLength: 300,
+                minLength: 1,
+              },
+              maxItems: 100000,
+            },
+          },
+          user: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 255,
+            },
+          },
+          model: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 255,
+            },
+          },
+          error: {
+            required: false,
+            schema: {
+              type: "boolean",
+            },
+          },
+          unsure: {
+            required: false,
+            schema: {
+              type: "boolean",
+              default: false,
+            },
+          },
+          q: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 200,
+            },
+          },
+          cursor: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 500,
+            },
+          },
+          page_size: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 1500,
+              default: 50,
+            },
+          },
+          compact: {
+            required: false,
+            schema: {
+              type: "boolean",
+              default: false,
+            },
+          },
+          sort: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["time", "-time", "confidence"],
+              default: "-time",
+            },
+          },
+          sessions: {
+            required: false,
+            schema: {
+              type: "boolean",
+              default: false,
+            },
+          },
+        },
+        responses: {
+          200: {
+            type: "string",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_instant-eval_export_create",
+        readQueryPost: true,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InstantEvalExportQuery",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            type: "string",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/instant-eval/rows/": {
+      get: {
+        operationId: "tracer_instant-eval_rows_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          eval_task_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          unit: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["traces", "spans", "sessions", "users"],
+            },
+          },
+          config_ids: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 2000,
+            },
+          },
+          tz: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 64,
+              default: "UTC",
+            },
+          },
+          config_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          answer: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 500,
+            },
+          },
+          answers: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 4000,
+            },
+          },
+          time_from: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 64,
+            },
+          },
+          time_to: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 64,
+            },
+          },
+          group: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+                maxLength: 300,
+                minLength: 1,
+              },
+              maxItems: 100000,
+            },
+          },
+          user: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 255,
+            },
+          },
+          model: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 255,
+            },
+          },
+          error: {
+            required: false,
+            schema: {
+              type: "boolean",
+            },
+          },
+          unsure: {
+            required: false,
+            schema: {
+              type: "boolean",
+              default: false,
+            },
+          },
+          q: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 200,
+            },
+          },
+          cursor: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 500,
+            },
+          },
+          page_size: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 1500,
+              default: 50,
+            },
+          },
+          compact: {
+            required: false,
+            schema: {
+              type: "boolean",
+              default: false,
+            },
+          },
+          sort: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["time", "-time", "confidence"],
+              default: "-time",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/InstantEvalRowsResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_instant-eval_rows_create",
+        readQueryPost: true,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InstantEvalRowsQuery",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InstantEvalRowsResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/instant-eval/runs/": {
+      get: {
+        operationId: "tracer_instant-eval_runs_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          unit: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["traces", "spans", "sessions", "users"],
+            },
+          },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 200,
+            },
+          },
+          task_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          page_number: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              default: 0,
+            },
+          },
+          page_size: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 50,
+              default: 20,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/InstantEvalRunsResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/instant-eval/start/": {
+      post: {
+        operationId: "tracer_instant-eval_start_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InstantEvalStartRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InstantEvalStartResponse",
+          },
+          400: {
+            $ref: "#/definitions/InstantEvalBadRequest",
+          },
+          402: {
+            $ref: "#/definitions/InstantEvalLimitError",
+          },
+          403: {
+            $ref: "#/definitions/InstantEvalLimitError",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/InstantEvalLimitError",
+          },
+          422: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/InstantEvalLimitError",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/instant-eval/summary/": {
+      get: {
+        operationId: "tracer_instant-eval_summary_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          eval_task_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          unit: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["traces", "spans", "sessions", "users"],
+            },
+          },
+          config_ids: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 2000,
+            },
+          },
+          tz: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 64,
+              default: "UTC",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/InstantEvalSummaryResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/internal/error-feed-v2/attempts/{attempt_id}/": {
       patch: {
         operationId: "tracer_internal_error-feed-v2_attempts_partial_update",
@@ -34662,6 +37238,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/internal/error-feed-v2/attempts/{attempt_id}/conversation-evidence/":
+      {
+        post: {
+          operationId:
+            "tracer_internal_error-feed-v2_attempts_conversation-evidence_create",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/ConversationEvidenceRequest",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/ConversationEvidenceResponse",
+            },
+            409: {
+              $ref: "#/definitions/InvestigationControlError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/tracer/internal/error-feed-v2/attempts/{attempt_id}/simulation-evidence/":
       {
         post: {
@@ -36419,6 +39019,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
+          test_execution_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          call_execution_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
           project_id: {
             required: false,
             schema: {
@@ -37656,6 +40270,138 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/saved-sql-query/": {
+      get: {
+        operationId: "tracer_saved-sql-query_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              maximum: 10000,
+              default: 0,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLSavedList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_saved-sql-query_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLSave",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/SQLSaved",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/saved-sql-query/{id}/": {
+      get: {
+        operationId: "tracer_saved-sql-query_read",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLSaved",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      patch: {
+        operationId: "tracer_saved-sql-query_partial_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLSave",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLSaved",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      delete: {
+        operationId: "tracer_saved-sql-query_delete",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/saved-sql-query/{id}/add-widget/": {
+      post: {
+        operationId: "tracer_saved-sql-query_add_widget",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLWidget",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/SQLWidgetResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/saved-views/": {
       get: {
         operationId: "tracer_saved-views_list",
@@ -37994,6 +40740,290 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           410: {
             $ref: "#/definitions/SharedLinkResolveError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/shared/{token}/sidebar/": {
+      get: {
+        operationId: "tracer_shared_sidebar_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          trace_id: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/FeedSidebarApiResponse",
+          },
+          401: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          403: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          404: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          410: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/shared/{token}/traces/{trace_id}/": {
+      get: {
+        operationId: "tracer_shared_traces_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/TraceDetailResponse",
+          },
+          401: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          403: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          404: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          410: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/": {
+      get: {
+        operationId: "tracer_sql-query_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              maximum: 10000,
+              default: 0,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLHistory",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/catalog/": {
+      get: {
+        operationId: "tracer_sql-query_catalog",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLCatalog",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/estimate/": {
+      post: {
+        operationId: "tracer_sql-query_estimate",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLQueryInput",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLEstimate",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/run-saved/": {
+      post: {
+        operationId: "tracer_sql-query_run_saved",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLRunSaved",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/SQLExecution",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/run/": {
+      post: {
+        operationId: "tracer_sql-query_run",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLRun",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/SQLExecution",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/{id}/": {
+      get: {
+        operationId: "tracer_sql-query_read",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              maximum: 10000,
+              default: 0,
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 1000,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLExecution",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/{id}/cancel/": {
+      post: {
+        operationId: "tracer_sql-query_cancel",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLProject",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLExecution",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/{id}/download/": {
+      get: {
+        operationId: "tracer_sql-query_download",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          file_format: {
+            required: true,
+            schema: {
+              type: "string",
+              enum: ["csv", "parquet"],
+            },
+          },
+        },
+        responses: {
+          200: {
+            type: "file",
+          },
+          409: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+          410: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -39406,6 +42436,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
+          sort_params: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              default: "[]",
+            },
+          },
           project_id: {
             required: false,
             schema: {
@@ -39677,6 +42715,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
+          test_execution_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          call_execution_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
           trace_id: {
             required: false,
             schema: {
@@ -39728,6 +42780,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
+          test_execution_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          call_execution_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
           project_id: {
             required: false,
             schema: {
@@ -40180,48 +43246,84 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/user-alerts/list_monitors/": {
       get: {
         operationId: "tracer_user-alerts_list_monitors",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
-          page: {
+          page_number: {
             required: false,
             schema: {
               type: "integer",
+              minimum: 0,
+              default: 0,
             },
           },
-          limit: {
+          page_size: {
             required: false,
             schema: {
               type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 30,
+            },
+          },
+          search_text: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          project_id: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+                format: "uuid",
+              },
+            },
+          },
+          status: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: ["triggered", "healthy"],
+              },
+            },
+          },
+          metric_type: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+                minLength: 1,
+              },
+            },
+          },
+          sort_by: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          sort_direction: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["asc", "desc"],
             },
           },
         },
         responses: {
           200: {
-            required: ["count", "results"],
-            type: "object",
-            properties: {
-              count: {
-                type: "integer",
-              },
-              next: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              previous: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              results: {
-                type: "array",
-                items: {
-                  $ref: "#/definitions/UserAlertMonitor",
-                },
-              },
-            },
+            $ref: "#/definitions/UserAlertMonitorListResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -46923,9 +50025,318 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentDefinitionDetailResponse: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        agent_name: {
+          title: "Agent name",
+          description: "Name of the AI agent",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        agent_type: {
+          title: "Agent type",
+          type: "string",
+          enum: ["voice", "text"],
+          readOnly: true,
+        },
+        contact_number: {
+          title: "Contact number",
+          description: "Phone number associated with the AI agent",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        inbound: {
+          title: "Inbound",
+          description: "Whether the agent handles inbound calls",
+          type: "boolean",
+          readOnly: true,
+        },
+        target_speaks_first: {
+          title: "Target speaks first",
+          description:
+            "Whether the target agent speaks first (greets) in a hosted voice simulation. True: the simulator waits for the target's greeting; False: the simulator opens the conversation; null: derive from inbound/outbound. Retell targets always let the simulator open (SDK limitation).",
+          type: "boolean",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        description: {
+          title: "Description",
+          description:
+            "Detailed description of the AI agent's purpose and capabilities",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        assistant_id: {
+          title: "Assistant id",
+          description: "External identifier for the assistant",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        provider: {
+          title: "Provider",
+          description: "Provider of the AI agent",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        language: {
+          title: "Language",
+          description: "Language of the agent",
+          type: "string",
+          enum: [
+            "ar",
+            "bg",
+            "zh",
+            "cs",
+            "da",
+            "nl",
+            "en",
+            "fi",
+            "fr",
+            "de",
+            "el",
+            "hi",
+            "hu",
+            "id",
+            "it",
+            "ja",
+            "ko",
+            "ms",
+            "no",
+            "pl",
+            "pt",
+            "ro",
+            "ru",
+            "sk",
+            "es",
+            "sv",
+            "tr",
+            "uk",
+            "vi",
+          ],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        languages: {
+          type: "array",
+          items: {
+            title: "Languages",
+            description: "Language of the agent",
+            type: "string",
+            enum: [
+              "ar",
+              "bg",
+              "zh",
+              "cs",
+              "da",
+              "nl",
+              "en",
+              "fi",
+              "fr",
+              "de",
+              "el",
+              "hi",
+              "hu",
+              "id",
+              "it",
+              "ja",
+              "ko",
+              "ms",
+              "no",
+              "pl",
+              "pt",
+              "ro",
+              "ru",
+              "sk",
+              "es",
+              "sv",
+              "tr",
+              "uk",
+              "vi",
+            ],
+          },
+          readOnly: true,
+          "x-nullable": true,
+        },
+        authentication_method: {
+          title: "Authentication method",
+          type: "string",
+          enum: ["api_key"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        websocket_url: {
+          title: "Websocket url",
+          description:
+            "WebSocket URL for real-time communication with the agent",
+          type: "string",
+          format: "uri",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        websocket_headers: {
+          title: "Websocket headers",
+          description: "Headers to be sent to the websocket server",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        workspace: {
+          title: "Workspace",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        knowledge_base: {
+          title: "Knowledge base",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        organization: {
+          title: "Organization",
+          description: "Organization this agent definition belongs to",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        api_key: {
+          title: "Api key",
+          type: "string",
+          readOnly: true,
+        },
+        observability_provider: {
+          title: "Observability provider",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        model: {
+          title: "Model",
+          description: "Model of the agent",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        model_details: {
+          title: "Model details",
+          description: "Details of the model",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        livekit_url: {
+          title: "Livekit url",
+          type: "string",
+          readOnly: true,
+        },
+        livekit_api_key: {
+          title: "Livekit api key",
+          type: "string",
+          readOnly: true,
+        },
+        livekit_agent_name: {
+          title: "Livekit agent name",
+          type: "string",
+          readOnly: true,
+        },
+        livekit_config_json: {
+          title: "Livekit config json",
+          type: "string",
+          readOnly: true,
+        },
+        livekit_max_concurrency: {
+          title: "Livekit max concurrency",
+          type: "string",
+          readOnly: true,
+        },
+        versions: {
+          type: "array",
+          items: {
+            type: "string",
+            "x-nullable": true,
+          },
+          readOnly: true,
+        },
+        active_version: {
+          title: "Active version",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+          readOnly: true,
+          "x-nullable": true,
+        },
+        version_count: {
+          title: "Version count",
+          type: "integer",
+          readOnly: true,
+        },
+        agent_kind: {
+          title: "Agent kind",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        environment_count: {
+          title: "Environment count",
+          type: "integer",
+          readOnly: true,
+        },
+        observability_enabled: {
+          title: "Observability enabled",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
     AgentDefinitionEditRequest: {
       type: "object",
       properties: {
+        observability_enabled: {
+          title: "Observability enabled",
+          type: "boolean",
+        },
         agent_name: {
           title: "Agent name",
           type: "string",
@@ -47288,6 +50699,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        agent_kind: {
+          title: "Agent kind",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        version_count: {
+          title: "Version count",
+          type: "integer",
+          readOnly: true,
+        },
+        environment_count: {
+          title: "Environment count",
+          type: "integer",
+          readOnly: true,
+        },
+        environments: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunEnvironmentRef",
+          },
+          readOnly: true,
+        },
       },
     },
     AgentDefinitionResponse: {
@@ -47545,6 +50987,674 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Livekit max concurrency",
           type: "string",
           readOnly: true,
+        },
+      },
+    },
+    AgentFixCandidateCreated: {
+      required: ["candidate_id", "agent_version_id", "preflight_status"],
+      type: "object",
+      properties: {
+        candidate_id: {
+          title: "Candidate id",
+          type: "string",
+          format: "uuid",
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+        },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AgentFixCheckRunCreated: {
+      required: ["run_id"],
+      type: "object",
+      properties: {
+        run_id: {
+          title: "Run id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AgentFixCheckRunRequest: {
+      required: ["label", "agent_version_id", "scenario_keys", "trials"],
+      type: "object",
+      properties: {
+        label: {
+          title: "Label",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+        },
+        scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          minItems: 1,
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          maximum: 20,
+          minimum: 1,
+        },
+        repeat: {
+          title: "Repeat",
+          type: "integer",
+          default: 1,
+          maximum: 20,
+          minimum: 1,
+        },
+      },
+    },
+    AgentFixEngineReport: {
+      required: ["stage"],
+      type: "object",
+      properties: {
+        stage: {
+          title: "Stage",
+          type: "string",
+          maxLength: 32,
+          minLength: 1,
+        },
+        step: {
+          title: "Step",
+          type: "string",
+          enum: ["reproduce", "search", "verify", "done"],
+          "x-nullable": true,
+        },
+        plan: {
+          $ref: "#/definitions/AgentFixPlan",
+        },
+        diagnosis: {
+          $ref: "#/definitions/AgentFixDiagnosis",
+        },
+        candidates: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCandidateUpdate",
+          },
+          default: [],
+        },
+        ending: {
+          title: "Ending",
+          type: "string",
+          enum: [
+            "ready",
+            "no_improvement",
+            "not_reproduced",
+            "out_of_budget",
+            "failed",
+          ],
+          "x-nullable": true,
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+          default: "",
+        },
+        failure: {
+          $ref: "#/definitions/AgentFixEngineFailure",
+        },
+        winner_candidate_id: {
+          title: "Winner candidate id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        lost_models: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 200,
+            minLength: 1,
+          },
+          default: [],
+          maxItems: 50,
+        },
+        last_error: {
+          title: "Last error",
+          type: "string",
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixEngineState: {
+      required: ["state"],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AgentFixLaunch: {
+      required: [
+        "source_run_id",
+        "target_scenario_keys",
+        "surfaces",
+        "budget_credits",
+      ],
+      type: "object",
+      properties: {
+        source_run_id: {
+          title: "Source run id",
+          type: "string",
+          format: "uuid",
+        },
+        target_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 200,
+          minItems: 1,
+        },
+        protected_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          default: [],
+          maxItems: 200,
+        },
+        surfaces: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["prompt", "tools", "settings", "code"],
+          },
+          minItems: 1,
+        },
+        locked_paths: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 512,
+            minLength: 1,
+          },
+          default: [],
+        },
+        budget_credits: {
+          title: "Budget credits",
+          type: "integer",
+          maximum: 50000,
+          minimum: 1,
+        },
+        max_minutes: {
+          title: "Max minutes",
+          type: "integer",
+          maximum: 1440,
+          minimum: 1,
+        },
+      },
+    },
+    AgentFixLaunchOptions: {
+      required: [
+        "source_run",
+        "environment",
+        "agent",
+        "scenarios",
+        "suggested",
+        "surfaces",
+        "defaults",
+        "limits",
+        "blocked",
+      ],
+      type: "object",
+      properties: {
+        source_run: {
+          $ref: "#/definitions/AgentFixLaunchSourceRun",
+        },
+        environment: {
+          $ref: "#/definitions/AgentFixLaunchEnvironment",
+        },
+        agent: {
+          $ref: "#/definitions/AgentFixAgent",
+        },
+        scenarios: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixLaunchScenario",
+          },
+        },
+        suggested: {
+          $ref: "#/definitions/AgentFixLaunchSuggested",
+        },
+        surfaces: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixLaunchSurface",
+          },
+        },
+        defaults: {
+          $ref: "#/definitions/AgentFixLaunchDefaults",
+        },
+        limits: {
+          $ref: "#/definitions/AgentFixLaunchLimits",
+        },
+        blocked: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+      },
+    },
+    AgentFixMakeDefault: {
+      required: ["outcome"],
+      type: "object",
+      properties: {
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AgentFixPullRequest: {
+      required: ["pull_request_url"],
+      type: "object",
+      properties: {
+        pull_request_url: {
+          title: "Pull request url",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+        },
+      },
+    },
+    AgentFixRun: {
+      required: [
+        "number",
+        "environment_id",
+        "source_run_id",
+        "source_run_number",
+        "base_agent_version_id",
+        "plan",
+        "diagnosis",
+        "request",
+        "spent_credits",
+        "committed_credits",
+        "report",
+        "failure",
+        "retried_from_id",
+        "candidates",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        number: {
+          title: "Number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        environment: {
+          $ref: "#/definitions/AgentFixEnvironment",
+        },
+        source_run_id: {
+          title: "Source run id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        source_run_number: {
+          title: "Source run number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        base_agent_version_id: {
+          title: "Base agent version id",
+          type: "string",
+          format: "uuid",
+        },
+        agent: {
+          $ref: "#/definitions/AgentFixAgent",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "queued",
+            "running",
+            "stopping",
+            "ready",
+            "no_improvement",
+            "not_reproduced",
+            "out_of_budget",
+            "stopped",
+            "failed",
+          ],
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+          maxLength: 32,
+        },
+        step: {
+          title: "Step",
+          description: "A finished fix is done, whatever the engine last said.",
+          type: "string",
+          enum: ["reproduce", "search", "verify", "done"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        plan: {
+          $ref: "#/definitions/AgentFixPlan",
+        },
+        diagnosis: {
+          $ref: "#/definitions/AgentFixDiagnosis",
+        },
+        request: {
+          $ref: "#/definitions/AgentFixRequest",
+        },
+        spent_credits: {
+          title: "Spent credits",
+          type: "number",
+        },
+        committed_credits: {
+          title: "Committed credits",
+          type: "number",
+        },
+        report: {
+          $ref: "#/definitions/AgentFixReport",
+        },
+        failure: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+        retried_from_id: {
+          title: "Retried from id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
+          readOnly: true,
+        },
+        limited_validation: {
+          title: "Limited validation",
+          type: "boolean",
+          readOnly: true,
+        },
+        check_runs: {
+          description: "The base version's runs; each candidate lists its own.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCheckRun",
+          },
+          readOnly: true,
+        },
+        candidates: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCandidate",
+          },
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+      },
+    },
+    AgentFixRunDetail: {
+      required: [
+        "number",
+        "environment_id",
+        "source_run_id",
+        "source_run_number",
+        "base_agent_version_id",
+        "plan",
+        "diagnosis",
+        "request",
+        "spent_credits",
+        "committed_credits",
+        "report",
+        "failure",
+        "retried_from_id",
+        "candidates",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        number: {
+          title: "Number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        environment: {
+          $ref: "#/definitions/AgentFixEnvironment",
+        },
+        source_run_id: {
+          title: "Source run id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        source_run_number: {
+          title: "Source run number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        base_agent_version_id: {
+          title: "Base agent version id",
+          type: "string",
+          format: "uuid",
+        },
+        agent: {
+          $ref: "#/definitions/AgentFixAgent",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "queued",
+            "running",
+            "stopping",
+            "ready",
+            "no_improvement",
+            "not_reproduced",
+            "out_of_budget",
+            "stopped",
+            "failed",
+          ],
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+          maxLength: 32,
+        },
+        step: {
+          title: "Step",
+          description: "A finished fix is done, whatever the engine last said.",
+          type: "string",
+          enum: ["reproduce", "search", "verify", "done"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        plan: {
+          $ref: "#/definitions/AgentFixPlan",
+        },
+        diagnosis: {
+          $ref: "#/definitions/AgentFixDiagnosis",
+        },
+        request: {
+          $ref: "#/definitions/AgentFixRequest",
+        },
+        spent_credits: {
+          title: "Spent credits",
+          type: "number",
+        },
+        committed_credits: {
+          title: "Committed credits",
+          type: "number",
+        },
+        report: {
+          $ref: "#/definitions/AgentFixReport",
+        },
+        failure: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+        retried_from_id: {
+          title: "Retried from id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
+          readOnly: true,
+        },
+        limited_validation: {
+          title: "Limited validation",
+          type: "boolean",
+          readOnly: true,
+        },
+        check_runs: {
+          description: "The base version's runs; each candidate lists its own.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCheckRun",
+          },
+          readOnly: true,
+        },
+        candidates: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCandidate",
+          },
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        eval_warnings: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixEvalWarning",
+          },
+          readOnly: true,
+        },
+      },
+    },
+    AgentFixRunList: {
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+      ],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixRun",
+          },
+        },
+      },
+    },
+    AgentFixShip: {
+      type: "object",
+      properties: {
+        override_reason: {
+          title: "Override reason",
+          type: "string",
+          default: "",
+          maxLength: 2000,
         },
       },
     },
@@ -47912,6 +52022,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentRunsResponse: {
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessRunSummary",
+          },
+          readOnly: true,
+        },
+      },
+    },
     AgentVersionActivateResponse: {
       type: "object",
       properties: {
@@ -48048,7 +52170,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         observability_enabled: {
           title: "Observability enabled",
           type: "boolean",
-          default: false,
         },
       },
     },
@@ -48288,6 +52409,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Is latest",
           type: "string",
           readOnly: true,
+        },
+        agent_kind: {
+          title: "Agent kind",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        api_key: {
+          title: "Api key",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
         },
         created_at: {
           title: "Created at",
@@ -49835,6 +53970,205 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AlertDeletedResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/AlertDeletedResult",
+        },
+      },
+    },
+    AlertItemResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/AlertItem",
+        },
+      },
+    },
+    AlertListResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/AlertListResult",
+        },
+      },
+    },
+    AlertOptionsResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/AlertOptionsResult",
+        },
+      },
+    },
+    AlertTestRequest: {
+      type: "object",
+      properties: {},
+    },
+    AlertTestResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/AlertTestResult",
+        },
+      },
+    },
+    AlertWriteRequest: {
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["metric", "error_feed"],
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        enabled: {
+          title: "Enabled",
+          type: "boolean",
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        trigger_type: {
+          title: "Trigger type",
+          type: "string",
+          minLength: 1,
+        },
+        severity_threshold: {
+          title: "Severity threshold",
+          type: "string",
+          enum: ["low", "medium", "high", "critical"],
+        },
+        occurrence_threshold: {
+          title: "Occurrence threshold",
+          type: "integer",
+          maximum: 1000000,
+          minimum: 1,
+        },
+        filters: {
+          title: "Filters",
+          type: "object",
+        },
+        slack_connection_id: {
+          title: "Slack connection id",
+          type: "string",
+          format: "uuid",
+        },
+        slack_channel_id: {
+          title: "Slack channel id",
+          type: "string",
+          minLength: 1,
+        },
+        cooldown_seconds: {
+          title: "Cooldown seconds",
+          type: "integer",
+          minimum: 0,
+        },
+        project: {
+          title: "Project",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        metric_type: {
+          title: "Metric type",
+          type: "string",
+          minLength: 1,
+        },
+        metric: {
+          title: "Metric",
+          type: "string",
+          "x-nullable": true,
+        },
+        threshold_type: {
+          title: "Threshold type",
+          type: "string",
+          minLength: 1,
+        },
+        threshold_operator: {
+          title: "Threshold operator",
+          type: "string",
+          minLength: 1,
+        },
+        threshold_metric_value: {
+          title: "Threshold metric value",
+          type: "string",
+          "x-nullable": true,
+        },
+        critical_threshold_value: {
+          title: "Critical threshold value",
+          type: "number",
+        },
+        warning_threshold_value: {
+          title: "Warning threshold value",
+          type: "number",
+        },
+        alert_frequency: {
+          title: "Alert frequency",
+          type: "integer",
+        },
+        auto_threshold_time_window: {
+          title: "Auto threshold time window",
+          type: "integer",
+        },
+        slack_webhook_url: {
+          title: "Slack webhook url",
+          type: "string",
+          format: "uri",
+          "x-nullable": true,
+        },
+        slack_notes: {
+          title: "Slack notes",
+          type: "string",
+          "x-nullable": true,
+        },
+        is_mute: {
+          title: "Is mute",
+          type: "boolean",
+        },
+        notification_emails: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "email",
+            minLength: 1,
+          },
+        },
+      },
+    },
     AllActiveTests: {
       required: ["active_tests", "total_active"],
       type: "object",
@@ -50830,6 +55164,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Autoreload walletthreshold",
           type: "string",
           format: "decimal",
+        },
+        autoreload_maxcharge: {
+          title: "Autoreload maxcharge",
+          type: "string",
+          format: "decimal",
+          "x-nullable": true,
+        },
+        autoreload_consent: {
+          title: "Autoreload consent",
+          type: "boolean",
+          default: false,
+        },
+        autoreload_charge_now: {
+          title: "Autoreload charge now",
+          type: "boolean",
+          default: false,
         },
       },
     },
@@ -52118,6 +56468,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           default: false,
         },
+        unfinished_only: {
+          title: "Unfinished only",
+          description:
+            "Resume an interrupted run: re-run only the calls that did not finish, as a new attempt of the same run. Takes no call ids and no select_all.",
+          type: "boolean",
+          default: false,
+        },
         environment_values: {
           title: "Environment values",
           description:
@@ -52164,10 +56521,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "persona",
         "persona_details",
         "sub_goals",
+        "sub_goal_results",
         "outcome",
         "cost_breakdown_cents",
         "evaluations",
         "function_calls",
+        "scoring_status",
+        "csat_status",
+        "csat_reason",
       ],
       type: "object",
       properties: {
@@ -52604,10 +56965,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        sub_goal_results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SubGoalResult",
+          },
+        },
         outcome: {
           title: "Outcome",
           type: "string",
-          enum: ["passed", "failed", "error", "inconclusive"],
+          enum: [
+            "queued",
+            "in_progress",
+            "passed",
+            "failed",
+            "inconclusive",
+            "error",
+          ],
         },
         cost_breakdown_cents: {
           $ref: "#/definitions/CostBreakdown",
@@ -52623,6 +56997,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/SimulateRunV3FunctionCall",
           },
+        },
+        scoring_status: {
+          title: "Scoring status",
+          type: "string",
+          enum: [
+            "not_applicable",
+            "pending",
+            "succeeded",
+            "failed",
+            "timed_out",
+          ],
+        },
+        csat_status: {
+          title: "Csat status",
+          type: "string",
+          enum: [
+            "not_applicable",
+            "pending",
+            "succeeded",
+            "failed",
+            "timed_out",
+            "skipped",
+          ],
+        },
+        csat_reason: {
+          title: "Csat reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },
@@ -53902,6 +58305,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ConversationEvidenceRequest: {
+      required: ["lease_token"],
+      type: "object",
+      properties: {
+        lease_token: {
+          title: "Lease token",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+      },
+    },
+    ConversationEvidenceResponse: {
+      required: ["rows"],
+      type: "object",
+      properties: {
+        rows: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ConversationEvidenceRow",
+          },
+        },
+      },
+    },
     ConversationListResponse: {
       required: ["status", "results", "total", "limit", "offset", "has_more"],
       type: "object",
@@ -54443,6 +58870,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 100,
           minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["user", "coding_agent"],
+          default: "user",
+        },
+        simulation_environment_id: {
+          title: "Simulation environment id",
+          type: "string",
+          format: "uuid",
         },
       },
     },
@@ -55562,6 +60000,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+      additionalProperties: false,
     },
     DatasetBehaviorRequest: {
       type: "object",
@@ -55692,6 +60131,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/DatasetCreationProgressResult",
+        },
+      },
+    },
+    DatasetDelete: {
+      required: ["dataset_ids"],
+      type: "object",
+      properties: {
+        dataset_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 50,
         },
       },
     },
@@ -58836,6 +63289,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
     EvalTemplateCreateV2Request: {
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
+        multi_choice: {
+          title: "Multi choice",
+          type: "boolean",
+          default: false,
+        },
+        input_data_types: {
+          title: "Input data types",
+          type: "object",
+          "x-nullable": true,
+        },
         name: {
           title: "Name",
           type: "string",
@@ -59060,6 +63528,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
     EvalTemplateUpdateV2Request: {
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
+        input_data_types: {
+          title: "Input data types",
+          type: "object",
+          "x-nullable": true,
+        },
         name: {
           title: "Name",
           type: "string",
@@ -59201,6 +63679,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
     EvalTemplateVersionCreateRequest: {
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
         criteria: {
           title: "Criteria",
           type: "string",
@@ -60296,6 +64779,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    FeedRedirectApiResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/FeedRedirect",
+        },
+      },
+    },
     FeedSidebarApiResponse: {
       required: ["result"],
       type: "object",
@@ -60963,6 +65460,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "object",
             additionalProperties: {
               type: "object",
+              "x-json-value": true,
+              description: "Any valid JSON value.",
             },
           },
         },
@@ -61012,6 +65511,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
       },
@@ -61024,6 +65525,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         routing: {
@@ -61031,6 +65534,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         cache: {
@@ -61038,6 +65543,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         rate_limiting: {
@@ -61045,6 +65552,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         budgets: {
@@ -61052,6 +65561,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         cost_tracking: {
@@ -61059,6 +65570,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         ip_acl: {
@@ -61066,6 +65579,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         alerting: {
@@ -61073,6 +65588,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         privacy: {
@@ -61080,6 +65597,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         tool_policy: {
@@ -61087,6 +65606,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         mcp: {
@@ -61094,6 +65615,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         a2a: {
@@ -61101,6 +65624,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         audit: {
@@ -61108,6 +65633,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         model_database: {
@@ -61122,6 +65649,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
       },
@@ -61151,6 +65680,78 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/GatewaySummaryResult",
         },
       },
+    },
+    GatewayHealthErrorResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          $ref: "#/definitions/GatewayHealthErrorResult",
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+      },
+      description:
+        "Failed probes return a result object with status (unreachable), error, and last_health_check (ISO 8601 completion time). Request validation and other errors return a string result without a probe timestamp.",
     },
     GatewayHealthResponse: {
       required: ["status", "result"],
@@ -61190,6 +65791,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
       },
@@ -61219,6 +65822,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
       },
@@ -61250,6 +65855,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
           default: {},
         },
@@ -61878,6 +66485,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        failure_code: {
+          title: "Failure code",
+          type: "string",
+          minLength: 1,
+        },
         status: {
           title: "Status",
           type: "string",
@@ -62008,6 +66620,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessAgentCredentialsResponse: {
+      required: ["agent_version"],
+      type: "object",
+      properties: {
+        agent_version: {
+          $ref: "#/definitions/HarnessVersion",
+        },
+      },
+    },
+    HarnessAgentVersionCreate: {
+      type: "object",
+      properties: {
+        archive_artifact_id: {
+          title: "Archive artifact id",
+          description: "A folder uploaded through source-upload.",
+          type: "string",
+          format: "uuid",
+        },
+        prompt: {
+          title: "Prompt",
+          type: "string",
+          maxLength: 65536,
+          minLength: 1,
+        },
+        agent_payload: {
+          $ref: "#/definitions/HarnessAgentPayloadChange",
+        },
+        make_default: {
+          title: "Make default",
+          description:
+            "False only checks the new version: once it passes, a run can pick it and a move makes it the default. Omitted, it is true, except for a coding agent key, whose push is never the default.",
+          type: "boolean",
+        },
+      },
+    },
     HarnessArtifactUploadResponse: {
       required: ["artifact_id", "duplicate"],
       type: "object",
@@ -62020,6 +66667,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
         duplicate: {
           title: "Duplicate",
           type: "boolean",
+        },
+      },
+    },
+    HarnessCompare: {
+      required: [
+        "execution_id",
+        "against_execution_id",
+        "pairs",
+        "summary",
+        "versions",
+      ],
+      type: "object",
+      properties: {
+        execution_id: {
+          title: "Execution id",
+          type: "string",
+          format: "uuid",
+        },
+        against_execution_id: {
+          title: "Against execution id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        pairs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessComparePair",
+          },
+        },
+        summary: {
+          $ref: "#/definitions/HarnessCompareSummary",
+        },
+        versions: {
+          $ref: "#/definitions/HarnessCompareVersions",
         },
       },
     },
@@ -62038,6 +66720,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 128,
           minLength: 1,
+        },
+        target_stage: {
+          title: "Target stage",
+          type: "string",
+          enum: ["understand", "environment", "scenarios"],
+        },
+        scenario_delta: {
+          title: "Scenario delta",
+          type: "integer",
+          minimum: 1,
         },
       },
     },
@@ -62163,6 +66855,106 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessConversationOverview: {
+      required: [
+        "environment",
+        "scenario_count",
+        "use_cases",
+        "coverage",
+        "recent_runs",
+        "build_changes",
+        "earlier_messages",
+      ],
+      type: "object",
+      properties: {
+        environment: {
+          title: "Environment",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        scenario_count: {
+          title: "Scenario count",
+          type: "integer",
+        },
+        use_cases: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        coverage: {
+          title: "Coverage",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        recent_runs: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        build_changes: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        earlier_messages: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        drafts: {
+          title: "Drafts",
+          description:
+            "The unsaved changes by piece, where the environment has drafts.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+      },
+    },
+    HarnessConversationOverviewQuery: {
+      type: "object",
+      properties: {},
+    },
+    HarnessConversationPublish: {
+      required: ["digest"],
+      type: "object",
+      properties: {
+        digest: {
+          title: "Digest",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+      },
+    },
     HarnessConversationRead: {
       required: [
         "conversation_id",
@@ -62236,6 +67028,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
       type: "object",
       properties: {},
     },
+    HarnessConversationRunStart: {
+      type: "object",
+      properties: {
+        numbers: {
+          type: "array",
+          items: {
+            type: "integer",
+            minimum: 1,
+          },
+          maxItems: 5000,
+        },
+        ranges: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          maxItems: 100,
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          default: 1,
+          maximum: 20,
+          minimum: 1,
+        },
+        operation_id: {
+          title: "Operation id",
+          type: "string",
+          maxLength: 64,
+        },
+      },
+    },
     HarnessConversationRunStatus: {
       required: [
         "job_id",
@@ -62281,6 +67109,93 @@ export const OPENAPI_CONTRACT = Object.freeze({
         receipts: {
           title: "Receipts",
           type: "object",
+        },
+      },
+    },
+    HarnessConversationRunsQuery: {
+      type: "object",
+      properties: {
+        run_id: {
+          title: "Run id",
+          type: "string",
+          maxLength: 64,
+        },
+        limit: {
+          title: "Limit",
+          type: "integer",
+          maximum: 50,
+          minimum: 1,
+        },
+      },
+    },
+    HarnessConversationScenarioQuery: {
+      type: "object",
+      properties: {
+        numbers: {
+          type: "array",
+          items: {
+            type: "integer",
+            minimum: 1,
+          },
+          maxItems: 5000,
+        },
+        ranges: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          maxItems: 100,
+        },
+        names: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 500,
+        },
+        ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 64,
+            minLength: 1,
+          },
+          maxItems: 1000,
+        },
+        search: {
+          title: "Search",
+          type: "string",
+          maxLength: 500,
+        },
+        filters: {
+          title: "Filters",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        page: {
+          title: "Page",
+          type: "integer",
+          minimum: 1,
+        },
+        page_size: {
+          title: "Page size",
+          type: "integer",
+          maximum: 100,
+          minimum: 1,
+        },
+        full: {
+          title: "Full",
+          type: "boolean",
+          default: false,
         },
       },
     },
@@ -62341,6 +67256,75 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Size",
           type: "integer",
           minimum: 0,
+        },
+      },
+    },
+    HarnessDefaultMove: {
+      required: ["expected_default_id"],
+      type: "object",
+      properties: {
+        expected_default_id: {
+          title: "Expected default id",
+          description:
+            "The default the caller saw; a newer default refuses the move.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessDraftSave: {
+      required: ["drafts", "idempotency_key"],
+      type: "object",
+      properties: {
+        drafts: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessDraftSaveItem",
+          },
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          description: "Repeating a Save with the same key repeats its answer.",
+          type: "string",
+          pattern: "^[A-Za-z0-9_-]+$",
+          maxLength: 128,
+          minLength: 1,
+        },
+      },
+    },
+    HarnessDraftSaveResponse: {
+      required: ["saved", "versions"],
+      type: "object",
+      properties: {
+        saved: {
+          title: "Saved",
+          description: "Each saved piece's new default version, by piece.",
+          type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/HarnessVersion",
+          },
+        },
+        versions: {
+          $ref: "#/definitions/HarnessVersions",
+        },
+      },
+    },
+    HarnessDrafts: {
+      required: ["environment", "suite", "set_aside"],
+      type: "object",
+      properties: {
+        environment: {
+          $ref: "#/definitions/HarnessDraftItem",
+        },
+        suite: {
+          $ref: "#/definitions/HarnessDraftItem",
+        },
+        set_aside: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessDraftItem",
+          },
         },
       },
     },
@@ -62405,6 +67389,125 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         settings: {
           $ref: "#/definitions/HarnessEnvironmentSettings",
+        },
+      },
+    },
+    HarnessEnvironmentEvalEdit: {
+      type: "object",
+      properties: {
+        config: {
+          title: "Config",
+          description: "Updated evaluation configuration parameters.",
+          type: "object",
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        mapping: {
+          title: "Mapping",
+          description:
+            "Updated field mapping between test data and evaluation inputs.",
+          type: "object",
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        model: {
+          title: "Model",
+          description: "Model to use for evaluations.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error_localizer: {
+          title: "Error localizer",
+          description:
+            "Enable granular error localization in evaluation results.",
+          type: "boolean",
+        },
+        kb_id: {
+          title: "Kb id",
+          description:
+            "UUID of a knowledge base to use for grounding. Pass null to clear. Switching template_id without providing an explicit kb_id will clear the KB association.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        filters: {
+          description:
+            "Updated canonical filter list to restrict which test results are evaluated.",
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              column_id: {
+                type: "string",
+                description: "Column or attribute id to filter on.",
+              },
+              property_id: {
+                type: "string",
+                description:
+                  "Optional stable namespaced Property Registry identity.",
+              },
+              display_name: {
+                type: "string",
+                description: "Optional UI label for chips and saved views.",
+              },
+              source: {
+                type: "string",
+                description:
+                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+              },
+              output_type: {
+                type: "string",
+                description:
+                  "Optional metric output type metadata used by eval and annotation filters.",
+              },
+              filter_config: {
+                type: "object",
+                properties: {
+                  filter_type: {
+                    type: "string",
+                    description:
+                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                  },
+                  filter_op: {
+                    type: "string",
+                    description:
+                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                  },
+                  filter_value: {
+                    description:
+                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                  },
+                  col_type: {
+                    type: "string",
+                    description:
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  },
+                  attribute_value_types: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                      enum: ["string", "number", "boolean"],
+                      "x-nullable": true,
+                    },
+                    description:
+                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                  },
+                },
+                required: ["filter_type", "filter_op"],
+                additionalProperties: false,
+              },
+            },
+            required: ["column_id", "filter_config"],
+            additionalProperties: false,
+          },
+          "x-nullable": true,
+        },
+        name: {
+          title: "Name",
+          description: "Updated name for the evaluation configuration.",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -62497,6 +67600,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentRunEvaluations: {
+      required: ["eval_config_ids"],
+      type: "object",
+      properties: {
+        eval_config_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          minItems: 1,
+        },
+        enable_tool_evaluation: {
+          title: "Enable tool evaluation",
+          description:
+            "Saved on the environment before grading starts; left as it is when absent.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessEnvironmentRunEvaluationsQueued: {
+      required: ["call_execution_count"],
+      type: "object",
+      properties: {
+        call_execution_count: {
+          title: "Call execution count",
+          description: "How many of the run's calls were queued for grading.",
+          type: "integer",
+        },
+      },
+    },
     HarnessEnvironmentToolCallEvaluation: {
       required: ["enable_tool_evaluation"],
       type: "object",
@@ -62537,6 +67672,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessEventRejection",
           },
+        },
+      },
+    },
+    HarnessGitHubPush: {
+      required: ["ref", "repository"],
+      type: "object",
+      properties: {
+        ref: {
+          title: "Ref",
+          type: "string",
+          maxLength: 512,
+          minLength: 1,
+        },
+        deleted: {
+          title: "Deleted",
+          type: "boolean",
+          default: false,
+        },
+        repository: {
+          $ref: "#/definitions/HarnessGitHubPushRepository",
         },
       },
     },
@@ -62615,6 +67770,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 128,
           minLength: 1,
         },
+        target_stage: {
+          title: "Target stage",
+          type: "string",
+          enum: ["understand", "environment", "scenarios"],
+        },
+        scenario_delta: {
+          title: "Scenario delta",
+          type: "integer",
+          minimum: 1,
+        },
       },
     },
     HarnessJobCreate: {
@@ -62673,10 +67838,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Metadata",
           type: "object",
           additionalProperties: {
-            type: "string",
+            type: "object",
             "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
           default: {},
+        },
+        credential_values: {
+          title: "Credential values",
+          description:
+            "Agent credential values by name; stored with the environment's first agent version, never echoed.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 65536,
+            minLength: 1,
+          },
         },
       },
     },
@@ -62769,6 +67947,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           "x-nullable": true,
         },
+        versioning: {
+          $ref: "#/definitions/HarnessVersioningFlags",
+        },
       },
     },
     HarnessManifest: {
@@ -62818,6 +67999,135 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           pattern: "^sha256:[0-9a-f]{64}$",
           minLength: 1,
+        },
+      },
+    },
+    HarnessNudge: {
+      required: [
+        "id",
+        "target",
+        "state",
+        "facts",
+        "trigger_agent_version",
+        "base_agent_version",
+        "base_environment_version",
+        "base_suite_version",
+        "result_environment_version",
+        "result_suite_version",
+        "summary",
+        "error",
+        "closed_at",
+        "queued_behind_input",
+        "can_stop",
+        "replaced_by",
+        "card_message_id",
+        "answered_by",
+        "answered_at",
+        "created_at",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        target: {
+          title: "Target",
+          type: "string",
+          enum: ["environment", "suite"],
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "pending",
+            "answered_no",
+            "queued",
+            "running",
+            "applied",
+            "no_change",
+            "replaced",
+            "failed",
+          ],
+        },
+        facts: {
+          $ref: "#/definitions/HarnessNudgeFacts",
+        },
+        trigger_agent_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        base_agent_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        base_environment_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        base_suite_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        result_environment_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        result_suite_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        summary: {
+          title: "Summary",
+          type: "object",
+          "x-nullable": true,
+        },
+        error: {
+          $ref: "#/definitions/HarnessNudgeError",
+        },
+        closed_at: {
+          title: "Closed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        queued_behind_input: {
+          title: "Queued behind input",
+          type: "boolean",
+        },
+        can_stop: {
+          title: "Can stop",
+          type: "boolean",
+        },
+        replaced_by: {
+          $ref: "#/definitions/HarnessNudgeReplacement",
+        },
+        card_message_id: {
+          title: "Card message id",
+          description: "The nudge's card in the environment's chat.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        answered_by: {
+          $ref: "#/definitions/HarnessVersionPerson",
+        },
+        answered_at: {
+          title: "Answered at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    HarnessNudgeAnswer: {
+      required: ["answer"],
+      type: "object",
+      properties: {
+        answer: {
+          title: "Answer",
+          type: "string",
+          enum: ["yes", "no"],
         },
       },
     },
@@ -62877,8 +68187,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Metadata",
           type: "object",
           additionalProperties: {
-            type: "string",
+            type: "object",
             "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
           default: {},
         },
@@ -62889,7 +68201,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "string",
-            maxLength: 4096,
+            maxLength: 65536,
           },
         },
       },
@@ -63056,6 +68368,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maximum: 20,
           minimum: 1,
         },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        environment_version_id: {
+          title: "Environment version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        suite_version_id: {
+          title: "Suite version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
       },
     },
     HarnessRunCreateResponse: {
@@ -63070,6 +68400,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "total_calls",
         "state",
         "stage",
+        "versions",
+        "warnings",
       ],
       type: "object",
       properties: {
@@ -63123,6 +68455,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Stage",
           type: "string",
           minLength: 1,
+        },
+        versions: {
+          $ref: "#/definitions/HarnessRunPinnedVersions",
+        },
+        warnings: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessRunWarning",
+          },
+        },
+      },
+    },
+    HarnessRunPlan: {
+      required: ["versions", "warnings", "bundle_cached"],
+      type: "object",
+      properties: {
+        versions: {
+          $ref: "#/definitions/HarnessRunPinnedVersions",
+        },
+        warnings: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessRunWarning",
+          },
+        },
+        bundle_cached: {
+          title: "Bundle cached",
+          description:
+            "Whether the run replays a cached bundle (true) or prepares one (false); null when it runs without one, as the defaults do before their bundle is cached.",
+          type: "boolean",
+          "x-nullable": true,
         },
       },
     },
@@ -63196,6 +68559,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        agent: {
+          title: "Agent",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
         run_test_id: {
           title: "Run test id",
           type: "string",
@@ -63241,17 +68612,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessSecretValues: {
-      required: ["environment_values"],
+      required: ["environment_values", "environment_id"],
       type: "object",
       properties: {
         environment_values: {
           title: "Environment values",
+          description:
+            "Values by name; may be empty only when an environment's files are given.",
           type: "object",
           additionalProperties: {
             type: "string",
             maxLength: 65536,
             minLength: 1,
           },
+        },
+        environment_id: {
+          title: "Environment id",
+          description:
+            "Change this environment's agent credentials: the values make its next agent version.",
+          type: "string",
+          format: "uuid",
+        },
+        files: {
+          description:
+            "Credential files staged through secret-files/, by their refs.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/SecretReference",
+          },
+          maxItems: 10,
         },
       },
     },
@@ -63276,6 +68665,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         total_bytes: {
           title: "Total bytes",
           type: "integer",
+        },
+      },
+    },
+    HarnessSuiteMember: {
+      required: ["scenario_key", "number", "name", "use_case"],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        number: {
+          title: "Number",
+          type: "integer",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        use_case: {
+          title: "Use case",
+          type: "string",
         },
       },
     },
@@ -63341,6 +68753,177 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Upgrade cta",
           type: "object",
           "x-nullable": true,
+        },
+      },
+    },
+    HarnessVerifyCreate: {
+      required: ["agent_version_id"],
+      type: "object",
+      properties: {
+        agent_version_id: {
+          title: "Agent version id",
+          description:
+            "The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts.",
+          type: "string",
+          format: "uuid",
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          default: 3,
+          maximum: 20,
+          minimum: 1,
+        },
+      },
+    },
+    HarnessVerifyCreateResponse: {
+      required: ["verify_id", "state"],
+      type: "object",
+      properties: {
+        verify_id: {
+          title: "Verify id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "received",
+            "queued",
+            "admitted",
+            "provisioning",
+            "running",
+            "finalizing",
+            "cleaning_up",
+            "retry_wait",
+            "completed",
+            "failed",
+            "canceled",
+          ],
+        },
+      },
+    },
+    HarnessVerifyResult: {
+      required: [
+        "state",
+        "passed",
+        "failed",
+        "total",
+        "trials",
+        "held_back_pass_rate",
+        "limited_validation",
+      ],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "received",
+            "queued",
+            "admitted",
+            "provisioning",
+            "running",
+            "finalizing",
+            "cleaning_up",
+            "retry_wait",
+            "completed",
+            "failed",
+            "canceled",
+          ],
+        },
+        passed: {
+          title: "Passed",
+          type: "integer",
+          minimum: 0,
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+          minimum: 0,
+        },
+        total: {
+          title: "Total",
+          type: "integer",
+          minimum: 0,
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          maximum: 20,
+          minimum: 1,
+        },
+        held_back_pass_rate: {
+          description:
+            "95% range of the trial pass rate, [low, high]; null until it ends.",
+          type: "array",
+          items: {
+            type: "number",
+            maximum: 1,
+            minimum: 0,
+          },
+          maxItems: 2,
+          minItems: 2,
+          "x-nullable": true,
+        },
+        limited_validation: {
+          title: "Limited validation",
+          description:
+            "Too few cases were held back to call a version verified.",
+          type: "boolean",
+        },
+      },
+    },
+    HarnessVersionDiff: {
+      required: ["summary", "diff"],
+      type: "object",
+      properties: {
+        summary: {
+          title: "Summary",
+          type: "string",
+        },
+        diff: {
+          title: "Diff",
+          type: "object",
+          "x-nullable": true,
+        },
+        includes_draft_edits: {
+          title: "Includes draft edits",
+          description:
+            "A rebuild made someone's unsaved edits live with this version.",
+          type: "boolean",
+        },
+        snapshot_diff: {
+          title: "Snapshot diff",
+          description:
+            "Those unsaved edits, against the default they started from.",
+          type: "object",
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessVersions: {
+      required: ["agent", "environment", "suite"],
+      type: "object",
+      properties: {
+        agent: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessVersion",
+          },
+        },
+        environment: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessVersion",
+          },
+        },
+        suite: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessVersion",
+          },
         },
       },
     },
@@ -63415,6 +68998,2300 @@ export const OPENAPI_CONTRACT = Object.freeze({
           default: {},
         },
       },
+    },
+    HostUpdateStatusError: {
+      required: [
+        "status",
+        "type",
+        "code",
+        "detail",
+        "message",
+        "error",
+        "result",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          type: "boolean",
+          enum: [false],
+        },
+        type: {
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "permission_error",
+            "not_found",
+            "api_error",
+            "service_unavailable",
+          ],
+        },
+        code: {
+          type: "string",
+          enum: [
+            "invalid",
+            "not_authenticated",
+            "permission_denied",
+            "2fa_required",
+            "saml_scope_conflict",
+            "not_found",
+            "method_not_allowed",
+            "service_unavailable",
+          ],
+        },
+        detail: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+        },
+        message: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+        },
+        error: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+        },
+        result: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+        },
+      },
+      additionalProperties: false,
+    },
+    HostUpdateStatusResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          type: "boolean",
+          enum: [true],
+        },
+        result: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "api_schema_version",
+            "availability",
+            "reason_code",
+            "freshness",
+            "age_seconds",
+            "discovery_freshness",
+            "versions_freshness",
+            "progress_freshness",
+            "snapshot",
+          ],
+          properties: {
+            api_schema_version: {
+              type: "integer",
+              enum: [1],
+            },
+            availability: {
+              type: "string",
+              enum: ["available", "unavailable", "unsupported"],
+            },
+            reason_code: {
+              type: "string",
+              enum: [
+                "not_configured",
+                "not_reported",
+                "unreadable",
+                "malformed",
+                "unsupported_schema",
+                "untrusted_file",
+                "clock_skew",
+                "installation_mismatch",
+              ],
+              "x-nullable": true,
+            },
+            freshness: {
+              type: "string",
+              enum: ["fresh", "stale", "unknown"],
+            },
+            age_seconds: {
+              type: "integer",
+              minimum: 0,
+              maximum: 9007199254740991,
+              "x-nullable": true,
+            },
+            discovery_freshness: {
+              type: "string",
+              enum: ["fresh", "stale", "unknown"],
+            },
+            versions_freshness: {
+              type: "string",
+              enum: ["fresh", "stale", "unknown"],
+            },
+            progress_freshness: {
+              type: "string",
+              enum: ["fresh", "stale", "unknown"],
+            },
+            snapshot: {
+              type: "object",
+              additionalProperties: false,
+              required: [
+                "schema_version",
+                "sequence",
+                "generated_at",
+                "installation",
+                "versions",
+                "policy",
+                "automation",
+                "discovery",
+                "download",
+                "operation",
+                "last_run",
+                "safety",
+              ],
+              properties: {
+                schema_version: {
+                  type: "integer",
+                  enum: [1],
+                },
+                sequence: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: 9007199254740991,
+                },
+                generated_at: {
+                  type: "string",
+                  minLength: 20,
+                  maxLength: 20,
+                  pattern:
+                    "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                  format: "date-time",
+                },
+                installation: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["slot_id", "topology", "production"],
+                  properties: {
+                    slot_id: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 32,
+                      pattern: "^[0-9a-f]{32}$",
+                    },
+                    topology: {
+                      type: "string",
+                      enum: ["standalone", "distributed"],
+                    },
+                    production: {
+                      type: "boolean",
+                    },
+                  },
+                },
+                versions: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "observed_at",
+                    "runtime_state",
+                    "selected_release",
+                    "running_release",
+                    "components",
+                  ],
+                  properties: {
+                    observed_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    runtime_state: {
+                      type: "string",
+                      enum: ["consistent", "mixed", "unknown"],
+                    },
+                    selected_release: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                    running_release: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                    components: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        additionalProperties: false,
+                        required: [
+                          "component",
+                          "selected_version",
+                          "observed_versions",
+                          "observation",
+                        ],
+                        properties: {
+                          component: {
+                            type: "string",
+                            enum: [
+                              "standalone",
+                              "backend",
+                              "frontend",
+                              "fi_collector",
+                              "agentcc_gateway",
+                              "serving",
+                              "serving_gpu",
+                              "code_executor",
+                              "simulation_runner",
+                            ],
+                          },
+                          selected_version: {
+                            type: "string",
+                            minLength: 1,
+                            maxLength: 128,
+                            pattern:
+                              "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                            "x-nullable": true,
+                          },
+                          observed_versions: {
+                            type: "array",
+                            items: {
+                              type: "string",
+                              minLength: 1,
+                              maxLength: 128,
+                              pattern:
+                                "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                            },
+                            minItems: 0,
+                            maxItems: 8,
+                            uniqueItems: true,
+                          },
+                          observation: {
+                            type: "string",
+                            enum: ["known", "unknown", "not_deployed"],
+                          },
+                        },
+                      },
+                      minItems: 0,
+                      maxItems: 9,
+                    },
+                  },
+                },
+                policy: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "channel",
+                    "version_policy",
+                    "check_interval_seconds",
+                  ],
+                  properties: {
+                    channel: {
+                      type: "string",
+                      enum: ["stable", "beta"],
+                    },
+                    version_policy: {
+                      type: "string",
+                      enum: ["patch", "minor", "major"],
+                    },
+                    check_interval_seconds: {
+                      type: "integer",
+                      minimum: 300,
+                      maximum: 86400,
+                    },
+                  },
+                },
+                automation: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "mode",
+                    "enabled",
+                    "state",
+                    "paused_until",
+                    "pause_indefinite",
+                    "maintenance_window",
+                    "last_tick_at",
+                    "next_check_at",
+                    "next_action_at",
+                  ],
+                  properties: {
+                    mode: {
+                      type: "string",
+                      enum: ["manual", "notify", "download", "apply"],
+                    },
+                    enabled: {
+                      type: "boolean",
+                    },
+                    state: {
+                      type: "string",
+                      enum: [
+                        "not_implemented",
+                        "disabled",
+                        "manual",
+                        "enabled",
+                        "paused",
+                        "blocked",
+                      ],
+                    },
+                    paused_until: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    pause_indefinite: {
+                      type: "boolean",
+                    },
+                    maintenance_window: {
+                      type: "object",
+                      additionalProperties: false,
+                      required: ["kind", "timezone"],
+                      description:
+                        "always: kind/timezone only; interval: also requires days_of_week/start/end.",
+                      "x-oneOf": [
+                        {
+                          type: "object",
+                          additionalProperties: false,
+                          required: ["kind", "timezone"],
+                          properties: {
+                            kind: {
+                              type: "string",
+                              enum: ["always"],
+                            },
+                            timezone: {
+                              type: "string",
+                              minLength: 1,
+                              maxLength: 64,
+                            },
+                          },
+                        },
+                        {
+                          type: "object",
+                          additionalProperties: false,
+                          required: [
+                            "kind",
+                            "timezone",
+                            "days_of_week",
+                            "start",
+                            "end",
+                          ],
+                          properties: {
+                            kind: {
+                              type: "string",
+                              enum: ["interval"],
+                            },
+                            timezone: {
+                              type: "string",
+                              minLength: 1,
+                              maxLength: 64,
+                            },
+                            days_of_week: {
+                              type: "array",
+                              items: {
+                                type: "integer",
+                                minimum: 1,
+                                maximum: 7,
+                              },
+                              minItems: 1,
+                              maxItems: 7,
+                              uniqueItems: true,
+                            },
+                            start: {
+                              type: "string",
+                              minLength: 1,
+                              maxLength: 5,
+                              pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                            },
+                            end: {
+                              type: "string",
+                              minLength: 1,
+                              maxLength: 5,
+                              pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                            },
+                          },
+                        },
+                      ],
+                      properties: {
+                        kind: {
+                          type: "string",
+                          enum: ["always", "interval"],
+                        },
+                        timezone: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 64,
+                        },
+                        days_of_week: {
+                          type: "array",
+                          items: {
+                            type: "integer",
+                            minimum: 1,
+                            maximum: 7,
+                          },
+                          minItems: 1,
+                          maxItems: 7,
+                          uniqueItems: true,
+                        },
+                        start: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 5,
+                          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                        },
+                        end: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 5,
+                          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                        },
+                      },
+                      "x-nullable": true,
+                    },
+                    last_tick_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    next_check_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    next_action_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                  },
+                },
+                discovery: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "state",
+                    "last_attempt_at",
+                    "checked_at",
+                    "candidate_version",
+                    "verification",
+                    "reason_codes",
+                  ],
+                  properties: {
+                    state: {
+                      type: "string",
+                      enum: [
+                        "not_checked",
+                        "current",
+                        "available",
+                        "blocked",
+                        "failed",
+                      ],
+                    },
+                    last_attempt_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    checked_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    candidate_version: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                    verification: {
+                      type: "string",
+                      enum: ["not_checked", "verified", "rejected"],
+                    },
+                    reason_codes: {
+                      type: "array",
+                      items: {
+                        type: "string",
+                        enum: [
+                          "manifest_unavailable",
+                          "signature_rejected",
+                          "channel_mismatch",
+                          "version_policy_blocked",
+                          "release_incomplete",
+                          "discovery_incomplete",
+                          "immutable_release_changed",
+                          "network_unavailable",
+                          "rate_limited",
+                          "cache_invalid",
+                          "ownership_unconfirmed",
+                          "deployment_files_mismatch",
+                          "required_env_missing",
+                          "unsupported_contract",
+                          "uncertified_release",
+                          "configuration_changed",
+                          "backup_required",
+                          "backup_failed",
+                          "backup_proof_invalid",
+                          "backup_expired",
+                          "stale_stage",
+                          "env_conflict",
+                          "initialization_required",
+                          "manual_stage_present",
+                          "recovery_required",
+                          "readiness_failed",
+                          "operation_interrupted",
+                          "operation_timeout",
+                          "rollback_ineligible",
+                          "rollback_failed",
+                          "failed_target_latched",
+                          "running_versions_unknown",
+                          "mixed_running_versions",
+                          "outside_window",
+                          "insufficient_window",
+                          "clock_skew",
+                          "timezone_unavailable",
+                          "host_verifier_required",
+                          "image_digest_mismatch",
+                          "disk_space_insufficient",
+                          "status_reporting_unavailable",
+                          "scheduler_unregistered",
+                          "unsupported_installation",
+                          "control_invalid",
+                          "process_failed",
+                          "restore_not_certified",
+                          "transition_not_rehearsed",
+                          "platform_not_rehearsed",
+                          "restore_procedure_unsupported",
+                          "migration_inventory_unsupported",
+                          "migration_inventory_mismatch",
+                          "backup_inventory_mismatch",
+                          "restore_capacity_unknown",
+                          "restore_capacity_insufficient",
+                          "restore_child_ambiguous",
+                          "restore_verification_failed",
+                          "automatic_recovery_pending",
+                          "restored_after_update_failure",
+                          "migration_exceeds_window",
+                          "insufficient_disk_for_migration",
+                          "backup_exceeds_window",
+                          "insufficient_disk_for_backup",
+                          "migration_stalled",
+                          "disk_watermark_abort",
+                        ],
+                      },
+                      minItems: 0,
+                      maxItems: 12,
+                      uniqueItems: true,
+                    },
+                  },
+                },
+                download: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "state",
+                    "target_version",
+                    "completed_at",
+                    "verified_components",
+                    "reason_codes",
+                  ],
+                  properties: {
+                    state: {
+                      type: "string",
+                      enum: [
+                        "not_downloaded",
+                        "downloading",
+                        "downloaded",
+                        "failed",
+                        "unknown",
+                      ],
+                    },
+                    target_version: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                    completed_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    verified_components: {
+                      type: "array",
+                      items: {
+                        type: "string",
+                        enum: [
+                          "standalone",
+                          "backend",
+                          "frontend",
+                          "fi_collector",
+                          "agentcc_gateway",
+                          "serving",
+                          "serving_gpu",
+                          "code_executor",
+                          "simulation_runner",
+                        ],
+                      },
+                      minItems: 0,
+                      maxItems: 9,
+                      uniqueItems: true,
+                    },
+                    reason_codes: {
+                      type: "array",
+                      items: {
+                        type: "string",
+                        enum: [
+                          "manifest_unavailable",
+                          "signature_rejected",
+                          "channel_mismatch",
+                          "version_policy_blocked",
+                          "release_incomplete",
+                          "discovery_incomplete",
+                          "immutable_release_changed",
+                          "network_unavailable",
+                          "rate_limited",
+                          "cache_invalid",
+                          "ownership_unconfirmed",
+                          "deployment_files_mismatch",
+                          "required_env_missing",
+                          "unsupported_contract",
+                          "uncertified_release",
+                          "configuration_changed",
+                          "backup_required",
+                          "backup_failed",
+                          "backup_proof_invalid",
+                          "backup_expired",
+                          "stale_stage",
+                          "env_conflict",
+                          "initialization_required",
+                          "manual_stage_present",
+                          "recovery_required",
+                          "readiness_failed",
+                          "operation_interrupted",
+                          "operation_timeout",
+                          "rollback_ineligible",
+                          "rollback_failed",
+                          "failed_target_latched",
+                          "running_versions_unknown",
+                          "mixed_running_versions",
+                          "outside_window",
+                          "insufficient_window",
+                          "clock_skew",
+                          "timezone_unavailable",
+                          "host_verifier_required",
+                          "image_digest_mismatch",
+                          "disk_space_insufficient",
+                          "status_reporting_unavailable",
+                          "scheduler_unregistered",
+                          "unsupported_installation",
+                          "control_invalid",
+                          "process_failed",
+                          "restore_not_certified",
+                          "transition_not_rehearsed",
+                          "platform_not_rehearsed",
+                          "restore_procedure_unsupported",
+                          "migration_inventory_unsupported",
+                          "migration_inventory_mismatch",
+                          "backup_inventory_mismatch",
+                          "restore_capacity_unknown",
+                          "restore_capacity_insufficient",
+                          "restore_child_ambiguous",
+                          "restore_verification_failed",
+                          "automatic_recovery_pending",
+                          "restored_after_update_failure",
+                          "migration_exceeds_window",
+                          "insufficient_disk_for_migration",
+                          "backup_exceeds_window",
+                          "insufficient_disk_for_backup",
+                          "migration_stalled",
+                          "disk_watermark_abort",
+                        ],
+                      },
+                      minItems: 0,
+                      maxItems: 12,
+                      uniqueItems: true,
+                    },
+                  },
+                },
+                operation: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "state",
+                    "kind",
+                    "stage",
+                    "started_at",
+                    "finished_at",
+                    "reported_at",
+                    "reason_codes",
+                  ],
+                  properties: {
+                    state: {
+                      type: "string",
+                      enum: [
+                        "idle",
+                        "checking",
+                        "downloading",
+                        "backing_up",
+                        "staged",
+                        "awaiting_initialization",
+                        "applying",
+                        "verifying",
+                        "succeeded",
+                        "failed",
+                        "interrupted",
+                        "rolling_back",
+                        "rolled_back",
+                        "blocked",
+                        "unknown",
+                        "restoring",
+                        "restored",
+                        "recovery_required",
+                      ],
+                    },
+                    kind: {
+                      type: "string",
+                      enum: [
+                        "check",
+                        "download",
+                        "apply",
+                        "rollback",
+                        "restore",
+                      ],
+                      "x-nullable": true,
+                    },
+                    stage: {
+                      type: "string",
+                      enum: [
+                        "planning",
+                        "backup",
+                        "image_fetch",
+                        "image_verification",
+                        "env_selection",
+                        "production_initialization",
+                        "rollout",
+                        "readiness",
+                        "recovery",
+                        "quiescence",
+                        "restore",
+                        "stability",
+                      ],
+                      "x-nullable": true,
+                    },
+                    started_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    finished_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    reported_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    reason_codes: {
+                      type: "array",
+                      items: {
+                        type: "string",
+                        enum: [
+                          "manifest_unavailable",
+                          "signature_rejected",
+                          "channel_mismatch",
+                          "version_policy_blocked",
+                          "release_incomplete",
+                          "discovery_incomplete",
+                          "immutable_release_changed",
+                          "network_unavailable",
+                          "rate_limited",
+                          "cache_invalid",
+                          "ownership_unconfirmed",
+                          "deployment_files_mismatch",
+                          "required_env_missing",
+                          "unsupported_contract",
+                          "uncertified_release",
+                          "configuration_changed",
+                          "backup_required",
+                          "backup_failed",
+                          "backup_proof_invalid",
+                          "backup_expired",
+                          "stale_stage",
+                          "env_conflict",
+                          "initialization_required",
+                          "manual_stage_present",
+                          "recovery_required",
+                          "readiness_failed",
+                          "operation_interrupted",
+                          "operation_timeout",
+                          "rollback_ineligible",
+                          "rollback_failed",
+                          "failed_target_latched",
+                          "running_versions_unknown",
+                          "mixed_running_versions",
+                          "outside_window",
+                          "insufficient_window",
+                          "clock_skew",
+                          "timezone_unavailable",
+                          "host_verifier_required",
+                          "image_digest_mismatch",
+                          "disk_space_insufficient",
+                          "status_reporting_unavailable",
+                          "scheduler_unregistered",
+                          "unsupported_installation",
+                          "control_invalid",
+                          "process_failed",
+                          "restore_not_certified",
+                          "transition_not_rehearsed",
+                          "platform_not_rehearsed",
+                          "restore_procedure_unsupported",
+                          "migration_inventory_unsupported",
+                          "migration_inventory_mismatch",
+                          "backup_inventory_mismatch",
+                          "restore_capacity_unknown",
+                          "restore_capacity_insufficient",
+                          "restore_child_ambiguous",
+                          "restore_verification_failed",
+                          "automatic_recovery_pending",
+                          "restored_after_update_failure",
+                          "migration_exceeds_window",
+                          "insufficient_disk_for_migration",
+                          "backup_exceeds_window",
+                          "insufficient_disk_for_backup",
+                          "migration_stalled",
+                          "disk_watermark_abort",
+                        ],
+                      },
+                      minItems: 0,
+                      maxItems: 12,
+                      uniqueItems: true,
+                    },
+                    phase: {
+                      type: "string",
+                      enum: [
+                        "attempt_reserved",
+                        "quiescing",
+                        "quiesced",
+                        "archiving",
+                        "backup_sealed",
+                        "env_commit_pending",
+                        "env_selected",
+                        "target_create_pending",
+                        "target_created",
+                        "target_starting",
+                        "target_verifying",
+                        "success_decided",
+                        "success_metadata_committed",
+                        "succeeded",
+                        "restore_decided",
+                        "restore_quiescing",
+                        "restore_quiesced",
+                        "restore_inputs_verified",
+                        "restoring_volumes",
+                        "restore_files_verified",
+                        "config_revert_pending",
+                        "config_reverted",
+                        "restore_data_committed",
+                        "previous_create_pending",
+                        "previous_created",
+                        "previous_start_armed",
+                        "previous_starting",
+                        "previous_verifying",
+                        "restore_verified",
+                        "restore_metadata_committed",
+                        "restored",
+                        "abort_quiescence",
+                        "failed_available",
+                      ],
+                      "x-nullable": true,
+                    },
+                  },
+                  "x-anyOf": [
+                    {
+                      type: "object",
+                      additionalProperties: false,
+                      required: [
+                        "state",
+                        "kind",
+                        "stage",
+                        "started_at",
+                        "finished_at",
+                        "reported_at",
+                        "reason_codes",
+                      ],
+                      properties: {
+                        state: {
+                          type: "string",
+                          enum: [
+                            "idle",
+                            "checking",
+                            "downloading",
+                            "backing_up",
+                            "staged",
+                            "awaiting_initialization",
+                            "applying",
+                            "verifying",
+                            "succeeded",
+                            "failed",
+                            "interrupted",
+                            "rolling_back",
+                            "rolled_back",
+                            "blocked",
+                            "unknown",
+                            "restoring",
+                            "restored",
+                            "recovery_required",
+                          ],
+                        },
+                        kind: {
+                          type: "string",
+                          enum: [
+                            "check",
+                            "download",
+                            "apply",
+                            "rollback",
+                            "restore",
+                          ],
+                          "x-nullable": true,
+                        },
+                        stage: {
+                          type: "string",
+                          enum: [
+                            "planning",
+                            "backup",
+                            "image_fetch",
+                            "image_verification",
+                            "env_selection",
+                            "production_initialization",
+                            "rollout",
+                            "readiness",
+                            "recovery",
+                            "quiescence",
+                            "restore",
+                            "stability",
+                          ],
+                          "x-nullable": true,
+                        },
+                        started_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        finished_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        reported_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        reason_codes: {
+                          type: "array",
+                          items: {
+                            type: "string",
+                            enum: [
+                              "manifest_unavailable",
+                              "signature_rejected",
+                              "channel_mismatch",
+                              "version_policy_blocked",
+                              "release_incomplete",
+                              "discovery_incomplete",
+                              "immutable_release_changed",
+                              "network_unavailable",
+                              "rate_limited",
+                              "cache_invalid",
+                              "ownership_unconfirmed",
+                              "deployment_files_mismatch",
+                              "required_env_missing",
+                              "unsupported_contract",
+                              "uncertified_release",
+                              "configuration_changed",
+                              "backup_required",
+                              "backup_failed",
+                              "backup_proof_invalid",
+                              "backup_expired",
+                              "stale_stage",
+                              "env_conflict",
+                              "initialization_required",
+                              "manual_stage_present",
+                              "recovery_required",
+                              "readiness_failed",
+                              "operation_interrupted",
+                              "operation_timeout",
+                              "rollback_ineligible",
+                              "rollback_failed",
+                              "failed_target_latched",
+                              "running_versions_unknown",
+                              "mixed_running_versions",
+                              "outside_window",
+                              "insufficient_window",
+                              "clock_skew",
+                              "timezone_unavailable",
+                              "host_verifier_required",
+                              "image_digest_mismatch",
+                              "disk_space_insufficient",
+                              "status_reporting_unavailable",
+                              "scheduler_unregistered",
+                              "unsupported_installation",
+                              "control_invalid",
+                              "process_failed",
+                              "restore_not_certified",
+                              "transition_not_rehearsed",
+                              "platform_not_rehearsed",
+                              "restore_procedure_unsupported",
+                              "migration_inventory_unsupported",
+                              "migration_inventory_mismatch",
+                              "backup_inventory_mismatch",
+                              "restore_capacity_unknown",
+                              "restore_capacity_insufficient",
+                              "restore_child_ambiguous",
+                              "restore_verification_failed",
+                              "automatic_recovery_pending",
+                              "restored_after_update_failure",
+                              "migration_exceeds_window",
+                              "insufficient_disk_for_migration",
+                              "backup_exceeds_window",
+                              "insufficient_disk_for_backup",
+                              "migration_stalled",
+                              "disk_watermark_abort",
+                            ],
+                          },
+                          minItems: 0,
+                          maxItems: 12,
+                          uniqueItems: true,
+                        },
+                        phase: {
+                          type: "string",
+                          enum: [
+                            "attempt_reserved",
+                            "quiescing",
+                            "quiesced",
+                            "archiving",
+                            "backup_sealed",
+                            "env_commit_pending",
+                            "env_selected",
+                            "target_create_pending",
+                            "target_created",
+                            "target_starting",
+                            "target_verifying",
+                            "success_decided",
+                            "success_metadata_committed",
+                            "succeeded",
+                            "restore_decided",
+                            "restore_quiescing",
+                            "restore_quiesced",
+                            "restore_inputs_verified",
+                            "restoring_volumes",
+                            "restore_files_verified",
+                            "config_revert_pending",
+                            "config_reverted",
+                            "restore_data_committed",
+                            "previous_create_pending",
+                            "previous_created",
+                            "previous_start_armed",
+                            "previous_starting",
+                            "previous_verifying",
+                            "restore_verified",
+                            "restore_metadata_committed",
+                            "restored",
+                            "abort_quiescence",
+                            "failed_available",
+                          ],
+                          "x-nullable": true,
+                        },
+                      },
+                      maxProperties: 7,
+                    },
+                    {
+                      type: "object",
+                      additionalProperties: false,
+                      required: [
+                        "state",
+                        "kind",
+                        "stage",
+                        "started_at",
+                        "finished_at",
+                        "reported_at",
+                        "reason_codes",
+                        "phase",
+                      ],
+                      properties: {
+                        state: {
+                          type: "string",
+                          enum: [
+                            "idle",
+                            "checking",
+                            "downloading",
+                            "backing_up",
+                            "staged",
+                            "awaiting_initialization",
+                            "applying",
+                            "verifying",
+                            "succeeded",
+                            "failed",
+                            "interrupted",
+                            "rolling_back",
+                            "rolled_back",
+                            "blocked",
+                            "unknown",
+                            "restoring",
+                            "restored",
+                            "recovery_required",
+                          ],
+                        },
+                        kind: {
+                          type: "string",
+                          enum: [
+                            "check",
+                            "download",
+                            "apply",
+                            "rollback",
+                            "restore",
+                          ],
+                          "x-nullable": true,
+                        },
+                        stage: {
+                          type: "string",
+                          enum: [
+                            "planning",
+                            "backup",
+                            "image_fetch",
+                            "image_verification",
+                            "env_selection",
+                            "production_initialization",
+                            "rollout",
+                            "readiness",
+                            "recovery",
+                            "quiescence",
+                            "restore",
+                            "stability",
+                          ],
+                          "x-nullable": true,
+                        },
+                        started_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        finished_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        reported_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        reason_codes: {
+                          type: "array",
+                          items: {
+                            type: "string",
+                            enum: [
+                              "manifest_unavailable",
+                              "signature_rejected",
+                              "channel_mismatch",
+                              "version_policy_blocked",
+                              "release_incomplete",
+                              "discovery_incomplete",
+                              "immutable_release_changed",
+                              "network_unavailable",
+                              "rate_limited",
+                              "cache_invalid",
+                              "ownership_unconfirmed",
+                              "deployment_files_mismatch",
+                              "required_env_missing",
+                              "unsupported_contract",
+                              "uncertified_release",
+                              "configuration_changed",
+                              "backup_required",
+                              "backup_failed",
+                              "backup_proof_invalid",
+                              "backup_expired",
+                              "stale_stage",
+                              "env_conflict",
+                              "initialization_required",
+                              "manual_stage_present",
+                              "recovery_required",
+                              "readiness_failed",
+                              "operation_interrupted",
+                              "operation_timeout",
+                              "rollback_ineligible",
+                              "rollback_failed",
+                              "failed_target_latched",
+                              "running_versions_unknown",
+                              "mixed_running_versions",
+                              "outside_window",
+                              "insufficient_window",
+                              "clock_skew",
+                              "timezone_unavailable",
+                              "host_verifier_required",
+                              "image_digest_mismatch",
+                              "disk_space_insufficient",
+                              "status_reporting_unavailable",
+                              "scheduler_unregistered",
+                              "unsupported_installation",
+                              "control_invalid",
+                              "process_failed",
+                              "restore_not_certified",
+                              "transition_not_rehearsed",
+                              "platform_not_rehearsed",
+                              "restore_procedure_unsupported",
+                              "migration_inventory_unsupported",
+                              "migration_inventory_mismatch",
+                              "backup_inventory_mismatch",
+                              "restore_capacity_unknown",
+                              "restore_capacity_insufficient",
+                              "restore_child_ambiguous",
+                              "restore_verification_failed",
+                              "automatic_recovery_pending",
+                              "restored_after_update_failure",
+                              "migration_exceeds_window",
+                              "insufficient_disk_for_migration",
+                              "backup_exceeds_window",
+                              "insufficient_disk_for_backup",
+                              "migration_stalled",
+                              "disk_watermark_abort",
+                            ],
+                          },
+                          minItems: 0,
+                          maxItems: 12,
+                          uniqueItems: true,
+                        },
+                        phase: {
+                          type: "string",
+                          enum: [
+                            "attempt_reserved",
+                            "quiescing",
+                            "quiesced",
+                            "archiving",
+                            "backup_sealed",
+                            "env_commit_pending",
+                            "env_selected",
+                            "target_create_pending",
+                            "target_created",
+                            "target_starting",
+                            "target_verifying",
+                            "success_decided",
+                            "success_metadata_committed",
+                            "succeeded",
+                            "restore_decided",
+                            "restore_quiescing",
+                            "restore_quiesced",
+                            "restore_inputs_verified",
+                            "restoring_volumes",
+                            "restore_files_verified",
+                            "config_revert_pending",
+                            "config_reverted",
+                            "restore_data_committed",
+                            "previous_create_pending",
+                            "previous_created",
+                            "previous_start_armed",
+                            "previous_starting",
+                            "previous_verifying",
+                            "restore_verified",
+                            "restore_metadata_committed",
+                            "restored",
+                            "abort_quiescence",
+                            "failed_available",
+                          ],
+                          "x-nullable": true,
+                        },
+                      },
+                    },
+                  ],
+                },
+                last_run: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "kind",
+                    "automatic",
+                    "outcome",
+                    "from_version",
+                    "target_version",
+                    "finished_at",
+                    "fallback_outcome",
+                  ],
+                  properties: {
+                    kind: {
+                      type: "string",
+                      enum: ["apply", "rollback"],
+                    },
+                    automatic: {
+                      type: "boolean",
+                    },
+                    outcome: {
+                      type: "string",
+                      enum: [
+                        "succeeded",
+                        "staged",
+                        "rolled_back",
+                        "failed_before_rollout",
+                        "failed_during_rollout",
+                        "interrupted_before_rollout",
+                        "interrupted_during_rollout",
+                        "blocked",
+                      ],
+                    },
+                    from_version: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                    target_version: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                    finished_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    fallback_outcome: {
+                      type: "string",
+                      enum: ["none", "succeeded", "failed", "ineligible"],
+                    },
+                    forward_result: {
+                      type: "string",
+                      enum: [
+                        "not_started",
+                        "running",
+                        "succeeded",
+                        "failed",
+                        "interrupted",
+                      ],
+                    },
+                    restore_result: {
+                      type: "string",
+                      enum: [
+                        "not_needed",
+                        "running",
+                        "verified",
+                        "failed",
+                        "recovery_required",
+                      ],
+                    },
+                    effective_version: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                    failed_target_version: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                  },
+                  "x-anyOf": [
+                    {
+                      type: "object",
+                      additionalProperties: false,
+                      required: [
+                        "kind",
+                        "automatic",
+                        "outcome",
+                        "from_version",
+                        "target_version",
+                        "finished_at",
+                        "fallback_outcome",
+                      ],
+                      properties: {
+                        kind: {
+                          type: "string",
+                          enum: ["apply", "rollback"],
+                        },
+                        automatic: {
+                          type: "boolean",
+                        },
+                        outcome: {
+                          type: "string",
+                          enum: [
+                            "succeeded",
+                            "staged",
+                            "rolled_back",
+                            "failed_before_rollout",
+                            "failed_during_rollout",
+                            "interrupted_before_rollout",
+                            "interrupted_during_rollout",
+                            "blocked",
+                          ],
+                        },
+                        from_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                        target_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                        finished_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        fallback_outcome: {
+                          type: "string",
+                          enum: ["none", "succeeded", "failed", "ineligible"],
+                        },
+                        forward_result: {
+                          type: "string",
+                          enum: [
+                            "not_started",
+                            "running",
+                            "succeeded",
+                            "failed",
+                            "interrupted",
+                          ],
+                        },
+                        restore_result: {
+                          type: "string",
+                          enum: [
+                            "not_needed",
+                            "running",
+                            "verified",
+                            "failed",
+                            "recovery_required",
+                          ],
+                        },
+                        effective_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                        failed_target_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                      },
+                      maxProperties: 7,
+                    },
+                    {
+                      type: "object",
+                      additionalProperties: false,
+                      required: [
+                        "kind",
+                        "automatic",
+                        "outcome",
+                        "from_version",
+                        "target_version",
+                        "finished_at",
+                        "fallback_outcome",
+                        "forward_result",
+                        "restore_result",
+                        "effective_version",
+                        "failed_target_version",
+                      ],
+                      properties: {
+                        kind: {
+                          type: "string",
+                          enum: ["apply", "rollback"],
+                        },
+                        automatic: {
+                          type: "boolean",
+                        },
+                        outcome: {
+                          type: "string",
+                          enum: [
+                            "succeeded",
+                            "staged",
+                            "rolled_back",
+                            "failed_before_rollout",
+                            "failed_during_rollout",
+                            "interrupted_before_rollout",
+                            "interrupted_during_rollout",
+                            "blocked",
+                          ],
+                        },
+                        from_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                        target_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                        finished_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        fallback_outcome: {
+                          type: "string",
+                          enum: ["none", "succeeded", "failed", "ineligible"],
+                        },
+                        forward_result: {
+                          type: "string",
+                          enum: [
+                            "not_started",
+                            "running",
+                            "succeeded",
+                            "failed",
+                            "interrupted",
+                          ],
+                        },
+                        restore_result: {
+                          type: "string",
+                          enum: [
+                            "not_needed",
+                            "running",
+                            "verified",
+                            "failed",
+                            "recovery_required",
+                          ],
+                        },
+                        effective_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                        failed_target_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                      },
+                    },
+                  ],
+                  "x-nullable": true,
+                },
+                safety: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "backup_required",
+                    "backup_state",
+                    "readiness",
+                    "automatic_rollback",
+                    "operator_action",
+                  ],
+                  properties: {
+                    backup_required: {
+                      type: "boolean",
+                    },
+                    backup_state: {
+                      type: "string",
+                      enum: [
+                        "not_evaluated",
+                        "required",
+                        "reported_complete",
+                        "failed",
+                        "explicitly_skipped",
+                        "pending",
+                        "quiescing",
+                        "sealed",
+                      ],
+                    },
+                    readiness: {
+                      type: "string",
+                      enum: ["unknown", "pending", "passed", "failed"],
+                    },
+                    automatic_rollback: {
+                      type: "string",
+                      enum: [
+                        "unsupported",
+                        "disabled",
+                        "eligible",
+                        "ineligible",
+                      ],
+                    },
+                    operator_action: {
+                      type: "string",
+                      enum: [
+                        "none",
+                        "inspect_host",
+                        "prepare_installation",
+                        "initialize_then_apply",
+                        "review_recovery",
+                        "repair_status_reporting",
+                      ],
+                    },
+                    fallback_strategy: {
+                      type: "string",
+                      enum: ["restore_backup", "none"],
+                    },
+                    restore_state: {
+                      type: "string",
+                      enum: [
+                        "not_needed",
+                        "running",
+                        "verified",
+                        "failed",
+                        "recovery_required",
+                      ],
+                    },
+                    snapshot_at: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    loss_window_start: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    loss_window_end: {
+                      type: "string",
+                      minLength: 20,
+                      maxLength: 20,
+                      pattern:
+                        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      format: "date-time",
+                      "x-nullable": true,
+                    },
+                    loss_window_qualification: {
+                      type: "string",
+                      enum: [
+                        "not_applicable",
+                        "bounded",
+                        "conservative",
+                        "unknown",
+                      ],
+                    },
+                    guidance_id: {
+                      type: "string",
+                      enum: ["none", "inspect_host", "review_recovery"],
+                    },
+                    estimates: {
+                      type: "object",
+                      additionalProperties: false,
+                      required: [
+                        "backup_seconds",
+                        "migration_seconds",
+                        "restore_seconds",
+                        "extra_disk_bytes",
+                        "backup_required_free_bytes",
+                        "docker_required_free_bytes",
+                        "protected_restore_reserve_bytes",
+                        "forward_seconds",
+                        "recovery_seconds",
+                        "total_seconds",
+                        "migration_deadline_seconds",
+                        "migration_stall_timeout_seconds",
+                      ],
+                      properties: {
+                        backup_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        migration_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        restore_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        extra_disk_bytes: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        backup_required_free_bytes: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        docker_required_free_bytes: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        protected_restore_reserve_bytes: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        forward_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        recovery_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        total_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        migration_deadline_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                        migration_stall_timeout_seconds: {
+                          type: "integer",
+                          minimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      "x-nullable": true,
+                    },
+                    failed_target_version: {
+                      type: "string",
+                      minLength: 1,
+                      maxLength: 128,
+                      pattern:
+                        "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                      "x-nullable": true,
+                    },
+                  },
+                  "x-anyOf": [
+                    {
+                      type: "object",
+                      additionalProperties: false,
+                      required: [
+                        "backup_required",
+                        "backup_state",
+                        "readiness",
+                        "automatic_rollback",
+                        "operator_action",
+                      ],
+                      properties: {
+                        backup_required: {
+                          type: "boolean",
+                        },
+                        backup_state: {
+                          type: "string",
+                          enum: [
+                            "not_evaluated",
+                            "required",
+                            "reported_complete",
+                            "failed",
+                            "explicitly_skipped",
+                            "pending",
+                            "quiescing",
+                            "sealed",
+                          ],
+                        },
+                        readiness: {
+                          type: "string",
+                          enum: ["unknown", "pending", "passed", "failed"],
+                        },
+                        automatic_rollback: {
+                          type: "string",
+                          enum: [
+                            "unsupported",
+                            "disabled",
+                            "eligible",
+                            "ineligible",
+                          ],
+                        },
+                        operator_action: {
+                          type: "string",
+                          enum: [
+                            "none",
+                            "inspect_host",
+                            "prepare_installation",
+                            "initialize_then_apply",
+                            "review_recovery",
+                            "repair_status_reporting",
+                          ],
+                        },
+                        fallback_strategy: {
+                          type: "string",
+                          enum: ["restore_backup", "none"],
+                        },
+                        restore_state: {
+                          type: "string",
+                          enum: [
+                            "not_needed",
+                            "running",
+                            "verified",
+                            "failed",
+                            "recovery_required",
+                          ],
+                        },
+                        snapshot_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        loss_window_start: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        loss_window_end: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        loss_window_qualification: {
+                          type: "string",
+                          enum: [
+                            "not_applicable",
+                            "bounded",
+                            "conservative",
+                            "unknown",
+                          ],
+                        },
+                        guidance_id: {
+                          type: "string",
+                          enum: ["none", "inspect_host", "review_recovery"],
+                        },
+                        estimates: {
+                          type: "object",
+                          additionalProperties: false,
+                          required: [
+                            "backup_seconds",
+                            "migration_seconds",
+                            "restore_seconds",
+                            "extra_disk_bytes",
+                            "backup_required_free_bytes",
+                            "docker_required_free_bytes",
+                            "protected_restore_reserve_bytes",
+                            "forward_seconds",
+                            "recovery_seconds",
+                            "total_seconds",
+                            "migration_deadline_seconds",
+                            "migration_stall_timeout_seconds",
+                          ],
+                          properties: {
+                            backup_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            migration_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            restore_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            extra_disk_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            backup_required_free_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            docker_required_free_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            protected_restore_reserve_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            forward_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            recovery_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            total_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            migration_deadline_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            migration_stall_timeout_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                          },
+                          "x-nullable": true,
+                        },
+                        failed_target_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                      },
+                      maxProperties: 5,
+                    },
+                    {
+                      type: "object",
+                      additionalProperties: false,
+                      required: [
+                        "backup_required",
+                        "backup_state",
+                        "readiness",
+                        "automatic_rollback",
+                        "operator_action",
+                        "fallback_strategy",
+                        "restore_state",
+                        "snapshot_at",
+                        "loss_window_start",
+                        "loss_window_end",
+                        "loss_window_qualification",
+                        "guidance_id",
+                        "estimates",
+                        "failed_target_version",
+                      ],
+                      properties: {
+                        backup_required: {
+                          type: "boolean",
+                        },
+                        backup_state: {
+                          type: "string",
+                          enum: [
+                            "not_evaluated",
+                            "required",
+                            "reported_complete",
+                            "failed",
+                            "explicitly_skipped",
+                            "pending",
+                            "quiescing",
+                            "sealed",
+                          ],
+                        },
+                        readiness: {
+                          type: "string",
+                          enum: ["unknown", "pending", "passed", "failed"],
+                        },
+                        automatic_rollback: {
+                          type: "string",
+                          enum: [
+                            "unsupported",
+                            "disabled",
+                            "eligible",
+                            "ineligible",
+                          ],
+                        },
+                        operator_action: {
+                          type: "string",
+                          enum: [
+                            "none",
+                            "inspect_host",
+                            "prepare_installation",
+                            "initialize_then_apply",
+                            "review_recovery",
+                            "repair_status_reporting",
+                          ],
+                        },
+                        fallback_strategy: {
+                          type: "string",
+                          enum: ["restore_backup", "none"],
+                        },
+                        restore_state: {
+                          type: "string",
+                          enum: [
+                            "not_needed",
+                            "running",
+                            "verified",
+                            "failed",
+                            "recovery_required",
+                          ],
+                        },
+                        snapshot_at: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        loss_window_start: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        loss_window_end: {
+                          type: "string",
+                          minLength: 20,
+                          maxLength: 20,
+                          pattern:
+                            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                          format: "date-time",
+                          "x-nullable": true,
+                        },
+                        loss_window_qualification: {
+                          type: "string",
+                          enum: [
+                            "not_applicable",
+                            "bounded",
+                            "conservative",
+                            "unknown",
+                          ],
+                        },
+                        guidance_id: {
+                          type: "string",
+                          enum: ["none", "inspect_host", "review_recovery"],
+                        },
+                        estimates: {
+                          type: "object",
+                          additionalProperties: false,
+                          required: [
+                            "backup_seconds",
+                            "migration_seconds",
+                            "restore_seconds",
+                            "extra_disk_bytes",
+                            "backup_required_free_bytes",
+                            "docker_required_free_bytes",
+                            "protected_restore_reserve_bytes",
+                            "forward_seconds",
+                            "recovery_seconds",
+                            "total_seconds",
+                            "migration_deadline_seconds",
+                            "migration_stall_timeout_seconds",
+                          ],
+                          properties: {
+                            backup_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            migration_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            restore_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            extra_disk_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            backup_required_free_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            docker_required_free_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            protected_restore_reserve_bytes: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            forward_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            recovery_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            total_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            migration_deadline_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                            migration_stall_timeout_seconds: {
+                              type: "integer",
+                              minimum: 0,
+                              maximum: 9007199254740991,
+                            },
+                          },
+                          "x-nullable": true,
+                        },
+                        failed_target_version: {
+                          type: "string",
+                          minLength: 1,
+                          maxLength: 128,
+                          pattern:
+                            "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$",
+                          "x-nullable": true,
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+              "x-nullable": true,
+            },
+          },
+        },
+      },
+      additionalProperties: false,
     },
     HuggingFaceAddRowsRequest: {
       required: [
@@ -63588,6 +71465,1120 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    InsightAsk: {
+      required: ["question"],
+      type: "object",
+      properties: {
+        question: {
+          title: "Question",
+          type: "string",
+          maxLength: 500,
+          minLength: 1,
+        },
+        history: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightAskMessage",
+          },
+        },
+      },
+    },
+    InsightAskResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightAskResult",
+        },
+      },
+    },
+    InsightConfigListResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightConfigListResult",
+        },
+      },
+    },
+    InsightConfigPatch: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        reset_taxonomy: {
+          title: "Reset taxonomy",
+          type: "boolean",
+          default: false,
+        },
+        question: {
+          title: "Question",
+          type: "string",
+          maxLength: 500,
+          minLength: 1,
+        },
+        lens: {
+          title: "Lens",
+          type: "string",
+          enum: ["usage", "failures", "experience", "personas", "custom"],
+        },
+        agent_description: {
+          title: "Agent description",
+          type: "string",
+          maxLength: 500,
+        },
+        instructions: {
+          title: "Instructions",
+          type: "string",
+          maxLength: 1000,
+        },
+        attributes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightAttribute",
+          },
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+          maximum: 1000,
+          minimum: 10,
+        },
+        scope: {
+          $ref: "#/definitions/InsightScope",
+        },
+      },
+    },
+    InsightConfigResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightConfigItem",
+        },
+      },
+    },
+    InsightDraft: {
+      required: ["project_id", "unit", "lens", "sample_ids"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["traces", "sessions", "users"],
+        },
+        lens: {
+          title: "Lens",
+          type: "string",
+          enum: ["usage", "failures", "experience", "personas", "custom"],
+        },
+        goal: {
+          title: "Goal",
+          type: "string",
+          maxLength: 500,
+        },
+        agent_description: {
+          title: "Agent description",
+          type: "string",
+          maxLength: 500,
+        },
+        sample_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 5,
+          minItems: 1,
+        },
+      },
+    },
+    InsightDraftResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightDraftResult",
+        },
+      },
+    },
+    InsightEstimateRequest: {
+      required: ["project_id"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        action: {
+          title: "Action",
+          type: "string",
+          enum: ["run", "ask", "draft", "preview"],
+          default: "run",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["traces", "sessions", "users"],
+        },
+        scope: {
+          $ref: "#/definitions/InsightScope",
+        },
+        population_size: {
+          title: "Population size",
+          type: "integer",
+          minimum: 1,
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+          maximum: 1000,
+          minimum: 10,
+        },
+      },
+    },
+    InsightEstimateResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightEstimateResult",
+        },
+      },
+    },
+    InsightPreview: {
+      required: ["project_id", "config", "unit_ids"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        config: {
+          $ref: "#/definitions/InsightConfigInput",
+        },
+        unit_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 3,
+          minItems: 1,
+        },
+      },
+    },
+    InsightPreviewResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightPreviewResult",
+        },
+      },
+    },
+    InsightRunCreate: {
+      required: ["project_id"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        config_id: {
+          title: "Config id",
+          type: "string",
+          format: "uuid",
+        },
+        config: {
+          $ref: "#/definitions/InsightConfigInput",
+        },
+        scope: {
+          $ref: "#/definitions/InsightScope",
+        },
+        population: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightPopulationItem",
+          },
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+          maximum: 1000,
+          minimum: 10,
+        },
+        reset_taxonomy: {
+          title: "Reset taxonomy",
+          type: "boolean",
+          default: false,
+        },
+      },
+    },
+    InsightRunCreatedResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightRunCreatedResult",
+        },
+      },
+    },
+    InsightRunResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightRunDetail",
+        },
+      },
+    },
+    InsightRunStopResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightRunStopResult",
+        },
+      },
+    },
+    InsightUnitsResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightUnitsResult",
+        },
+      },
+    },
+    InstantEvalBadRequest: {
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          title: "Result",
+          type: "object",
+          "x-string-or-object": true,
+          description: "String or JSON object.",
+          properties: {
+            message: {
+              type: "string",
+            },
+            error_code: {
+              type: "string",
+            },
+            settings_path: {
+              type: "string",
+            },
+          },
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+      },
+    },
+    InstantEvalControlRequest: {
+      required: ["project_id", "eval_task_id", "action"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        eval_task_id: {
+          title: "Eval task id",
+          type: "string",
+          format: "uuid",
+        },
+        action: {
+          title: "Action",
+          type: "string",
+          enum: ["pause", "resume", "cancel", "retry_failed", "read_more"],
+        },
+        more: {
+          title: "More",
+          type: "integer",
+          minimum: 1,
+          "x-nullable": true,
+        },
+        confirm: {
+          title: "Confirm",
+          type: "boolean",
+          default: false,
+        },
+      },
+    },
+    InstantEvalControlResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InstantEvalControl",
+        },
+      },
+    },
+    InstantEvalEstimateRequest: {
+      required: ["project_id", "unit"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["traces", "spans", "sessions", "users"],
+        },
+        filters: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              column_id: {
+                type: "string",
+                description: "Column or attribute id to filter on.",
+              },
+              property_id: {
+                type: "string",
+                description:
+                  "Optional stable namespaced Property Registry identity.",
+              },
+              display_name: {
+                type: "string",
+                description: "Optional UI label for chips and saved views.",
+              },
+              source: {
+                type: "string",
+                description:
+                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+              },
+              output_type: {
+                type: "string",
+                description:
+                  "Optional metric output type metadata used by eval and annotation filters.",
+              },
+              filter_config: {
+                type: "object",
+                properties: {
+                  filter_type: {
+                    type: "string",
+                    description:
+                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                  },
+                  filter_op: {
+                    type: "string",
+                    description:
+                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                  },
+                  filter_value: {
+                    description:
+                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                  },
+                  col_type: {
+                    type: "string",
+                    description:
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  },
+                  attribute_value_types: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                      enum: ["string", "number", "boolean"],
+                      "x-nullable": true,
+                    },
+                    description:
+                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                  },
+                },
+                required: ["filter_type", "filter_op"],
+                additionalProperties: false,
+              },
+            },
+            required: ["column_id", "filter_config"],
+            additionalProperties: false,
+          },
+          default: [],
+        },
+        ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 5000,
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+          minimum: 1,
+          "x-nullable": true,
+        },
+        date_preset: {
+          title: "Date preset",
+          type: "string",
+          enum: [
+            "Today",
+            "Yesterday",
+            "7D",
+            "30D",
+            "3M",
+            "6M",
+            "12M",
+            "Custom",
+          ],
+          "x-nullable": true,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          maxLength: 300,
+          "x-nullable": true,
+        },
+        search: {
+          title: "Search",
+          type: "string",
+          maxLength: 200,
+        },
+        questions: {
+          title: "Questions",
+          type: "integer",
+          default: 1,
+          maximum: 5,
+          minimum: 1,
+        },
+      },
+    },
+    InstantEvalEstimateResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InstantEvalEstimate",
+        },
+      },
+    },
+    InstantEvalExportQuery: {
+      required: ["project_id", "eval_task_id"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        eval_task_id: {
+          title: "Eval task id",
+          type: "string",
+          format: "uuid",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["traces", "spans", "sessions", "users"],
+        },
+        config_ids: {
+          title: "Config ids",
+          type: "string",
+          maxLength: 2000,
+        },
+        tz: {
+          title: "Tz",
+          type: "string",
+          default: "UTC",
+          maxLength: 64,
+          minLength: 1,
+        },
+        config_id: {
+          title: "Config id",
+          type: "string",
+          format: "uuid",
+        },
+        answer: {
+          title: "Answer",
+          type: "string",
+          maxLength: 500,
+          minLength: 1,
+        },
+        answers: {
+          title: "Answers",
+          type: "string",
+          maxLength: 4000,
+          minLength: 1,
+        },
+        time_from: {
+          title: "Time from",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        time_to: {
+          title: "Time to",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        group: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 300,
+            minLength: 1,
+          },
+          maxItems: 100000,
+        },
+        user: {
+          title: "User",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        error: {
+          title: "Error",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        unsure: {
+          title: "Unsure",
+          type: "boolean",
+          default: false,
+        },
+        q: {
+          title: "Q",
+          type: "string",
+          maxLength: 200,
+        },
+        cursor: {
+          title: "Cursor",
+          type: "string",
+          maxLength: 500,
+        },
+        page_size: {
+          title: "Page size",
+          type: "integer",
+          default: 50,
+          maximum: 1500,
+          minimum: 1,
+        },
+        compact: {
+          title: "Compact",
+          type: "boolean",
+          default: false,
+        },
+        sort: {
+          title: "Sort",
+          type: "string",
+          enum: ["time", "-time", "confidence"],
+          default: "-time",
+        },
+        sessions: {
+          title: "Sessions",
+          type: "boolean",
+          default: false,
+        },
+      },
+    },
+    InstantEvalLimitError: {
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          $ref: "#/definitions/InstantEvalLimitDetail",
+        },
+      },
+    },
+    InstantEvalRowsQuery: {
+      required: ["project_id", "eval_task_id"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        eval_task_id: {
+          title: "Eval task id",
+          type: "string",
+          format: "uuid",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["traces", "spans", "sessions", "users"],
+        },
+        config_ids: {
+          title: "Config ids",
+          type: "string",
+          maxLength: 2000,
+        },
+        tz: {
+          title: "Tz",
+          type: "string",
+          default: "UTC",
+          maxLength: 64,
+          minLength: 1,
+        },
+        config_id: {
+          title: "Config id",
+          type: "string",
+          format: "uuid",
+        },
+        answer: {
+          title: "Answer",
+          type: "string",
+          maxLength: 500,
+          minLength: 1,
+        },
+        answers: {
+          title: "Answers",
+          type: "string",
+          maxLength: 4000,
+          minLength: 1,
+        },
+        time_from: {
+          title: "Time from",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        time_to: {
+          title: "Time to",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        group: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 300,
+            minLength: 1,
+          },
+          maxItems: 100000,
+        },
+        user: {
+          title: "User",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        error: {
+          title: "Error",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        unsure: {
+          title: "Unsure",
+          type: "boolean",
+          default: false,
+        },
+        q: {
+          title: "Q",
+          type: "string",
+          maxLength: 200,
+        },
+        cursor: {
+          title: "Cursor",
+          type: "string",
+          maxLength: 500,
+        },
+        page_size: {
+          title: "Page size",
+          type: "integer",
+          default: 50,
+          maximum: 1500,
+          minimum: 1,
+        },
+        compact: {
+          title: "Compact",
+          type: "boolean",
+          default: false,
+        },
+        sort: {
+          title: "Sort",
+          type: "string",
+          enum: ["time", "-time", "confidence"],
+          default: "-time",
+        },
+      },
+    },
+    InstantEvalRowsResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InstantEvalRowsResult",
+        },
+      },
+    },
+    InstantEvalRunsResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InstantEvalRunsResult",
+        },
+      },
+    },
+    InstantEvalStartRequest: {
+      required: ["project_id", "unit", "config_ids"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["traces", "spans", "sessions", "users"],
+        },
+        filters: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              column_id: {
+                type: "string",
+                description: "Column or attribute id to filter on.",
+              },
+              property_id: {
+                type: "string",
+                description:
+                  "Optional stable namespaced Property Registry identity.",
+              },
+              display_name: {
+                type: "string",
+                description: "Optional UI label for chips and saved views.",
+              },
+              source: {
+                type: "string",
+                description:
+                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+              },
+              output_type: {
+                type: "string",
+                description:
+                  "Optional metric output type metadata used by eval and annotation filters.",
+              },
+              filter_config: {
+                type: "object",
+                properties: {
+                  filter_type: {
+                    type: "string",
+                    description:
+                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                  },
+                  filter_op: {
+                    type: "string",
+                    description:
+                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                  },
+                  filter_value: {
+                    description:
+                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                  },
+                  col_type: {
+                    type: "string",
+                    description:
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  },
+                  attribute_value_types: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                      enum: ["string", "number", "boolean"],
+                      "x-nullable": true,
+                    },
+                    description:
+                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                  },
+                },
+                required: ["filter_type", "filter_op"],
+                additionalProperties: false,
+              },
+            },
+            required: ["column_id", "filter_config"],
+            additionalProperties: false,
+          },
+          default: [],
+        },
+        ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 5000,
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+          minimum: 1,
+          "x-nullable": true,
+        },
+        date_preset: {
+          title: "Date preset",
+          type: "string",
+          enum: [
+            "Today",
+            "Yesterday",
+            "7D",
+            "30D",
+            "3M",
+            "6M",
+            "12M",
+            "Custom",
+          ],
+          "x-nullable": true,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          maxLength: 300,
+          "x-nullable": true,
+        },
+        search: {
+          title: "Search",
+          type: "string",
+          maxLength: 200,
+        },
+        config_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 5,
+          minItems: 1,
+        },
+        confirm: {
+          title: "Confirm",
+          type: "boolean",
+          default: false,
+        },
+        confirmed_rows: {
+          title: "Confirmed rows",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    InstantEvalStartResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InstantEvalStart",
+        },
+      },
+    },
+    InstantEvalSummaryResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InstantEvalSummary",
+        },
+      },
+    },
     IntegrationConnectionCreate: {
       required: ["platform"],
       type: "object",
@@ -63604,6 +72595,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "cloud_storage",
             "message_queue",
             "linear",
+            "slack",
           ],
         },
         host_url: {
@@ -63722,6 +72714,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "cloud_storage",
             "message_queue",
             "linear",
+            "slack",
           ],
         },
         display_name: {
@@ -66467,6 +75460,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ModelListResponse: {
+      required: ["count", "results"],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          "x-nullable": true,
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ModelListEntry",
+          },
+        },
+      },
+    },
     ModelParametersResponse: {
       required: ["status", "result"],
       type: "object",
@@ -66877,6 +75896,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "guardrail",
             "evaluator",
             "conversation",
+            "internal",
           ],
         },
         start_time: {
@@ -67967,7 +76987,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     OrgConfigBulkResponse: {
-      required: ["status", "result"],
+      required: ["status", "result", "unbuilt_org_ids"],
       type: "object",
       properties: {
         status: {
@@ -67979,6 +76999,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             $ref: "#/definitions/OrgConfigBulkItem",
+          },
+        },
+        unbuilt_org_ids: {
+          description:
+            "Orgs with an active config that could not be built. The gateway keeps their last good config instead of dropping them.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
           },
         },
       },
@@ -72042,6 +81071,108 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    Reliability: {
+      required: [
+        "trials",
+        "scenarios",
+        "consistent_pass",
+        "passed_at_least_once",
+        "repeated",
+        "flaky",
+        "flip_rate",
+        "k",
+        "inconclusive",
+        "pass_hat_1",
+        "pass_hat_k",
+        "pass_hat_k_scenarios",
+        "pass_hat_k_passed",
+        "pass_hat_k_excluded",
+        "trials_passed",
+        "trials_evaluated",
+        "pass_rate_interval",
+        "rows",
+      ],
+      type: "object",
+      properties: {
+        trials: {
+          title: "Trials",
+          type: "integer",
+        },
+        scenarios: {
+          title: "Scenarios",
+          type: "integer",
+        },
+        consistent_pass: {
+          title: "Consistent pass",
+          type: "integer",
+        },
+        passed_at_least_once: {
+          title: "Passed at least once",
+          type: "integer",
+        },
+        repeated: {
+          title: "Repeated",
+          type: "integer",
+        },
+        flaky: {
+          title: "Flaky",
+          type: "integer",
+        },
+        flip_rate: {
+          title: "Flip rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        k: {
+          title: "K",
+          type: "integer",
+          "x-nullable": true,
+        },
+        inconclusive: {
+          title: "Inconclusive",
+          type: "integer",
+        },
+        pass_hat_1: {
+          title: "Pass hat 1",
+          type: "number",
+          "x-nullable": true,
+        },
+        pass_hat_k: {
+          title: "Pass hat k",
+          type: "number",
+          "x-nullable": true,
+        },
+        pass_hat_k_scenarios: {
+          title: "Pass hat k scenarios",
+          type: "integer",
+        },
+        pass_hat_k_passed: {
+          title: "Pass hat k passed",
+          type: "integer",
+        },
+        pass_hat_k_excluded: {
+          title: "Pass hat k excluded",
+          type: "integer",
+        },
+        trials_passed: {
+          title: "Trials passed",
+          type: "integer",
+        },
+        trials_evaluated: {
+          title: "Trials evaluated",
+          type: "integer",
+        },
+        pass_rate_interval: {
+          $ref: "#/definitions/ReliabilityInterval",
+        },
+        rows: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ReliabilityRow",
+          },
+        },
+      },
+    },
     RenewGroupingFeature: {
       required: ["lease_token", "action"],
       type: "object",
@@ -72410,6 +81541,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "execution",
         "summary",
         "scenario_risk",
+        "reliability",
         "turn_distribution",
         "evaluations",
         "failure_breakdown",
@@ -72435,6 +81567,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/Risk",
           },
+        },
+        reliability: {
+          $ref: "#/definitions/Reliability",
         },
         turn_distribution: {
           type: "array",
@@ -72491,6 +81626,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "results",
         "groups",
         "facets",
+        "status_counts",
         "evaluation_columns",
       ],
       type: "object",
@@ -72499,7 +81635,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/RunExecution",
         },
         summary: {
-          $ref: "#/definitions/RunSummary",
+          $ref: "#/definitions/SimulateRunV3CallsSummary",
         },
         count: {
           title: "Count",
@@ -72531,6 +81667,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         facets: {
           $ref: "#/definitions/RunFacets",
+        },
+        status_counts: {
+          $ref: "#/definitions/OutcomeCounts",
         },
         evaluation_columns: {
           type: "array",
@@ -72618,7 +81757,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     RunNewEvalsResponse: {
-      required: ["message", "run_test_id", "call_execution_count"],
+      required: [
+        "message",
+        "run_test_id",
+        "call_execution_count",
+        "dispatched",
+      ],
       type: "object",
       properties: {
         message: {
@@ -72634,6 +81778,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         call_execution_count: {
           title: "Call execution count",
           type: "integer",
+        },
+        dispatched: {
+          title: "Dispatched",
+          type: "boolean",
         },
       },
     },
@@ -73001,6 +82149,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/TestExecutionItemResponse",
           },
+          readOnly: true,
+        },
+        covered_scenario_count: {
+          title: "Covered scenario count",
+          type: "integer",
           readOnly: true,
         },
       },
@@ -73453,6 +82606,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RunTracesV3Response: {
+      required: ["project_id", "traces"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        traces: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunTrace",
+          },
+        },
+      },
+    },
     SAMLErrorResponse: {
       required: ["status"],
       type: "object",
@@ -73812,6 +82983,416 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "email",
           maxLength: 255,
           minLength: 1,
+        },
+      },
+    },
+    SQLCatalog: {
+      required: [
+        "identity_semantics",
+        "version",
+        "datasets",
+        "examples",
+        "max_rows",
+        "max_window_days",
+        "can_save",
+      ],
+      type: "object",
+      properties: {
+        identity_semantics: {
+          title: "Identity semantics",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+        },
+        datasets: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLDataset",
+          },
+        },
+        examples: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLExample",
+          },
+        },
+        max_rows: {
+          title: "Max rows",
+          type: "integer",
+        },
+        max_window_days: {
+          title: "Max window days",
+          type: "integer",
+        },
+        can_save: {
+          title: "Can save",
+          type: "boolean",
+        },
+      },
+    },
+    SQLEstimate: {
+      required: [
+        "status",
+        "reason",
+        "sources",
+        "max_rows_to_read",
+        "exceeds_scan_bound",
+        "elapsed_ms",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["ok", "unavailable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        sources: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLEstimateSource",
+          },
+        },
+        max_rows_to_read: {
+          title: "Max rows to read",
+          type: "integer",
+        },
+        exceeds_scan_bound: {
+          title: "Exceeds scan bound",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        elapsed_ms: {
+          title: "Elapsed ms",
+          type: "integer",
+        },
+      },
+    },
+    SQLExecution: {
+      required: [
+        "id",
+        "project_id",
+        "sql",
+        "state",
+        "created_at",
+        "expires_at",
+        "finished_at",
+        "error",
+        "result",
+        "expired",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          minLength: 1,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: ["queued", "running", "succeeded", "failed", "cancelled"],
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        reused: {
+          title: "Reused",
+          type: "boolean",
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        result: {
+          $ref: "#/definitions/SQLResult",
+        },
+        expired: {
+          title: "Expired",
+          type: "boolean",
+        },
+      },
+    },
+    SQLHistory: {
+      required: ["items", "has_more"],
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLExecution",
+          },
+        },
+        has_more: {
+          title: "Has more",
+          type: "boolean",
+        },
+      },
+    },
+    SQLProject: {
+      required: ["project_id"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    SQLQueryInput: {
+      required: ["project_id", "sql", "start", "end"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          maxLength: 32768,
+          minLength: 1,
+        },
+        start: {
+          title: "Start",
+          type: "string",
+          format: "date-time",
+        },
+        end: {
+          title: "End",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    SQLRun: {
+      required: ["project_id", "sql", "start", "end"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          maxLength: 32768,
+          minLength: 1,
+        },
+        start: {
+          title: "Start",
+          type: "string",
+          format: "date-time",
+        },
+        end: {
+          title: "End",
+          type: "string",
+          format: "date-time",
+        },
+        reuse: {
+          title: "Reuse",
+          type: "boolean",
+          default: true,
+        },
+      },
+    },
+    SQLRunSaved: {
+      required: ["project_id", "saved_query_id"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        saved_query_id: {
+          title: "Saved query id",
+          type: "string",
+          format: "uuid",
+        },
+        start: {
+          title: "Start",
+          type: "string",
+          format: "date-time",
+        },
+        end: {
+          title: "End",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    SQLSave: {
+      required: ["project_id", "name", "sql"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 160,
+          minLength: 1,
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          maxLength: 32768,
+          minLength: 1,
+        },
+        visibility: {
+          title: "Visibility",
+          type: "string",
+          enum: ["private", "project"],
+          default: "private",
+        },
+        chart: {
+          $ref: "#/definitions/SQLChart",
+        },
+        window_hours: {
+          title: "Window hours",
+          type: "integer",
+          default: 24,
+          maximum: 744,
+          minimum: 1,
+        },
+      },
+    },
+    SQLSaved: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        visibility: {
+          title: "Visibility",
+          type: "string",
+          enum: ["private", "project"],
+          readOnly: true,
+        },
+        chart: {
+          title: "Chart",
+          type: "object",
+          readOnly: true,
+        },
+        window_hours: {
+          title: "Window hours",
+          type: "integer",
+          readOnly: true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        created_by_id: {
+          title: "Created by id",
+          type: "string",
+          readOnly: true,
+        },
+      },
+    },
+    SQLSavedList: {
+      required: ["items", "has_more"],
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLSaved",
+          },
+        },
+        has_more: {
+          title: "Has more",
+          type: "boolean",
+        },
+      },
+    },
+    SQLWidget: {
+      required: ["project_id", "dashboard_id"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        dashboard_id: {
+          title: "Dashboard id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    SQLWidgetResponse: {
+      required: ["id", "dashboard_id"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        dashboard_id: {
+          title: "Dashboard id",
+          type: "string",
+          format: "uuid",
         },
       },
     },
@@ -74939,7 +84520,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         resource_type: {
           title: "Resource type",
           type: "string",
-          enum: ["trace", "dashboard", "project", "call_execution"],
+          enum: [
+            "trace",
+            "dashboard",
+            "project",
+            "call_execution",
+            "error_feed_issue",
+          ],
         },
         resource_id: {
           title: "Resource id",
@@ -74990,6 +84577,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "dataset",
             "project",
             "call_execution",
+            "error_feed_issue",
           ],
           readOnly: true,
         },
@@ -75068,6 +84656,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "dataset",
             "project",
             "call_execution",
+            "error_feed_issue",
           ],
           readOnly: true,
         },
@@ -75212,6 +84801,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "dataset",
             "project",
             "call_execution",
+            "error_feed_issue",
           ],
         },
         resource_id: {
@@ -75293,6 +84883,158 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/SignupResult",
+        },
+      },
+    },
+    SimulateEvalConfigResponse: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        config: {
+          title: "Config",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        mapping: {
+          title: "Mapping",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+          additionalProperties: true,
+        },
+        filters: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              column_id: {
+                type: "string",
+                description: "Column or attribute id to filter on.",
+              },
+              property_id: {
+                type: "string",
+                description:
+                  "Optional stable namespaced Property Registry identity.",
+              },
+              display_name: {
+                type: "string",
+                description: "Optional UI label for chips and saved views.",
+              },
+              source: {
+                type: "string",
+                description:
+                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+              },
+              output_type: {
+                type: "string",
+                description:
+                  "Optional metric output type metadata used by eval and annotation filters.",
+              },
+              filter_config: {
+                type: "object",
+                properties: {
+                  filter_type: {
+                    type: "string",
+                    description:
+                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                  },
+                  filter_op: {
+                    type: "string",
+                    description:
+                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                  },
+                  filter_value: {
+                    description:
+                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                  },
+                  col_type: {
+                    type: "string",
+                    description:
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  },
+                  attribute_value_types: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                      enum: ["string", "number", "boolean"],
+                      "x-nullable": true,
+                    },
+                    description:
+                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                  },
+                },
+                required: ["filter_type", "filter_op"],
+                additionalProperties: false,
+              },
+            },
+            required: ["column_id", "filter_config"],
+            additionalProperties: false,
+          },
+          readOnly: true,
+          default: [],
+        },
+        error_localizer: {
+          title: "Error localizer",
+          type: "boolean",
+          readOnly: true,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        eval_group: {
+          title: "Eval group",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        template_id: {
+          title: "Template id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        eval_type: {
+          title: "Eval type",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        regradable: {
+          title: "Regradable",
+          type: "boolean",
+          readOnly: true,
+        },
+        editable: {
+          title: "Editable",
+          type: "boolean",
+          readOnly: true,
         },
       },
     },
@@ -75733,6 +85475,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
         is_active: {
           title: "Is active",
           type: "boolean",
+        },
+      },
+    },
+    SlackChannelsResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SlackChannelsResult",
+        },
+      },
+    },
+    SlackInstall: {
+      type: "object",
+      properties: {
+        connection_id: {
+          title: "Connection id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    SlackInstallResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SlackInstallResult",
         },
       },
     },
@@ -76237,6 +86015,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Experiment id",
           type: "string",
           format: "uuid",
+        },
+      },
+    },
+    StoredAgentResponse: {
+      required: ["agent", "sdk_version", "stored_at", "setup_stale"],
+      type: "object",
+      properties: {
+        agent: {
+          $ref: "#/definitions/StoredAgent",
+        },
+        sdk_version: {
+          title: "Sdk version",
+          type: "string",
+          minLength: 1,
+        },
+        stored_at: {
+          title: "Stored at",
+          type: "string",
+          format: "date-time",
+        },
+        setup_stale: {
+          title: "Setup stale",
+          type: "boolean",
         },
       },
     },
@@ -76747,6 +86548,118 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    TeamCreateErrorResponse: {
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          title: "Result",
+          type: "object",
+          "x-nullable": true,
+          description:
+            "String error message or structured account/login error metadata.",
+          "x-string-or-object": true,
+          properties: {
+            error: {
+              type: "string",
+            },
+            error_code: {
+              type: "string",
+            },
+            message: {
+              type: "string",
+            },
+            blocked: {
+              type: "boolean",
+            },
+            remaining_attempts: {
+              type: "integer",
+            },
+            block_time: {
+              type: "integer",
+            },
+            block_time_remaining: {
+              type: "integer",
+            },
+            created_members: {
+              type: "array",
+              items: {
+                $ref: "#/definitions/TeamCreatedMemberResponse",
+              },
+            },
+            workspace: {
+              $ref: "#/definitions/WorkspaceSummary",
+            },
+            errors: {
+              type: "array",
+              items: {
+                $ref: "#/definitions/TeamCreateErrorItem",
+              },
+            },
+          },
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
         },
       },
     },
@@ -78193,6 +88106,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
     TraceObserveListQuery: {
       type: "object",
       properties: {
+        sort_params: {
+          title: "Sort params",
+          type: "string",
+          default: "[]",
+          minLength: 1,
+          description: "JSON-encoded list of sort params.",
+        },
         project_id: {
           title: "Project id",
           type: "string",
@@ -79186,7 +89106,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         action: {
           title: "Action",
           type: "string",
-          enum: ["renew", "cancel"],
+          enum: ["renew", "cancel", "fail"],
+        },
+        failure_code: {
+          title: "Failure code",
+          type: "string",
+          default: "",
+          maxLength: 100,
         },
       },
     },
@@ -80562,6 +90488,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    UserAlertMonitorListResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/UserAlertMonitorListResult",
+        },
+      },
+    },
     UserAlertMonitorLog: {
       required: ["type", "message"],
       type: "object",
@@ -81215,6 +91154,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "org_level",
         "ws_level",
         "effective_level",
+        "restrict_simulate_to_environments",
       ],
       type: "object",
       properties: {
@@ -81335,6 +91275,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Org 2fa grace ends at",
           type: "string",
           format: "date-time",
+        },
+        restrict_simulate_to_environments: {
+          title: "Restrict simulate to environments",
+          type: "boolean",
         },
       },
     },
@@ -81646,6 +91590,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "cloud_storage",
             "message_queue",
             "linear",
+            "slack",
           ],
         },
         host_url: {
@@ -82648,6 +92593,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "protect_evaluator",
             "protect_flash_evaluator",
             "code_evaluator",
+            "jev_evaluator",
             "user_add",
             "observe_add",
             "prototype_add",
@@ -83076,6 +93022,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Template id",
           type: "string",
           format: "uuid",
+          readOnly: true,
+        },
+        eval_type: {
+          title: "Eval type",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        regradable: {
+          title: "Regradable",
+          type: "boolean",
+          readOnly: true,
+        },
+        editable: {
+          title: "Editable",
+          type: "boolean",
           readOnly: true,
         },
       },
@@ -83603,6 +93565,579 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RunEnvironmentRef: {
+      required: ["id", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AgentFixCandidateUpdate: {
+      required: ["candidate_id", "outcome"],
+      type: "object",
+      properties: {
+        candidate_id: {
+          title: "Candidate id",
+          type: "string",
+          format: "uuid",
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          enum: ["pending", "rejected", "finalist", "winner"],
+        },
+        verdict: {
+          $ref: "#/definitions/AgentFixVerdict",
+        },
+      },
+    },
+    AgentFixDiagnosis: {
+      type: "object",
+      properties: {
+        causes: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixEngineFailure: {
+      required: ["owner", "code", "message"],
+      type: "object",
+      properties: {
+        owner: {
+          title: "Owner",
+          type: "string",
+          enum: ["ours", "user"],
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          maxLength: 500,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixPlan: {
+      required: [
+        "target",
+        "held_back",
+        "must_pass",
+        "max_candidates",
+        "repeats",
+        "baseline_spread_pts",
+      ],
+      type: "object",
+      properties: {
+        target: {
+          title: "Target",
+          type: "integer",
+          minimum: 0,
+        },
+        held_back: {
+          title: "Held back",
+          type: "integer",
+          minimum: 0,
+        },
+        must_pass: {
+          title: "Must pass",
+          type: "integer",
+          minimum: 0,
+        },
+        protected: {
+          title: "Protected",
+          type: "integer",
+          default: 0,
+          minimum: 0,
+        },
+        max_candidates: {
+          title: "Max candidates",
+          type: "integer",
+          minimum: 0,
+        },
+        repeats: {
+          title: "Repeats",
+          type: "integer",
+          minimum: 0,
+        },
+        baseline_spread_pts: {
+          title: "Baseline spread pts",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixAgent: {
+      required: ["name", "kind", "version_id", "version_number", "ref"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        ref: {
+          title: "Ref",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixFailure: {
+      required: ["code", "message"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixLaunchDefaults: {
+      required: ["surfaces", "budget_credits", "max_minutes"],
+      type: "object",
+      properties: {
+        surfaces: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["prompt", "tools", "settings", "code"],
+          },
+        },
+        budget_credits: {
+          title: "Budget credits",
+          type: "integer",
+        },
+        max_minutes: {
+          title: "Max minutes",
+          type: "integer",
+        },
+      },
+    },
+    AgentFixLaunchEnvironment: {
+      required: ["id", "name", "version"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixLaunchLimits: {
+      required: [
+        "budget_credits_max",
+        "max_minutes_max",
+        "scenarios_min",
+        "scenarios_max",
+      ],
+      type: "object",
+      properties: {
+        budget_credits_max: {
+          title: "Budget credits max",
+          type: "integer",
+        },
+        max_minutes_max: {
+          title: "Max minutes max",
+          type: "integer",
+        },
+        scenarios_min: {
+          title: "Scenarios min",
+          type: "integer",
+        },
+        scenarios_max: {
+          title: "Scenarios max",
+          type: "integer",
+        },
+      },
+    },
+    AgentFixLaunchScenario: {
+      required: ["key", "name", "passed", "failing_sub_goals"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        passed: {
+          title: "Passed",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        failing_sub_goals: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    AgentFixLaunchSourceRun: {
+      required: ["id", "number", "state", "finished_at"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        number: {
+          title: "Number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixLaunchSuggested: {
+      required: ["target_scenario_keys", "protected_scenario_keys"],
+      type: "object",
+      properties: {
+        target_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        protected_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    AgentFixLaunchSurface: {
+      required: ["id", "label", "allowed", "reason"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          enum: ["prompt", "tools", "settings", "code"],
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        allowed: {
+          title: "Allowed",
+          type: "boolean",
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixCandidate: {
+      required: ["attempt", "agent_version_id", "version_number", "verdict"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        attempt: {
+          title: "Attempt",
+          type: "integer",
+          maximum: 32767,
+          minimum: 0,
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          enum: ["pending", "rejected", "finalist", "winner"],
+        },
+        verdict: {
+          $ref: "#/definitions/AgentFixVerdict",
+        },
+        check_runs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCheckRun",
+          },
+          readOnly: true,
+        },
+        override: {
+          $ref: "#/definitions/AgentFixOverride",
+        },
+        pull_request_url: {
+          title: "Pull request url",
+          type: "string",
+          format: "uri",
+          maxLength: 512,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+      },
+    },
+    AgentFixCheckRun: {
+      required: ["run_id", "test_execution_id", "label", "state"],
+      type: "object",
+      properties: {
+        run_id: {
+          title: "Run id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        test_execution_id: {
+          title: "Test execution id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AgentFixEnvironment: {
+      required: ["name", "version", "default_agent_version_id"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+          "x-nullable": true,
+        },
+        default_agent_version_id: {
+          title: "Default agent version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixReport: {
+      required: ["ending", "summary", "winner_candidate_id"],
+      type: "object",
+      properties: {
+        ending: {
+          title: "Ending",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+        },
+        winner_candidate_id: {
+          title: "Winner candidate id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixRequest: {
+      required: [
+        "target_scenario_keys",
+        "failing_sub_goals",
+        "surfaces",
+        "locked_paths",
+        "budget_credits",
+        "max_minutes",
+      ],
+      type: "object",
+      properties: {
+        target_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        protected_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
+        },
+        held_back_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
+        },
+        failing_sub_goals: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        surfaces: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        locked_paths: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        budget_credits: {
+          title: "Budget credits",
+          type: "number",
+        },
+        max_minutes: {
+          title: "Max minutes",
+          type: "integer",
+        },
+      },
+    },
+    AgentFixEvalWarning: {
+      required: [
+        "name",
+        "pass_rate",
+        "base_pass_rate",
+        "trials",
+        "base_trials",
+      ],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+        },
+        base_pass_rate: {
+          title: "Base pass rate",
+          type: "number",
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+        },
+        base_trials: {
+          title: "Base trials",
+          type: "integer",
+        },
+      },
+    },
     AgentPromptOptimiserGraphSeries: {
       type: "object",
       properties: {
@@ -83986,6 +94521,88 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessRunSummary: {
+      required: [
+        "kind",
+        "test_execution_id",
+        "run_test_id",
+        "run_test_name",
+        "run_number",
+        "status",
+        "environment",
+        "agent_version",
+        "outcome_passed",
+        "outcome_failed",
+        "outcome_skipped",
+        "started_at",
+        "completed_at",
+      ],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["environment", "simulate"],
+        },
+        test_execution_id: {
+          title: "Test execution id",
+          type: "string",
+          format: "uuid",
+        },
+        run_test_id: {
+          title: "Run test id",
+          type: "string",
+          format: "uuid",
+        },
+        run_test_name: {
+          title: "Run test name",
+          type: "string",
+        },
+        run_number: {
+          title: "Run number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        environment: {
+          $ref: "#/definitions/RunEnvironmentRef",
+        },
+        agent_version: {
+          $ref: "#/definitions/AgentVersionRef",
+        },
+        outcome_passed: {
+          title: "Outcome passed",
+          type: "integer",
+          "x-nullable": true,
+        },
+        outcome_failed: {
+          title: "Outcome failed",
+          type: "integer",
+          "x-nullable": true,
+        },
+        outcome_skipped: {
+          title: "Outcome skipped",
+          type: "integer",
+          "x-nullable": true,
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        completed_at: {
+          title: "Completed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+    },
     AgentccRequestLogMetadataValues: {
       required: ["application", "service", "tags"],
       type: "object",
@@ -84012,6 +94629,298 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+      },
+    },
+    AlertDeletedResult: {
+      required: ["id", "deleted"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        deleted: {
+          title: "Deleted",
+          type: "boolean",
+        },
+      },
+    },
+    AlertItem: {
+      required: ["id", "kind", "name", "enabled"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["metric", "error_feed"],
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        enabled: {
+          title: "Enabled",
+          type: "boolean",
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        trigger_type: {
+          title: "Trigger type",
+          type: "string",
+          minLength: 1,
+        },
+        severity_threshold: {
+          title: "Severity threshold",
+          type: "string",
+          enum: ["low", "medium", "high", "critical"],
+        },
+        occurrence_threshold: {
+          title: "Occurrence threshold",
+          type: "integer",
+        },
+        filters: {
+          title: "Filters",
+          type: "object",
+        },
+        slack_connection_id: {
+          title: "Slack connection id",
+          type: "string",
+          format: "uuid",
+        },
+        slack_channel_id: {
+          title: "Slack channel id",
+          type: "string",
+          minLength: 1,
+        },
+        slack_channel_name: {
+          title: "Slack channel name",
+          type: "string",
+          minLength: 1,
+        },
+        cooldown_seconds: {
+          title: "Cooldown seconds",
+          type: "integer",
+        },
+        last_triggered_at: {
+          title: "Last triggered at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        health: {
+          title: "Health",
+          type: "string",
+          minLength: 1,
+        },
+        failure_reason: {
+          title: "Failure reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+        },
+        project: {
+          title: "Project",
+          type: "string",
+          format: "uuid",
+        },
+        organization: {
+          title: "Organization",
+          type: "string",
+          format: "uuid",
+        },
+        workspace: {
+          title: "Workspace",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        created_by: {
+          title: "Created by",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        metric_type: {
+          title: "Metric type",
+          type: "string",
+          minLength: 1,
+        },
+        metric: {
+          title: "Metric",
+          type: "string",
+          "x-nullable": true,
+        },
+        metric_name: {
+          title: "Metric name",
+          type: "string",
+          minLength: 1,
+        },
+        threshold_type: {
+          title: "Threshold type",
+          type: "string",
+          minLength: 1,
+        },
+        threshold_operator: {
+          title: "Threshold operator",
+          type: "string",
+          minLength: 1,
+        },
+        threshold_metric_value: {
+          title: "Threshold metric value",
+          type: "string",
+          "x-nullable": true,
+        },
+        critical_threshold_value: {
+          title: "Critical threshold value",
+          type: "number",
+          "x-nullable": true,
+        },
+        warning_threshold_value: {
+          title: "Warning threshold value",
+          type: "number",
+          "x-nullable": true,
+        },
+        alert_frequency: {
+          title: "Alert frequency",
+          type: "integer",
+        },
+        auto_threshold_time_window: {
+          title: "Auto threshold time window",
+          type: "integer",
+        },
+        last_checked_at: {
+          title: "Last checked at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        slack_webhook_url: {
+          title: "Slack webhook url",
+          type: "string",
+          format: "uri",
+          "x-nullable": true,
+        },
+        slack_notes: {
+          title: "Slack notes",
+          type: "string",
+          "x-nullable": true,
+        },
+        is_mute: {
+          title: "Is mute",
+          type: "boolean",
+        },
+        deleted: {
+          title: "Deleted",
+          type: "boolean",
+        },
+        deleted_at: {
+          title: "Deleted at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        logs: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+          "x-nullable": true,
+        },
+        notification_emails: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "email",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    AlertListResult: {
+      required: ["alerts"],
+      type: "object",
+      properties: {
+        alerts: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AlertItem",
+          },
+        },
+      },
+    },
+    AlertOptionsResult: {
+      required: ["triggers", "severities", "statuses", "sources", "projects"],
+      type: "object",
+      properties: {
+        triggers: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AlertOption",
+          },
+        },
+        severities: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        statuses: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        sources: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        projects: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AlertProjectOption",
+          },
+        },
+      },
+    },
+    AlertTestResult: {
+      required: ["sent", "slack_ts"],
+      type: "object",
+      properties: {
+        sent: {
+          title: "Sent",
+          type: "boolean",
+        },
+        slack_ts: {
+          title: "Slack ts",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -84741,6 +95650,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           "x-nullable": true,
         },
+        kind: {
+          title: "Kind",
+          description:
+            "Set on the v3 call detail: a sub-goal check or an evaluation",
+          type: "string",
+          enum: ["evaluation", "sub_goal"],
+        },
         visible: {
           title: "Visible",
           type: "boolean",
@@ -85063,12 +95979,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         type: {
           title: "Type",
           type: "string",
-          minLength: 1,
         },
         value: {
           title: "Value",
           type: "object",
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         score: {
           title: "Score",
@@ -85087,7 +96004,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          minLength: 1,
+          enum: ["pending", "succeeded", "failed", "timed_out", "skipped"],
         },
       },
     },
@@ -85123,6 +96040,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         start_time_ms: {
           title: "Start time ms",
           type: "integer",
+        },
+      },
+    },
+    SubGoalResult: {
+      required: ["name", "passed"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        passed: {
+          title: "Passed",
+          type: "boolean",
+          "x-nullable": true,
         },
       },
     },
@@ -85532,6 +96465,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Read cutoff",
           type: "string",
           format: "date-time",
+        },
+        evidence_window: {
+          $ref: "#/definitions/InvestigationEvidenceWindow",
+        },
+        evidence_source: {
+          title: "Evidence source",
+          type: "string",
+          enum: ["conversation"],
         },
         engine_version: {
           title: "Engine version",
@@ -86067,6 +97008,80 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    ConversationEvidenceRow: {
+      required: [
+        "project_id",
+        "trace_id",
+        "org_id",
+        "id",
+        "parent_span_id",
+        "name",
+        "observation_type",
+        "start_time",
+        "end_time",
+        "attrs_string",
+        "conversation",
+      ],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          format: "uuid",
+        },
+        org_id: {
+          title: "Org id",
+          type: "string",
+          format: "uuid",
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        parent_span_id: {
+          title: "Parent span id",
+          type: "string",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        observation_type: {
+          title: "Observation type",
+          type: "string",
+          minLength: 1,
+        },
+        start_time: {
+          title: "Start time",
+          type: "string",
+          format: "date-time",
+        },
+        end_time: {
+          title: "End time",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        attrs_string: {
+          title: "Attrs string",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        conversation: {
+          $ref: "#/definitions/ConversationDossier",
         },
       },
     },
@@ -87097,6 +98112,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
         },
+        order: {
+          title: "Order",
+          description:
+            "Legacy input accepted for compatibility; rows are appended in request order.",
+          type: "integer",
+        },
         cells: {
           type: "array",
           items: {
@@ -87105,6 +98126,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           default: [],
         },
       },
+      additionalProperties: false,
     },
     DatasetCellValue: {
       type: "object",
@@ -88713,6 +99735,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
         id: {
           title: "Id",
           type: "string",
@@ -89863,6 +100890,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    FeedRedirect: {
+      required: ["requested_cluster_id", "resolved_cluster_id"],
+      type: "object",
+      properties: {
+        requested_cluster_id: {
+          title: "Requested cluster id",
+          type: "string",
+          minLength: 1,
+        },
+        resolved_cluster_id: {
+          title: "Resolved cluster id",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     FeedSidebar: {
       required: [
         "timeline",
@@ -90254,7 +101297,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     GatewaySummaryResult: {
-      required: ["id", "name", "base_url", "status"],
+      required: ["id", "name", "base_url", "status", "last_health_check"],
       type: "object",
       properties: {
         id: {
@@ -90278,6 +101321,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        last_health_check: {
+          title: "Last health check",
+          description:
+            "Completion time of this request's live health probe, including unreachable results.",
+          type: "string",
+          format: "date-time",
+        },
         provider_count: {
           title: "Provider count",
           type: "integer",
@@ -90288,14 +101338,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GatewayHealthErrorResult: {
+      required: ["status", "error", "last_health_check"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["unreachable"],
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        last_health_check: {
+          title: "Last health check",
+          description:
+            "Completion time of this request's failed live health probe.",
+          type: "string",
+          format: "date-time",
+        },
+      },
+      "x-string-or-object": true,
+    },
     GatewayHealthResult: {
-      required: ["status", "providers", "provider_count", "model_count"],
+      required: [
+        "status",
+        "last_health_check",
+        "providers",
+        "provider_count",
+        "model_count",
+      ],
       type: "object",
       properties: {
         status: {
           title: "Status",
           type: "string",
           minLength: 1,
+        },
+        last_health_check: {
+          title: "Last health check",
+          description: "Completion time of this request's live health probe.",
+          type: "string",
+          format: "date-time",
         },
         health: {
           title: "Health",
@@ -90893,6 +101978,344 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessVersion: {
+      required: [
+        "id",
+        "label",
+        "status",
+        "is_default",
+        "created_at",
+        "created_by",
+        "origin",
+        "summary",
+        "hash",
+        "parent_id",
+        "derived_from_agent_version_id",
+        "scenario_count",
+        "source",
+        "prompt",
+        "preflight_status",
+        "preflight_report",
+        "preflighted_at",
+        "check_started_at",
+        "credential_names",
+        "required_variable_names",
+        "activation_outcome",
+        "requested_here",
+        "pickable",
+        "discardable",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["draft", "active", "discarded"],
+        },
+        is_default: {
+          title: "Is default",
+          type: "boolean",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        created_by: {
+          $ref: "#/definitions/HarnessVersionPerson",
+        },
+        origin: {
+          title: "Origin",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+        },
+        hash: {
+          title: "Hash",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        parent_id: {
+          title: "Parent id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        derived_from_agent_version_id: {
+          title: "Derived from agent version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        scenario_count: {
+          title: "Scenario count",
+          type: "integer",
+          "x-nullable": true,
+        },
+        source: {
+          title: "Source",
+          description: "An agent version's non-secret source facts.",
+          type: "object",
+          "x-nullable": true,
+        },
+        prompt: {
+          title: "Prompt",
+          description:
+            "The default agent version's prompt; null on every other item.",
+          type: "string",
+          "x-nullable": true,
+        },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        preflight_report: {
+          title: "Preflight report",
+          description:
+            "An agent version's last check: check statuses and names only.",
+          type: "object",
+          "x-nullable": true,
+        },
+        preflighted_at: {
+          title: "Preflighted at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        check_started_at: {
+          title: "Check started at",
+          description: "When an agent version's latest check was asked for.",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        credential_names: {
+          description:
+            "An agent version's credential names, provider keys included.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        required_variable_names: {
+          description:
+            "The variables an agent version's source reads, when known.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        activation_outcome: {
+          title: "Activation outcome",
+          description:
+            "Why a passed agent version is or isn't this environment's default, as last recorded.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        requested_here: {
+          title: "Requested here",
+          description: "Whether this environment asked for an agent version.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        pickable: {
+          title: "Pickable",
+          description:
+            "Whether an agent version can be picked for a run of this environment or made its default.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        discardable: {
+          title: "Discardable",
+          description: "Whether this environment can discard an agent version.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessAgentPayloadChange: {
+      required: ["config"],
+      type: "object",
+      properties: {
+        config: {
+          $ref: "#/definitions/HarnessAgentConfigChange",
+        },
+      },
+    },
+    HarnessComparePair: {
+      required: [
+        "scenario_key",
+        "scenario",
+        "band",
+        "verdict",
+        "difference",
+        "interval",
+        "current",
+        "against",
+        "changed_sub_goals",
+        "reason",
+        "removed_in",
+      ],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        scenario: {
+          title: "Scenario",
+          type: "string",
+          minLength: 1,
+        },
+        band: {
+          title: "Band",
+          type: "string",
+          enum: ["paired", "criteria_changed", "new", "not_applicable"],
+        },
+        verdict: {
+          title: "Verdict",
+          type: "string",
+          enum: [
+            "improved",
+            "regressed",
+            "no_meaningful_change",
+            "inconclusive",
+          ],
+          "x-nullable": true,
+        },
+        difference: {
+          title: "Difference",
+          description: "Pass-rate change in percentage points.",
+          type: "number",
+          "x-nullable": true,
+        },
+        interval: {
+          $ref: "#/definitions/HarnessCompareInterval",
+        },
+        current: {
+          $ref: "#/definitions/HarnessCompareSide",
+        },
+        against: {
+          $ref: "#/definitions/HarnessCompareSide",
+        },
+        changed_sub_goals: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        removed_in: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+      },
+    },
+    HarnessCompareSummary: {
+      required: [
+        "paired",
+        "improved",
+        "regressed",
+        "no_meaningful_change",
+        "inconclusive",
+        "criteria_changed",
+        "new",
+        "not_applicable",
+        "current_pass_rate",
+        "against_pass_rate",
+        "margin",
+      ],
+      type: "object",
+      properties: {
+        paired: {
+          title: "Paired",
+          type: "integer",
+        },
+        improved: {
+          title: "Improved",
+          type: "integer",
+        },
+        regressed: {
+          title: "Regressed",
+          type: "integer",
+        },
+        no_meaningful_change: {
+          title: "No meaningful change",
+          type: "integer",
+        },
+        inconclusive: {
+          title: "Inconclusive",
+          type: "integer",
+        },
+        criteria_changed: {
+          title: "Criteria changed",
+          type: "integer",
+        },
+        new: {
+          title: "New",
+          type: "integer",
+        },
+        not_applicable: {
+          title: "Not applicable",
+          type: "integer",
+        },
+        current_pass_rate: {
+          title: "Current pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        against_pass_rate: {
+          title: "Against pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        margin: {
+          title: "Margin",
+          type: "number",
+        },
+      },
+    },
+    HarnessCompareVersions: {
+      required: ["current", "against"],
+      type: "object",
+      properties: {
+        current: {
+          $ref: "#/definitions/HarnessRunPinnedVersions",
+        },
+        against: {
+          $ref: "#/definitions/HarnessRunPinnedVersions",
+        },
+      },
+    },
     HarnessConversationEvent: {
       required: [
         "schema_version",
@@ -91147,6 +102570,258 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
         },
       },
+    },
+    HarnessDraftSaveItem: {
+      required: ["piece", "expected_parent_id"],
+      type: "object",
+      properties: {
+        piece: {
+          title: "Piece",
+          type: "string",
+          enum: ["environment", "suite"],
+        },
+        expected_parent_id: {
+          title: "Expected parent id",
+          description: "The draft's parent the caller saw.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        expected_revision: {
+          title: "Expected revision",
+          description: "The draft's revision the caller saw.",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    HarnessDraftItem: {
+      required: [
+        "id",
+        "label",
+        "status",
+        "is_default",
+        "created_at",
+        "created_by",
+        "origin",
+        "summary",
+        "hash",
+        "parent_id",
+        "derived_from_agent_version_id",
+        "scenario_count",
+        "source",
+        "prompt",
+        "preflight_status",
+        "preflight_report",
+        "preflighted_at",
+        "check_started_at",
+        "credential_names",
+        "required_variable_names",
+        "activation_outcome",
+        "requested_here",
+        "pickable",
+        "discardable",
+        "stale",
+        "revision",
+        "last_edited_by",
+        "updated_at",
+        "parent_label",
+        "default_label",
+        "changes",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["draft", "active", "discarded"],
+        },
+        is_default: {
+          title: "Is default",
+          type: "boolean",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        created_by: {
+          $ref: "#/definitions/HarnessVersionPerson",
+        },
+        origin: {
+          title: "Origin",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+        },
+        hash: {
+          title: "Hash",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        parent_id: {
+          title: "Parent id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        derived_from_agent_version_id: {
+          title: "Derived from agent version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        scenario_count: {
+          title: "Scenario count",
+          type: "integer",
+          "x-nullable": true,
+        },
+        source: {
+          title: "Source",
+          description: "An agent version's non-secret source facts.",
+          type: "object",
+          "x-nullable": true,
+        },
+        prompt: {
+          title: "Prompt",
+          description:
+            "The default agent version's prompt; null on every other item.",
+          type: "string",
+          "x-nullable": true,
+        },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        preflight_report: {
+          title: "Preflight report",
+          description:
+            "An agent version's last check: check statuses and names only.",
+          type: "object",
+          "x-nullable": true,
+        },
+        preflighted_at: {
+          title: "Preflighted at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        check_started_at: {
+          title: "Check started at",
+          description: "When an agent version's latest check was asked for.",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        credential_names: {
+          description:
+            "An agent version's credential names, provider keys included.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        required_variable_names: {
+          description:
+            "The variables an agent version's source reads, when known.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        activation_outcome: {
+          title: "Activation outcome",
+          description:
+            "Why a passed agent version is or isn't this environment's default, as last recorded.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        requested_here: {
+          title: "Requested here",
+          description: "Whether this environment asked for an agent version.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        pickable: {
+          title: "Pickable",
+          description:
+            "Whether an agent version can be picked for a run of this environment or made its default.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        discardable: {
+          title: "Discardable",
+          description: "Whether this environment can discard an agent version.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        stale: {
+          title: "Stale",
+          description:
+            "Whether the default moved since the draft started; Save refuses it.",
+          type: "boolean",
+        },
+        revision: {
+          title: "Revision",
+          description: "Bumped on every edit to the draft.",
+          type: "integer",
+        },
+        last_edited_by: {
+          $ref: "#/definitions/HarnessVersionPerson",
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+        },
+        parent_label: {
+          title: "Parent label",
+          description: "The version the draft started from.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        default_label: {
+          title: "Default label",
+          description: "The piece's default now.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        changes: {
+          title: "Changes",
+          description:
+            "Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+          },
+        },
+      },
+      "x-nullable": true,
     },
     HarnessEnvironmentOfferedEval: {
       required: [
@@ -91715,6 +103390,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runs_count",
         "last_updated",
         "created_at",
+        "last_run",
       ],
       type: "object",
       properties: {
@@ -91788,6 +103464,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Created at",
           type: "string",
           format: "date-time",
+        },
+        last_run: {
+          $ref: "#/definitions/HarnessRunSummary",
         },
       },
     },
@@ -91883,6 +103562,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Message",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    HarnessGitHubPushRepository: {
+      required: ["full_name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "integer",
+          minimum: 1,
+          "x-nullable": true,
+        },
+        full_name: {
+          title: "Full name",
+          type: "string",
+          maxLength: 256,
+          minLength: 1,
+        },
+        default_branch: {
+          title: "Default branch",
+          type: "string",
+          maxLength: 256,
+          "x-nullable": true,
         },
       },
     },
@@ -92268,8 +103971,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Metadata",
           type: "object",
           additionalProperties: {
-            type: "string",
+            type: "object",
             "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         runtime: {
@@ -92492,6 +104197,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessVersioningFlags: {
+      required: ["enabled", "nudges_enabled"],
+      type: "object",
+      properties: {
+        enabled: {
+          title: "Enabled",
+          type: "boolean",
+        },
+        nudges_enabled: {
+          title: "Nudges enabled",
+          type: "boolean",
+        },
+      },
+    },
     HarnessManifestEntry: {
       required: ["artifact_id", "kind", "size"],
       type: "object",
@@ -92521,6 +104240,158 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
+    },
+    HarnessNudgeError: {
+      required: ["code"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          description:
+            "stopped_by_user, stopped_by_newer, environment_deleted, checks_failed, no_report, not_runnable, turn_failed, turn_interrupted, rebuild_not_started, rebuild_stuck, landing_failed, or a refused save's code.",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        problems: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessNudgeProblem",
+          },
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessNudgeFacts: {
+      type: "object",
+      properties: {
+        source: {
+          title: "Source",
+          description:
+            "The agent source's kind, whether it changed, and its from/to ids.",
+          type: "object",
+        },
+        changed_files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessNudgeFile",
+          },
+        },
+        files_total: {
+          title: "Files total",
+          type: "integer",
+          "x-nullable": true,
+        },
+        files_truncated: {
+          title: "Files truncated",
+          type: "boolean",
+        },
+        reversed: {
+          title: "Reversed",
+          description: "A roll back to an earlier commit.",
+          type: "boolean",
+        },
+        files_unavailable: {
+          title: "Files unavailable",
+          description:
+            "Why the file changes aren't listed: private_repository, no_commit, repository_changed, not_linear, rate_limited, github_error, archive_missing, archive_unreadable or archive_too_large.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        prompt_changed: {
+          title: "Prompt changed",
+          type: "boolean",
+        },
+        variables: {
+          $ref: "#/definitions/HarnessNudgeVariables",
+        },
+        settings_changed: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        agent_default_moved: {
+          title: "Agent default moved",
+          description:
+            "Whether the agent version is already this environment's default.",
+          type: "boolean",
+        },
+        environment_diff: {
+          title: "Environment diff",
+          type: "object",
+          "x-nullable": true,
+        },
+        environment_summary: {
+          title: "Environment summary",
+          type: "string",
+        },
+        from_environment_version_id: {
+          title: "From environment version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessNudgeReplacement: {
+      required: ["id", "trigger_label"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        trigger_label: {
+          title: "Trigger label",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessVersionPerson: {
+      required: ["id", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
+    },
+    RunVersionLabel: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     HarnessPreflightCheck: {
       required: ["id", "label", "status", "detail", "missing", "fix"],
@@ -92648,6 +104519,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        script_completed: {
+          title: "Script completed",
+          type: "boolean",
+        },
+        target_metrics: {
+          $ref: "#/definitions/HarnessTargetMetrics",
+        },
       },
       "x-nullable": true,
     },
@@ -92712,6 +104590,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         judged: {
           title: "Judged",
           type: "boolean",
+        },
+      },
+    },
+    HarnessRunPinnedVersions: {
+      required: ["agent", "environment", "suite"],
+      type: "object",
+      properties: {
+        agent: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        environment: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        suite: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+      },
+    },
+    HarnessRunWarning: {
+      required: ["code", "message", "piece"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        piece: {
+          title: "Piece",
+          type: "string",
+          enum: ["agent", "environment", "suite"],
+          "x-nullable": true,
         },
       },
     },
@@ -92990,6 +104905,1045 @@ export const OPENAPI_CONTRACT = Object.freeze({
         score_source: {
           title: "Score source",
           type: "string",
+        },
+      },
+    },
+    InsightAskMessage: {
+      required: ["role", "content"],
+      type: "object",
+      properties: {
+        role: {
+          title: "Role",
+          type: "string",
+          enum: ["user", "assistant"],
+        },
+        content: {
+          title: "Content",
+          type: "string",
+          maxLength: 4000,
+        },
+      },
+    },
+    InsightAskResult: {
+      required: ["answer", "follow_ups", "dropped"],
+      type: "object",
+      properties: {
+        answer: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightAskParagraph",
+          },
+        },
+        follow_ups: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        dropped: {
+          title: "Dropped",
+          type: "integer",
+        },
+        unverified_answer: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightAskParagraph",
+          },
+        },
+        verification: {
+          title: "Verification",
+          type: "object",
+        },
+      },
+    },
+    InsightConfigListResult: {
+      required: ["configs"],
+      type: "object",
+      properties: {
+        configs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightConfigItem",
+          },
+        },
+      },
+    },
+    InsightAttribute: {
+      required: ["key", "type"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          maxLength: 60,
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["boolean", "number", "string"],
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          maxLength: 300,
+        },
+        filter_by: {
+          title: "Filter by",
+          type: "boolean",
+          default: false,
+        },
+      },
+    },
+    InsightScope: {
+      type: "object",
+      properties: {
+        filters: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          maxLength: 300,
+        },
+        preset: {
+          title: "Preset",
+          type: "string",
+          maxLength: 16,
+        },
+        window: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 64,
+            minLength: 1,
+          },
+          maxItems: 2,
+        },
+        search: {
+          title: "Search",
+          type: "string",
+          maxLength: 200,
+        },
+      },
+    },
+    InsightConfigItem: {
+      required: [
+        "id",
+        "name",
+        "unit",
+        "lens",
+        "question",
+        "agent_description",
+        "instructions",
+        "attributes",
+        "sample_size",
+        "scope",
+        "has_taxonomy",
+        "taxonomy",
+        "created_at",
+        "latest_run",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          minLength: 1,
+        },
+        lens: {
+          title: "Lens",
+          type: "string",
+          minLength: 1,
+        },
+        question: {
+          title: "Question",
+          type: "string",
+          minLength: 1,
+        },
+        agent_description: {
+          title: "Agent description",
+          type: "string",
+        },
+        instructions: {
+          title: "Instructions",
+          type: "string",
+        },
+        attributes: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+        },
+        scope: {
+          title: "Scope",
+          type: "object",
+        },
+        has_taxonomy: {
+          title: "Has taxonomy",
+          type: "boolean",
+        },
+        taxonomy: {
+          title: "Taxonomy",
+          type: "object",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        latest_run: {
+          $ref: "#/definitions/InsightRunSummary",
+        },
+        runs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightRunSummary",
+          },
+        },
+      },
+    },
+    InsightDraftResult: {
+      required: [
+        "name",
+        "question",
+        "agent_description",
+        "instructions",
+        "attributes",
+        "examples_read",
+      ],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        question: {
+          title: "Question",
+          type: "string",
+          minLength: 1,
+        },
+        agent_description: {
+          title: "Agent description",
+          type: "string",
+        },
+        instructions: {
+          title: "Instructions",
+          type: "string",
+        },
+        attributes: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        examples_read: {
+          title: "Examples read",
+          type: "integer",
+        },
+      },
+    },
+    InsightEstimateResult: {
+      required: [
+        "population",
+        "population_is_lower_bound",
+        "sample_size",
+        "window",
+        "sample_ids",
+        "credits_estimate",
+        "credit_limited",
+        "credits_left",
+        "credit_max_sample",
+        "credit_message",
+      ],
+      type: "object",
+      properties: {
+        population: {
+          title: "Population",
+          type: "integer",
+        },
+        population_is_lower_bound: {
+          title: "Population is lower bound",
+          type: "boolean",
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+        },
+        window: {
+          title: "Window",
+          type: "object",
+          "x-nullable": true,
+        },
+        sample_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        credits_estimate: {
+          title: "Credits estimate",
+          type: "number",
+          "x-nullable": true,
+        },
+        credit_limited: {
+          title: "Credit limited",
+          type: "boolean",
+        },
+        credit_check_unavailable: {
+          title: "Credit check unavailable",
+          type: "boolean",
+        },
+        credits_left: {
+          title: "Credits left",
+          type: "number",
+          "x-nullable": true,
+        },
+        credit_max_sample: {
+          title: "Credit max sample",
+          type: "integer",
+          "x-nullable": true,
+        },
+        credit_message: {
+          title: "Credit message",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    InsightConfigInput: {
+      required: ["name", "unit", "lens", "question"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["traces", "sessions", "users"],
+        },
+        lens: {
+          title: "Lens",
+          type: "string",
+          enum: ["usage", "failures", "experience", "personas", "custom"],
+        },
+        question: {
+          title: "Question",
+          type: "string",
+          maxLength: 500,
+          minLength: 1,
+        },
+        agent_description: {
+          title: "Agent description",
+          type: "string",
+          maxLength: 500,
+        },
+        instructions: {
+          title: "Instructions",
+          type: "string",
+          maxLength: 1000,
+        },
+        attributes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightAttribute",
+          },
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+          maximum: 1000,
+          minimum: 10,
+        },
+      },
+    },
+    InsightPreviewResult: {
+      required: ["units"],
+      type: "object",
+      properties: {
+        units: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+      },
+    },
+    InsightPopulationItem: {
+      required: ["id"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        time: {
+          title: "Time",
+          type: "string",
+          maxLength: 64,
+        },
+        user_id: {
+          title: "User id",
+          type: "string",
+          maxLength: 255,
+        },
+      },
+    },
+    InsightRunCreatedResult: {
+      required: ["run_id", "config_id"],
+      type: "object",
+      properties: {
+        run_id: {
+          title: "Run id",
+          type: "string",
+          format: "uuid",
+        },
+        config_id: {
+          title: "Config id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    InsightRunDetail: {
+      required: [
+        "id",
+        "config_id",
+        "project_id",
+        "status",
+        "stage",
+        "progress",
+        "unit",
+        "scope",
+        "settings",
+        "population_size",
+        "sample_size",
+        "analysed_count",
+        "excluded_count",
+        "failed_count",
+        "skipped_count",
+        "taxonomy_mode",
+        "result",
+        "models_used",
+        "cost_usd",
+        "error",
+        "error_code",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "previous_run_id",
+        "next_run_id",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        config_id: {
+          title: "Config id",
+          type: "string",
+          format: "uuid",
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+          minLength: 1,
+        },
+        progress: {
+          title: "Progress",
+          type: "object",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          minLength: 1,
+        },
+        scope: {
+          title: "Scope",
+          type: "object",
+        },
+        settings: {
+          title: "Settings",
+          type: "object",
+        },
+        population_size: {
+          title: "Population size",
+          type: "integer",
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+        },
+        analysed_count: {
+          title: "Analysed count",
+          type: "integer",
+        },
+        excluded_count: {
+          title: "Excluded count",
+          type: "integer",
+        },
+        failed_count: {
+          title: "Failed count",
+          type: "integer",
+        },
+        skipped_count: {
+          title: "Skipped count",
+          type: "integer",
+        },
+        taxonomy_mode: {
+          title: "Taxonomy mode",
+          type: "string",
+          minLength: 1,
+        },
+        result: {
+          title: "Result",
+          type: "object",
+        },
+        models_used: {
+          title: "Models used",
+          type: "object",
+        },
+        cost_usd: {
+          title: "Cost usd",
+          type: "number",
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        error_code: {
+          title: "Error code",
+          type: "string",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        previous_run_id: {
+          title: "Previous run id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        next_run_id: {
+          title: "Next run id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    InsightRunStopResult: {
+      required: ["id", "status", "error", "error_code"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        error_code: {
+          title: "Error code",
+          type: "string",
+        },
+      },
+    },
+    InsightUnitsResult: {
+      required: ["units", "total"],
+      type: "object",
+      properties: {
+        units: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightUnitItem",
+          },
+        },
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+      },
+    },
+    InstantEvalControl: {
+      required: ["status", "message"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        rows_requested: {
+          title: "Rows requested",
+          type: "integer",
+        },
+        retried: {
+          title: "Retried",
+          type: "integer",
+        },
+      },
+    },
+    InstantEvalEstimate: {
+      required: [
+        "population",
+        "population_is_lower_bound",
+        "rows_to_read",
+        "questions",
+        "credits_estimate",
+        "credits_per_answer",
+        "seconds_estimate",
+        "needs_confirm",
+        "max_rows",
+        "confirm_rows",
+        "default_sample_size",
+        "sessions_per_user",
+        "choices",
+        "credit_check",
+        "credit_max_sample",
+        "window",
+        "sample_error",
+      ],
+      type: "object",
+      properties: {
+        population: {
+          title: "Population",
+          type: "integer",
+        },
+        population_is_lower_bound: {
+          title: "Population is lower bound",
+          type: "boolean",
+        },
+        rows_to_read: {
+          title: "Rows to read",
+          type: "integer",
+        },
+        questions: {
+          title: "Questions",
+          type: "integer",
+        },
+        credits_estimate: {
+          title: "Credits estimate",
+          type: "number",
+          "x-nullable": true,
+        },
+        credits_per_answer: {
+          title: "Credits per answer",
+          type: "number",
+          "x-nullable": true,
+        },
+        seconds_estimate: {
+          title: "Seconds estimate",
+          type: "integer",
+        },
+        needs_confirm: {
+          title: "Needs confirm",
+          type: "boolean",
+        },
+        max_rows: {
+          title: "Max rows",
+          type: "integer",
+        },
+        confirm_rows: {
+          title: "Confirm rows",
+          type: "integer",
+        },
+        default_sample_size: {
+          title: "Default sample size",
+          type: "integer",
+          "x-nullable": true,
+        },
+        sessions_per_user: {
+          title: "Sessions per user",
+          type: "integer",
+          "x-nullable": true,
+        },
+        choices: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InstantEvalChoice",
+          },
+        },
+        credit_check: {
+          $ref: "#/definitions/InstantEvalCreditCheck",
+        },
+        credit_max_sample: {
+          title: "Credit max sample",
+          type: "integer",
+          "x-nullable": true,
+        },
+        window: {
+          title: "Window",
+          type: "object",
+        },
+        sample_error: {
+          $ref: "#/definitions/InstantEvalSampleError",
+        },
+      },
+    },
+    InstantEvalLimitDetail: {
+      required: ["message", "error_code"],
+      type: "object",
+      properties: {
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        error_code: {
+          title: "Error code",
+          type: "string",
+          minLength: 1,
+        },
+        rows_to_read: {
+          title: "Rows to read",
+          type: "integer",
+        },
+        credits_estimate: {
+          title: "Credits estimate",
+          type: "number",
+          "x-nullable": true,
+        },
+        credits_left: {
+          title: "Credits left",
+          type: "number",
+          "x-nullable": true,
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+          "x-nullable": true,
+        },
+        runs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InstantEvalBusyRun",
+          },
+        },
+      },
+    },
+    InstantEvalRowsResult: {
+      required: ["rows", "next_cursor", "total"],
+      type: "object",
+      properties: {
+        rows: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+      },
+    },
+    InstantEvalRunsResult: {
+      required: ["runs", "has_more"],
+      type: "object",
+      properties: {
+        runs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InstantEvalRun",
+          },
+        },
+        has_more: {
+          title: "Has more",
+          type: "boolean",
+        },
+      },
+    },
+    InstantEvalStart: {
+      required: [
+        "task_id",
+        "unit",
+        "population",
+        "rows_requested",
+        "is_sample",
+        "credits_estimate",
+        "date_preset",
+        "label",
+      ],
+      type: "object",
+      properties: {
+        task_id: {
+          title: "Task id",
+          type: "string",
+          minLength: 1,
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          minLength: 1,
+        },
+        population: {
+          title: "Population",
+          type: "integer",
+        },
+        rows_requested: {
+          title: "Rows requested",
+          type: "integer",
+        },
+        is_sample: {
+          title: "Is sample",
+          type: "boolean",
+        },
+        credits_estimate: {
+          title: "Credits estimate",
+          type: "number",
+          "x-nullable": true,
+        },
+        date_preset: {
+          title: "Date preset",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          "x-nullable": true,
+        },
+      },
+    },
+    InstantEvalSummary: {
+      required: [
+        "status",
+        "unit",
+        "preparing",
+        "total",
+        "answered",
+        "failed",
+        "pending",
+        "not_read",
+        "started_at",
+        "finished_at",
+        "rate_per_min",
+        "eta_s",
+        "created_by",
+        "credits_estimate",
+        "credits_used",
+        "in_flight",
+        "waiting_s",
+        "active_s",
+        "idle_s",
+        "sample",
+        "window",
+        "scope",
+        "questions",
+        "counts",
+        "unsure",
+        "timeline",
+        "groups",
+        "cross",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          minLength: 1,
+        },
+        preparing: {
+          title: "Preparing",
+          type: "boolean",
+        },
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+        answered: {
+          title: "Answered",
+          type: "integer",
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+        },
+        pending: {
+          title: "Pending",
+          type: "integer",
+        },
+        not_read: {
+          title: "Not read",
+          type: "integer",
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        rate_per_min: {
+          title: "Rate per min",
+          type: "number",
+          "x-nullable": true,
+        },
+        eta_s: {
+          title: "Eta s",
+          type: "integer",
+          "x-nullable": true,
+        },
+        created_by: {
+          $ref: "#/definitions/InstantEvalPerson",
+        },
+        credits_estimate: {
+          title: "Credits estimate",
+          type: "number",
+          "x-nullable": true,
+        },
+        credits_used: {
+          title: "Credits used",
+          type: "number",
+          "x-nullable": true,
+        },
+        in_flight: {
+          title: "In flight",
+          type: "integer",
+          "x-nullable": true,
+        },
+        waiting_s: {
+          title: "Waiting s",
+          type: "integer",
+          "x-nullable": true,
+        },
+        failure: {
+          $ref: "#/definitions/InstantEvalFailure",
+        },
+        active_s: {
+          title: "Active s",
+          type: "integer",
+          "x-nullable": true,
+        },
+        idle_s: {
+          title: "Idle s",
+          type: "integer",
+          "x-nullable": true,
+        },
+        sample: {
+          $ref: "#/definitions/InstantEvalSample",
+        },
+        window: {
+          title: "Window",
+          type: "object",
+        },
+        scope: {
+          title: "Scope",
+          type: "object",
+        },
+        questions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InstantEvalQuestion",
+          },
+        },
+        counts: {
+          title: "Counts",
+          type: "object",
+        },
+        unsure: {
+          title: "Unsure",
+          type: "object",
+        },
+        timeline: {
+          title: "Timeline",
+          type: "object",
+        },
+        groups: {
+          title: "Groups",
+          type: "object",
+        },
+        cross: {
+          title: "Cross",
+          type: "object",
+        },
+        sessions_read: {
+          title: "Sessions read",
+          type: "integer",
+          "x-nullable": true,
         },
       },
     },
@@ -94488,6 +107442,130 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Success",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    ModelListEntry: {
+      required: ["model_name", "type"],
+      type: "object",
+      properties: {
+        model_name: {
+          title: "Model name",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        author: {
+          title: "Author",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+        },
+        question_types: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        min_choices: {
+          title: "Min choices",
+          type: "integer",
+          minimum: 1,
+        },
+        max_choices: {
+          title: "Max choices",
+          type: "integer",
+          minimum: 1,
+        },
+        max_state_bytes: {
+          title: "Max state bytes",
+          type: "integer",
+          minimum: 1,
+        },
+        notice: {
+          title: "Notice",
+          type: "string",
+        },
+        unavailable_reason: {
+          title: "Unavailable reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        connections: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DecisionConnection",
+          },
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          minLength: 1,
+        },
+        providers: {
+          title: "Providers",
+          type: "string",
+        },
+        is_available: {
+          title: "Is available",
+          type: "boolean",
+        },
+        logo_url: {
+          title: "Logo url",
+          type: "string",
+          "x-nullable": true,
+        },
+        best_for: {
+          title: "Best for",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        use_case: {
+          title: "Use case",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        cutoff: {
+          title: "Cutoff",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        rate_limits: {
+          title: "Rate limits",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        latency: {
+          title: "Latency",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        pricing: {
+          title: "Pricing",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
       },
     },
@@ -96319,6 +109397,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-json-value": true,
           description: "Any valid JSON value.",
         },
+        cost_coverage: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CostCoverageBucket",
+          },
+        },
         system_metric_statistics: {
           title: "System metric statistics",
           description:
@@ -96368,6 +109452,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["session", "trace", "cost", "input_tokens", "output_tokens"],
       type: "object",
       properties: {
+        cost_coverage: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CostCoverageBucket",
+          },
+        },
         session: {
           type: "array",
           items: {
@@ -97594,6 +110684,112 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ReliabilityInterval: {
+      required: ["low", "high", "effective_n", "scenarios", "evaluated"],
+      type: "object",
+      properties: {
+        low: {
+          title: "Low",
+          type: "number",
+        },
+        high: {
+          title: "High",
+          type: "number",
+        },
+        effective_n: {
+          title: "Effective n",
+          type: "number",
+        },
+        scenarios: {
+          title: "Scenarios",
+          type: "integer",
+        },
+        evaluated: {
+          title: "Evaluated",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
+    },
+    ReliabilityRow: {
+      required: [
+        "queued",
+        "in_progress",
+        "passed",
+        "failed",
+        "error",
+        "inconclusive",
+        "scenario",
+        "scenario_key",
+        "runs",
+        "evaluated",
+        "pass_rate",
+        "verdict",
+        "call_ids",
+      ],
+      type: "object",
+      properties: {
+        queued: {
+          title: "Queued",
+          type: "integer",
+        },
+        in_progress: {
+          title: "In progress",
+          type: "integer",
+        },
+        passed: {
+          title: "Passed",
+          type: "integer",
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+        },
+        error: {
+          title: "Error",
+          type: "integer",
+        },
+        inconclusive: {
+          title: "Inconclusive",
+          type: "integer",
+        },
+        scenario: {
+          title: "Scenario",
+          type: "string",
+          minLength: 1,
+        },
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        runs: {
+          title: "Runs",
+          type: "integer",
+        },
+        evaluated: {
+          title: "Evaluated",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        verdict: {
+          title: "Verdict",
+          type: "string",
+          enum: ["passed", "failed", "flaky", "not_evaluated"],
+        },
+        call_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
     AgentDefinitionNested: {
       required: ["agent_name", "description"],
       type: "object",
@@ -98000,6 +111196,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "passed",
         "failed",
         "measured",
+        "errored",
         "missing",
         "pass_rate",
         "average_score",
@@ -98026,6 +111223,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         measured: {
           title: "Measured",
+          type: "integer",
+        },
+        errored: {
+          title: "Errored",
           type: "integer",
         },
         missing: {
@@ -98171,7 +111372,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "latency",
         "tokens",
         "cost_cents",
-        "goal",
+        "scenario",
+        "scenario_key",
       ],
       type: "object",
       properties: {
@@ -98203,8 +111405,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         cost_cents: {
           $ref: "#/definitions/TotalMetricStats",
         },
-        goal: {
-          title: "Goal",
+        scenario: {
+          title: "Scenario",
+          type: "string",
+          minLength: 1,
+        },
+        scenario_key: {
+          title: "Scenario key",
           type: "string",
           minLength: 1,
         },
@@ -98219,6 +111426,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "series",
         "series_limit",
         "series_mode",
+        "agent_latency_percentiles",
         "latency_percentiles",
         "distributions",
         "csat",
@@ -98230,6 +111438,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "unavailable_features",
         "evaluation_summary",
         "use_case_risk",
+        "run_health",
+        "comparison",
         "goal_count",
       ],
       type: "object",
@@ -98269,6 +111479,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Series mode",
           type: "string",
           enum: ["calls", "time_buckets"],
+        },
+        agent_latency_percentiles: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunDashboardPercentile",
+          },
         },
         latency_percentiles: {
           type: "array",
@@ -98323,6 +111539,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/RunDashboardRisk",
           },
+        },
+        run_health: {
+          $ref: "#/definitions/RunDashboardHealth",
+        },
+        comparison: {
+          $ref: "#/definitions/RunDashboardComparison",
         },
         goal_count: {
           title: "Goal count",
@@ -98387,9 +111609,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     TurnDistribution: {
-      required: ["passed", "failed", "error", "inconclusive", "turn_count"],
+      required: [
+        "queued",
+        "in_progress",
+        "passed",
+        "failed",
+        "error",
+        "inconclusive",
+        "turn_count",
+      ],
       type: "object",
       properties: {
+        queued: {
+          title: "Queued",
+          type: "integer",
+        },
+        in_progress: {
+          title: "In progress",
+          type: "integer",
+        },
         passed: {
           title: "Passed",
           type: "integer",
@@ -98413,7 +111651,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     EvaluationColumn: {
-      required: ["id", "name"],
+      required: ["id", "name", "kind"],
       type: "object",
       properties: {
         id: {
@@ -98425,6 +111663,48 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Name",
           type: "string",
           minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["evaluation", "sub_goal"],
+        },
+      },
+    },
+    OutcomeCounts: {
+      required: [
+        "queued",
+        "in_progress",
+        "passed",
+        "failed",
+        "error",
+        "inconclusive",
+      ],
+      type: "object",
+      properties: {
+        queued: {
+          title: "Queued",
+          type: "integer",
+        },
+        in_progress: {
+          title: "In progress",
+          type: "integer",
+        },
+        passed: {
+          title: "Passed",
+          type: "integer",
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+        },
+        error: {
+          title: "Error",
+          type: "integer",
+        },
+        inconclusive: {
+          title: "Inconclusive",
+          type: "integer",
         },
       },
     },
@@ -98439,6 +111719,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "persona",
         "persona_details",
         "sub_goals",
+        "sub_goal_results",
         "harness_outcome_status",
         "source_scenario_key",
         "trial_index",
@@ -98450,6 +111731,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "completed_at",
         "duration_seconds",
         "latency_ms",
+        "avg_stop_time_after_interruption",
+        "ai_interruption_count",
         "turn_count",
         "tokens",
         "cost_cents",
@@ -98458,6 +111741,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "ended_reason",
         "error_message",
         "evaluations",
+        "scoring_status",
+        "csat_status",
+        "csat_reason",
+        "failure_domain",
+        "failure_code",
       ],
       type: "object",
       properties: {
@@ -98510,6 +111798,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        sub_goal_results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SubGoalResult",
+          },
+        },
         harness_outcome_status: {
           title: "Harness outcome status",
           type: "string",
@@ -98530,7 +111824,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         outcome: {
           title: "Outcome",
           type: "string",
-          enum: ["passed", "failed", "error", "inconclusive"],
+          enum: [
+            "queued",
+            "in_progress",
+            "passed",
+            "failed",
+            "inconclusive",
+            "error",
+          ],
         },
         execution_status: {
           title: "Execution status",
@@ -98570,6 +111871,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "number",
           "x-nullable": true,
         },
+        avg_stop_time_after_interruption: {
+          title: "Avg stop time after interruption",
+          description:
+            "Average stop time after caller interruption in milliseconds.",
+          type: "integer",
+          "x-nullable": true,
+        },
+        ai_interruption_count: {
+          title: "Ai interruption count",
+          type: "integer",
+          "x-nullable": true,
+        },
         turn_count: {
           title: "Turn count",
           type: "integer",
@@ -98596,13 +111909,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         ended_reason: {
           title: "Ended reason",
           type: "string",
-          minLength: 1,
           "x-nullable": true,
         },
         error_message: {
           title: "Error message",
           type: "string",
-          minLength: 1,
           "x-nullable": true,
         },
         evaluations: {
@@ -98610,6 +111921,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/SimulateRunV3EvaluationResult",
           },
+        },
+        scoring_status: {
+          title: "Scoring status",
+          type: "string",
+          enum: [
+            "not_applicable",
+            "pending",
+            "succeeded",
+            "failed",
+            "timed_out",
+          ],
+        },
+        csat_status: {
+          title: "Csat status",
+          type: "string",
+          enum: [
+            "not_applicable",
+            "pending",
+            "succeeded",
+            "failed",
+            "timed_out",
+            "skipped",
+          ],
+        },
+        csat_reason: {
+          title: "Csat reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        failure_domain: {
+          title: "Failure domain",
+          type: "string",
+          enum: [
+            "agent",
+            "simulator",
+            "environment",
+            "connectivity",
+            "infrastructure",
+            "grading",
+            "platform_sync",
+          ],
+          "x-nullable": true,
+        },
+        failure_code: {
+          title: "Failure code",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },
@@ -98624,6 +111984,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "ordinal",
         "agent_version",
         "agent_type",
+        "resume",
         "summary",
       ],
       type: "object",
@@ -98670,6 +112031,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        environment_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        suite_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        pinned_agent_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        agent_differs: {
+          title: "Agent differs",
+          type: "boolean",
+          default: false,
+        },
         selected_scenario_keys: {
           type: "array",
           items: {
@@ -98690,8 +112065,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        resume: {
+          $ref: "#/definitions/RunResume",
+        },
         summary: {
           $ref: "#/definitions/RunSummary",
+        },
+        fix_run: {
+          $ref: "#/definitions/RunFixRun",
         },
       },
     },
@@ -98786,7 +112167,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    RunSummary: {
+    SimulateRunV3CallsSummary: {
       required: [
         "total",
         "outcomes",
@@ -98796,6 +112177,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "latency",
         "tokens",
         "cost_cents",
+        "scoring",
       ],
       type: "object",
       properties: {
@@ -98826,6 +112208,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         cost_cents: {
           $ref: "#/definitions/TotalMetricStats",
+        },
+        scoring: {
+          $ref: "#/definitions/SimulateRunV3ScoringCounts",
         },
       },
     },
@@ -99105,6 +112490,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
           "x-nullable": true,
         },
+        environment_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        suite_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        pinned_agent_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        agent_differs: {
+          title: "Agent differs",
+          type: "boolean",
+          readOnly: true,
+        },
       },
     },
     RunTestNameResult: {
@@ -99123,138 +112522,47 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    SimulateEvalConfigResponse: {
+    RunTrace: {
+      required: [
+        "trace_id",
+        "name",
+        "start_time",
+        "status",
+        "latency_ms",
+        "call_execution_id",
+      ],
       type: "object",
       properties: {
-        id: {
-          title: "Id",
+        trace_id: {
+          title: "Trace id",
           type: "string",
-          format: "uuid",
-          readOnly: true,
+          minLength: 1,
         },
         name: {
           title: "Name",
           type: "string",
-          readOnly: true,
-          minLength: 1,
           "x-nullable": true,
         },
-        config: {
-          title: "Config",
-          type: "object",
-          readOnly: true,
-          "x-nullable": true,
-          additionalProperties: true,
-        },
-        mapping: {
-          title: "Mapping",
-          type: "object",
-          readOnly: true,
-          "x-nullable": true,
-          additionalProperties: true,
-        },
-        filters: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              column_id: {
-                type: "string",
-                description: "Column or attribute id to filter on.",
-              },
-              property_id: {
-                type: "string",
-                description:
-                  "Optional stable namespaced Property Registry identity.",
-              },
-              display_name: {
-                type: "string",
-                description: "Optional UI label for chips and saved views.",
-              },
-              source: {
-                type: "string",
-                description:
-                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
-              },
-              output_type: {
-                type: "string",
-                description:
-                  "Optional metric output type metadata used by eval and annotation filters.",
-              },
-              filter_config: {
-                type: "object",
-                properties: {
-                  filter_type: {
-                    type: "string",
-                    description:
-                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
-                  },
-                  filter_op: {
-                    type: "string",
-                    description:
-                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
-                  },
-                  filter_value: {
-                    description:
-                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
-                  },
-                  col_type: {
-                    type: "string",
-                    description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
-                  },
-                  attribute_value_types: {
-                    type: "array",
-                    items: {
-                      type: "string",
-                      enum: ["string", "number", "boolean"],
-                      "x-nullable": true,
-                    },
-                    description:
-                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
-                  },
-                },
-                required: ["filter_type", "filter_op"],
-                additionalProperties: false,
-              },
-            },
-            required: ["column_id", "filter_config"],
-            additionalProperties: false,
-          },
-          readOnly: true,
-          default: [],
-        },
-        error_localizer: {
-          title: "Error localizer",
-          type: "boolean",
-          readOnly: true,
-        },
-        model: {
-          title: "Model",
+        start_time: {
+          title: "Start time",
           type: "string",
-          readOnly: true,
-          minLength: 1,
+          format: "date-time",
           "x-nullable": true,
         },
         status: {
           title: "Status",
           type: "string",
-          readOnly: true,
-          minLength: 1,
           "x-nullable": true,
         },
-        eval_group: {
-          title: "Eval group",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
+        latency_ms: {
+          title: "Latency ms",
+          type: "integer",
           "x-nullable": true,
         },
-        template_id: {
-          title: "Template id",
+        call_execution_id: {
+          title: "Call execution id",
           type: "string",
           format: "uuid",
-          readOnly: true,
           "x-nullable": true,
         },
       },
@@ -99813,6 +113121,203 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Result",
           type: "object",
         },
+      },
+    },
+    SQLDataset: {
+      required: [
+        "available",
+        "unavailable_reason",
+        "name",
+        "description",
+        "columns",
+      ],
+      type: "object",
+      properties: {
+        available: {
+          title: "Available",
+          type: "boolean",
+        },
+        unavailable_reason: {
+          title: "Unavailable reason",
+          type: "string",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          minLength: 1,
+        },
+        columns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLColumn",
+          },
+        },
+      },
+    },
+    SQLExample: {
+      required: ["id", "title", "description", "sql", "datasets"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        title: {
+          title: "Title",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          minLength: 1,
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          minLength: 1,
+        },
+        datasets: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    SQLEstimateSource: {
+      required: [
+        "dataset",
+        "estimated",
+        "parts",
+        "marks",
+        "max_rows",
+        "reason",
+      ],
+      type: "object",
+      properties: {
+        dataset: {
+          title: "Dataset",
+          type: "string",
+          minLength: 1,
+        },
+        estimated: {
+          title: "Estimated",
+          type: "boolean",
+        },
+        parts: {
+          title: "Parts",
+          type: "integer",
+          "x-nullable": true,
+        },
+        marks: {
+          title: "Marks",
+          type: "integer",
+          "x-nullable": true,
+        },
+        max_rows: {
+          title: "Max rows",
+          type: "integer",
+          "x-nullable": true,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+      },
+    },
+    SQLResult: {
+      type: "object",
+      properties: {
+        columns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLColumn",
+          },
+        },
+        rows: {
+          type: "array",
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+            },
+          },
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+        row_count: {
+          title: "Row count",
+          type: "integer",
+        },
+        result_bytes: {
+          title: "Result bytes",
+          type: "integer",
+        },
+        elapsed_ms: {
+          title: "Elapsed ms",
+          type: "integer",
+        },
+        offset: {
+          title: "Offset",
+          type: "integer",
+        },
+        next_offset: {
+          title: "Next offset",
+          type: "integer",
+          "x-nullable": true,
+        },
+        has_more: {
+          title: "Has more",
+          type: "boolean",
+        },
+        page_row_count: {
+          title: "Page row count",
+          type: "integer",
+        },
+        previewed: {
+          title: "Previewed",
+          type: "boolean",
+        },
+        retrieval_note: {
+          title: "Retrieval note",
+          type: "string",
+        },
+      },
+    },
+    SQLChart: {
+      type: "object",
+      properties: {
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["table", "bar"],
+          default: "table",
+        },
+        x: {
+          title: "X",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        y: {
+          title: "Y",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+      },
+      default: {
+        type: "table",
       },
     },
     SavedViewDetail: {
@@ -100517,6 +114022,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Widget count",
           type: "integer",
         },
+        issue: {
+          $ref: "#/definitions/FeedDetailCore",
+        },
+        overview: {
+          $ref: "#/definitions/OverviewResponse",
+        },
+        traces: {
+          $ref: "#/definitions/TracesTabResponse",
+        },
+        trends: {
+          $ref: "#/definitions/TrendsTabResponse",
+        },
+        sidebar: {
+          $ref: "#/definitions/FeedSidebar",
+        },
       },
     },
     SignupResult: {
@@ -100715,6 +114235,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Created by display",
           type: "string",
           readOnly: true,
+        },
+      },
+    },
+    SlackChannelsResult: {
+      required: ["channels", "next_cursor"],
+      type: "object",
+      properties: {
+        channels: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SlackChannel",
+          },
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    SlackInstallResult: {
+      required: ["authorization_url"],
+      type: "object",
+      properties: {
+        authorization_url: {
+          title: "Authorization url",
+          type: "string",
+          format: "uri",
+          minLength: 1,
         },
       },
     },
@@ -100922,6 +114472,105 @@ export const OPENAPI_CONTRACT = Object.freeze({
           additionalProperties: {
             $ref: "#/definitions/SpendSummaryOrg",
           },
+        },
+      },
+    },
+    StoredAgent: {
+      required: [
+        "schema_version",
+        "type",
+        "kind",
+        "name",
+        "provider_ref",
+        "behaviour",
+        "tools",
+        "model",
+        "voice",
+        "telephony",
+        "supports",
+        "direction_answer",
+        "gaps",
+        "instrumentation",
+        "setup_hash",
+      ],
+      type: "object",
+      properties: {
+        schema_version: {
+          title: "Schema version",
+          type: "string",
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        provider_ref: {
+          $ref: "#/definitions/StoredProviderRef",
+        },
+        behaviour: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/StoredBehaviourUnit",
+          },
+        },
+        tools: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/StoredTool",
+          },
+        },
+        model: {
+          $ref: "#/definitions/StoredModel",
+        },
+        voice: {
+          $ref: "#/definitions/StoredVoice",
+        },
+        telephony: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/StoredTelephony",
+          },
+        },
+        supports: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        direction_answer: {
+          title: "Direction answer",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        gaps: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        instrumentation: {
+          title: "Instrumentation",
+          type: "string",
+          minLength: 1,
+        },
+        setup_hash: {
+          title: "Setup hash",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -101193,6 +114842,124 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    TeamCreateErrorItem: {
+      required: ["error"],
+      type: "object",
+      properties: {
+        index: {
+          title: "Index",
+          type: "integer",
+        },
+        email: {
+          title: "Email",
+          type: "string",
+          format: "email",
+          minLength: 1,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    TeamCreatedMemberResponse: {
+      required: [
+        "id",
+        "email",
+        "name",
+        "organization_role",
+        "organization",
+        "created_at",
+        "status",
+        "role",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        email: {
+          title: "Email",
+          type: "string",
+          format: "email",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          "x-nullable": true,
+        },
+        organization_role: {
+          title: "Organization role",
+          type: "string",
+          "x-nullable": true,
+        },
+        organization: {
+          $ref: "#/definitions/AccountOrganizationDetail",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          "x-nullable": true,
+        },
+        goals: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        invite_email_warning: {
+          title: "Invite email warning",
+          description:
+            "Member was added, but the invitation email could not be sent.",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    WorkspaceSummary: {
+      required: ["id", "name", "display_name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        display_name: {
+          title: "Display name",
+          type: "string",
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        is_default: {
+          title: "Is default",
+          type: "boolean",
+        },
+      },
+    },
     CreateMember: {
       required: ["email", "name"],
       type: "object",
@@ -101258,7 +115025,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         created_members: {
           type: "array",
           items: {
-            $ref: "#/definitions/AccountUserItemResponse",
+            $ref: "#/definitions/TeamCreatedMemberResponse",
           },
         },
         workspace: {
@@ -101855,12 +115622,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         observation_spans: {
           type: "array",
           items: {
-            type: "object",
+            $ref: "#/definitions/TraceDetailSpan",
           },
         },
         summary: {
           title: "Summary",
           type: "object",
+        },
+        cost_coverage: {
+          $ref: "#/definitions/CostCoverage",
+        },
+        capture_coverage: {
+          $ref: "#/definitions/CaptureCoverage",
         },
         graph: {
           title: "Graph",
@@ -102056,10 +115829,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["metadata", "table", "config"],
       type: "object",
       properties: {
+        trace_capture_coverage: {
+          title: "Trace capture coverage",
+          description:
+            "Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            additionalProperties: {
+              $ref: "#/definitions/CaptureCoverage",
+            },
+          },
+        },
         metadata: {
           $ref: "#/definitions/TraceObserveListMetadata",
         },
         table: {
+          description:
+            "Observe eval bool and choice cells are counts of completed attempts; a detail eval_rollup separately selects the latest completed row per span.",
           type: "array",
           items: {
             type: "object",
@@ -102115,6 +115902,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: true,
         },
+        cost_coverage: {
+          $ref: "#/definitions/CostCoverage",
+        },
+        capture_coverage: {
+          $ref: "#/definitions/CaptureCoverage",
+        },
         response: {
           type: "array",
           items: {
@@ -102132,6 +115925,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["metadata", "table", "config"],
       type: "object",
       properties: {
+        trace_capture_coverage: {
+          title: "Trace capture coverage",
+          description:
+            "Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            additionalProperties: {
+              $ref: "#/definitions/CaptureCoverage",
+            },
+          },
+        },
         metadata: {
           $ref: "#/definitions/TraceSessionListMetadata",
         },
@@ -102408,6 +116213,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: true,
         },
+        eval_rollup: {
+          required: ["scope", "evals"],
+          type: "object",
+          properties: {
+            scope: {
+              title: "Scope",
+              type: "string",
+              enum: ["trace", "span"],
+            },
+            evals: {
+              type: "array",
+              items: {
+                $ref: "#/definitions/EvalRollupEval",
+              },
+            },
+            error: {
+              title: "Error",
+              type: "boolean",
+            },
+          },
+          "x-nullable": true,
+        },
         call_execution_id: {
           title: "Call execution id",
           type: "string",
@@ -102563,6 +116390,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Eval template id",
           type: "string",
           minLength: 1,
+          "x-nullable": true,
+        },
+        target_type: {
+          title: "Target type",
+          type: "string",
+          enum: ["span", "trace"],
           "x-nullable": true,
         },
         annotators: {
@@ -103146,6 +116979,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Message",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    UserAlertMonitorListResult: {
+      required: ["column_config", "table", "metadata"],
+      type: "object",
+      properties: {
+        column_config: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/UserAlertMonitorListColumn",
+          },
+        },
+        table: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/UserAlertMonitorListItem",
+          },
+        },
+        metadata: {
+          $ref: "#/definitions/UserAlertMonitorListMetadata",
         },
       },
     },
@@ -103917,34 +117771,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    WorkspaceSummary: {
-      required: ["id", "name", "display_name"],
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          minLength: 1,
-        },
-        display_name: {
-          title: "Display name",
-          type: "string",
-        },
-        description: {
-          title: "Description",
-          type: "string",
-        },
-        is_default: {
-          title: "Is default",
-          type: "boolean",
-        },
-      },
-    },
     AdminInvoiceLineItem: {
       required: [
         "line_type",
@@ -104028,6 +117854,88 @@ export const OPENAPI_CONTRACT = Object.freeze({
         display_unit: {
           title: "Display unit",
           type: "string",
+        },
+      },
+    },
+    AgentFixVerdict: {
+      required: ["accepted", "reason", "must_pass_regressions"],
+      type: "object",
+      properties: {
+        accepted: {
+          title: "Accepted",
+          type: "boolean",
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+        },
+        target_pass_rate: {
+          type: "array",
+          items: {
+            type: "number",
+          },
+          "x-nullable": true,
+        },
+        held_back_pass_rate: {
+          type: "array",
+          items: {
+            type: "number",
+          },
+          "x-nullable": true,
+        },
+        must_pass_regressions: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        must_pass_within_noise: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
+        },
+        tiers: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixVerdictTier",
+          },
+          default: [],
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixOverride: {
+      required: ["allowed", "regressions", "reason", "by", "at"],
+      type: "object",
+      properties: {
+        allowed: {
+          title: "Allowed",
+          type: "boolean",
+        },
+        regressions: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        by: {
+          $ref: "#/definitions/HarnessVersionPerson",
+        },
+        at: {
+          title: "At",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
         },
       },
     },
@@ -104252,6 +118160,54 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentVersionRef: {
+      required: ["id", "version_number"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
+    },
+    AlertOption: {
+      required: ["value", "label"],
+      type: "object",
+      properties: {
+        value: {
+          title: "Value",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AlertProjectOption: {
+      required: ["id", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     AnnotationSummaryHeader: {
       type: "object",
       properties: {
@@ -104468,6 +118424,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Text",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    InvestigationEvidenceWindow: {
+      required: ["start", "end"],
+      type: "object",
+      properties: {
+        start: {
+          title: "Start",
+          type: "string",
+          format: "date-time",
+        },
+        end: {
+          title: "End",
+          type: "string",
+          format: "date-time",
         },
       },
     },
@@ -104788,6 +118760,66 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    ConversationDossier: {
+      required: [
+        "provider",
+        "agent_instructions",
+        "call",
+        "variables",
+        "analysis",
+        "latency_ms",
+        "turns",
+        "not_included",
+      ],
+      type: "object",
+      properties: {
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+        },
+        agent_instructions: {
+          title: "Agent instructions",
+          type: "string",
+          "x-nullable": true,
+        },
+        call: {
+          $ref: "#/definitions/ConversationCall",
+        },
+        variables: {
+          $ref: "#/definitions/ConversationVariables",
+        },
+        analysis: {
+          $ref: "#/definitions/ConversationAnalysis",
+        },
+        latency_ms: {
+          title: "Latency ms",
+          type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/ConversationLatency",
+          },
+        },
+        turns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ConversationTurn",
+          },
+        },
+        provider_log_issues: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ConversationProviderLogIssue",
+          },
+        },
+        not_included: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -105153,6 +119185,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description: "Any valid JSON value.",
         },
       },
+      additionalProperties: false,
     },
     DatasetCellMetadata: {
       type: "object",
@@ -106759,6 +120792,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          "x-nullable": true,
+        },
         id: {
           title: "Id",
           type: "string",
@@ -106837,6 +120880,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["id", "version_number", "is_default"],
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
         id: {
           title: "Id",
           type: "string",
@@ -108411,6 +122459,82 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessAgentConfigChange: {
+      type: "object",
+      properties: {
+        phone_number: {
+          title: "Phone number",
+          type: "string",
+          maxLength: 512,
+          minLength: 1,
+        },
+        agent_name: {
+          title: "Agent name",
+          type: "string",
+          maxLength: 512,
+          minLength: 1,
+        },
+        target_speaks_first: {
+          title: "Target speaks first",
+          type: "boolean",
+        },
+      },
+    },
+    HarnessCompareInterval: {
+      description: "Newcombe 95% interval of the difference.",
+      required: ["low", "high"],
+      type: "object",
+      properties: {
+        low: {
+          title: "Low",
+          type: "number",
+        },
+        high: {
+          title: "High",
+          type: "number",
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessCompareSide: {
+      required: [
+        "passed",
+        "trials",
+        "undecided",
+        "pass_rate",
+        "eval_pass_rate",
+      ],
+      type: "object",
+      properties: {
+        passed: {
+          title: "Passed",
+          type: "integer",
+        },
+        trials: {
+          title: "Trials",
+          description: "Trials a verdict was reached on.",
+          type: "integer",
+        },
+        undecided: {
+          title: "Undecided",
+          description:
+            "Trials that ran to an end but a sub-goal check was undecided.",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        eval_pass_rate: {
+          title: "Eval pass rate",
+          description: "Context only; never decides the verdict.",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessEnvironmentEvalInput: {
       required: ["key", "source", "label"],
       type: "object",
@@ -108613,6 +122737,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "inputs",
         "id",
         "runnable",
+        "editable",
       ],
       type: "object",
       properties: {
@@ -108675,6 +122800,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         runnable: {
           title: "Runnable",
+          type: "boolean",
+        },
+        editable: {
+          title: "Editable",
           type: "boolean",
         },
       },
@@ -108900,6 +123029,151 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessNudgeProblem: {
+      required: ["item", "kind", "message", "in_your_unsaved_edits"],
+      type: "object",
+      properties: {
+        item: {
+          title: "Item",
+          type: "string",
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+        },
+        message: {
+          title: "Message",
+          type: "string",
+        },
+        in_your_unsaved_edits: {
+          title: "In your unsaved edits",
+          type: "boolean",
+        },
+      },
+    },
+    HarnessNudgeFile: {
+      required: [
+        "path",
+        "status",
+        "previous_path",
+        "additions",
+        "deletions",
+        "has_patch",
+        "patch_omitted",
+      ],
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["added", "removed", "modified", "renamed", "copied"],
+        },
+        previous_path: {
+          title: "Previous path",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        additions: {
+          title: "Additions",
+          type: "integer",
+          "x-nullable": true,
+        },
+        deletions: {
+          title: "Deletions",
+          type: "integer",
+          "x-nullable": true,
+        },
+        has_patch: {
+          title: "Has patch",
+          type: "boolean",
+        },
+        patch_omitted: {
+          title: "Patch omitted",
+          description:
+            "Why the file's patch isn't kept: secret_path, too_large, binary, budget or redaction_unavailable.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessNudgeVariables: {
+      required: ["added", "removed", "changed", "unknown"],
+      type: "object",
+      properties: {
+        added: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        removed: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        changed: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        unknown: {
+          description:
+            "Names whose values couldn't be read, so they may have changed.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    HarnessTargetMetrics: {
+      required: ["provider"],
+      type: "object",
+      properties: {
+        provider: {
+          title: "Provider",
+          type: "string",
+          enum: ["vapi", "retell", "livekit"],
+        },
+        usage: {
+          $ref: "#/definitions/HarnessTargetUsage",
+        },
+        cost_cents: {
+          title: "Cost cents",
+          type: "integer",
+          minimum: 0,
+        },
+        latency: {
+          $ref: "#/definitions/HarnessTargetLatency",
+        },
+        provider_call_id: {
+          title: "Provider call id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        provider_end_reason: {
+          title: "Provider end reason",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessScenarioRegistrationResponse: {
       required: ["scenario_key", "scenario_id"],
       type: "object",
@@ -109024,6 +123298,616 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    InsightAskParagraph: {
+      required: ["text", "unit_ids", "category_ids", "evidence"],
+      type: "object",
+      properties: {
+        text: {
+          title: "Text",
+          type: "string",
+          minLength: 1,
+        },
+        unit_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        category_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        evidence: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightAskEvidence",
+          },
+        },
+      },
+    },
+    InsightRunSummary: {
+      required: [
+        "id",
+        "status",
+        "stage",
+        "created_at",
+        "finished_at",
+        "population_size",
+        "sample_size",
+        "analysed_count",
+        "excluded_count",
+        "failed_count",
+        "skipped_count",
+        "taxonomy_mode",
+        "distribution",
+        "error",
+        "error_code",
+        "scope",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+          minLength: 1,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        population_size: {
+          title: "Population size",
+          type: "integer",
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+        },
+        analysed_count: {
+          title: "Analysed count",
+          type: "integer",
+        },
+        excluded_count: {
+          title: "Excluded count",
+          type: "integer",
+        },
+        failed_count: {
+          title: "Failed count",
+          type: "integer",
+        },
+        skipped_count: {
+          title: "Skipped count",
+          type: "integer",
+        },
+        taxonomy_mode: {
+          title: "Taxonomy mode",
+          type: "string",
+          minLength: 1,
+        },
+        distribution: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        error_code: {
+          title: "Error code",
+          type: "string",
+        },
+        scope: {
+          title: "Scope",
+          type: "object",
+        },
+      },
+      "x-nullable": true,
+    },
+    InsightUnitItem: {
+      required: [
+        "unit_id",
+        "label",
+        "user_id",
+        "session_id",
+        "time",
+        "excerpt",
+        "summary",
+        "lens_answer",
+        "facets",
+        "metrics",
+        "category_id",
+        "sub_category_id",
+      ],
+      type: "object",
+      properties: {
+        unit_id: {
+          title: "Unit id",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+        },
+        user_id: {
+          title: "User id",
+          type: "string",
+        },
+        session_id: {
+          title: "Session id",
+          type: "string",
+        },
+        time: {
+          title: "Time",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        excerpt: {
+          title: "Excerpt",
+          type: "string",
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+        },
+        lens_answer: {
+          title: "Lens answer",
+          type: "string",
+        },
+        facets: {
+          title: "Facets",
+          type: "object",
+        },
+        metrics: {
+          title: "Metrics",
+          type: "object",
+        },
+        category_id: {
+          title: "Category id",
+          type: "string",
+        },
+        sub_category_id: {
+          title: "Sub category id",
+          type: "string",
+        },
+        content: {
+          title: "Content",
+          type: "string",
+        },
+      },
+    },
+    InstantEvalChoice: {
+      required: [
+        "sample_size",
+        "rows_to_read",
+        "credits_estimate",
+        "seconds_estimate",
+        "needs_confirm",
+        "allowed",
+        "credit_limited",
+      ],
+      type: "object",
+      properties: {
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+          "x-nullable": true,
+        },
+        rows_to_read: {
+          title: "Rows to read",
+          type: "integer",
+        },
+        credits_estimate: {
+          title: "Credits estimate",
+          type: "number",
+          "x-nullable": true,
+        },
+        seconds_estimate: {
+          title: "Seconds estimate",
+          type: "integer",
+        },
+        needs_confirm: {
+          title: "Needs confirm",
+          type: "boolean",
+        },
+        allowed: {
+          title: "Allowed",
+          type: "boolean",
+        },
+        credit_limited: {
+          title: "Credit limited",
+          type: "boolean",
+        },
+      },
+    },
+    InstantEvalCreditCheck: {
+      required: [
+        "allowed",
+        "error_code",
+        "current_usage",
+        "limit",
+        "credits_left",
+        "blocked",
+        "message",
+      ],
+      type: "object",
+      properties: {
+        allowed: {
+          title: "Allowed",
+          type: "boolean",
+        },
+        error_code: {
+          title: "Error code",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        current_usage: {
+          title: "Current usage",
+          type: "number",
+          "x-nullable": true,
+        },
+        limit: {
+          title: "Limit",
+          type: "number",
+          "x-nullable": true,
+        },
+        credits_left: {
+          title: "Credits left",
+          type: "number",
+          "x-nullable": true,
+        },
+        blocked: {
+          title: "Blocked",
+          type: "boolean",
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    InstantEvalSampleError: {
+      required: ["error_code", "message", "sample_size"],
+      type: "object",
+      properties: {
+        error_code: {
+          title: "Error code",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
+    },
+    InstantEvalBusyRun: {
+      required: [
+        "task_id",
+        "project_id",
+        "question",
+        "rows",
+        "started_by",
+        "started_at",
+      ],
+      type: "object",
+      properties: {
+        task_id: {
+          title: "Task id",
+          type: "string",
+          minLength: 1,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          minLength: 1,
+        },
+        question: {
+          title: "Question",
+          type: "string",
+        },
+        rows: {
+          title: "Rows",
+          type: "integer",
+        },
+        started_by: {
+          title: "Started by",
+          type: "string",
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    InstantEvalRun: {
+      required: [
+        "task_id",
+        "name",
+        "created_at",
+        "status",
+        "run_type",
+        "unit",
+        "reads",
+        "rows",
+        "config_ids",
+        "questions",
+        "counts",
+        "answered",
+        "pending",
+      ],
+      type: "object",
+      properties: {
+        task_id: {
+          title: "Task id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        run_type: {
+          title: "Run type",
+          type: "string",
+          minLength: 1,
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          minLength: 1,
+        },
+        reads: {
+          title: "Reads",
+          type: "string",
+          "x-nullable": true,
+        },
+        rows: {
+          title: "Rows",
+          type: "integer",
+        },
+        config_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        questions: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        counts: {
+          title: "Counts",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            additionalProperties: {
+              type: "integer",
+            },
+          },
+        },
+        answered: {
+          title: "Answered",
+          type: "integer",
+        },
+        pending: {
+          title: "Pending",
+          type: "integer",
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        last_activity_at: {
+          title: "Last activity at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        created_by: {
+          title: "Created by",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        credits_estimate: {
+          title: "Credits estimate",
+          type: "number",
+          "x-nullable": true,
+        },
+        population: {
+          title: "Population",
+          type: "integer",
+          "x-nullable": true,
+        },
+        is_sample: {
+          title: "Is sample",
+          type: "boolean",
+        },
+        date_preset: {
+          title: "Date preset",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          "x-nullable": true,
+        },
+        window: {
+          title: "Window",
+          type: "object",
+          "x-nullable": true,
+        },
+        sessions: {
+          title: "Sessions",
+          type: "integer",
+          "x-nullable": true,
+        },
+      },
+    },
+    InstantEvalFailure: {
+      required: ["message", "every", "ai_providers"],
+      type: "object",
+      properties: {
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        every: {
+          title: "Every",
+          type: "boolean",
+        },
+        ai_providers: {
+          title: "Ai providers",
+          type: "boolean",
+        },
+      },
+      "x-nullable": true,
+    },
+    InstantEvalPerson: {
+      required: ["id", "name", "email"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        email: {
+          title: "Email",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
+    },
+    InstantEvalQuestion: {
+      required: ["config_id", "question", "answer_type", "labels"],
+      type: "object",
+      properties: {
+        config_id: {
+          title: "Config id",
+          type: "string",
+          minLength: 1,
+        },
+        question: {
+          title: "Question",
+          type: "string",
+        },
+        answer_type: {
+          title: "Answer type",
+          type: "string",
+          minLength: 1,
+        },
+        labels: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    InstantEvalSample: {
+      required: [
+        "population",
+        "population_is_lower_bound",
+        "requested",
+        "read",
+        "is_sample",
+        "can_extend",
+        "next_size",
+      ],
+      type: "object",
+      properties: {
+        population: {
+          title: "Population",
+          type: "integer",
+        },
+        population_is_lower_bound: {
+          title: "Population is lower bound",
+          type: "boolean",
+        },
+        requested: {
+          title: "Requested",
+          type: "integer",
+        },
+        read: {
+          title: "Read",
+          type: "integer",
+        },
+        is_sample: {
+          title: "Is sample",
+          type: "boolean",
+        },
+        can_extend: {
+          title: "Can extend",
+          type: "boolean",
+        },
+        next_size: {
+          title: "Next size",
+          type: "integer",
+        },
+      },
+    },
     IntegrationConnectionList: {
       required: [
         "platform",
@@ -109051,6 +123935,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "cloud_storage",
             "message_queue",
             "linear",
+            "slack",
           ],
         },
         display_name: {
@@ -109717,6 +124602,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    DecisionConnection: {
+      required: ["model_name", "provider", "label", "is_available"],
+      type: "object",
+      properties: {
+        model_name: {
+          title: "Model name",
+          type: "string",
+          minLength: 1,
+        },
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        is_available: {
+          title: "Is available",
+          type: "boolean",
+        },
+      },
+    },
     ModelParameterBoolean: {
       required: ["label"],
       type: "object",
@@ -109909,6 +124819,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Primary traffic",
           type: "number",
           "x-nullable": true,
+        },
+        cost_coverage: {
+          $ref: "#/definitions/CostCoverage",
         },
       },
     },
@@ -110159,6 +125072,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Details",
           type: "object",
           "x-nullable": true,
+        },
+      },
+    },
+    CostCoverageBucket: {
+      required: [
+        "status",
+        "known_subtotal",
+        "known_fact_count",
+        "unknown_fact_count",
+        "timestamp",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["complete", "partial", "unknown"],
+        },
+        known_subtotal: {
+          title: "Known subtotal",
+          description:
+            "Sum in USD of known observed contributions, never an average.",
+          type: "number",
+          minimum: 0,
+        },
+        known_fact_count: {
+          title: "Known fact count",
+          description:
+            "Observed additive monetary facts with known cost, including zero.",
+          type: "integer",
+          minimum: 0,
+        },
+        unknown_fact_count: {
+          title: "Unknown fact count",
+          description:
+            "Observed additive monetary facts with unknown cost, not missing requests.",
+          type: "integer",
+          minimum: 0,
+        },
+        timestamp: {
+          title: "Timestamp",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -111475,28 +126431,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    OutcomeCounts: {
-      required: ["passed", "failed", "error", "inconclusive"],
-      type: "object",
-      properties: {
-        passed: {
-          title: "Passed",
-          type: "integer",
-        },
-        failed: {
-          title: "Failed",
-          type: "integer",
-        },
-        error: {
-          title: "Error",
-          type: "integer",
-        },
-        inconclusive: {
-          title: "Inconclusive",
-          type: "integer",
-        },
-      },
-    },
     TotalMetricStats: {
       required: [
         "average",
@@ -111604,8 +126538,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RunDashboardComparison: {
+      required: [
+        "available",
+        "previous_execution_id",
+        "shared_scenarios",
+        "newly_passing",
+        "newly_failing",
+      ],
+      type: "object",
+      properties: {
+        available: {
+          title: "Available",
+          type: "boolean",
+        },
+        previous_execution_id: {
+          title: "Previous execution id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        shared_scenarios: {
+          title: "Shared scenarios",
+          type: "integer",
+        },
+        newly_passing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        newly_failing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
     RunDashboardCsat: {
-      required: ["bins", "measured", "total", "agreement"],
+      required: [
+        "bins",
+        "measured",
+        "total",
+        "satisfied",
+        "satisfied_percent",
+        "agreement",
+      ],
       type: "object",
       properties: {
         bins: {
@@ -111621,6 +126602,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         total: {
           title: "Total",
           type: "integer",
+        },
+        satisfied: {
+          title: "Satisfied",
+          type: "integer",
+        },
+        satisfied_percent: {
+          title: "Satisfied percent",
+          type: "number",
+          "x-nullable": true,
         },
         agreement: {
           $ref: "#/definitions/RunDashboardAgreement",
@@ -111668,7 +126658,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     RunDashboardEvaluationSummary: {
-      required: ["graders", "passed", "measured", "pass_rate"],
+      required: [
+        "graders",
+        "passed",
+        "measured",
+        "pass_rate",
+        "errored_checks",
+      ],
       type: "object",
       properties: {
         graders: {
@@ -111687,6 +126683,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Pass rate",
           type: "number",
           "x-nullable": true,
+        },
+        errored_checks: {
+          title: "Errored checks",
+          type: "integer",
+        },
+      },
+    },
+    RunDashboardHealth: {
+      required: [
+        "show_banner",
+        "attempted",
+        "ran_cleanly",
+        "connected",
+        "errored",
+        "not_evaluated",
+        "eval_errors",
+      ],
+      type: "object",
+      properties: {
+        show_banner: {
+          title: "Show banner",
+          type: "boolean",
+        },
+        attempted: {
+          title: "Attempted",
+          type: "integer",
+        },
+        ran_cleanly: {
+          title: "Ran cleanly",
+          type: "integer",
+        },
+        connected: {
+          title: "Connected",
+          type: "integer",
+        },
+        errored: {
+          title: "Errored",
+          type: "integer",
+        },
+        not_evaluated: {
+          title: "Not evaluated",
+          type: "integer",
+        },
+        eval_errors: {
+          title: "Eval errors",
+          type: "integer",
         },
       },
     },
@@ -111843,11 +126885,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     RunDashboardRisk: {
-      required: ["goal", "passed", "failed", "error", "inconclusive"],
+      required: [
+        "queued",
+        "in_progress",
+        "scenario",
+        "passed",
+        "failed",
+        "error",
+        "inconclusive",
+      ],
       type: "object",
       properties: {
-        goal: {
-          title: "Goal",
+        queued: {
+          title: "Queued",
+          type: "integer",
+        },
+        in_progress: {
+          title: "In progress",
+          type: "integer",
+        },
+        scenario: {
+          title: "Scenario",
           type: "string",
           minLength: 1,
         },
@@ -111874,6 +126932,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "label",
         "started_at",
         "calls",
+        "latency_ms",
         "duration_ms",
         "llm_cents",
         "tts_cents",
@@ -111896,6 +126955,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         calls: {
           title: "Calls",
           type: "integer",
+        },
+        latency_ms: {
+          title: "Latency ms",
+          type: "number",
+          "x-nullable": true,
         },
         duration_ms: {
           title: "Duration ms",
@@ -112069,6 +127133,91 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RunFixRun: {
+      required: ["id", "label"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        label: {
+          title: "Label",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
+    },
+    RunResume: {
+      required: ["resumable", "finished", "unfinished", "history"],
+      type: "object",
+      properties: {
+        resumable: {
+          title: "Resumable",
+          type: "boolean",
+        },
+        finished: {
+          title: "Finished",
+          type: "integer",
+          "x-nullable": true,
+        },
+        unfinished: {
+          title: "Unfinished",
+          type: "integer",
+          "x-nullable": true,
+        },
+        history: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunResumeEntry",
+          },
+        },
+      },
+    },
+    RunSummary: {
+      required: [
+        "total",
+        "outcomes",
+        "measured",
+        "pass_rate",
+        "duration",
+        "latency",
+        "tokens",
+        "cost_cents",
+      ],
+      type: "object",
+      properties: {
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+        outcomes: {
+          $ref: "#/definitions/OutcomeCounts",
+        },
+        measured: {
+          title: "Measured",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        duration: {
+          $ref: "#/definitions/MetricStats",
+        },
+        latency: {
+          $ref: "#/definitions/MetricStats",
+        },
+        tokens: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        cost_cents: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+      },
+    },
     FacetValue: {
       required: ["value", "count"],
       type: "object",
@@ -112085,7 +127234,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     GroupAggregates: {
-      required: ["csat", "turns", "latency_ms", "tokens", "evaluations"],
+      required: [
+        "csat",
+        "turns",
+        "latency_ms",
+        "avg_stop_time_after_interruption",
+        "ai_interruptions",
+        "tokens",
+        "evaluations",
+      ],
       type: "object",
       properties: {
         csat: {
@@ -112103,6 +127260,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "number",
           "x-nullable": true,
         },
+        avg_stop_time_after_interruption: {
+          title: "Avg stop time after interruption",
+          description:
+            "Mean call stop latency in milliseconds, excluding unmeasured calls.",
+          type: "number",
+          "x-nullable": true,
+        },
+        ai_interruptions: {
+          title: "Ai interruptions",
+          description:
+            "Mean AI interruption count per call, excluding unmeasured calls.",
+          type: "number",
+          "x-nullable": true,
+        },
         tokens: {
           title: "Tokens",
           type: "number",
@@ -112111,6 +127282,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         evaluations: {
           title: "Evaluations",
           type: "object",
+        },
+      },
+    },
+    SimulateRunV3ScoringCounts: {
+      required: [
+        "not_applicable",
+        "pending",
+        "succeeded",
+        "failed",
+        "timed_out",
+      ],
+      type: "object",
+      properties: {
+        not_applicable: {
+          title: "Not applicable",
+          type: "integer",
+          minimum: 0,
+        },
+        pending: {
+          title: "Pending",
+          type: "integer",
+          minimum: 0,
+        },
+        succeeded: {
+          title: "Succeeded",
+          type: "integer",
+          minimum: 0,
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+          minimum: 0,
+        },
+        timed_out: {
+          title: "Timed out",
+          type: "integer",
+          minimum: 0,
         },
       },
     },
@@ -112348,6 +127556,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SQLColumn: {
+      required: ["name", "type"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     SavedViewDefaultTab: {
       required: ["key", "label", "tab_type"],
       type: "object",
@@ -112567,6 +127791,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SlackChannel: {
+      required: ["id", "name", "is_private", "is_member"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        is_private: {
+          title: "Is private",
+          type: "boolean",
+        },
+        is_member: {
+          title: "Is member",
+          type: "boolean",
+        },
+      },
+    },
     SpanListColumnConfig: {
       required: ["id", "name", "is_visible"],
       type: "object",
@@ -112635,6 +127883,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Eval template id",
           type: "string",
           minLength: 1,
+          "x-nullable": true,
+        },
+        target_type: {
+          title: "Target type",
+          type: "string",
+          enum: ["span", "trace"],
           "x-nullable": true,
         },
         annotators: {
@@ -112804,6 +128058,176 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    StoredBehaviourUnit: {
+      required: ["id", "shape", "instructions", "tools", "transitions"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        shape: {
+          title: "Shape",
+          type: "string",
+          minLength: 1,
+        },
+        instructions: {
+          title: "Instructions",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        tools: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        transitions: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    StoredModel: {
+      required: ["provider", "name", "temperature", "max_tokens"],
+      type: "object",
+      properties: {
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        temperature: {
+          title: "Temperature",
+          type: "number",
+          "x-nullable": true,
+        },
+        max_tokens: {
+          title: "Max tokens",
+          type: "integer",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    StoredProviderRef: {
+      required: ["provider", "id", "version"],
+      type: "object",
+      properties: {
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    StoredTelephony: {
+      required: ["number", "provider", "direction_supported"],
+      type: "object",
+      properties: {
+        number: {
+          title: "Number",
+          type: "string",
+          minLength: 1,
+        },
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        direction_supported: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    StoredTool: {
+      required: ["name", "description", "kind", "parameters", "endpoint"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        parameters: {
+          title: "Parameters",
+          type: "object",
+          "x-nullable": true,
+        },
+        endpoint: {
+          $ref: "#/definitions/StoredToolEndpoint",
+        },
+      },
+    },
+    StoredVoice: {
+      required: ["provider", "voice_id", "language", "speed"],
+      type: "object",
+      properties: {
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        voice_id: {
+          title: "Voice id",
+          type: "string",
+          minLength: 1,
+        },
+        language: {
+          title: "Language",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        speed: {
+          title: "Speed",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
     SyntheticDatasetConfigPayload: {
       type: "object",
       properties: {
@@ -112850,27 +128274,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         num_columns: {
           title: "Num columns",
           type: "integer",
-        },
-      },
-    },
-    TeamCreateErrorItem: {
-      required: ["error"],
-      type: "object",
-      properties: {
-        index: {
-          title: "Index",
-          type: "integer",
-        },
-        email: {
-          title: "Email",
-          type: "string",
-          format: "email",
-          minLength: 1,
-        },
-        error: {
-          title: "Error",
-          type: "string",
-          minLength: 1,
         },
       },
     },
@@ -113109,6 +128512,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "number",
           minimum: 0,
         },
+        cost_coverage: {
+          $ref: "#/definitions/CostCoverage",
+        },
         error_count: {
           title: "Error count",
           type: "integer",
@@ -113183,6 +128589,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "number",
           minimum: 0,
         },
+        cost_coverage: {
+          $ref: "#/definitions/CostCoverage",
+        },
         error_count: {
           title: "Error count",
           type: "integer",
@@ -113206,6 +128615,109 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Member count",
           type: "integer",
           minimum: 0,
+        },
+      },
+    },
+    CaptureCoverage: {
+      required: [
+        "scope",
+        "source_summary_present",
+        "request_count",
+        "coverage_unknown",
+      ],
+      type: "object",
+      properties: {
+        scope: {
+          title: "Scope",
+          type: "string",
+          enum: ["observed_requests"],
+        },
+        source_summary_present: {
+          title: "Source summary present",
+          type: "boolean",
+        },
+        request_count: {
+          title: "Request count",
+          description:
+            "Observed request spans only; never inferred from source summary totals.",
+          type: "integer",
+          minimum: 0,
+        },
+        coverage_unknown: {
+          title: "Coverage unknown",
+          description:
+            "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+          type: "boolean",
+        },
+      },
+    },
+    CostCoverage: {
+      required: [
+        "status",
+        "known_subtotal",
+        "known_fact_count",
+        "unknown_fact_count",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["complete", "partial", "unknown"],
+        },
+        known_subtotal: {
+          title: "Known subtotal",
+          description:
+            "Sum in USD of known observed contributions, never an average.",
+          type: "number",
+          minimum: 0,
+        },
+        known_fact_count: {
+          title: "Known fact count",
+          description:
+            "Observed additive monetary facts with known cost, including zero.",
+          type: "integer",
+          minimum: 0,
+        },
+        unknown_fact_count: {
+          title: "Unknown fact count",
+          description:
+            "Observed additive monetary facts with unknown cost, not missing requests.",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    TraceDetailSpan: {
+      required: ["observation_span"],
+      type: "object",
+      properties: {
+        observation_span: {
+          title: "Observation span",
+          type: "object",
+        },
+        children: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        eval_scores: {
+          description:
+            "Raw eval rows retained for backwards-compatible array consumers.",
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        eval_rollup: {
+          $ref: "#/definitions/EvalRollup",
+        },
+        annotations: {
+          type: "array",
+          items: {
+            type: "object",
+          },
         },
       },
     },
@@ -113449,6 +128961,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "number",
           "x-nullable": true,
         },
+        cost_coverage: {
+          $ref: "#/definitions/CostCoverage",
+        },
+        capture_coverage: {
+          $ref: "#/definitions/CaptureCoverage",
+        },
         total_tokens: {
           title: "Total tokens",
           type: "integer",
@@ -113495,6 +129013,63 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "x-nullable": true,
       },
     },
+    EvalRollupEval: {
+      required: ["eval_config_id", "eval_name", "aggregate", "spans"],
+      type: "object",
+      properties: {
+        eval_config_id: {
+          title: "Eval config id",
+          type: "string",
+          minLength: 1,
+        },
+        eval_name: {
+          title: "Eval name",
+          type: "string",
+          minLength: 1,
+        },
+        output_type: {
+          title: "Output type",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        template_type: {
+          title: "Template type",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        target_type: {
+          title: "Target type",
+          type: "string",
+          enum: ["span", "trace"],
+          "x-nullable": true,
+        },
+        choices_map: {
+          title: "Choices map",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        aggregate: {
+          title: "Aggregate",
+          type: "object",
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        spans: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvalRollupSpan",
+          },
+        },
+        error: {
+          title: "Error",
+          type: "boolean",
+        },
+      },
+    },
     TracesAggregates: {
       required: [
         "total_traces",
@@ -113522,6 +129097,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         avg_score: {
           title: "Avg score",
           type: "number",
+          "x-nullable": true,
         },
         p50_latency: {
           title: "P50 latency",
@@ -113534,6 +129110,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         avg_turns: {
           title: "Avg turns",
           type: "number",
+          "x-nullable": true,
         },
       },
     },
@@ -114169,6 +129746,116 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    UserAlertMonitorListColumn: {
+      required: ["id", "name", "is_visible"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        is_visible: {
+          title: "Is visible",
+          type: "boolean",
+        },
+      },
+    },
+    UserAlertMonitorListItem: {
+      required: [
+        "id",
+        "name",
+        "created_at",
+        "updated_at",
+        "metric_type",
+        "filters",
+        "status",
+        "no_of_alerts",
+        "last_triggered",
+        "is_mute",
+        "trends",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+        },
+        metric_type: {
+          title: "Metric type",
+          type: "string",
+          minLength: 1,
+        },
+        filters: {
+          title: "Filters",
+          type: "object",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["triggered", "healthy"],
+        },
+        no_of_alerts: {
+          title: "No of alerts",
+          type: "integer",
+          minimum: 0,
+        },
+        last_triggered: {
+          title: "Last triggered",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        is_mute: {
+          title: "Is mute",
+          type: "boolean",
+        },
+        trends: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/UserAlertMonitorTrend",
+          },
+        },
+      },
+    },
+    UserAlertMonitorListMetadata: {
+      required: ["total_rows", "total_pages"],
+      type: "object",
+      properties: {
+        total_rows: {
+          title: "Total rows",
+          type: "integer",
+          minimum: 0,
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
     UserOnboardingData: {
       required: ["role", "goals"],
       type: "object",
@@ -114200,6 +129887,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         total_cost: {
           title: "Total cost",
           type: "number",
+        },
+        cost_coverage: {
+          $ref: "#/definitions/CostCoverage",
         },
         total_tokens: {
           title: "Total tokens",
@@ -114286,6 +129976,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Project id",
           type: "string",
           format: "uuid",
+          "x-nullable": true,
+        },
+        project_name: {
+          title: "Project name",
+          type: "string",
+          minLength: 1,
           "x-nullable": true,
         },
         user_id_type: {
@@ -114602,6 +130298,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "name",
         "status",
         "run_type",
+        "row_type",
         "filters_applied",
         "created_at",
         "evals_applied",
@@ -114638,6 +130335,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        row_type: {
+          title: "Row type",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
         filters_applied: {
           title: "Filters applied",
           type: "object",
@@ -114666,6 +130369,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           "x-nullable": true,
+        },
+      },
+    },
+    AgentFixVerdictTier: {
+      required: ["name", "status"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["passed", "failed", "pending", "skipped"],
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          default: "",
         },
       },
     },
@@ -114726,6 +130450,284 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 128,
           minLength: 1,
           "x-nullable": true,
+        },
+      },
+    },
+    ConversationAnalysis: {
+      required: ["summary", "successful", "in_voicemail", "sentiment", "flags"],
+      type: "object",
+      properties: {
+        summary: {
+          title: "Summary",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        successful: {
+          title: "Successful",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        in_voicemail: {
+          title: "In voicemail",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        sentiment: {
+          title: "Sentiment",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        flags: {
+          title: "Flags",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+      },
+    },
+    ConversationCall: {
+      required: [
+        "status",
+        "direction",
+        "duration_seconds",
+        "ended_reason",
+        "agent",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        direction: {
+          title: "Direction",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        duration_seconds: {
+          title: "Duration seconds",
+          type: "number",
+          "x-nullable": true,
+        },
+        ended_reason: {
+          title: "Ended reason",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        agent: {
+          $ref: "#/definitions/ConversationCallAgent",
+        },
+      },
+    },
+    ConversationLatency: {
+      required: ["p50", "p90", "max", "num"],
+      type: "object",
+      properties: {
+        p50: {
+          title: "P50",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        p90: {
+          title: "P90",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        max: {
+          title: "Max",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        num: {
+          title: "Num",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+      },
+    },
+    ConversationProviderLogIssue: {
+      required: ["at", "level", "message"],
+      type: "object",
+      properties: {
+        at: {
+          title: "At",
+          type: "number",
+        },
+        level: {
+          title: "Level",
+          type: "string",
+          enum: ["warn", "error"],
+        },
+        message: {
+          title: "Message",
+          type: "string",
+        },
+      },
+    },
+    ConversationTurn: {
+      required: ["i", "role"],
+      type: "object",
+      properties: {
+        i: {
+          title: "I",
+          type: "integer",
+          minimum: 0,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          minLength: 1,
+        },
+        start: {
+          title: "Start",
+          type: "number",
+          "x-nullable": true,
+        },
+        end: {
+          title: "End",
+          type: "number",
+          "x-nullable": true,
+        },
+        text: {
+          title: "Text",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        spoken: {
+          title: "Spoken",
+          type: "boolean",
+        },
+        at: {
+          title: "At",
+          type: "number",
+          "x-nullable": true,
+        },
+        id: {
+          title: "Id",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        name: {
+          title: "Name",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        arguments: {
+          title: "Arguments",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        ok: {
+          title: "Ok",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        content: {
+          title: "Content",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        to: {
+          title: "To",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        type: {
+          title: "Type",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        digit: {
+          title: "Digit",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        media: {
+          type: "array",
+          items: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+        from: {
+          title: "From",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+      },
+    },
+    ConversationVariables: {
+      required: ["configured", "collected"],
+      type: "object",
+      properties: {
+        configured: {
+          title: "Configured",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+        collected: {
+          title: "Collected",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
         },
       },
     },
@@ -115339,6 +131341,83 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessTargetLatency: {
+      type: "object",
+      properties: {
+        turn: {
+          title: "Turn",
+          type: "integer",
+          minimum: 0,
+        },
+        model: {
+          title: "Model",
+          type: "integer",
+          minimum: 0,
+        },
+        voice: {
+          title: "Voice",
+          type: "integer",
+          minimum: 0,
+        },
+        transcriber: {
+          title: "Transcriber",
+          type: "integer",
+          minimum: 0,
+        },
+        endpointing: {
+          title: "Endpointing",
+          type: "integer",
+          minimum: 0,
+        },
+        turns: {
+          type: "array",
+          items: {
+            type: "integer",
+            minimum: 0,
+          },
+          maxItems: 1000,
+        },
+      },
+    },
+    HarnessTargetUsage: {
+      type: "object",
+      properties: {
+        prompt_tokens: {
+          title: "Prompt tokens",
+          type: "integer",
+          minimum: 0,
+        },
+        completion_tokens: {
+          title: "Completion tokens",
+          type: "integer",
+          minimum: 0,
+        },
+        total_tokens: {
+          title: "Total tokens",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    InsightAskEvidence: {
+      required: ["unit_id", "quote"],
+      type: "object",
+      properties: {
+        unit_id: {
+          title: "Unit id",
+          type: "string",
+          minLength: 1,
+        },
+        quote: {
+          title: "Quote",
+          type: "string",
+        },
+        evidence_id: {
+          title: "Evidence id",
+          type: "string",
+        },
+      },
+    },
     LegacyEvalTemplateAverage: {
       required: ["avg_graph_data"],
       type: "object",
@@ -115759,6 +131838,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RunResumeEntry: {
+      required: ["at", "by", "calls"],
+      type: "object",
+      properties: {
+        at: {
+          title: "At",
+          type: "string",
+          format: "date-time",
+        },
+        by: {
+          title: "By",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        calls: {
+          title: "Calls",
+          type: "integer",
+        },
+      },
+    },
     ChatToolCallFunction: {
       required: ["name", "arguments"],
       type: "object",
@@ -115774,6 +131874,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
       },
+    },
+    StoredToolEndpoint: {
+      required: ["url"],
+      type: "object",
+      properties: {
+        url: {
+          title: "Url",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
     },
     TeamWorkspaceSummary: {
       required: ["id", "name", "role"],
@@ -115820,6 +131932,69 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Required",
           type: "boolean",
           readOnly: true,
+        },
+      },
+    },
+    EvalRollup: {
+      required: ["scope", "evals"],
+      type: "object",
+      properties: {
+        scope: {
+          title: "Scope",
+          type: "string",
+          enum: ["trace", "span"],
+        },
+        evals: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvalRollupEval",
+          },
+        },
+        error: {
+          title: "Error",
+          type: "boolean",
+        },
+      },
+    },
+    EvalRollupSpan: {
+      required: ["span_id"],
+      type: "object",
+      properties: {
+        span_id: {
+          title: "Span id",
+          type: "string",
+          minLength: 1,
+        },
+        span_name: {
+          title: "Span name",
+          type: "string",
+        },
+        value: {
+          title: "Value",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        explanation: {
+          title: "Explanation",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "boolean",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        eval_config_id: {
+          title: "Eval config id",
+          type: "string",
         },
       },
     },
@@ -115880,6 +132055,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    UserAlertMonitorTrend: {
+      required: ["timestamp", "count"],
+      type: "object",
+      properties: {
+        timestamp: {
+          title: "Timestamp",
+          type: "string",
+          format: "date-time",
+        },
+        count: {
+          title: "Count",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
     AgentPromptOptimiserIndividualResultMetadata: {
       type: "object",
       properties: {
@@ -115899,6 +132090,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
           additionalProperties: {
             $ref: "#/definitions/AgentPromptOptimiserComponentEvalResult",
           },
+        },
+      },
+    },
+    ConversationCallAgent: {
+      required: ["id", "version", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        version: {
+          title: "Version",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        name: {
+          title: "Name",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
       },
     },

@@ -5,7 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Box, useTheme, Typography } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import useUsersStore from "./Store/usersStore";
@@ -61,12 +61,12 @@ const getUsersGridThemeParams = (theme) => ({
   headerColumnBorder: false,
   wrapperBorder: { width: 0 },
   wrapperBorderRadius: 0,
-  rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+  rowBorder: { width: 1, color: theme.palette.border.subtle },
   headerFontSize: "13px",
   headerFontWeight: theme.typography.fontWeightMedium,
   headerBackgroundColor: "transparent",
   headerTextColor: theme.palette.text.primary,
-  rowHoverColor: "rgba(120,87,252,0.04)",
+  rowHoverColor: theme.palette.action.hover,
 });
 
 const userRowIdentity = (row) => {
@@ -147,6 +147,9 @@ const UsersGrid = React.memo(
 
     const { observeId } = useParams();
     const updatedObserveId = observeId;
+    // Without a project in the route this is the cross-project Users page:
+    // rows from several projects share the grid, so each names its project.
+    const includeProject = !observeId;
     const sortStorageKey = `ag-grid-sort-model-${updatedObserveId}`;
     const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
 
@@ -176,7 +179,7 @@ const UsersGrid = React.memo(
     }, [hasActiveListReads]);
 
     useEffect(() => {
-      const initial = getUsersColumnConfig();
+      const initial = getUsersColumnConfig({ includeProject });
 
       const transformed = initial.map((col) => ({
         id: col.field,
@@ -187,10 +190,10 @@ const UsersGrid = React.memo(
       }));
 
       setColumns(transformed);
-    }, []);
+    }, [includeProject, setColumns]);
 
     const userColumnDefs = useMemo(() => {
-      const baseConfig = getUsersColumnConfig();
+      const baseConfig = getUsersColumnConfig({ includeProject });
 
       // If columns from store isn't ready, use baseConfig directly
       if (!columns || !Array.isArray(columns)) {
@@ -256,7 +259,7 @@ const UsersGrid = React.memo(
       }
 
       return result;
-    }, [columns]);
+    }, [columns, includeProject]);
 
     const requestedProjection = useMemo(() => {
       // Zustand starts with an empty list and is hydrated in an effect. AG Grid
@@ -266,7 +269,7 @@ const UsersGrid = React.memo(
       const projectionColumns =
         Array.isArray(columns) && columns.length > 0
           ? columns
-          : getUsersColumnConfig().map((column) => ({
+          : getUsersColumnConfig({ includeProject }).map((column) => ({
               id: column.field,
               isVisible: column.hide !== true,
               groupBy: null,
@@ -284,7 +287,7 @@ const UsersGrid = React.memo(
           .map((column) => column.id)
           .filter(Boolean),
       };
-    }, [columns]);
+    }, [columns, includeProject]);
 
     const dataSource = useMemo(() => {
       cursorPagination.current.reset();
@@ -645,7 +648,7 @@ const UsersGrid = React.memo(
         suppressHeaderContextMenu: true,
         cellStyle: {
           padding: "0px 20px",
-          fontSize: "14px",
+          fontSize: "13px",
           height: "100%",
           display: "flex",
           alignItems: "center",
@@ -841,7 +844,7 @@ const UsersGrid = React.memo(
               serverSideDatasource={dataSource}
               getLocaleText={getGridLocaleText}
               getRowId={({ data }) => userRowIdentity(data)}
-              headerHeight={40}
+              headerHeight={32}
               rowHeight={userTraceRowHeightMapping[cellHeight]?.height ?? 40}
               theme={agTheme}
               rowSelection={{ mode: "multiRow", enableClickSelection: false }}
@@ -877,14 +880,9 @@ const UsersGrid = React.memo(
                 continuationNotice
                   ? null
                   : NoRowsOverlay(
-                      <Typography
-                        role={readError ? "alert" : undefined}
-                        typography="m3"
-                        color="text.primary"
-                        fontWeight="fontWeightMedium"
-                      >
+                      <span role={readError ? "alert" : undefined}>
                         {readError || "No active users for current filters"}
-                      </Typography>,
+                      </span>,
                     )
               }
             />

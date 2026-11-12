@@ -52,7 +52,7 @@ def reader_auth(monkeypatch):
     monkeypatch.setattr(auth, "_resolve_organization", lambda *_: organization)
     monkeypatch.setattr(auth, "_get_requested_workspace", lambda *_: workspace)
     monkeypatch.setattr(
-        "accounts.authentication.decode_token", lambda _: (user, "fixture-token")
+        "accounts.authentication.decode_token", lambda _: (user, "fixture-token", None)
     )
     clear_workspace_context()
     yield auth, user, workspace, access

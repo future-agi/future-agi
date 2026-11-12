@@ -43,7 +43,13 @@ func newLlamaGuardAdapter(cfg map[string]interface{}) *llamaGuardAdapter {
 }
 
 func (a *llamaGuardAdapter) buildRequest(ctx context.Context, text string) (*http.Request, error) {
-	url := strings.TrimRight(a.endpoint, "/") + "/v1/chat/completions"
+	ep := strings.TrimRight(a.endpoint, "/")
+	var url string
+	if strings.HasSuffix(ep, "/chat/completions") {
+		url = ep
+	} else {
+		url = ep + "/v1/chat/completions"
+	}
 	payload := llamaGuardRequest{
 		Model: a.model,
 		Messages: []llamaGuardMessage{

@@ -62,7 +62,7 @@ def build_diagnosis(
     # The run page's own reading of an errored call (the harness verdict, else the
     # call status), so the drawer and the page count the same calls. Eval ids only
     # matter past that point, so none are needed here.
-    infra = {call.id for call in calls if call_outcome(call, set()) == "error"}
+    infra = {call.id for call in calls if call_outcome(call, {}) == "error"}
     verdicts: dict = {}
     for call in calls:
         if call.id in infra:

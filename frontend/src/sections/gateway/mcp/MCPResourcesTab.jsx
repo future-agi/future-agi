@@ -2,9 +2,6 @@
 import React, { useState, useMemo } from "react";
 import {
   Box,
-  Card,
-  CardContent,
-  Chip,
   InputAdornment,
   Stack,
   Table,
@@ -17,6 +14,7 @@ import {
   Typography,
   Skeleton,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 
 const MCPResourcesTab = ({ mcpResources, isLoading }) => {
@@ -37,7 +35,7 @@ const MCPResourcesTab = ({ mcpResources, isLoading }) => {
 
   if (isLoading) {
     return (
-      <Card>
+      <Section variant="panel">
         {[...Array(3)].map((_, i) => (
           <Stack
             key={i}
@@ -55,7 +53,7 @@ const MCPResourcesTab = ({ mcpResources, isLoading }) => {
             <Skeleton width="30%" height={20} />
           </Stack>
         ))}
-      </Card>
+      </Section>
     );
   }
 
@@ -70,29 +68,27 @@ const MCPResourcesTab = ({ mcpResources, isLoading }) => {
         InputProps={{
           startAdornment: (
             <InputAdornment position="start">
-              <Iconify icon="mdi:magnify" width={20} />
+              <Iconify icon="solar:magnifier-linear" width={16} />
             </InputAdornment>
           ),
         }}
       />
 
       {filtered.length === 0 ? (
-        <Card>
-          <CardContent>
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              align="center"
-              sx={{ py: 3 }}
-            >
-              {resources.length === 0
-                ? "No MCP resources registered. Upstream servers may not expose resources."
-                : "No resources match the current filter."}
-            </Typography>
-          </CardContent>
-        </Card>
+        <Section variant="panel">
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            align="center"
+            sx={{ py: 3 }}
+          >
+            {resources.length === 0
+              ? "No MCP resources registered. Upstream servers may not expose resources."
+              : "No resources match the current filter."}
+          </Typography>
+        </Section>
       ) : (
-        <Card>
+        <Section variant="panel" sx={{ p: 0, overflow: "hidden" }}>
           <TableContainer>
             <Table size="small">
               <TableHead>
@@ -118,11 +114,9 @@ const MCPResourcesTab = ({ mcpResources, isLoading }) => {
                     <TableCell>{res.name || "—"}</TableCell>
                     <TableCell>
                       {res.mimeType ? (
-                        <Chip
-                          label={res.mimeType}
-                          size="small"
-                          variant="outlined"
-                        />
+                        <Typography variant="body2" color="text.secondary">
+                          {res.mimeType}
+                        </Typography>
                       ) : (
                         "—"
                       )}
@@ -147,7 +141,7 @@ const MCPResourcesTab = ({ mcpResources, isLoading }) => {
               </TableBody>
             </Table>
           </TableContainer>
-        </Card>
+        </Section>
       )}
     </Box>
   );

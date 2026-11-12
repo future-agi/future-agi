@@ -179,11 +179,19 @@ func main() {
 		tracker := budgetpkg.NewTracker(cfg.Budgets)
 		pricing := budgetplugin.NewPricingLookup(cfg.CostTracking.CustomPricing)
 		budgetPlugin = budgetplugin.New(tracker, pricing, true, tenantStore)
+		sharedGlobal := false
 		if redisBudgetStore != nil {
 			budgetPlugin.SetRedisBudget(redisBudgetStore)
+			// Global levels join the shared ledger only when video is on, so
+			// video reservations and ordinary spend count against one ceiling.
+			// Without video, global levels stay pod-local as before.
+			if cfg.Video.Enabled {
+				budgetPlugin.ShareGlobalBudgets()
+				sharedGlobal = true
+			}
 		}
 		plugins = append(plugins, budgetPlugin)
-		slog.Info("budgets enabled", "default_period", cfg.Budgets.DefaultPeriod, "redis", redisBudgetStore != nil)
+		slog.Info("budgets enabled", "default_period", cfg.Budgets.DefaultPeriod, "redis", redisBudgetStore != nil, "shared_global_levels", sharedGlobal)
 
 		// Seed budget counters from historical spend in Postgres (with retry).
 		if cfg.ControlPlane.URL != "" {
@@ -451,7 +459,8 @@ func main() {
 	}
 
 	// Create cost tracking plugin.
-	plugins = append(plugins, costplugin.New(cfg.CostTracking.Enabled, modelDBGetter, tenantStore, cfg.CostTracking.AliasCostFactors))
+	costPlugin := costplugin.New(cfg.CostTracking.Enabled, modelDBGetter, tenantStore, cfg.CostTracking.AliasCostFactors)
+	plugins = append(plugins, costPlugin)
 
 	// Create credits plugin for managed keys with optional Redis backend.
 	if keyStore != nil {
@@ -577,6 +586,7 @@ func main() {
 
 	// Create and start server (shares the same ModelDB pointer for hot-reload).
 	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange, redisClient)
+	costPlugin.SetPriceTables(srv.PriceTableName)
 
 	// Register onChange callback on tenantStore so that periodic sync (MergeBulk)
 	// evicts the OrgProviderCache for any org whose config changed. Without this,

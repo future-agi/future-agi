@@ -154,6 +154,7 @@ def ingest_result_receipt(
     *,
     digest_body: dict[str, Any] | None = None,
     recovered_artifact_ids: list[str] | None = None,
+    replay_usage: bool = True,
 ) -> tuple[HostedHarnessReceipt, bool]:
     from simulate.services.harness_usage import replay_harness_usage
 
@@ -232,7 +233,8 @@ def ingest_result_receipt(
                     allocation, body, recovered_artifact_ids=recovered_artifact_ids
                 )
                 update_execution_counts(attempt.job)
-                transaction.on_commit(lambda: replay_harness_usage(attempt))
+                if replay_usage:
+                    transaction.on_commit(lambda: replay_harness_usage(attempt))
                 return existing, False
             if existing.attempt_number >= attempt.attempt_number:
                 raise HostedHarnessError(
@@ -295,7 +297,8 @@ def ingest_result_receipt(
             allocation, body, recovered_artifact_ids=recovered_artifact_ids
         )
         update_execution_counts(attempt.job)
-        transaction.on_commit(lambda: replay_harness_usage(attempt))
+        if replay_usage:
+            transaction.on_commit(lambda: replay_harness_usage(attempt))
         return receipt, True
 
 
@@ -877,6 +880,7 @@ def _apply_receipt_to_call(
     scenario_key = getattr(allocation, "execution_key", None) or allocation.scenario_key
     call.status = _call_lifecycle_status(body)
     call_data = body.get("call")
+    call.ended_reason = (call_data or {}).get("stop_reason") or ""
     resolved_modality = _resolve_scenario_modality(job, body)
     if call_data and call_data.get("recording_artifacts"):
         # A persisted audio recording is definitive evidence of a voice call,
@@ -888,7 +892,6 @@ def _apply_receipt_to_call(
         call.ended_at = call_data["ended_at"]
         call.completed_at = call_data["ended_at"]
         call.duration_seconds = round(call_data["duration_ms"] / 1000)
-        call.ended_reason = call_data.get("stop_reason") or ""
     elif body["status"] == "skipped":
         call.completed_at = timezone.now()
     metadata = dict(call.call_metadata or {})
@@ -909,10 +912,16 @@ def _apply_receipt_to_call(
         metadata.pop("harness_grading_error", None)
     else:
         metadata["harness_grading_status"] = "failed"
+        failure = body.get("failure") or {}
         metadata["harness_grading_error"] = (
             "Required evaluation coverage was incomplete "
             f"({coverage['executed']}/{coverage['expected']} executed). "
-            "This is a grading failure, not an agent failure."
+            + (
+                "The trial ended with "
+                f"{failure.get('code') or failure.get('message')}."
+                if failure
+                else "This is a grading failure, not an agent failure."
+            )
         )
     update_fields = [
         "status",
@@ -1018,6 +1027,7 @@ def _apply_receipt_to_call(
         _tool_evaluation_on,
         runnable_eval_config_ids,
     )
+    from simulate.services.scoring_status import locked_call_metadata_update
 
     _apply_harness_evaluation_outputs(call)
     update_fields.append("eval_outputs")
@@ -1059,6 +1069,16 @@ def _apply_receipt_to_call(
                     "duration_seconds",
                 ]
             )
+    _apply_target_metrics(call, (call_data or {}).get("target_metrics"))
+    update_fields.extend(
+        [
+            "customer_call_id",
+            "customer_cost_cents",
+            "customer_latency_metrics",
+            "conversation_metrics_data",
+            "ended_reason",
+        ]
+    )
     call.save(update_fields=list(dict.fromkeys(update_fields)))
     if resolved_modality == CallExecution.SimulationCallType.VOICE:
         _ensure_run_agent_is_voice(job)
@@ -1069,15 +1089,20 @@ def _apply_receipt_to_call(
             lambda: _dispatch_csat_once(CallExecution.objects.get(id=call_id))
         )
         # A hosted receipt never travels the SDK result path, so dispatch here, after commit.
+        lookup_failed = False
         try:
-            known = isinstance(run_test_id, (str, UUID))
-            selected = runnable_eval_config_ids(run_test_id) if known else []
-            tool_on = _tool_evaluation_on(run_test_id) if known else False
+            # A savepoint: a database error in these reads must not abort the
+            # receipt's own transaction, which still has to commit.
+            with transaction.atomic():
+                known = isinstance(run_test_id, (str, UUID))
+                selected = runnable_eval_config_ids(run_test_id) if known else []
+                tool_on = _tool_evaluation_on(run_test_id) if known else False
         except Exception:  # noqa: BLE001 - a receipt is never lost over scheduling
             logger.exception(
                 "harness_eval_selection_lookup_failed for call %s", call_id
             )
             selected, tool_on = [], False
+            lookup_failed = True
         # The tool-call judge switch is independent of the eval catalogue, so
         # it must still dispatch when this environment has no runnable eval selected.
         if selected or tool_on:
@@ -1086,6 +1111,22 @@ def _apply_receipt_to_call(
                     CallExecution.objects.get(id=call_id),
                     eval_config_ids=selected,  # [] stays [], never None
                 )
+            )
+        else:
+            # Nothing is dispatched, so the call must not hold its run as still
+            # scoring: close its eval side. After a failed lookup it stays open
+            # instead, so its evals read as pending and then time out visibly.
+            def _mark_eval_side(metadata: dict) -> bool:
+                if metadata.get("eval_started"):
+                    return False
+                metadata["eval_started"] = True
+                if not lookup_failed:
+                    metadata["eval_completed"] = True
+                return True
+
+            transaction.on_commit(
+                lambda: locked_call_metadata_update(call_id, _mark_eval_side),
+                robust=True,
             )
 
 
@@ -1224,6 +1265,38 @@ def _read_hosted_tool_trace(
             response.release_conn()
 
 
+_TARGET_TOKEN_FIELDS = {
+    "prompt_tokens": "input_tokens",
+    "completion_tokens": "output_tokens",
+    "total_tokens": "total_tokens",
+}
+
+
+def _apply_target_metrics(call: CallExecution, target: dict[str, Any] | None) -> None:
+    """Store provider-reported identity, cost, latency and tokens.
+
+    These go in the customer fields the native Vapi flow fills, never in ``cost_cents`` (the
+    platform's own cost). A rerun reuses this row, so a receipt without them clears the last
+    attempt's provider ID, cost and latency instead of leaving them attached to another call.
+    """
+    target = target or {}
+    call.customer_call_id = target.get("provider_call_id")
+    call.customer_cost_cents = target.get("cost_cents")
+    latency = dict(target.get("latency") or {})
+    turns = latency.pop("turns", [])
+    call.customer_latency_metrics = (
+        {"systemMetrics": latency, "turnLatencies": turns} if latency or turns else None
+    )
+    usage = target.get("usage") or {}
+    metrics = dict(call.conversation_metrics_data or {})
+    for field in _TARGET_TOKEN_FIELDS.values():
+        metrics.pop(field, None)
+    for source, field in _TARGET_TOKEN_FIELDS.items():
+        if usage.get(source) is not None:
+            metrics[field] = usage[source]
+    call.conversation_metrics_data = metrics
+
+
 def _epoch_seconds(value: Any) -> float | None:
     """Epoch seconds for a datetime or ISO string; None when it can't be read."""
     if isinstance(value, str):
@@ -1283,24 +1356,42 @@ def _ingest_hosted_transcript(
                 _store_alk_chat_messages,
             )
 
-            segments = [
-                {
-                    "speaker_role": str(message.get("role") or "unknown"),
-                    "content": str(message.get("content") or ""),
-                    **(
-                        {"tool_calls": message["tool_calls"]}
-                        if message.get("tool_calls")
-                        else {}
-                    ),
-                }
+            # Turns carry the epoch second they were delivered (`at`), on the tool trace's
+            # clock, so turns and tool calls are measured from one base into one timeline.
+            def sent_at(message: dict) -> float | None:
+                value = message.get("at")
+                return value if isinstance(value, (int, float)) and value > 0 else None
+
+            messages = [
+                message
                 for message in messages
                 if isinstance(message, dict) and message.get("content") is not None
             ]
+            sent = [at for at in map(sent_at, messages) if at is not None]
+            if sent:
+                call_start = _epoch_seconds(call.started_at)
+                base_time = (
+                    call_start
+                    if call_start is not None and call_start <= min(sent)
+                    else min(sent)
+                )
+            segments = []
+            for message in messages:
+                segment = {
+                    "speaker_role": str(message.get("role") or "unknown"),
+                    "content": str(message.get("content") or ""),
+                }
+                if message.get("tool_calls"):
+                    segment["tool_calls"] = message["tool_calls"]
+                at = sent_at(message)
+                if base_time is not None and at is not None:
+                    segment["start_time_ms"] = int(round((at - base_time) * 1000))
+                segments.append(segment)
             ChatMessageModel.objects.filter(call_execution=call).delete()
             CallTranscript.objects.filter(call_execution=call).delete()
             if segments:
                 _store_alk_chat_messages(call, segments)
-            return None
+            return base_time
         rows: list[CallTranscript] = []
         if isinstance(messages, list):
             # The v2 transcript carries absolute speech timing
