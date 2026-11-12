@@ -113,7 +113,9 @@ class ProductionCertificationWorkflow:
             if not running:
                 break
             await workflow.wait_condition(
-                lambda: (self.cancel_requested and not cancel_handled)
+                lambda cancel_handled=cancel_handled: (
+                    self.cancel_requested and not cancel_handled
+                )
                 or any(task.done() for task in running)
             )
             done = [task for task in running if task.done()]
