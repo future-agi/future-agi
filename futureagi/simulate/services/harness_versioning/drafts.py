@@ -517,6 +517,9 @@ def record_draft(
     published = index_in_step(archives.read_archive(body))
     split, prepared = prepare_tree(environment, published)
     require_checkpoint_scenarios(prepared.scenarios)
+    from simulate.services.harness_actors import require_valid_faults
+
+    require_valid_faults(prepared.scenarios)
     hashes = {
         "environment": prepared.environment_hash,
         "suite": prepared.suite_hash,
