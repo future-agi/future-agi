@@ -21,8 +21,8 @@ test('SKILLS-E2E-063: recover an incident through the declared eight-fault matri
     steps: [
       'prepare a retained refund incident, three release identities, a retired child and a quarantined alternative through public APIs and the packaged application',
       'open the declared context from the retained incident and review the complete closure of an eligible lower-numbered release',
-      'request a lower-number rollback, let another releaser move production away and back, see the approved stale packet refused and superseded by the fresh request, then approve and execute that fresh rollback through the reviewer inbox',
-      'issue a replacement credential and restore the exact checked-in lock without losing local work',
+      'request a lower-number rollback, let another releaser move production away and back, see the approved stale packet refused and superseded by the fresh request, then approve and execute that fresh rollback from its exact review link',
+      'issue a replacement credential and restore the lock of the last reviewed commit with one verified command without losing local work',
       'run the application through a registry outage after a persisted refund and resume the same session and checkpoint',
       'inspect expired-credential and lost-mapping threads, close what can be closed and start reviewed clean threads without replaying the refund',
       'recheck the original case once and inspect the declared cohort',
