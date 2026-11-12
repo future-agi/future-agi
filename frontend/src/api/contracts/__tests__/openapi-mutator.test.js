@@ -28,6 +28,29 @@ describe("OpenAPI mutator", () => {
     expect(axios.get).toHaveBeenCalledWith("/accounts/user-info/", undefined);
   });
 
+  it("preserves the full Axios response and its headers by identity", async () => {
+    const response = {
+      data: { ok: true },
+      status: 200,
+      headers: { "content-type": "application/json" },
+      config: { url: "/accounts/user-info/" },
+    };
+    axios.get.mockResolvedValueOnce(response);
+
+    await expect(
+      apiMutator("/accounts/user-info/", { method: "GET" }),
+    ).resolves.toBe(response);
+  });
+
+  it("propagates Axios rejection instead of returning an error envelope", async () => {
+    const error = new Error("Request failed");
+    axios.get.mockRejectedValueOnce(error);
+
+    await expect(
+      apiMutator("/accounts/user-info/", { method: "GET" }),
+    ).rejects.toBe(error);
+  });
+
   it("routes generated JSON mutation requests with parsed body and headers", async () => {
     const abortController = new AbortController();
     axios.patch.mockResolvedValueOnce({ data: { status: true } });
