@@ -55,6 +55,9 @@ LATEST = (
     ('tracer','0134_attachment_binding_claims'),
     ('simulate','0102_agent_fix_engine_notes'),
     ('simulate','0103_harness_job_verify_of'),
+    ('tracer','0098_useralertmonitor_webhook_url'),
+    ('tracer','0131_merge_alert_webhook'),
+    ('tracer','0132_merge_alert_webhook_and_sql_workbench'),
 ) + SQL_ADDITIONS
 FLOOR_ONLY = (
     ('simulate','0099_harness_versioning'),('simulate','0100_agent_fix'),
