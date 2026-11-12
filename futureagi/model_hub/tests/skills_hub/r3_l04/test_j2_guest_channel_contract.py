@@ -6,11 +6,13 @@ from uuid import uuid4
 import pytest
 from rest_framework.test import APIRequestFactory, force_authenticate
 
+from model_hub.services.skills_hub.r3 import native_runs
 from model_hub.views.skills_native_runs import (
     NativeGuestFailureView,
     NativeGuestHealthView,
     NativeGuestObservationView,
 )
+from simulate.models.hosted_harness import HostedHarnessAttempt
 
 GUEST = SimpleNamespace(is_authenticated=True, is_harness_attempt=True)
 HEALTH = {
@@ -40,7 +42,7 @@ OBSERVATION = {
 }
 
 
-def post(view, body, monkeypatch, service):
+def post(view, body, monkeypatch, service, token=None):
     calls = []
     monkeypatch.setattr(
         f"model_hub.services.skills_hub.r3.native_runs.{service}",
@@ -50,7 +52,10 @@ def post(view, body, monkeypatch, service):
     request = APIRequestFactory().post(
         f"/model-hub/skills/native/attempts/{attempt_id}/", body, format="json"
     )
-    force_authenticate(request, user=GUEST, token=SimpleNamespace(pk=attempt_id))
+    # HarnessAttemptAuthentication authenticates as the fenced attempt itself.
+    if token is None:
+        token = HostedHarnessAttempt(id=attempt_id)
+    force_authenticate(request, user=GUEST, token=token)
     return view.as_view()(request, attempt_id=attempt_id), calls
 
 
@@ -102,3 +107,51 @@ def test_any_failure_reason_is_recorded(body, monkeypatch):
     )
     assert response.status_code == 200
     assert calls == [{"attempt": calls[0]["attempt"], "reason": body.get("reason")}]
+
+
+@pytest.mark.parametrize(
+    ("view", "body", "service"),
+    [
+        (NativeGuestHealthView, HEALTH, "record_guest_health"),
+        (NativeGuestObservationView, OBSERVATION, "ingest_observation"),
+        (
+            NativeGuestFailureView,
+            {"reason": "provider_timeout"},
+            "report_guest_failure",
+        ),
+    ],
+)
+def test_guest_routes_require_the_fenced_attempt_identity(
+    view, body, service, monkeypatch
+):
+    token = SimpleNamespace(pk=uuid4())
+    response, calls = post(view, body, monkeypatch, service, token=token)
+    assert response.status_code == 401
+    assert response.data["error"]["code"] == "authentication_required"
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("reason", "code"),
+    [
+        ("provider_timeout", "provider_timeout"),
+        (7, "7"),
+        (None, "guest_failed"),
+        ("Not A Code", "guest_failed"),
+        ({"nested": True}, "guest_failed"),
+    ],
+)
+def test_guest_failure_reason_is_stored_as_a_bounded_string_code(
+    reason, code, monkeypatch
+):
+    finished = []
+    monkeypatch.setattr(
+        native_runs,
+        "_finish",
+        lambda job_id, attempt_id, *, failure: finished.append(failure),
+    )
+    attempt = SimpleNamespace(job_id=uuid4(), pk=uuid4())
+    assert native_runs.report_guest_failure(attempt=attempt, reason=reason) == {
+        "accepted": True
+    }
+    assert finished == [code]
