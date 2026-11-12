@@ -47,7 +47,7 @@ export const EVIDENCE_COPY = {
   importButton: "Import evidence",
   importHintTitle: "Import evidence",
   importHint:
-    "Pick sessions or calls in Observe, then choose Create environment test. Or add a transcript you have: paste it or upload files. The import opens here for review.",
+    "Pick sessions or calls in Observe, or rows in a dataset, then choose Create environment test. Or add a transcript you have: paste it or upload files. The import opens here for review.",
   openObserve: "Open Observe",
   addTranscript: "Add a transcript",
   transcriptTitle: "Add a transcript",
