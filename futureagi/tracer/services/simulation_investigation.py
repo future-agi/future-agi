@@ -347,6 +347,22 @@ def _goals_payload(scenario) -> dict | None:
     }
 
 
+def _situation(scenario) -> str | None:
+    """What the scenario set the simulated caller up to want and know."""
+    instruction = scenario.instruction if scenario is not None else ""
+    return instruction if instruction.strip() else None
+
+
+def _persona(scenario) -> dict | str | None:
+    """Who the simulated caller is: traits on newer suites, text on older ones."""
+    persona = scenario.persona if scenario is not None else None
+    if isinstance(persona, dict) and persona:
+        return persona
+    if isinstance(persona, str) and persona.strip():
+        return persona
+    return None
+
+
 # A recorded tool call as the worker accepts it; long values are cut so one
 # verbose tool cannot crowd out the transcript, and a call's tool calls stop at a
 # total that keeps its evidence page under the control payload limit.
@@ -494,7 +510,7 @@ def simulation_evidence_page(
     if cursor > total:
         raise SimulationInvestigationConflict("Evidence cursor is outside the result")
     rows = list(calls_qs[cursor : cursor + 20])
-    authored = _authored_goals(execution, rows)
+    authored = authored_scenarios_for_calls(execution.run_test_id, rows)
     _, live_eval_ids = build_evaluation_catalog(execution)
     live_eval_configs = {
         str(config.id): config
@@ -524,7 +540,11 @@ def simulation_evidence_page(
                     }
                     for entry in call.transcripts.all()
                 ],
-                "goals": authored.get(call.id),
+                "goals": _goals_payload(authored.get(call.id)),
+                # The simulated caller's setup, so the investigator judges the agent's
+                # replies against what that caller needed. The agent never saw these.
+                "situation": _situation(authored.get(call.id)),
+                "persona": _persona(authored.get(call.id)),
                 # The run's own verdicts: Omega explains how a goal broke, the
                 # evals decide whether it did.
                 "evaluations": [

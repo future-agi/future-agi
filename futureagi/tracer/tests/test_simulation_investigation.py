@@ -849,7 +849,7 @@ def test_debug_counts_calls_whose_own_analysis_ended_without_a_report(
     assert auth_client.get(url).status_code == 200
 
 
-def _hosted_run(organization, workspace, execution, catalogue=None):
+def _hosted_run(organization, workspace, execution, catalogue=None, **scenario_fields):
     """An environment job holding one authored scenario, and the run's child job."""
 
     def job(**fields):
@@ -873,12 +873,73 @@ def _hosted_run(organization, workspace, execution, catalogue=None):
         stage_outputs=[{"kind": "sub_goals", "data": {"sub_goals": catalogue or []}}]
     )
     job(environment=environment, run_test=execution.run_test)
-    HostedHarnessScenario.no_workspace_objects.create(
+    return HostedHarnessScenario.no_workspace_objects.create(
         job=environment,
         scenario_key="pin-booking",
         use_case="Book a guest ride",
         sub_goals=["exact_greeting", "spoken_pin_guidance"],
         tests="the agent books after a spoken PIN",
+        **scenario_fields,
+    )
+
+
+def test_debug_evidence_carries_the_simulated_callers_situation_and_persona(
+    auth_client, organization, workspace
+):
+    scenario = Scenarios.objects.create(
+        name="Fee disputes",
+        source="Billing support",
+        organization=organization,
+        workspace=workspace,
+    )
+    execution, call = _execution(
+        organization, workspace, scenario, "caller", CallExecution.CallStatus.COMPLETED
+    )
+    call.call_metadata = {"harness_scenario_key": "pin-booking"}
+    call.save(update_fields=["call_metadata"])
+    authored = _hosted_run(
+        organization,
+        workspace,
+        execution,
+        instruction="You want a late-cancellation fee removed.",
+        persona={"personality": "impatient", "communication_style": "direct"},
+    )
+    auth_client.post(f"/simulate/test-executions/{execution.id}/debug-analysis/")
+    claim = claim_due_investigations(
+        worker_id="test-worker", engine_version="omega-v1", limit=1
+    )["claims"][0]
+
+    def served():
+        return simulation_evidence_page(
+            attempt_id=claim["attempt_id"], lease_token=claim["lease_token"], cursor=0
+        )["calls"][0]
+
+    call_record = served()
+    assert call_record["situation"] == "You want a late-cancellation fee removed."
+    assert call_record["persona"] == {
+        "personality": "impatient",
+        "communication_style": "direct",
+    }
+
+    # Older suites hold the persona as text; any other shape is left out, so the
+    # worker never refuses the page over it.
+    for persona, expected in (
+        ("A busy office manager.", "A busy office manager."),
+        (["impatient"], None),
+        ("  ", None),
+    ):
+        authored.persona = persona
+        authored.save(update_fields=["persona"])
+        assert served()["persona"] == expected
+
+    # A call with no authored scenario says it has none.
+    call.call_metadata = {}
+    call.save(update_fields=["call_metadata"])
+    call_record = served()
+    assert (call_record["goals"], call_record["situation"], call_record["persona"]) == (
+        None,
+        None,
+        None,
     )
 
 
