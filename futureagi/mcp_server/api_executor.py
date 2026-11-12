@@ -161,6 +161,7 @@ class DjangoAPIExecutor:
                 f"Generated API route no longer resolves: {method} {path}"
             ) from exc
         request.resolver_match = match
+        request.mcp_response = True
 
         # Reuse the existing workspace membership and write-access checks, then
         # inject the already authenticated MCP user for normal DRF permissions.

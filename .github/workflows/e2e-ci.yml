@@ -129,7 +129,10 @@ jobs:
       matrix:
         stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Image builds (~20 min), the Playwright suite (~70 min and growing with
+    # the flow catalog) and the SDK live suites run in this one job. Dev runs
+    # already finish at 66-89 min, so 90 min cancels healthy runs mid-SDK-suite.
+    timeout-minutes: 120
     permissions:
       contents: read
       packages: write # ghcr build-cache: read on PRs, written on pushes
@@ -360,7 +363,12 @@ jobs:
         id: boot
         run: bin/e2e up
 
+      - name: Start Redis diagnostics
+        continue-on-error: true
+        run: node e2e/scripts/redis-diagnostics.mjs start --output-dir "$RUNNER_TEMP/redis-diagnostics"
+
       - name: Run E2E suite
+        id: suite
         run: bin/e2e test
 
       - name: Prove host update assertion fallibility
@@ -383,6 +391,23 @@ jobs:
           path: ${{ runner.temp }}/host-update-fallibility
           retention-days: 7
           if-no-files-found: error
+
+      - name: Stop Redis diagnostics
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          SUITE_OUTCOME: ${{ steps.suite.outcome }}
+        run: node e2e/scripts/redis-diagnostics.mjs stop --output-dir "$RUNNER_TEMP/redis-diagnostics" --suite-outcome "$SUITE_OUTCOME"
+
+      - name: Upload Redis diagnostics
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: redis-diagnostics-${{ matrix.stack }}
+          path: ${{ runner.temp }}/redis-diagnostics/redis-diagnostics.json
+          retention-days: 3
+          if-no-files-found: warn
 
       - name: Upload report
         if: ${{ !cancelled() }}

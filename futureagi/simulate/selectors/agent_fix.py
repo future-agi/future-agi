@@ -1,5 +1,7 @@
 """Reads for "Fix my agent": the engine's brief, a check run's results, the run list."""
 
+import json
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
@@ -8,6 +10,7 @@ from typing import Any
 
 from django.conf import settings
 from django.db.models import (
+    Case,
     Count,
     DecimalField,
     Exists,
@@ -21,8 +24,10 @@ from django.db.models import (
     Subquery,
     Sum,
     Value,
+    When,
 )
 from django.db.models.functions import Coalesce
+from django.utils import timezone
 
 from simulate.models import (
     AgentFixCandidate,
@@ -34,6 +39,7 @@ from simulate.models import (
     HostedHarnessJob,
     HostedHarnessScenario,
 )
+from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.agent_fix import (
     BUDGET_CREDITS_MAX,
@@ -74,6 +80,8 @@ from simulate.services.run_results_v3_scoring import (
 )
 
 TRANSCRIPT_CHARS = 8000
+# A lost model is skipped for this long after it was lost: a short outage may be over.
+LOST_MODELS_SKIPPED_FOR = timedelta(hours=1)
 FINISHED_RUN_STATES = {
     HostedHarnessJob.State.COMPLETED,
     HostedHarnessJob.State.FAILED,
@@ -134,6 +142,30 @@ def fix_deadline(fix_run: AgentFixRun) -> datetime:
     return (fix_run.started_at or fix_run.created_at) + timedelta(minutes=minutes)
 
 
+def queue_deadline(fix_run: AgentFixRun) -> datetime:
+    """When a fix still waiting for room fails. A fix ahead may run its whole limit and end
+    up to the grace after it, so a fix waits its own limit and the grace, or the queue
+    setting when that is longer."""
+    minutes = FixRequest.model_validate(fix_run.request).max_minutes
+    wait = max(
+        settings.AGENT_FIX_MAX_QUEUED_SECONDS,
+        minutes * 60 + settings.AGENT_FIX_TOKEN_GRACE_SECONDS,
+    )
+    return fix_run.created_at + timedelta(seconds=wait)
+
+
+def recent_lost_models(engine_notes: dict[str, Any] | None) -> dict[str, str]:
+    """The fix's lost models, each with when it was lost, that were lost within
+    LOST_MODELS_SKIPPED_FOR."""
+    cutoff = timezone.now() - LOST_MODELS_SKIPPED_FOR
+    lost = (engine_notes or {}).get("lost_models") or {}
+    return {
+        model: lost_at
+        for model, lost_at in lost.items()
+        if datetime.fromisoformat(lost_at) > cutoff
+    }
+
+
 def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
     if fix_run.source_run is None:
         raise HostedHarnessError(
@@ -150,10 +182,44 @@ def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
         base_commit=str(source.get("commit_sha") or ""),
         request=request,
         inventory=inventory(fix_run),
+        lost_models=list(recent_lost_models(fix_run.engine_notes)),
         last_attempt=fix_run.candidates.aggregate(last=Max("attempt"))["last"] or 0,
         committed_usd=float(committed_usd(fix_run)),
         deadline_at=fix_deadline(fix_run).isoformat(),
+        source_failures=source_failures(fix_run.source_run, request),
     )
+
+
+def source_failures(
+    source_run: HostedHarnessJob, request: FixRequest
+) -> list[CheckRecord]:
+    """The source run's evidence on each target the engine searches: the first trial it
+    judged in full that failed a sub-goal, as a check record. The engine reads one such
+    trial a scenario, so the brief holds at most one record for each. The held-back targets
+    stay out, as they do from everything the engine reads."""
+    searched = set(request.target_scenario_keys) - set(request.held_back_scenario_keys)
+    found: dict[str, tuple[Any, CheckRecord]] = {}
+    for execution in (
+        HostedHarnessExecution.no_workspace_objects.filter(
+            job=source_run, source_scenario__scenario_key__in=searched
+        )
+        .select_related("source_scenario", "call_execution")
+        .order_by("trial_index", "execution_key")
+    ):
+        key = execution.source_scenario.scenario_key
+        receipt = (execution.call_execution.call_metadata or {}).get(
+            "hosted_harness_receipt"
+        )
+        if key in found or not isinstance(receipt, Mapping):
+            continue
+        record = _record(key, execution.trial_index, receipt, "")
+        if record.status == "ok" and False in record.sub_goals.values():
+            found[key] = (execution.call_execution_id, record)
+    transcripts = _transcripts(call_id for call_id, _ in found.values())
+    return [
+        record.model_copy(update={"transcript": transcripts.get(call_id, "")})
+        for call_id, record in found.values()
+    ]
 
 
 def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
@@ -217,6 +283,16 @@ def ran_at(run: HostedHarnessJob, trials: int | None = None) -> int:
 
 # A plan's limit, met mid-run, is the user's to lift even though the platform reports it.
 _USER_FAILURE_CODES = frozenset({"usage_exhausted"})
+# Certification reports every failure as the environment's. A chat that timed out waiting
+# for the agent's reply, or an agent slower to come up than the wait (infrastructure on any
+# other run), says nothing about the agent. A reply that failed, or a connection the
+# agent's own process refused or never accepted, stays the user's.
+_CERTIFY_FAILED = "authoring_runtime_validation_failed"
+_CERTIFY_TIMED_OUT = re.compile(
+    r"chat_target_failed: (?!Connect|[^;\n]*\bConnection timed out\b)"
+    r"(?:\w*Timeout\w*|\w+: [^;\n]*\btimed out\b)"
+    r"|depends_on/depends_on_timeout"
+)
 
 
 def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
@@ -225,11 +301,14 @@ def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
     if not isinstance(failure, Mapping):
         return None
     code = str(failure.get("code") or "unknown")
+    message = str(failure.get("message") or "")
     user = failure.get("domain") == "environment" or code in _USER_FAILURE_CODES
+    if code == _CERTIFY_FAILED and _CERTIFY_TIMED_OUT.search(message):
+        user = False
     return CheckFailure(
         owner=FailureOwner.USER if user else FailureOwner.OURS,
         code=code,
-        message=str(failure.get("message") or "")[:500],
+        message=message[:500],
     )
 
 
@@ -281,16 +360,82 @@ def _record(
     )
 
 
+# The engine's speaker for a chat row's role.
+_CHAT_SPEAKERS = {
+    ChatMessageModel.RoleChoices.USER: "user",
+    ChatMessageModel.RoleChoices.ASSISTANT: "assistant",
+    ChatMessageModel.RoleChoices.TOOL: "tool_call_result",
+}
+# Chat ingestion means one exchange's rows to share a time, its user turn first.
+_USER_TURN_FIRST = Case(
+    When(role=ChatMessageModel.RoleChoices.USER, then=Value(0)), default=Value(1)
+)
+
+
 def _transcripts(call_ids: Iterable[Any]) -> dict[Any, str]:
+    """Each call's conversation as "<role>: <text>" lines, the way the engine reads them: a
+    voice call's CallTranscript rows, else a chat call's ChatMessage rows."""
+    ids = list(call_ids)
     lines: dict[Any, list[str]] = {}
     rows = CallTranscript.no_workspace_objects.filter(
-        call_execution_id__in=list(call_ids)
+        call_execution_id__in=ids
     ).order_by("call_execution_id", "start_time_ms", "created_at")
     for row in rows.values_list("call_execution_id", "speaker_role", "content"):
         lines.setdefault(row[0], []).append(f"{row[1]}: {row[2]}")
+    if chats := [one for one in ids if one not in lines]:
+        messages = ChatMessageModel.no_workspace_objects.filter(
+            call_execution_id__in=chats
+        ).order_by("call_execution_id", "created_at", _USER_TURN_FIRST)
+        for call_id, *row in messages.values_list(
+            "call_execution_id", "role", "messages", "content", "tool_calls"
+        ):
+            lines.setdefault(call_id, []).extend(_chat_lines(*row))
     return {
         call_id: "\n".join(turns)[:TRANSCRIPT_CHARS] for call_id, turns in lines.items()
     }
+
+
+def _chat_lines(role: str, messages: Any, content: Any, tool_calls: Any) -> list[str]:
+    """One chat row as transcript lines. Hosted chat folds an exchange's agent side into one
+    row: each item is its text, a call it made (``tool_calls``) or a call's result
+    (``tool_call_result``), in order. A text with calls is followed by a line of them."""
+    speaker = _CHAT_SPEAKERS.get(role, "unknown")
+    items = [item for item in content or [] if isinstance(item, Mapping)] or [
+        {"content": text} for text in messages or []
+    ]
+    lines = []
+    for item in items:
+        text = str(item.get("content") or "")
+        if item.get("kind") in ("tool_calls", "tool_call_result"):
+            lines.append(f"{item['kind']}: {text}")
+            continue
+        if text:
+            lines.append(f"{speaker}: {text}")
+        if item.get("tool_calls"):
+            lines.append(f"tool_calls: {_calls_json(item['tool_calls'])}")
+    if tool_calls:
+        lines.append(f"tool_calls: {_calls_json(tool_calls)}")
+    return lines
+
+
+def _calls_json(calls: Any) -> str:
+    """Tool calls as compact JSON of their names and arguments, from either the OpenAI
+    shape (``function.name``, arguments as a JSON string) or a flat one."""
+    named = []
+    for call in calls if isinstance(calls, list) else []:
+        if not isinstance(call, Mapping):
+            continue
+        function = call.get("function")
+        function = function if isinstance(function, Mapping) else call
+        arguments = function.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                # Arguments that are not JSON are shown as the model sent them.
+                pass
+        named.append({"name": function.get("name"), "arguments": arguments})
+    return json.dumps(named, separators=(",", ":"), ensure_ascii=False, default=str)
 
 
 def scenario_results(source_run: HostedHarnessJob) -> list[LaunchScenario]:
@@ -632,11 +777,18 @@ SURFACE_LABELS = {
     Surface.SETTINGS: "Settings",
     Surface.CODE: "Code",
 }
-# What the launch form starts from: the instructions only, within 1,500 credits and three
-# hours.
+# What the launch form starts from: the instructions only, within 1,500 credits and the time
+# default_max_minutes gives the run's suite.
 DEFAULT_SURFACES = [Surface.PROMPT]
 DEFAULT_BUDGET_CREDITS = 1500
 DEFAULT_MAX_MINUTES = 180
+
+
+def default_max_minutes(cases: int) -> int:
+    """A fix's default time limit for a suite of ``cases`` scenarios: Reproduce and Verify run
+    every one. Three hours up to 30 cases, then 4 minutes a case (5 hours at 60), within
+    the limit a launch accepts."""
+    return min(MAX_MINUTES_MAX, max(DEFAULT_MAX_MINUTES, 60 + 4 * cases))
 
 
 def launch_blocker(
@@ -738,7 +890,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         defaults=LaunchDefaults(
             surfaces=[one for one in DEFAULT_SURFACES if one in offered],
             budget_credits=DEFAULT_BUDGET_CREDITS,
-            max_minutes=DEFAULT_MAX_MINUTES,
+            max_minutes=default_max_minutes(len(scenarios)),
         ),
         limits=LaunchLimits(
             budget_credits_max=BUDGET_CREDITS_MAX,

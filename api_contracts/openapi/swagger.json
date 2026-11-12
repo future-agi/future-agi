@@ -10915,7 +10915,7 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AgentccErrorResponse"
+                            "$ref": "#/definitions/GatewayHealthErrorResponse"
                         }
                     },
                     "default": {
@@ -23609,12 +23609,40 @@
             "get": {
                 "operationId": "model-hub_api_models_list_list",
                 "description": "",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "name",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "search",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "model_type",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "exclude_providers",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ModelHubPaginatedResponse"
+                            "$ref": "#/definitions/ModelListResponse"
                         }
                     },
                     "400": {
@@ -23656,7 +23684,9 @@
                 },
                 "tags": [
                     "model-hub"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -51599,7 +51629,7 @@
             "get": {
                 "operationId": "simulate_api_harness-environments_read",
                 "summary": "One environment: overview, contract, world, scenarios, evaluations, settings.",
-                "description": "Same shape whichever door built it. A section the pipeline has not reached\nyet is null, so the client renders \"building\" rather than an empty pane.",
+                "description": "Same shape whichever door built it. A section the pipeline has not reached\nyet is null, so the client renders \"building\" rather than an empty pane. A\ncoding agent's read leaves out the held-back cases.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -52391,6 +52421,88 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/verify/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_verify",
+                "description": "Verify an agent version on the held-back cases, in a run no user read shows.\nIts live or completed verify is final: asking again returns it. After one that\nfailed or was canceled, asking again starts a new one.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessVerifyCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessVerifyCreateResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/verify/{verify_id}/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_verify_detail",
+                "description": "How the verified version did on the held-back cases, as counts only.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessVerifyResult"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "verify_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/versions/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_versions",
@@ -52427,7 +52539,7 @@
         "/simulate/api/harness-environments/{id}/versions/agent/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_versions_create_agent_version",
-                "description": "A new agent version from an upload, a prompt edit or a settings edit; it is\nchecked next, then made this environment's default.",
+                "description": "A new agent version from an upload, a prompt edit or a settings edit; it is\nchecked next, then made this environment's default unless make_default is\nfalse. A coding agent key pushes only an upload, never made the default.",
                 "parameters": [
                     {
                         "name": "data",
@@ -52568,7 +52680,7 @@
         "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_versions_suite_suite_members",
-                "description": "The scenarios in one suite version, by number.",
+                "description": "The scenarios in one suite version, by number; a coding agent's read leaves\nout the held-back cases.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -52991,8 +53103,7 @@
         "/simulate/api/harness-jobs/{id}/": {
             "get": {
                 "operationId": "simulate_api_harness-jobs_read",
-                "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
+                "description": "One harness job. A coding agent key reads its own run narrowly, outside\nthis schema: only `status` (its failure as domain, stage, code and a fixed\nmessage), `receipts`, `consumption`, `platform`, and `job` with its ids and\nfive metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or\n`job.source`, which name every case of the suite.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -71622,6 +71733,230 @@
                 }
             ]
         },
+        "/tracer/saved-sql-query/": {
+            "get": {
+                "operationId": "tracer_saved-sql-query_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 0,
+                        "maximum": 10000,
+                        "minimum": 0
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLSavedList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_saved-sql-query_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLSave"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLSaved"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/saved-sql-query/{id}/": {
+            "get": {
+                "operationId": "tracer_saved-sql-query_read",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLSaved"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "patch": {
+                "operationId": "tracer_saved-sql-query_partial_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLSave"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLSaved"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "tracer_saved-sql-query_delete",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Deleted"
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/saved-sql-query/{id}/add-widget/": {
+            "post": {
+                "operationId": "tracer_saved-sql-query_add_widget",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLWidget"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLWidgetResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/tracer/saved-views/": {
             "get": {
                 "operationId": "tracer_saved-views_list",
@@ -72363,6 +72698,366 @@
                 },
                 {
                     "name": "trace_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/sql-query/": {
+            "get": {
+                "operationId": "tracer_sql-query_list",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 0,
+                        "maximum": 10000,
+                        "minimum": 0
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLHistory"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/sql-query/catalog/": {
+            "get": {
+                "operationId": "tracer_sql-query_catalog",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLCatalog"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/sql-query/estimate/": {
+            "post": {
+                "operationId": "tracer_sql-query_estimate",
+                "description": "Advisory index estimate of a query; never admits or blocks a run.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLQueryInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLEstimate"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/sql-query/run-saved/": {
+            "post": {
+                "operationId": "tracer_sql-query_run_saved",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLRunSaved"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLExecution"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/sql-query/run/": {
+            "post": {
+                "operationId": "tracer_sql-query_run",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLRun"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLExecution"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/sql-query/{id}/": {
+            "get": {
+                "operationId": "tracer_sql-query_read",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 0,
+                        "maximum": 10000,
+                        "minimum": 0
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "description": "Optional bounded result page; omitted REST requests retain the full snapshot. MCP defaults to 100. Wide rows are explicitly previewed; download for full cells.",
+                        "required": false,
+                        "type": "integer",
+                        "maximum": 1000,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLExecution"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/sql-query/{id}/cancel/": {
+            "post": {
+                "operationId": "tracer_sql-query_cancel",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLProject"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLExecution"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/sql-query/{id}/download/": {
+            "get": {
+                "operationId": "tracer_sql-query_download",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "file_format",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "enum": [
+                            "csv",
+                            "parquet"
+                        ]
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Bounded result download",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    },
+                    "410": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
                     "in": "path",
                     "required": true,
                     "type": "string"
@@ -81385,7 +82080,7 @@
         "/usage/update-auto-reload-settings/": {
             "post": {
                 "operationId": "usage_update-auto-reload-settings_create",
-                "description": "",
+                "description": "Owner/Admin only. Enabling needs a positive cap and consent, recorded\non the Stripe customer against the current default card. Saving never\ncharges; ``autoreload_charge_now`` asks for one capped reload now.\nDisabling clears the consent.",
                 "parameters": [
                     {
                         "name": "data",
@@ -86028,6 +86723,20 @@
                     "type": "string",
                     "maxLength": 100,
                     "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "coding_agent"
+                    ],
+                    "default": "user"
+                },
+                "simulation_environment_id": {
+                    "title": "Simulation environment id",
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },
@@ -91974,7 +92683,8 @@
                 "id",
                 "name",
                 "base_url",
-                "status"
+                "status",
+                "last_health_check"
             ],
             "type": "object",
             "properties": {
@@ -91998,6 +92708,12 @@
                     "title": "Status",
                     "type": "string",
                     "minLength": 1
+                },
+                "last_health_check": {
+                    "title": "Last health check",
+                    "description": "Completion time of this request's live health probe, including unreachable results.",
+                    "type": "string",
+                    "format": "date-time"
                 },
                 "provider_count": {
                     "title": "Provider count",
@@ -92482,6 +93198,7 @@
         "GatewayHealthResult": {
             "required": [
                 "status",
+                "last_health_check",
                 "providers",
                 "provider_count",
                 "model_count"
@@ -92492,6 +93209,12 @@
                     "title": "Status",
                     "type": "string",
                     "minLength": 1
+                },
+                "last_health_check": {
+                    "title": "Last health check",
+                    "description": "Completion time of this request's live health probe.",
+                    "type": "string",
+                    "format": "date-time"
                 },
                 "health": {
                     "title": "Health",
@@ -92525,6 +93248,107 @@
                     "$ref": "#/definitions/GatewayHealthResult"
                 }
             }
+        },
+        "GatewayHealthErrorResult": {
+            "required": [
+                "status",
+                "error",
+                "last_health_check"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "unreachable"
+                    ]
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string"
+                },
+                "last_health_check": {
+                    "title": "Last health check",
+                    "description": "Completion time of this request's failed live health probe.",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            },
+            "x-string-or-object": true
+        },
+        "GatewayHealthErrorResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "result": {
+                    "$ref": "#/definitions/GatewayHealthErrorResult"
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                }
+            },
+            "description": "Failed probes return a result object with status (unreachable), error, and last_health_check (ISO 8601 completion time). Request validation and other errors return a string result without a probe timestamp."
         },
         "GatewayMCPStatusResult": {
             "required": [
@@ -113479,7 +114303,164 @@
                 }
             }
         },
-        "ModelHubPaginatedResponse": {
+        "DecisionConnection": {
+            "required": [
+                "model_name",
+                "provider",
+                "label",
+                "is_available"
+            ],
+            "type": "object",
+            "properties": {
+                "model_name": {
+                    "title": "Model name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "provider": {
+                    "title": "Provider",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "is_available": {
+                    "title": "Is available",
+                    "type": "boolean"
+                }
+            }
+        },
+        "ModelListEntry": {
+            "required": [
+                "model_name",
+                "type"
+            ],
+            "type": "object",
+            "properties": {
+                "model_name": {
+                    "title": "Model name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "author": {
+                    "title": "Author",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "question_types": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "min_choices": {
+                    "title": "Min choices",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "max_choices": {
+                    "title": "Max choices",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "max_state_bytes": {
+                    "title": "Max state bytes",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "notice": {
+                    "title": "Notice",
+                    "type": "string"
+                },
+                "unavailable_reason": {
+                    "title": "Unavailable reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "connections": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DecisionConnection"
+                    }
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "providers": {
+                    "title": "Providers",
+                    "type": "string"
+                },
+                "is_available": {
+                    "title": "Is available",
+                    "type": "boolean"
+                },
+                "logo_url": {
+                    "title": "Logo url",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "best_for": {
+                    "title": "Best for",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "use_case": {
+                    "title": "Use case",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "cutoff": {
+                    "title": "Cutoff",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "rate_limits": {
+                    "title": "Rate limits",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "latency": {
+                    "title": "Latency",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "pricing": {
+                    "title": "Pricing",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                }
+            }
+        },
+        "ModelListResponse": {
             "required": [
                 "count",
                 "results"
@@ -113503,7 +114484,7 @@
                 "results": {
                     "type": "array",
                     "items": {
-                        "type": "object"
+                        "$ref": "#/definitions/ModelListEntry"
                     }
                 }
             }
@@ -114078,6 +115059,35 @@
                 "prompts": {
                     "title": "Prompts",
                     "type": "object"
+                }
+            }
+        },
+        "ModelHubPaginatedResponse": {
+            "required": [
+                "count",
+                "results"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "next": {
+                    "title": "Next",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "previous": {
+                    "title": "Previous",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
                 }
             }
         },
@@ -136348,6 +137358,21 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                },
+                "lost_models": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 200,
+                        "minLength": 1
+                    },
+                    "default": [],
+                    "maxItems": 50
+                },
+                "last_error": {
+                    "title": "Last error",
+                    "type": "string",
+                    "x-nullable": true
                 }
             }
         },
@@ -136910,8 +137935,7 @@
                 "source_run_id",
                 "target_scenario_keys",
                 "surfaces",
-                "budget_credits",
-                "max_minutes"
+                "budget_credits"
             ],
             "type": "object",
             "properties": {
@@ -142256,6 +143280,127 @@
                 }
             }
         },
+        "HarnessVerifyCreate": {
+            "required": [
+                "agent_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "description": "The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "default": 3,
+                    "maximum": 20,
+                    "minimum": 1
+                }
+            }
+        },
+        "HarnessVerifyCreateResponse": {
+            "required": [
+                "verify_id",
+                "state"
+            ],
+            "type": "object",
+            "properties": {
+                "verify_id": {
+                    "title": "Verify id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "received",
+                        "queued",
+                        "admitted",
+                        "provisioning",
+                        "running",
+                        "finalizing",
+                        "cleaning_up",
+                        "retry_wait",
+                        "completed",
+                        "failed",
+                        "canceled"
+                    ]
+                }
+            }
+        },
+        "HarnessVerifyResult": {
+            "required": [
+                "state",
+                "passed",
+                "failed",
+                "total",
+                "trials",
+                "held_back_pass_rate",
+                "limited_validation"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "received",
+                        "queued",
+                        "admitted",
+                        "provisioning",
+                        "running",
+                        "finalizing",
+                        "cleaning_up",
+                        "retry_wait",
+                        "completed",
+                        "failed",
+                        "canceled"
+                    ]
+                },
+                "passed": {
+                    "title": "Passed",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "failed": {
+                    "title": "Failed",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "total": {
+                    "title": "Total",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "maximum": 20,
+                    "minimum": 1
+                },
+                "held_back_pass_rate": {
+                    "description": "95% range of the trial pass rate, [low, high]; null until it ends.",
+                    "type": "array",
+                    "items": {
+                        "type": "number",
+                        "maximum": 1,
+                        "minimum": 0
+                    },
+                    "maxItems": 2,
+                    "minItems": 2,
+                    "x-nullable": true
+                },
+                "limited_validation": {
+                    "title": "Limited validation",
+                    "description": "Too few cases were held back to call a version verified.",
+                    "type": "boolean"
+                }
+            }
+        },
         "HarnessAgentConfigChange": {
             "type": "object",
             "properties": {
@@ -142305,6 +143450,11 @@
                 },
                 "agent_payload": {
                     "$ref": "#/definitions/HarnessAgentPayloadChange"
+                },
+                "make_default": {
+                    "title": "Make default",
+                    "description": "False only checks the new version: once it passes, a run can pick it and a move makes it the default. Omitted, it is true, except for a coding agent key, whose push is never the default.",
+                    "type": "boolean"
                 }
             }
         },
@@ -152947,6 +154097,12 @@
                     "type": "boolean",
                     "default": false
                 },
+                "unfinished_only": {
+                    "title": "Unfinished only",
+                    "description": "Resume an interrupted run: re-run only the calls that did not finish, as a new attempt of the same run. Takes no call ids and no select_all.",
+                    "type": "boolean",
+                    "default": false
+                },
                 "environment_values": {
                     "title": "Environment values",
                     "description": "Fresh job-scoped environment for a repository-backed harness rerun. Values are forwarded to the sandbox and are not persisted.",
@@ -153233,7 +154389,9 @@
                 "value": {
                     "title": "Value",
                     "type": "object",
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "score": {
                     "title": "Score",
@@ -155684,6 +156842,62 @@
                 }
             }
         },
+        "RunResumeEntry": {
+            "required": [
+                "at",
+                "by",
+                "calls"
+            ],
+            "type": "object",
+            "properties": {
+                "at": {
+                    "title": "At",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "by": {
+                    "title": "By",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "calls": {
+                    "title": "Calls",
+                    "type": "integer"
+                }
+            }
+        },
+        "RunResume": {
+            "required": [
+                "resumable",
+                "finished",
+                "unfinished",
+                "history"
+            ],
+            "type": "object",
+            "properties": {
+                "resumable": {
+                    "title": "Resumable",
+                    "type": "boolean"
+                },
+                "finished": {
+                    "title": "Finished",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "unfinished": {
+                    "title": "Unfinished",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "history": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/RunResumeEntry"
+                    }
+                }
+            }
+        },
         "RunSummary": {
             "required": [
                 "total",
@@ -155727,6 +156941,25 @@
                 }
             }
         },
+        "RunFixRun": {
+            "required": [
+                "id",
+                "label"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string"
+                }
+            },
+            "x-nullable": true
+        },
         "RunExecution": {
             "required": [
                 "id",
@@ -155738,6 +156971,7 @@
                 "ordinal",
                 "agent_version",
                 "agent_type",
+                "resume",
                 "summary"
             ],
             "type": "object",
@@ -155818,8 +157052,14 @@
                     "minLength": 1,
                     "x-nullable": true
                 },
+                "resume": {
+                    "$ref": "#/definitions/RunResume"
+                },
                 "summary": {
                     "$ref": "#/definitions/RunSummary"
+                },
+                "fix_run": {
+                    "$ref": "#/definitions/RunFixRun"
                 }
             }
         },
@@ -155942,7 +157182,9 @@
                 "evaluations",
                 "scoring_status",
                 "csat_status",
-                "csat_reason"
+                "csat_reason",
+                "failure_domain",
+                "failure_code"
             ],
             "type": "object",
             "properties": {
@@ -156105,13 +157347,11 @@
                 "ended_reason": {
                     "title": "Ended reason",
                     "type": "string",
-                    "minLength": 1,
                     "x-nullable": true
                 },
                 "error_message": {
                     "title": "Error message",
                     "type": "string",
-                    "minLength": 1,
                     "x-nullable": true
                 },
                 "evaluations": {
@@ -156145,6 +157385,26 @@
                 },
                 "csat_reason": {
                     "title": "Csat reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "failure_domain": {
+                    "title": "Failure domain",
+                    "type": "string",
+                    "enum": [
+                        "agent",
+                        "simulator",
+                        "environment",
+                        "connectivity",
+                        "infrastructure",
+                        "grading",
+                        "platform_sync"
+                    ],
+                    "x-nullable": true
+                },
+                "failure_code": {
+                    "title": "Failure code",
                     "type": "string",
                     "minLength": 1,
                     "x-nullable": true
@@ -168640,7 +169900,8 @@
                         "unknown",
                         "guardrail",
                         "evaluator",
-                        "conversation"
+                        "conversation",
+                        "internal"
                     ]
                 },
                 "start_time": {
@@ -171384,6 +172645,196 @@
                 }
             }
         },
+        "SQLSaved": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "visibility": {
+                    "title": "Visibility",
+                    "type": "string",
+                    "enum": [
+                        "private",
+                        "project"
+                    ],
+                    "readOnly": true
+                },
+                "chart": {
+                    "title": "Chart",
+                    "type": "object",
+                    "readOnly": true
+                },
+                "window_hours": {
+                    "title": "Window hours",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "created_by_id": {
+                    "title": "Created by id",
+                    "type": "string",
+                    "readOnly": true
+                }
+            }
+        },
+        "SQLSavedList": {
+            "required": [
+                "items",
+                "has_more"
+            ],
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLSaved"
+                    }
+                },
+                "has_more": {
+                    "title": "Has more",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SQLChart": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "table",
+                        "bar"
+                    ],
+                    "default": "table"
+                },
+                "x": {
+                    "title": "X",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                },
+                "y": {
+                    "title": "Y",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                }
+            },
+            "default": {
+                "type": "table"
+            }
+        },
+        "SQLSave": {
+            "required": [
+                "project_id",
+                "name",
+                "sql"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 160,
+                    "minLength": 1
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "maxLength": 32768,
+                    "minLength": 1
+                },
+                "visibility": {
+                    "title": "Visibility",
+                    "type": "string",
+                    "enum": [
+                        "private",
+                        "project"
+                    ],
+                    "default": "private"
+                },
+                "chart": {
+                    "$ref": "#/definitions/SQLChart"
+                },
+                "window_hours": {
+                    "title": "Window hours",
+                    "type": "integer",
+                    "default": 24,
+                    "maximum": 744,
+                    "minimum": 1
+                }
+            }
+        },
+        "SQLWidget": {
+            "required": [
+                "project_id",
+                "dashboard_id"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "dashboard_id": {
+                    "title": "Dashboard id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "SQLWidgetResponse": {
+            "required": [
+                "id",
+                "dashboard_id"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "dashboard_id": {
+                    "title": "Dashboard id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
         "SavedViewDefaultTab": {
             "required": [
                 "key",
@@ -172511,6 +173962,497 @@
                 },
                 "result": {
                     "$ref": "#/definitions/TraceDetailResult"
+                }
+            }
+        },
+        "SQLColumn": {
+            "required": [
+                "name",
+                "type"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "SQLResult": {
+            "type": "object",
+            "properties": {
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLColumn"
+                    }
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object"
+                        }
+                    }
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "type": "boolean"
+                },
+                "row_count": {
+                    "title": "Row count",
+                    "type": "integer"
+                },
+                "result_bytes": {
+                    "title": "Result bytes",
+                    "type": "integer"
+                },
+                "elapsed_ms": {
+                    "title": "Elapsed ms",
+                    "type": "integer"
+                },
+                "offset": {
+                    "title": "Offset",
+                    "type": "integer"
+                },
+                "next_offset": {
+                    "title": "Next offset",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "has_more": {
+                    "title": "Has more",
+                    "type": "boolean"
+                },
+                "page_row_count": {
+                    "title": "Page row count",
+                    "type": "integer"
+                },
+                "previewed": {
+                    "title": "Previewed",
+                    "type": "boolean"
+                },
+                "retrieval_note": {
+                    "title": "Retrieval note",
+                    "type": "string"
+                }
+            }
+        },
+        "SQLExecution": {
+            "required": [
+                "id",
+                "project_id",
+                "sql",
+                "state",
+                "created_at",
+                "expires_at",
+                "finished_at",
+                "error",
+                "result",
+                "expired"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "running",
+                        "succeeded",
+                        "failed",
+                        "cancelled"
+                    ]
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "expires_at": {
+                    "title": "Expires at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "finished_at": {
+                    "title": "Finished at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "reused": {
+                    "title": "Reused",
+                    "type": "boolean"
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string"
+                },
+                "result": {
+                    "$ref": "#/definitions/SQLResult"
+                },
+                "expired": {
+                    "title": "Expired",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SQLHistory": {
+            "required": [
+                "items",
+                "has_more"
+            ],
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLExecution"
+                    }
+                },
+                "has_more": {
+                    "title": "Has more",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SQLDataset": {
+            "required": [
+                "available",
+                "unavailable_reason",
+                "name",
+                "description",
+                "columns"
+            ],
+            "type": "object",
+            "properties": {
+                "available": {
+                    "title": "Available",
+                    "type": "boolean"
+                },
+                "unavailable_reason": {
+                    "title": "Unavailable reason",
+                    "type": "string"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLColumn"
+                    }
+                }
+            }
+        },
+        "SQLExample": {
+            "required": [
+                "id",
+                "title",
+                "description",
+                "sql",
+                "datasets"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "datasets": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "SQLCatalog": {
+            "required": [
+                "identity_semantics",
+                "version",
+                "datasets",
+                "examples",
+                "max_rows",
+                "max_window_days",
+                "can_save"
+            ],
+            "type": "object",
+            "properties": {
+                "identity_semantics": {
+                    "title": "Identity semantics",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                },
+                "datasets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLDataset"
+                    }
+                },
+                "examples": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLExample"
+                    }
+                },
+                "max_rows": {
+                    "title": "Max rows",
+                    "type": "integer"
+                },
+                "max_window_days": {
+                    "title": "Max window days",
+                    "type": "integer"
+                },
+                "can_save": {
+                    "title": "Can save",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SQLQueryInput": {
+            "required": [
+                "project_id",
+                "sql",
+                "start",
+                "end"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "maxLength": 32768,
+                    "minLength": 1
+                },
+                "start": {
+                    "title": "Start",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "end": {
+                    "title": "End",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "SQLEstimateSource": {
+            "required": [
+                "dataset",
+                "estimated",
+                "parts",
+                "marks",
+                "max_rows",
+                "reason"
+            ],
+            "type": "object",
+            "properties": {
+                "dataset": {
+                    "title": "Dataset",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "estimated": {
+                    "title": "Estimated",
+                    "type": "boolean"
+                },
+                "parts": {
+                    "title": "Parts",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "marks": {
+                    "title": "Marks",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "max_rows": {
+                    "title": "Max rows",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                }
+            }
+        },
+        "SQLEstimate": {
+            "required": [
+                "status",
+                "reason",
+                "sources",
+                "max_rows_to_read",
+                "exceeds_scan_bound",
+                "elapsed_ms"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "unavailable"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "sources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLEstimateSource"
+                    }
+                },
+                "max_rows_to_read": {
+                    "title": "Max rows to read",
+                    "type": "integer"
+                },
+                "exceeds_scan_bound": {
+                    "title": "Exceeds scan bound",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
+                "elapsed_ms": {
+                    "title": "Elapsed ms",
+                    "type": "integer"
+                }
+            }
+        },
+        "SQLRunSaved": {
+            "required": [
+                "project_id",
+                "saved_query_id"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "saved_query_id": {
+                    "title": "Saved query id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "start": {
+                    "title": "Start",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "end": {
+                    "title": "End",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "SQLRun": {
+            "required": [
+                "project_id",
+                "sql",
+                "start",
+                "end"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "maxLength": 32768,
+                    "minLength": 1
+                },
+                "start": {
+                    "title": "Start",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "end": {
+                    "title": "End",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "reuse": {
+                    "title": "Reuse",
+                    "type": "boolean",
+                    "default": true
+                }
+            }
+        },
+        "SQLProject": {
+            "required": [
+                "project_id"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },
@@ -179212,6 +181154,22 @@
                     "title": "Autoreload walletthreshold",
                     "type": "string",
                     "format": "decimal"
+                },
+                "autoreload_maxcharge": {
+                    "title": "Autoreload maxcharge",
+                    "type": "string",
+                    "format": "decimal",
+                    "x-nullable": true
+                },
+                "autoreload_consent": {
+                    "title": "Autoreload consent",
+                    "type": "boolean",
+                    "default": false
+                },
+                "autoreload_charge_now": {
+                    "title": "Autoreload charge now",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },

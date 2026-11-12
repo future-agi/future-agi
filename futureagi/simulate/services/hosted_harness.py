@@ -290,12 +290,17 @@ def create_selected_harness_run(
     fix_run: Any = None,
     seed: int | None = None,
     parallelism: int | None = None,
+    verify: bool = False,
+    coding_agent_key_id: str | None = None,
 ) -> tuple[HostedHarnessJob, bool]:
     """Freeze and preallocate one selected-scenario Run for an authored environment.
 
     A rerun of a pinned run (``rerun_of``) keeps that run's pins; ``picks`` win over
-    both, per piece. A ``fix_run`` marks the Run as one of its check runs. ``seed`` and
-    ``parallelism`` replace the environment's; each defaults to what it has.
+    both, per piece. A ``fix_run`` marks the Run as one of its check runs, and
+    ``verify`` as a verify of the environment's held-back cases. A Run a coding agent
+    asks for (``coding_agent_key_id``) is stamped with its key, and a held-back case
+    in it is refused as an unknown one. ``seed`` and ``parallelism`` replace the
+    environment's; each defaults to what it has.
     """
 
     if environment.environment_id is not None:
@@ -367,6 +372,10 @@ def create_selected_harness_run(
                 "environment changed while submitting this Run",
                 status_code=409,
             )
+        if coding_agent_key_id is not None:
+            # A coding agent's request key names only its own runs, never a person's
+            # or another key's, so a repeat can neither read nor re-queue theirs.
+            idempotency_key = f"coding-agent:{coding_agent_key_id}:{idempotency_key}"
         idempotency_digest = hashlib.sha256(idempotency_key.encode()).hexdigest()
         child_idempotency_key = run_idempotency_key(environment, idempotency_key)
         resolved = resolve_run_pins(environment, rerun_of=rerun_of, picks=picks)
@@ -391,6 +400,18 @@ def create_selected_harness_run(
         by_key = {
             registration.scenario_key: registration for registration in registrations
         }
+        from simulate.selectors.held_back import HELD_BACK_METADATA_KEY, held_back
+
+        if coding_agent_key_id is not None:
+            chosen = held_back(environment)
+            if chosen is None:
+                from simulate.services.harness_verify import no_held_back
+
+                raise no_held_back()
+            # A held-back case reads as one the environment does not have, so the
+            # refusal tells a coding agent no more than an unknown key would.
+            for key in chosen.scenario_keys:
+                by_key.pop(key, None)
         missing = [key for key in scenario_keys if key not in by_key]
         if missing and pins is not None:
             # A rerun of an environment or of an unpinned run selects keys the default
@@ -494,8 +515,13 @@ def create_selected_harness_run(
             "conversation_checkpoints",
             "draft_saves",
             "observability_refusal",
+            # The run's payload never names which cases are held back; its sandbox
+            # still holds every case of the suite.
+            HELD_BACK_METADATA_KEY,
         ):
             child_metadata.pop(key, None)
+        if coding_agent_key_id is not None:
+            child_metadata["coding_agent_key_id"] = coding_agent_key_id
         child_metadata.update(
             {
                 "environment_job_id": str(environment.id),
@@ -597,6 +623,7 @@ def create_selected_harness_run(
         )
         child.environment = environment
         child.fix_run = fix_run
+        child.verify_of = environment if verify else None
         child.run_test = environment.run_test
         child.stage_outputs = list(environment.stage_outputs or [])
         child.bundle_digest = environment.bundle_digest
@@ -619,6 +646,7 @@ def create_selected_harness_run(
                 "payload",
                 "environment",
                 "fix_run",
+                "verify_of",
                 "run_test",
                 "test_execution",
                 "updated_at",
@@ -1578,6 +1606,55 @@ def rerun_calls_in_run(
     return job
 
 
+def resume_run(test_execution: TestExecution, *, user: Any) -> list[uuid.UUID]:
+    """Run again only the calls an interrupted Run did not finish, as a new attempt of that
+    same Run on its pinned versions, and return those calls. Finished calls keep their
+    results and are neither run nor charged again. Versions are only ever soft-deleted, so
+    a pin stays set and its ``deleted`` flag says whether that version is gone."""
+    from simulate.selectors.run_resume import RESUMES, ResumeRefused, check_resume
+
+    check = check_resume(test_execution)
+    if isinstance(check, ResumeRefused):
+        raise HostedHarnessError(check.code, check.message, status_code=409)
+    job = check.job
+    # A resume runs on the versions the run used, never on others.
+    gone = [
+        label
+        for label, pin in (
+            ("agent version", job.agent_version),
+            ("environment version", job.environment_version),
+            ("scenario suite version", job.suite_version),
+            ("assembled bundle", job.assembled_bundle),
+        )
+        if pin is not None and getattr(pin, "deleted", False)
+    ]
+    if gone:
+        raise HostedHarnessError(
+            "resume_version_missing",
+            f"this run used a {', '.join(gone)} that is no longer available",
+            status_code=409,
+        )
+    calls = [execution.call_execution_id for execution in check.unfinished]
+    resumed = rerun_calls_in_run(test_execution, calls)
+    with transaction.atomic():
+        locked = TestExecution.no_workspace_objects.select_for_update().get(
+            id=test_execution.id
+        )
+        metadata = dict(locked.execution_metadata or {})
+        metadata[RESUMES] = [
+            *(metadata.get(RESUMES) or []),
+            {
+                "at": timezone.now().isoformat(),
+                "by": str(user.id) if user is not None else None,
+                "calls": len(calls),
+            },
+        ]
+        locked.execution_metadata = metadata
+        locked.save(update_fields=["execution_metadata"])
+    logger.info("hosted_run_resumed", job=str(resumed.id), calls=len(calls))
+    return calls
+
+
 def scope_dispatch_to_rerun(dispatch_payload: dict[str, Any]) -> dict[str, Any]:
     """Narrow a Run's dispatch document to the executions an in-run re-run chose."""
 
@@ -1615,9 +1692,9 @@ def _apply_parallelism_admission(
     admitted, clamped = clamp_parallelism(requested, snapshot_digest)
     from simulate.services.harness_capacity import configured_capacity
 
-    # An in-run re-run executes only its chosen calls, so W is bounded by those.
-    capacity = configured_capacity(scope_dispatch_to_rerun(job.payload))
-    admitted = min(admitted, capacity.parallelism)
+    # The marker describes the Run's admission. An in-run re-run or a relaunch of lost
+    # calls runs fewer of the Run's calls, and running fewer calls is no clamp.
+    admitted = min(admitted, configured_capacity(job.payload).parallelism)
     clamped = admitted != requested
     metadata = dict(job.payload.get("metadata") or {})
     changed = False
@@ -1634,7 +1711,9 @@ def _apply_parallelism_admission(
         payload["metadata"] = metadata
         job.payload = payload
         job.save(update_fields=["payload", "updated_at"])
-    return admitted
+    # An in-run re-run executes only its chosen calls, so W is bounded by those.
+    capacity = configured_capacity(scope_dispatch_to_rerun(job.payload))
+    return min(admitted, capacity.parallelism)
 
 
 def register_attempt(
@@ -2858,9 +2937,16 @@ def _ask_builder_to_check(job_id: str, attempt_id: str) -> None:
 
 def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
     """Move a terminal job's Run, and the calls it left open, to their end states."""
+    from simulate.selectors.held_back import coding_agent_failure_message
+
     if not job.test_execution_id:
         return
     message = (job.failure or {}).get("message")
+    if message and ((job.payload or {}).get("metadata") or {}).get(
+        "coding_agent_key_id"
+    ):
+        # A coding agent reads these; the stored message can end with guest output.
+        message = coding_agent_failure_message(job.failure)
     calls = CallExecution.no_workspace_objects.filter(
         test_execution_id=job.test_execution_id
     )
