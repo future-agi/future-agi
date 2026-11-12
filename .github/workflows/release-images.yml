@@ -76,6 +76,11 @@ concurrency:
   group: release-images-${{ inputs.version || github.ref_name }}
   cancel-in-progress: false
 
+# Every Python call in a run step uses -I (isolated mode). Several jobs hold
+# the release-bot key or a write token, and -I puts neither the current
+# directory nor the script's directory on sys.path, so no module file in a
+# checkout (pip.py, json.py) is imported.
+
 jobs:
   guard:
     runs-on: ubuntu-latest
@@ -234,7 +239,7 @@ jobs:
         run: |
           set -euo pipefail
           [ -f scripts/release_autopilot.py ] || { echo "::error::The release policy script is not on main yet. Promote dev to main before cutting a release tag."; exit 1; }
-          python3 scripts/release_autopilot.py environment --version "$VERSION"
+          python3 -I scripts/release_autopilot.py environment --version "$VERSION"
 
   # Every other job still waits here. Unknown/new migrations and dispatches
   # retain Production review; only opted-in migration-free tag pushes skip it.
@@ -391,7 +396,7 @@ jobs:
         run: |
           set -euo pipefail
           [ -f scripts/release_autopilot.py ] || { echo "::error::The release policy script is not on main yet. Promote dev to main before cutting a release tag."; exit 1; }
-          python3 scripts/release_autopilot.py environment --version "$VERSION" \
+          python3 -I scripts/release_autopilot.py environment --version "$VERSION" \
             --expected-sha "$EXPECTED_SHA" --approved-environment "$APPROVED_ENVIRONMENT"
 
   build:
@@ -828,7 +833,7 @@ jobs:
           VERSION: ${{ needs.guard.outputs.version }}
           WORKER_RELEASE_REF: ${{ vars.OMEGA_WORKER_RELEASE_REF }}
           RELEASE_REQUEST_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-        run: python3 scripts/release-error-feed-worker.py
+        run: python3 -I scripts/release-error-feed-worker.py
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -1077,7 +1082,7 @@ jobs:
       - name: Image sizes
         env:
           VERSION: ${{ needs.guard.outputs.version }}
-        run: python3 scripts/image_size_budget.py report --tag "$VERSION"
+        run: python3 -I scripts/image_size_budget.py report --tag "$VERSION"
 
   bump-deployment:
     needs: [guard, dispatch-ee, resolve-sdk, simulation-runner, release-worker]
@@ -1152,8 +1157,8 @@ jobs:
         env:
           RELEASE_WORKFLOW: ${{ github.workspace }}/.release-source/.github/workflows/release-images.yml
         run: |
-          python3 -m pip install PyYAML==6.0.3
-          python3 tests/test-release-digest-bump.py
+          python3 -I -m pip install PyYAML==6.0.3
+          python3 -I tests/test-release-digest-bump.py
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
@@ -1221,7 +1226,7 @@ jobs:
           fi
           # Unknown unless both tags exist here and the pinned one is an
           # earlier ancestor of this release. Any failure is unknown, never 0.
-          count=$(cd platform && python3 scripts/release_autopilot.py migrations-since --from "$pinned" --to "$VERSION") || count=unknown
+          count=$(cd platform && python3 -I scripts/release_autopilot.py migrations-since --from "$pinned" --to "$VERSION") || count=unknown
           [[ "$count" =~ ^(0|[1-9][0-9]*)$ ]] || count=unknown
           echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
           echo "migrations=$count" >> "$GITHUB_OUTPUT"
@@ -1284,9 +1289,9 @@ jobs:
           # result: every image in the platform release lane must now carry
           # $VERSION, so a tag added to a values file but not to the path list
           # fails here instead of in a deploy. The image list lives in the
-          # script; scripts/test_verify_platform_image_tags.py pins it.
-          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --quiet --user pyyaml
-          python3 platform/scripts/verify-platform-image-tags.py "$VERSION" \
+          # script; scripts/test_verify_platform_image_tags.py pins it. PyYAML
+          # comes from the "Verify release scripts" step above.
+          python3 -I platform/scripts/verify-platform-image-tags.py "$VERSION" \
             eu/gcp/deployment/values.yaml us/gcp/deployment/values.yaml
       - name: Open bump PR
         env:

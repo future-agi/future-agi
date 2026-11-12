@@ -223,8 +223,9 @@ changes none of them.
     from this repository's `dev`, which the last-push ruleset above covers.
   - `bump-deployment` in `release-images.yml` checks out deployment `main`
     with a minted release-bot token persisted (contents and pull-request
-    write on `future-agi/deployment`), then runs `python3 -m pip` and that
-    branch's `tests/test-release-digest-bump.py`. Deployment `main` needs the
+    write on `future-agi/deployment`), then runs `python3 -I -m pip` and
+    that branch's `tests/test-release-digest-bump.py` (also with `-I`, see
+    "Python calls in key-holding jobs" below). Deployment `main` needs the
     same review: Actions approvals off and a last-push ruleset, which its
     `deploy_github.tf` header already requires.
 
@@ -263,6 +264,19 @@ changes none of them.
   and every dispatch gets `Production` review. GitHub treats environment names
   case-insensitively; `Production` is the existing environment formerly
   written as `production` in this workflow.
+- **Worker release ref.** `release-worker` passes the repository variable
+  `OMEGA_WORKER_RELEASE_REF` (today `main`) to
+  `scripts/release-error-feed-worker.py`. The script resolves it to a commit
+  of `future-agi/omega-error-feed-worker` and dispatches that repository's
+  image build, and the deployment bump pins the resulting digest. So whoever
+  can change the variable chooses the code of the next Error Feed worker
+  image. Who can edit repository variables here was not checked. Set the same
+  variable, with value `main`, on the `production-auto` environment, which
+  `release-worker` names: an environment variable takes precedence over a
+  repository variable of the same name, and changing an environment needs
+  admin access. The worker repository's `release-image.yml` builds whatever
+  commit it is sent; a check there that the commit is on its `main` is a
+  change in that repository.
 - The workflow token gets Contents, Checks, Statuses, Actions and Pull requests
   read in the `check` job, and Pull requests and Issues write in the `merge`
   job, for comments and labels. GitHub supplies this token; no PAT is needed.
@@ -755,6 +769,45 @@ bump could compare between the pinned and the new backend digest.
   Enable `RELEASE_AUTO_APPROVE` separately after observing its manual-path
   summaries and the deployment safety net. No admin setting is changed by code.
 
+## Python calls in key-holding jobs
+
+`release-images.yml`, `release-autopilot.yml` and `sdk-sync.yml` hold the
+release-bot key, the approver App key or a contents-write token. Every Python
+call in their `run` steps uses `python3 -I` (or `python -I`), which is
+isolated mode. It ignores `PYTHON*` variables and the user site directory, and
+it puts neither the current directory nor the script's directory on
+`sys.path`. Without it, `python3 -m pip` imports a `pip.py` file or a `pip/`
+folder from the current directory, and `python3 scripts/x.py` imports a
+`json.py` placed beside the script, while the job holds the key or token.
+With it, Python imports only the standard library and installed packages.
+
+The scripts these calls run import only the standard library and PyYAML, so
+they needed no change. Two limits remain:
+
+- `sdkgen/generate.py` on futureagi-sdk `dev` puts its own repository root at
+  the front of `sys.path` to import `sdkgen.generator`. For that one call, a
+  top-level module file on futureagi-sdk `dev`, such as `typing.py`, still
+  shadows the standard library. Such a file needs a merge into `dev`, which
+  the custody above already requires a person to review. Closing it needs a
+  change in futureagi-sdk, for example adding the root at the end of
+  `sys.path` instead.
+- `-I` also hides packages installed with `pip install --user`. The bump
+  job's verify step therefore no longer has a `--user` fallback; PyYAML comes
+  from the job's earlier install.
+
+Python calls left without `-I`, and why:
+
+- `worker-release-checks.yml` runs `python3 -m unittest` from `scripts/`. It
+  holds only a read token, and unittest needs the current directory on
+  `sys.path` to find the test modules.
+- The backend build's `verify-command` in `release-images.yml` runs
+  `python -c` inside the built image, not on the runner.
+- `release-update-manifest.yml` (`python3 -` in its contents-write `publish`
+  job) and `refresh-disposable-domains.yml` (which reads the release-bot key)
+  need the same change. They are outside this change.
+  `helm-release.yml` runs `python -m pip` only in its read-only `package`
+  job.
+
 ## Verification and unchanged workflow sections
 
 Synthetic tests run with `python3 scripts/test_release_autopilot.py` after
@@ -773,6 +826,19 @@ of a synthetic history whose origin is deleted, so no file contents can be
 fetched. The steps use real `yq` when it is on `PATH` (GitHub's Ubuntu runners
 have it) and also a stub that accepts only the job's expressions; both must
 write the same files and lines. Only the last step's `git` and `gh` are stubs.
+The ancestry tests also plant tags named `origin/main`, `origin/dev` and
+`refs/remotes/origin/main`, on an old main commit and on an unreviewed one.
+The `sdk-sync.yml` tests run its two checkout checks on scratch repositories
+(a same-named branch, another commit, a missing tag and a tag of a tree are
+refused) and evaluate its job condition on the shapes of real runs.
+The Python isolation tests scan every `run` step of the three key-holding
+workflows and require `-I` on each Python call, against a fixed list of
+calls. They plant `pip.py`, a `pip/` package, `uuid.py`, `typing.py` and the
+modules the scripts import in the job's working directory, at the top of a
+checkout and beside its scripts. Each of this repository's scripts then runs
+as its workflow calls it, with `-I`, and imports none of them; without `-I`,
+the same call imports one. The bump job's real steps also run with these
+planted modules, and every Python call they make must use `-I`.
 Run workload tests only in E2B or CI, not on the shared development host.
 
 **CI wiring:** the `Release script checks` workflow
@@ -804,8 +870,11 @@ The `release-images.yml` diff is deliberately limited:
   in a comment, this repository's checkout fetches history and tags without
   file contents, a new step reads the baseline and counts, and `Open bump PR`
   writes the two lines from its `env`.
+- Every Python call runs with `-I`, and the verify step's `pip install --user`
+  fallback is gone (see "Python calls in key-holding jobs").
 
-All jobs from `build` to `size-report` are byte-identical to the base. The
+All jobs from `build` to `size-report` are byte-identical to the base, except
+the `python3 -I` calls in `release-worker` and `size-report`. The
 steps of `bump-deployment` that the deployment repository's
 `tests/test-release-digest-bump.py` runs (the step whose name starts with
 "Bump platform tags" and the step `catalog-images`) and its `COMMON_PATHS`

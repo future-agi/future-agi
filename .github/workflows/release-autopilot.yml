@@ -17,6 +17,11 @@ concurrency:
   group: release-autopilot
   cancel-in-progress: false
 
+# Every Python call runs with -I (isolated mode): it ignores PYTHON* variables
+# and the user site, and puts neither the current directory nor the script's
+# directory on sys.path. So no module file in the checkout, such as pip.py or
+# json.py, is imported in a job that holds a key.
+
 jobs:
   # Read-only decision. It names no environment, so the frequent idle polls
   # neither read a key nor record a deployment.
@@ -60,13 +65,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+          python3 -I -m pip install --disable-pip-version-check PyYAML==6.0.3
       - name: Evaluate current release PR
         id: policy
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/release_autopilot.py check
+          python3 -I scripts/release_autopilot.py check
 
   merge:
     needs: check
@@ -105,7 +110,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+          python3 -I -m pip install --disable-pip-version-check PyYAML==6.0.3
       # Approvals only. Whether an App's approval counts is reported to follow
       # its installation's access, not the token's (not verified live; see
       # docs/release-autopilot.md), so the token requests no contents permission.
@@ -138,4 +143,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/release_autopilot.py merge
+          python3 -I scripts/release_autopilot.py merge

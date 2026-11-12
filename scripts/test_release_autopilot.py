@@ -5,6 +5,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import base64
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -1563,7 +1564,7 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertIn("ref: main\n", block)
             self.assertIn("persist-credentials: false", block)
             self.assertIn("fetch-depth: 0", block)
-            self.assertIn("python3 scripts/release_autopilot.py environment", block)
+            self.assertIn("python3 -I scripts/release_autopilot.py environment", block)
             self.assertLess(block.index('echo "components: $components"'), block.index("actions/checkout@v4"))
         self.assertIn("environment: ${{ needs.guard.outputs.environment }}", approve)
         self.assertIn('--expected-sha "$EXPECTED_SHA" --approved-environment "$APPROVED_ENVIRONMENT"', approve)
@@ -1671,7 +1672,7 @@ class WorkflowContractTests(unittest.TestCase):
         for fragment in ('cron: "*/15 * * * *"', 'workflows: ["Backend CI", "E2E CI"]', "workflow_dispatch:",
                          "github.event.repository.default_branch", "persist-credentials: false", "checks: read",
                          "statuses: read", "actions: read", "permission-contents: write", "permission-pull-requests: write",
-                         "python3 -m pip install --disable-pip-version-check PyYAML==6.0.3"):
+                         "python3 -I -m pip install --disable-pip-version-check PyYAML==6.0.3"):
             self.assertIn(fragment, text)
         self.assertNotIn("pull_request_target:", text)
         self.assertNotIn("github.event.workflow_run.head_sha", text)
@@ -2023,6 +2024,242 @@ class SdkSyncWorkflowTests(unittest.TestCase):
             self.assertIn("refs/remotes/origin/dev is missing", log)
 
 
+# A module file that records its own import and stops the interpreter. Planted
+# where a checkout could hold it: an isolated (-I) call must never import it.
+PLANT = """import os
+with open(os.environ["PLANT_LOG"], "a", encoding="utf-8") as log:
+    log.write(__name__ + " " + __file__ + "\\n")
+raise SystemExit(97)
+"""
+# uuid and typing as named in the review; the rest are modules the release
+# scripts import, so a call without -I that reads a planted directory imports one.
+PLANTED = ("uuid", "typing", "json", "argparse", "subprocess", "re", "yaml")
+
+
+def plant(directory, pip_package=True):
+    """Plant shadowing modules, and pip as a pip/ package or as pip.py (a package wins in one directory)."""
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in PLANTED:
+        (directory / f"{name}.py").write_text(PLANT)
+    if pip_package:
+        (directory / "pip").mkdir()
+        for name in ("__init__.py", "__main__.py"):
+            (directory / "pip" / name).write_text(PLANT)
+    else:
+        (directory / "pip.py").write_text(PLANT)
+
+
+def python_shim(directory, call_log):
+    """python3 and python on PATH: this interpreter, and a log of each call's first argument."""
+    for name in ("python3", "python"):
+        shim = directory / name
+        # Only the first argument: later ones, such as a PR body, can span lines.
+        shim.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$1\" >> {shlex.quote(str(call_log))}\n"
+                        f"exec {shlex.quote(sys.executable)} \"$@\"\n")
+        shim.chmod(0o755)
+
+
+class PythonIsolationTests(unittest.TestCase):
+    """Every Python call in the release workflows runs isolated (python -I).
+
+    These workflows hold the release-bot key, the approver App key or a
+    contents-write token. Without -I, `python -m` and `python -c` put the
+    current directory on sys.path and `python script.py` puts the script's
+    directory there, so a module file in the checkout (pip.py, json.py) would
+    run first with those credentials.
+    """
+
+    ROOT = Path(__file__).resolve().parents[1]
+    WORKFLOWS = (".github/workflows/release-images.yml", ".github/workflows/release-autopilot.yml",
+                 ".github/workflows/sdk-sync.yml")
+    # A call in command position: line start or after a shell operator, past
+    # any VAR=value prefixes. `git diff -- python typescript` is not a call.
+    CALL = re.compile(r"(?:^|&&|\|\||[;|(`!]|\$\(|\b(?:then|do|else)\b)\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
+                      r"(?P<python>python3?)(?=\s|$)")
+    # Every call, by workflow, job and what it runs. A new call must be added
+    # here, and run below when it is this repository's script.
+    INVENTORY = sorted([
+        ("release-autopilot.yml", "check", "-m pip"), ("release-autopilot.yml", "check", "scripts/release_autopilot.py"),
+        ("release-autopilot.yml", "merge", "-m pip"), ("release-autopilot.yml", "merge", "scripts/release_autopilot.py"),
+        ("release-images.yml", "guard", "scripts/release_autopilot.py"),
+        ("release-images.yml", "approve", "scripts/release_autopilot.py"),
+        ("release-images.yml", "release-worker", "scripts/release-error-feed-worker.py"),
+        ("release-images.yml", "size-report", "scripts/image_size_budget.py"),
+        ("release-images.yml", "bump-deployment", "-m pip"),
+        ("release-images.yml", "bump-deployment", "tests/test-release-digest-bump.py"),
+        ("release-images.yml", "bump-deployment", "scripts/release_autopilot.py"),
+        ("release-images.yml", "bump-deployment", "platform/scripts/verify-platform-image-tags.py"),
+        ("sdk-sync.yml", "sync", "-m pip"), ("sdk-sync.yml", "sync", "sdkgen/sync_contract.py"),
+        ("sdk-sync.yml", "sync", "sdkgen/generate.py"),
+    ])
+    # Scripts of other repositories, run from their own checkouts: the
+    # deployment repository's test (deployment main) and futureagi-sdk's
+    # sdkgen (dev). They import only the standard library, PyYAML and, for
+    # generate.py, its own package, which it adds to sys.path itself.
+    OTHER_REPOSITORIES = {"tests/test-release-digest-bump.py", "sdkgen/sync_contract.py", "sdkgen/generate.py"}
+
+    @classmethod
+    def calls(cls, script):
+        """(interpreter, the arguments after it) for each Python call in a shell script."""
+        found = []
+        for line in script.replace("\\\n", " ").splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            for match in cls.CALL.finditer(line):
+                found.append((match["python"], line[match.end("python"):].split()))
+        return found
+
+    @staticmethod
+    def target(arguments):
+        rest = arguments[1:] if arguments[:1] == ["-I"] else arguments
+        return " ".join(rest[:2]) if rest[:1] in (["-m"], ["-c"]) else rest[0]
+
+    def workflow_calls(self):
+        import yaml
+
+        for path in self.WORKFLOWS:
+            for job_name, job in yaml.safe_load((self.ROOT / path).read_text())["jobs"].items():
+                for step in job.get("steps", []):
+                    for python, arguments in self.calls(step.get("run", "")):
+                        yield Path(path).name, job_name, python, arguments
+
+    def test_every_python_call_in_the_release_workflows_runs_isolated(self):
+        calls = list(self.workflow_calls())
+        self.assertEqual(sorted((name, job, self.target(arguments)) for name, job, _, arguments in calls),
+                         self.INVENTORY)
+        for name, job, python, arguments in calls:
+            with self.subTest(workflow=name, job=job, call=" ".join([python, *arguments])):
+                self.assertEqual(arguments[:1], ["-I"])
+        # This repository's scripts are all run by the planted-checkout test below.
+        ours = {target for _, _, target in self.INVENTORY if not target.startswith("-")} - self.OTHER_REPOSITORIES
+        self.assertEqual({Path(target).name for target in ours}, set(self.SCRIPT_CALLS))
+
+    def test_the_scan_finds_calls_without_isolation_and_ignores_other_words(self):
+        script = "\n".join([
+            "python3 -m pip install x",
+            'count=$(cd platform && python3 scripts/a.py --to "$V") || count=unknown',
+            "python -c 'import yaml' 2>/dev/null || python3 -I -m pip install y",
+            "if true; then python3 scripts/b.py \\\n  --flag; fi",
+            "FOO=1 python3 scripts/c.py",
+            "# python3 scripts/commented.py",
+            "if git diff --quiet -- python typescript; then",
+            "python3 -I scripts/d.py",
+        ])
+        self.assertEqual([(python, self.target(arguments), arguments[:1] == ["-I"])
+                          for python, arguments in self.calls(script)],
+                         [("python3", "-m pip", False), ("python3", "scripts/a.py", False),
+                          ("python", "-c 'import", False), ("python3", "-m pip", True),
+                          ("python3", "scripts/b.py", False), ("python3", "scripts/c.py", False),
+                          ("python3", "scripts/d.py", True)])
+        self.assertEqual(self.calls("git diff --quiet -- python typescript"), [])
+
+    # Each of this repository's scripts, called as its workflow calls it, with
+    # arguments that stay offline. {I} is "-I " or nothing.
+    # (working directory, command, environment, exit code, expected text)
+    SCRIPT_CALLS = {
+        "release_autopilot.py": [
+            ("platform", "python3 {I}scripts/release_autopilot.py check", {}, 0, "eligible=false"),
+            ("platform", "python3 {I}scripts/release_autopilot.py merge", {}, 0, "eligible=false"),
+            # The first release has no baseline, so no GitHub read happens.
+            ("platform", 'python3 {I}scripts/release_autopilot.py environment --version "$VERSION"',
+             {"VERSION": "v1.0.0"}, 0, "environment=Production"),
+            (".", 'count=$(cd platform && python3 {I}scripts/release_autopilot.py migrations-since '
+                  '--from v1.0.0 --to "$VERSION") && echo "count=$count"', {}, 0, "count=1"),
+        ],
+        "release-error-feed-worker.py": [
+            # It validates the version before any GitHub call.
+            ("platform", "python3 {I}scripts/release-error-feed-worker.py", {"VERSION": "not-a-release"}, 1,
+             "Expected a stable platform version"),
+        ],
+        "verify-platform-image-tags.py": [
+            (".", 'python3 {I}platform/scripts/verify-platform-image-tags.py "$VERSION" eu.yaml', {}, 0, ""),
+        ],
+        # Its report reads registries over the network; --help still imports everything.
+        "image_size_budget.py": [
+            ("platform", "python3 {I}scripts/image_size_budget.py report --help", {}, 0, "--tag"),
+        ],
+    }
+
+    def checkout(self, root, pip_package=True):
+        """root is the job's working directory, root/platform a checkout of this repository."""
+        platform = root / "platform"
+        (platform / "scripts").mkdir(parents=True)
+        for name in self.SCRIPT_CALLS:
+            shutil.copy2(self.ROOT / "scripts" / name, platform / "scripts" / name)
+
+        def git(*args):
+            subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+                            "-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", *args],
+                           cwd=platform, check=True, capture_output=True, text=True)
+
+        git("init", "-q", "-b", "main")
+        git("add", ".")
+        git("commit", "-q", "-m", "scripts")
+        git("tag", "v1.0.0")
+        (platform / "futureagi/app/migrations").mkdir(parents=True)
+        (platform / "futureagi/app/migrations/0002_new.py").write_text("synthetic\n")
+        git("add", ".")
+        git("commit", "-q", "-m", "a migration")
+        git("tag", "v1.1.0")
+        git("update-ref", "refs/remotes/origin/main", "HEAD")
+        (root / "eu.yaml").write_text(yaml_dump({"backend": {"image": {
+            "repository": "futureagi/future-agi-ee", "tag": "v1.1.0"}}}))
+        # The job's working directory, the checkout's top level and the
+        # script's own directory.
+        for directory in (root, platform, platform / "scripts"):
+            plant(directory, pip_package)
+
+    def run_call(self, root, cwd, command, overrides, isolated):
+        tools, plants, calls = root / "tools", root / "planted.log", root / "calls.log"
+        tools.mkdir(exist_ok=True)
+        python_shim(tools, calls)
+        for log in (plants, calls):
+            log.unlink(missing_ok=True)
+        output, summary = root / "output", root / "summary"
+        for path in (output, summary):
+            path.write_text("")
+        env = {"PATH": os.pathsep.join([str(tools), os.environ.get("PATH", "")]), "HOME": str(root),
+               "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "PLANT_LOG": str(plants),
+               "GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(summary), "VERSION": "v1.1.0",
+               "GITHUB_EVENT_NAME": "workflow_dispatch", "RELEASE_REQUEST_ID": "1-1", "PIP_NO_INDEX": "1",
+               **overrides}
+        result = subprocess.run(["bash", "--noprofile", "--norc", "-e", "-c",
+                                 command.format(I="-I " if isolated else "")],
+                                cwd=root / cwd, env=env, text=True, capture_output=True, timeout=120)
+        planted = plants.read_text() if plants.exists() else ""
+        text = result.stdout + result.stderr + output.read_text() + summary.read_text()
+        return result.returncode, text, planted
+
+    def test_planted_modules_are_never_imported_and_every_script_still_runs(self):
+        cases = [case for calls in self.SCRIPT_CALLS.values() for case in calls]
+        # pip with the job's own arguments; PIP_NO_INDEX keeps it offline. The
+        # release-autopilot form; bump-deployment's and sdk-sync's differ only in flags.
+        pip = ("platform", "python3 {I}-m pip install --disable-pip-version-check PyYAML==6.0.3", {}, 0, "PyYAML")
+        has_pip = importlib.util.find_spec("pip") is not None
+        for pip_package in (True, False):
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                self.checkout(root, pip_package)
+                for cwd, command, overrides, code, expected in [*([pip] if has_pip else []), *cases]:
+                    with self.subTest(command=command, pip_package=pip_package):
+                        returncode, text, planted = self.run_call(root, cwd, command, overrides, isolated=True)
+                        self.assertEqual(planted, "")
+                        self.assertEqual(returncode, code, text)
+                        self.assertIn(expected, text)
+                        # The negative control: the same call without -I imports a planted module.
+                        returncode, text, planted = self.run_call(root, cwd, command, overrides, isolated=False)
+                        self.assertNotEqual(planted, "", text)
+                        self.assertEqual(returncode, 97, text)
+        if not has_pip:
+            self.skipTest("pip is not installed for this interpreter; the pip call was not run")
+
+
+def yaml_dump(document):
+    import yaml
+
+    return yaml.safe_dump(document, sort_keys=False)
+
+
 def yq_stub(directory):
     """A stand-in for mikefarah yq v4 that accepts only the expressions the bump job uses."""
     script = directory / "yq_stub.py"
@@ -2164,10 +2401,16 @@ class BumpJobTests(unittest.TestCase):
                 path = work / region / "gcp/deployment/values.yaml"
                 path.parent.mkdir(parents=True)
                 path.write_text(yaml.safe_dump(self.values(tags, region), sort_keys=False))
+            # Modules that shadow the standard library, pip and PyYAML, in the
+            # deployment checkout (the steps' working directory), at the top of
+            # this repository's checkout and beside its scripts.
+            for directory in (work, work / "platform", work / "platform" / "scripts"):
+                plant(directory)
+            planted, python_calls = root / "planted.log", root / "python-calls.log"
             tools, stubs = root / "tools", root / "stubs"
             tools.mkdir()
             stubs.mkdir()
-            (tools / "python3").write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} \"$@\"\n")
+            python_shim(tools, python_calls)
             if yq is None:
                 (tools / "yq").write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} "
                                           f"{shlex.quote(str(yq_stub(root)))} \"$@\"\n")
@@ -2204,7 +2447,8 @@ class BumpJobTests(unittest.TestCase):
 
             # A step inherits the runner's environment; user Git config is ignored.
             base = {**os.environ, "HOME": temp, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
-                    "GH_CONFIG_DIR": str(root), "STUB_LOG": str(log), **resolve(self.job["env"])}
+                    "GH_CONFIG_DIR": str(root), "STUB_LOG": str(log), "PLANT_LOG": str(planted),
+                    **resolve(self.job["env"])}
             outputs, logs = {}, {}
             for name in selected:
                 step = steps[name]
@@ -2230,6 +2474,14 @@ class BumpJobTests(unittest.TestCase):
             calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
             files = {region: yaml.safe_load((work / region / "gcp/deployment/values.yaml").read_text())
                      for region in ("eu", "us")}
+            # Every Python call the steps made ran isolated, and none imported a
+            # planted module. The git and gh stubs run through the shim too.
+            self.assertFalse(planted.exists(), planted.read_text() if planted.exists() else "")
+            made = [line for line in python_calls.read_text().splitlines()
+                    if not line.startswith(str(stubs))] if python_calls.exists() else []
+            if "Count migrations since the release deployment main runs" in selected:
+                self.assertTrue(made)
+            self.assertEqual([line for line in made if line != "-I"], [])
         result = {"outputs": outputs, "logs": logs, "values": files}
         if calls:
             commit = next(call for call in calls if call[:2] == ["git", "commit"])
