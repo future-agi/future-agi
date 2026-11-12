@@ -285,9 +285,13 @@ class UploadReservation(ScopedAttachmentRecord):
 
     class Meta:
         indexes = [
+            # expire_reservations: unsettled rows in expiry order. A plain
+            # (settled_at, expires_at) index could not give that order for
+            # IS NULL, so it seq-scanned a 100k-row backlog (decision 7).
             models.Index(
-                fields=["settled_at", "expires_at"],
-                name="attachment_reservation_expiry",
+                fields=["expires_at"],
+                condition=models.Q(settled_at__isnull=True),
+                name="attachment_reservation_due_idx",
             )
         ]
 

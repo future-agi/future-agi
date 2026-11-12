@@ -37,6 +37,7 @@ from tracer.models.attachment import (
     AttachmentScope,
     AttachmentState,
     AttachmentUpload,
+    CaptureSession,
     UploadReservation,
 )
 from tracer.services.attachments.bootstrap import (
@@ -136,6 +137,21 @@ def _check_generation(scope, body):
         raise AttachmentError("expired", 409)
 
 
+def _locked_session(session):
+    """The capture session re-read under a lock its revocation must wait for.
+
+    ``find_session`` reads the session before the transaction, so checking that
+    object let a revocation committed in between still admit an upload (the
+    load test measured about one late occurrence per in-flight writer). FOR NO
+    KEY UPDATE conflicts with the revoking UPDATE, but not with the FK KEY SHARE
+    checks of concurrent inserts. Initializes on one scope are already
+    serialised by the scope row lock, so it adds no wait between them.
+    """
+    return CaptureSession.objects.select_for_update(no_key=True).get(
+        pk=session.pk, scope_id=session.scope_id
+    )
+
+
 def _renew(upload, session):
     """BR-1: same job, same reservation, fresh capability and later expiry.
 
@@ -207,6 +223,7 @@ def initialize(writer, *, scope_id, body, key):
             locked = AttachmentUpload.objects.select_for_update().get(
                 pk=existing.pk, scope=scope
             )
+            session = _locked_session(session)
             check_session(session)
             return _renew(locked, session)
     if not _count_attempt(scope):
@@ -215,6 +232,7 @@ def initialize(writer, *, scope_id, body, key):
         # One ordering for all budget-mutating operations, then scope/upload.
         budgets = _lock_budgets(scope)
         scope = AttachmentScope.objects.select_for_update().get(pk=scope.id)
+        session = _locked_session(session)
         check_session(session)
         _check_generation(scope, body)
         existing = AttachmentUpload.objects.filter(

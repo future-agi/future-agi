@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import threading
 import uuid
 import wave
 from concurrent.futures import ThreadPoolExecutor
@@ -11,7 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from django.db import IntegrityError, close_old_connections, transaction
+from django.db import IntegrityError, close_old_connections, connection, transaction
 from django.utils import timezone
 
 from accounts.models import OrgApiKey
@@ -25,6 +26,7 @@ from tracer.models.attachment import (
     AttachmentState,
     AttachmentUpload,
     AttachmentWriteGrant,
+    CaptureSession,
     UploadReservation,
 )
 from tracer.models.project import Project
@@ -737,3 +739,105 @@ def test_concurrent_completion_and_settlement(setup):
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert list(pool.map(finish, range(2))) == ["validating", "validating"]
     assert AttachmentOutbox.objects.filter(event="validate").count() == 1
+
+
+# --- #3945 hardening (decision 7 load-test findings) -------------------------
+
+
+@pytest.mark.parametrize("replay", [False, True], ids=["fresh", "replay"])
+def test_revocation_after_session_lookup_admits_nothing(setup, monkeypatch, replay):
+    """A revocation committed after ``find_session`` read the session, but
+    before the locked admission, refuses it: no occurrence, upload or
+    reservation is created and no capability is re-issued. The load test
+    measured about one late occurrence per in-flight writer before the fix."""
+    scope, writer = setup
+    current, _ = session(setup)
+    body = upload_body(scope, current)
+    key = f"up-{uuid.UUID(body['occurrence_id']).hex}"
+    if replay:
+        uploads.initialize(writer, scope_id=scope.id, body=body, key=key)
+
+    def counts():
+        return (
+            AttachmentOccurrence.objects.count(),
+            AttachmentUpload.objects.count(),
+            UploadReservation.objects.count(),
+            AttachmentOutbox.objects.filter(event="admitted").count(),
+        )
+
+    before = counts()
+    real = uploads.find_session
+
+    def lookup_then_revoke(*args):
+        found = real(*args)
+        CaptureSession.objects.filter(pk=found.pk).update(revoked_at=timezone.now())
+        return found
+
+    monkeypatch.setattr(uploads, "find_session", lookup_then_revoke)
+    with pytest.raises(AttachmentError, match="capability_expired"):
+        uploads.initialize(writer, scope_id=scope.id, body=body, key=key)
+    assert counts() == before
+
+
+@pytest.mark.django_db(transaction=True)
+def test_session_renewal_does_not_queue_behind_fk_key_share(setup):
+    """Renewal locks the scope and session rows FOR NO KEY UPDATE, so an open
+    transaction holding the FK KEY SHARE that every attachment insert takes on
+    those rows does not block it. With FOR UPDATE, renewals and inserts queued
+    behind each other (most raw-shape lock waits in the load test)."""
+    scope, _ = setup
+    sid, nonce = str(uuid.uuid4()), str(uuid.uuid4())
+    current, _ = session(setup, capture_session_id=sid, correlation_nonce=nonce)
+    holding, release = threading.Event(), threading.Event()
+
+    def hold():
+        close_old_connections()
+        try:
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT 1 FROM tracer_attachmentscope WHERE id = %s FOR KEY SHARE",
+                    [scope.id],
+                )
+                cursor.execute(
+                    "SELECT 1 FROM tracer_capturesession WHERE id = %s FOR KEY SHARE",
+                    [current.id],
+                )
+                holding.set()
+                release.wait(15)
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        holder = pool.submit(hold)
+        assert holding.wait(15)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SET lock_timeout = '2s'")
+            renewed, _ = session(setup, capture_session_id=sid, correlation_nonce=nonce)
+        finally:
+            release.set()
+            with connection.cursor() as cursor:
+                cursor.execute("RESET lock_timeout")
+        holder.result(timeout=15)
+    assert renewed.id == current.id
+
+
+def test_reservation_sweep_uses_the_unsettled_partial_index(setup):
+    """``expire_reservations`` reads unsettled rows in expiry order from the
+    partial index; the old (settled_at, expires_at) index seq-scanned 100k."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = %s",
+            ["attachment_reservation_due_idx"],
+        )
+        (definition,) = cursor.fetchone()
+        cursor.execute("SET LOCAL enable_seqscan = off")
+        plan = (
+            UploadReservation.objects.filter(
+                settled_at__isnull=True, expires_at__lte=timezone.now()
+            )
+            .order_by("expires_at")[:100]
+            .explain()
+        )
+    assert "(expires_at) WHERE (settled_at IS NULL)" in definition
+    assert "attachment_reservation_due_idx" in plan

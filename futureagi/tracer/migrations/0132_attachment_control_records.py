@@ -408,6 +408,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name='uploadreservation',
-            index=models.Index(fields=['settled_at', 'expires_at'], name='attachment_reservation_expiry'),
+            index=models.Index(condition=models.Q(('settled_at__isnull', True)), fields=['expires_at'], name='attachment_reservation_due_idx'),
         ),
     ]
