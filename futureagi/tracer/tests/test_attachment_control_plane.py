@@ -555,6 +555,35 @@ def test_read_path_refuses_what_binding_refused(setup, user, monkeypatch):
         )
 
 
+def test_binder_tombstone_locks_every_budget_shard_first(setup, monkeypatch):
+    """A rejected binding settles an upload of any shard under the scope lock.
+
+    So it takes the retention lock order: every global shard ascending, then
+    the organization and project rows, before the scope (#3945's sharding).
+    Calling the one-shard ``_lock_budgets(scope)`` here raised TypeError and
+    left the row unsettled.
+    """
+    scope, _ = setup
+    row = occurrence(setup, monkeypatch)
+    spans = Spans()
+    spans.put(scope.project_id, span_for(row, refs=[ref_for(row, direction="input")]))
+    locked, lock_budget = [], uploads._lock_budget
+
+    def recording(key):
+        locked.append(key)
+        return lock_budget(key)
+
+    monkeypatch.setattr(uploads, "_lock_budget", recording)
+    assert control_plane.reconcile_tick(span_reader=spans)["rejected"] == 1
+    expected = [f"global:{shard}" for shard in range(uploads.GLOBAL_SHARDS)] + [
+        f"org:{scope.organization_id}",
+        f"project:{scope.project_id}",
+    ]
+    assert locked[: len(expected)] == expected
+    row.refresh_from_db()
+    assert row.deleted_at is not None
+
+
 def test_aborted_or_erased_bytes_are_never_claimed(setup, monkeypatch):
     scope, _ = setup
     aborted, token, _, _ = initialized(setup)

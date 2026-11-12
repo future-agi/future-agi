@@ -62,7 +62,7 @@ from tracer.services.attachments.references import (
     InvalidReference,
     parse_references,
 )
-from tracer.services.attachments.uploads import _lock_budgets
+from tracer.services.attachments.uploads import lock_all_budgets
 
 SPAN_COLUMNS = ["id", "trace_id", "project_id", "start_time", "is_deleted"]
 # A worker tick walks at most this many claim batches before yielding.
@@ -319,7 +319,7 @@ class OccurrenceBindingStore:
     def _tombstone(self, link, *, only_if_fenced=False):
         # Same lock order as retention.expire_occurrences: budgets, scope, row.
         scope = AttachmentScope.objects.get(pk=link.scope_id)
-        _lock_budgets(scope)
+        lock_all_budgets(scope)
         scope = AttachmentScope.objects.select_for_update().get(pk=link.scope_id)
         row = (
             AttachmentOccurrence.objects.select_for_update()
