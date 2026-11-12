@@ -98,10 +98,11 @@ anyone else, including an "Update branch" click by someone not on the list,
 sends the PR to a person for good; the author has to merge `dev` into the
 branch and push it themselves. An empty history, a full page that may hide
 older pushes, or a page whose oldest row is not the branch's
-`branch_creation` row (so earlier pushes are missing) also goes to a person. On 2026-11-11 the oldest row of
-all 19 sampled PR branches in this repository was `branch_creation`. If the
-newest push in the feed is not yet the PR head, the run waits. If the
-endpoint does not answer, the run stops and approves nothing.
+`branch_creation` row (so earlier pushes are missing) also goes to a person.
+On 2026-11-11 the oldest row of all 19 sampled PR branches in this
+repository was `branch_creation`. If the newest push in the feed is not yet
+the PR head, the run waits. If the endpoint does not answer, the run stops
+and approves nothing.
 
 An invalid or overnight working-hours window denies automation. Use one
 same-day UTC window; there is no local-time/DST conversion or implicit fallback.
@@ -1134,8 +1135,9 @@ Suggested rollout:
      `gh pr update-branch`) works while "Always suggest updating pull
      request branches" is off. Record the HTTP status and whether the
      branch moved. The behind-dev note does not mention the command until
-     this is known; if it works, the activity feed shows the caller as the
-     pusher, so only a trusted author may use it.
+     this is known. If it works, also record which account the branch
+     activity feed names for that update: the push-history check counts it
+     like any other push.
    No authenticated GitHub integration rehearsal, live merge or billable review
    was exercised during development; synthetic scope checks are not that proof.
 3. On `dev` and the default branch, enable classification with an **empty trust
