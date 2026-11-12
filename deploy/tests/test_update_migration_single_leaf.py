@@ -10,8 +10,8 @@ The graph is read from the migration files' AST (``dependencies``,
 ``replaces``, ``run_before``); no migration module is imported.
 """
 import ast
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / 'futureagi'
@@ -48,20 +48,35 @@ def _migration_attributes(path):
     return None
 
 
-def load_graph(backend=BACKEND):
-    """Return ({(app, name)}, [(child, parent)]) for every migration under backend.
+def app_label(app_dir):
+    """The AppConfig ``label`` declared in ``apps.py``, else the directory name.
 
-    The app label is the migrations package's parent directory name, which is
-    how every app in this repository is labelled (asserted by the test below).
+    ``agentcc`` is labelled ``prism`` and ``ee/licensing`` ``ee_licensing``, so
+    the directory name alone would split one app into two.
     """
-    nodes, edges, replaced = set(), [], set()
+    apps_py = app_dir / 'apps.py'
+    if apps_py.exists():
+        for node in ast.walk(ast.parse(apps_py.read_text(encoding='utf-8'), filename=str(apps_py))):
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name) and node.targets[0].id == 'label'
+                    and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
+                return node.value.value
+    return app_dir.name
+
+
+def load_graph(backend=BACKEND):
+    """Return ({(app_label, name)}, [(child, parent)]) for every migration under backend."""
+    nodes, edges, replaced, labels = set(), [], set(), {}
     for path in sorted(backend.glob('**/migrations/[0-9]*.py')):
         if 'node_modules' in path.parts:
             continue
         attributes = _migration_attributes(path)
         if attributes is None:
             continue
-        node = (path.parent.parent.name, path.stem)
+        app_dir = path.parent.parent
+        if app_dir not in labels:
+            labels[app_dir] = app_label(app_dir)
+        node = (labels[app_dir], path.stem)
         nodes.add(node)
         for parent in _literal_nodes(attributes.get('dependencies')):
             edges.append((node, parent))
@@ -83,6 +98,8 @@ def leaves_by_app(nodes, edges):
 
 
 class SingleMigrationLeafTests(unittest.TestCase):
+    maxDiff = None
+
     def test_every_app_has_exactly_one_leaf(self):
         nodes, edges = load_graph()
         self.assertIn(('tracer', '0001_initial'), nodes)
@@ -90,11 +107,13 @@ class SingleMigrationLeafTests(unittest.TestCase):
         conflicts = {app: sorted(names) for app, names in leaves.items() if len(names) != 1}
         self.assertEqual(conflicts, {}, 'multiple migration leaves; add a merge migration or re-point the newer one')
 
-    def test_same_app_dependencies_resolve_to_known_migrations(self):
-        # Guards the directory-name-is-label assumption: a same-app parent that
-        # does not exist on disk would make its child look like a stray leaf.
+    def test_dependencies_on_repository_apps_resolve(self):
+        # Guards the label mapping: a parent whose label or name is not on disk
+        # would leave its real parent looking like a stray leaf.
         nodes, edges = load_graph()
         apps = {app for app, _ in nodes}
+        self.assertIn('prism', apps)
+        self.assertNotIn('agentcc', apps)
         missing = sorted({parent for child, parent in edges
                           if parent[0] in apps and parent[1] not in ('__first__', '__latest__') and parent not in nodes})
         self.assertEqual(missing, [])
