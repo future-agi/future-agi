@@ -8,6 +8,13 @@ import { useAgentPlaygroundStore, useAgentListGridStore } from "../../store";
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
+// L7c merge: the real app's Create Agent (a prototype build has none, its
+// create is not mocked); one case below pins the prototype's absent door.
+const protoMock = vi.hoisted(() => ({ prototype: false }));
+vi.mock("src/utils/prototype", () => ({
+  isPrototypeMode: () => protoMock.prototype,
+}));
+
 const mockNavigate = vi.fn();
 vi.mock("react-router", () => ({
   useNavigate: () => mockNavigate,
@@ -118,7 +125,7 @@ describe("Actions", () => {
 
     renderActions();
 
-    expect(screen.getByText(/2 Selected/)).toBeInTheDocument();
+    expect(screen.getByText(/2 selected/)).toBeInTheDocument();
     expect(screen.getByText("Delete")).toBeInTheDocument();
     expect(screen.getByText("Cancel")).toBeInTheDocument();
   });
@@ -133,7 +140,7 @@ describe("Actions", () => {
     renderActions();
 
     // selectedCount = 10 - 1 = 9
-    expect(screen.getByText(/9 Selected/)).toBeInTheDocument();
+    expect(screen.getByText(/9 selected/)).toBeInTheDocument();
   });
 
   it("does not show selection when selectAll=true but all items excluded", () => {
@@ -269,7 +276,7 @@ describe("Actions — edge cases", () => {
 
     // selectedCount = 0 - 0 = 0, userMadeSelection should be false
     // because totalRowCount > 0 is false
-    expect(screen.queryByText(/Selected/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /create agent/i }),
     ).toBeInTheDocument();
@@ -305,5 +312,17 @@ describe("Actions — edge cases", () => {
         mockDeleteMutate._onSuccess?.();
       });
     }).not.toThrow();
+  });
+});
+
+describe("Actions in the prototype build (L7c merge)", () => {
+  it("offers no Create Agent (its create is not mocked)", () => {
+    protoMock.prototype = true;
+    try {
+      renderActions();
+      expect(screen.queryByText("Create Agent")).toBeNull();
+    } finally {
+      protoMock.prototype = false;
+    }
   });
 });

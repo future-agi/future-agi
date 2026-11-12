@@ -56,3 +56,64 @@ def sdk_validation_error_response(errors):
         },
         status=status.HTTP_400_BAD_REQUEST,
     )
+
+
+class SDKAdmissionError(Exception):
+    """A refused SDK evaluation, before any engine work is admitted.
+
+    Keep this transport independent of EE imports so OSS evaluation paths can
+    still load without the optional billing package.
+    """
+
+    def __init__(self, code, reason, *, metadata=None):
+        super().__init__(reason)
+        self.code = code
+        self.metadata = metadata or {}
+
+    @classmethod
+    def from_usage_check(cls, check):
+        metadata = {
+            "dimension": check.dimension,
+            "current_usage": check.current_usage,
+            "limit": check.limit,
+        }
+        if check.upgrade_cta:
+            metadata["upgrade_cta"] = check.upgrade_cta.model_dump()
+        return cls(
+            check.error_code or "USAGE_LIMIT_EXCEEDED",
+            check.reason or "Usage limit exceeded",
+            metadata=metadata,
+        )
+
+    @classmethod
+    def unavailable(cls):
+        # Dependency exception messages can contain internal diagnostics.
+        return cls(
+            "USAGE_CHECK_UNAVAILABLE",
+            "Usage validation is temporarily unavailable. Please retry.",
+        )
+
+    def to_response(self):
+        http_status = {
+            "PAYMENT_REQUIRED": status.HTTP_402_PAYMENT_REQUIRED,
+            "BALANCE_EXHAUSTED": status.HTTP_402_PAYMENT_REQUIRED,
+            "INSUFFICIENT_CREDITS": status.HTTP_402_PAYMENT_REQUIRED,
+            "BUDGET_CHECK_UNAVAILABLE": status.HTTP_503_SERVICE_UNAVAILABLE,
+            "USAGE_CHECK_UNAVAILABLE": status.HTTP_503_SERVICE_UNAVAILABLE,
+        }.get(self.code, status.HTTP_429_TOO_MANY_REQUESTS)
+        return Response(
+            build_error_envelope(
+                str(self),
+                status_code=http_status,
+                code=self.code,
+                extra={
+                    **self.metadata,
+                    "error_code": self.code,
+                    "retryable": (
+                        http_status == status.HTTP_503_SERVICE_UNAVAILABLE
+                        or self.code == "RATE_LIMITED"
+                    ),
+                },
+            ),
+            status=http_status,
+        )

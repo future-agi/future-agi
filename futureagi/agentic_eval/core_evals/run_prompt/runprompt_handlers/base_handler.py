@@ -34,6 +34,23 @@ TIMEOUT_ERROR_PATTERNS = (
 )
 
 
+def with_response_time_unit(metadata: Any) -> Any:
+    """
+    Mark metadata["response_time"] as milliseconds, the unit every handler
+    emits. Prompts runs saved before this marker stored seconds for
+    streaming LLM runs with no unit, so readers convert only marked values.
+    Returns a copy when it adds the key; anything without a response_time
+    (for example a stopped run's empty metadata) is returned unchanged.
+    """
+    if (
+        isinstance(metadata, dict)
+        and "response_time" in metadata
+        and "response_time_unit" not in metadata
+    ):
+        return {**metadata, "response_time_unit": "ms"}
+    return metadata
+
+
 @dataclass
 class ModelHandlerContext:
     """
@@ -221,7 +238,7 @@ class HandlerResponse:
             "runtime": self.runtime,
             "model": self.model,
             "metrics": self.metrics,
-            "metadata": self.metadata,
+            "metadata": with_response_time_unit(self.metadata),
             "output": self.output,
         }
         return self.response, value_info
@@ -592,7 +609,7 @@ class BaseModelHandler(ABC):
             version=self.context.version,
             result_index=self.context.result_index,
             num_results=self.context.num_results,
-            metadata=metadata,
+            metadata=with_response_time_unit(metadata),
             output_format=self.context.output_format or "string",
         )
 
@@ -638,7 +655,7 @@ class BaseModelHandler(ABC):
             version=self.context.version,
             result_index=self.context.result_index,
             num_results=self.context.num_results,
-            metadata=metadata,
+            metadata=with_response_time_unit(metadata),
             output_format=self.context.output_format or "string",
         )
 

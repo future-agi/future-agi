@@ -1,9 +1,9 @@
-from django.db.models import Q
 from rest_framework import serializers
 
 from model_hub.models.choices import OwnerChoices
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EXTERNAL_EVAL_TYPE, EvalTemplate
 from model_hub.utils.function_eval_params import normalize_eval_runtime_config
+from sdk.utils.template_lookup import find_sdk_template
 
 
 class ConfigureEvaluationsSerializer(serializers.Serializer):
@@ -23,18 +23,20 @@ class ConfigureEvaluationsSerializer(serializers.Serializer):
         request = self.context.get("request")
         user = request.user if request else None
         workspace = getattr(request, "workspace", None)
+        # The organization the SDK views store and run under.
+        organization = getattr(request, "organization", None) or user.organization
 
         try:
-            eval_template = EvalTemplate.no_workspace_objects.get(
-                Q(name=eval_templates)
-                & (
-                    Q(organization=user.organization, workspace=workspace)
-                    | Q(organization__isnull=True)
-                )
-            )
+            eval_template = find_sdk_template(eval_templates, organization, workspace)
         except EvalTemplate.DoesNotExist:
             raise serializers.ValidationError(  # noqa: B904
                 f"Evaluation template with name :{eval_templates} not found."
+            )
+
+        if eval_template.eval_type == EXTERNAL_EVAL_TYPE:
+            raise serializers.ValidationError(
+                f"Evaluation template {eval_templates} is an external metric: it is "
+                "scored by the caller and is never executed by the server."
             )
 
         if eval_template.owner == OwnerChoices.SYSTEM.value:
@@ -131,7 +133,29 @@ class ConfigureEvaluationsSerializer(serializers.Serializer):
             data["config"] = normalize_eval_runtime_config(
                 eval_template.config, data.get("config", {})
             )
+            from sdk.utils.evaluations import validate_sdk_choice_score_override
+
+            validate_sdk_choice_score_override(eval_template, data["config"])
         except ValueError as e:
             raise serializers.ValidationError({"config": str(e)})  # noqa: B904
 
+        return data
+
+
+class StandaloneEvaluationsSerializer(ConfigureEvaluationsSerializer):
+    """Select new-eval batches without changing configuration or CI/CD policy."""
+
+    def validate(self, data):
+        # Retain the base value types and its existing three-row cap scope.
+        data = super().validate(data)
+        inputs = data["inputs"]
+        data["is_batched"] = bool(inputs) and all(
+            isinstance(value, list) for value in inputs.values()
+        )
+        if data["is_batched"] and len({len(value) for value in inputs.values()}) > 1:
+            # Include list-valued columns, not just flat string columns. Check
+            # the whole shape before either runner can persist or meter a row.
+            raise serializers.ValidationError(
+                {"inputs": "All input lists must have the same length."}
+            )
         return data

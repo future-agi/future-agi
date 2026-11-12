@@ -1,7 +1,7 @@
 import structlog
 from django.db import transaction
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import APIException, NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -16,7 +16,7 @@ from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.db_routing import DATABASE_FOR_REPLAY_SESSION_LIST
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
-from tracer.models.replay_session import ReplaySession, ReplaySessionStep
+from tracer.models.replay_session import ReplaySession, ReplaySessionStep, ReplayType
 from tracer.serializers.replay_session import (
     CreateReplaySessionSerializer,
     GenerateScenarioSerializer,
@@ -80,7 +80,9 @@ class ReplaySessionView(ViewSet):
             project__deleted=False,
         )
 
-    @uses_db(DATABASE_FOR_REPLAY_SESSION_LIST, feature_key="feature:replay_session_list")
+    @uses_db(
+        DATABASE_FOR_REPLAY_SESSION_LIST, feature_key="feature:replay_session_list"
+    )
     def list(self, request: Request) -> Response:
         """
         List replay sessions for a project with pagination.
@@ -112,6 +114,8 @@ class ReplaySessionView(ViewSet):
             return paginator.get_paginated_response(serializer.data)
 
         except NotFound:
+            raise
+        except APIException:
             raise
         except Exception as e:
             logger.exception("Error listing replay sessions", error=str(e))
@@ -162,6 +166,8 @@ class ReplaySessionView(ViewSet):
             replay_type: "session" or "trace" (default: "session")
             ids: list of uuids (required if select_all=false)
             select_all: bool (default: false)
+            filters: canonical session filters (required for session select-all)
+            exclude_ids: session UUIDs unchecked in a select-all selection
 
         Returns:
             Created replay session with suggested agent_name, agent_description, scenario_name.
@@ -179,6 +185,42 @@ class ReplaySessionView(ViewSet):
         project = serializer.context.get("project")
 
         try:
+            if replay_type == ReplayType.SESSION and select_all:
+                from model_hub.services.bulk_selection import (
+                    BulkSelectionReadIncomplete,
+                    resolve_filtered_session_ids,
+                )
+
+                # Older clients used ids for exclusions. Never let either form
+                # reach transcript extraction as an unbounded select_all query.
+                exclude_ids = {
+                    str(identifier)
+                    for identifier in [*ids, *validated_data.get("exclude_ids", [])]
+                }
+                try:
+                    population = resolve_filtered_session_ids(
+                        project_id=project.id,
+                        filters=validated_data["filters"],
+                        exclude_ids=exclude_ids,
+                        organization=project.organization,
+                        workspace=project.workspace,
+                        user=request.user,
+                    )
+                except (BulkSelectionReadIncomplete, ValueError):
+                    return self._gm.bad_request(
+                        "Could not resolve all selected sessions. Narrow the filters and retry."
+                    )
+                if population.truncated or population.continuation is not None:
+                    return self._gm.bad_request(
+                        "Too many matching sessions. Narrow the filters and retry."
+                    )
+                ids = population.ids
+                if not ids:
+                    return self._gm.bad_request("No sessions match the selection.")
+                # Freeze before suggestions as well as persistence: both creation
+                # and later generation must consume exactly the same population.
+                select_all = False
+
             exists, suggestions, agent_def = get_agent_suggestions(
                 project=project,
                 replay_type=replay_type,
@@ -275,9 +317,9 @@ class ReplaySessionView(ViewSet):
                     replay_session.ids or [],
                     replay_session.select_all,
                 )
-                if _is_voice_trace_query(trace_query):
+                if _is_voice_trace_query(trace_query, project_id=str(project.id)):
                     original_voice_config = _extract_voice_trace_original_config(
-                        trace_query
+                        trace_query, project_id=str(project.id)
                     )
 
             with transaction.atomic():

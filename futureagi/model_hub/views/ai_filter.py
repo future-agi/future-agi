@@ -1160,7 +1160,9 @@ def _validate_smart_filters(parsed_filters, schema, grounded_values_by_field):
     return out
 
 
-def _run_smart_agent(query, schema, fetch_values, *, deadline=None):
+def _run_smart_agent(
+    query, schema, fetch_values, *, deadline=None, organization=None, workspace=None
+):
     """Run the Haiku tool-use loop. Returns a list of validated filters.
 
     `fetch_values(field_id, search_query=...) -> list[str]` is the source-specific value
@@ -1172,8 +1174,8 @@ def _run_smart_agent(query, schema, fetch_values, *, deadline=None):
     routes through the Agentcc gateway with litellm fallback, so we don't
     talk to Bedrock directly here.
     """
-    from agentic_eval.core.llm.llm import LLM
     from agentic_eval.core.utils.model_config import ModelConfigs
+    from model_hub.services.model_route import OP_SMART_FILTER, platform_llm
     from tracer.services.clickhouse.read_budget import (
         ReadDeadline,
         ReadDeadlineExceeded,
@@ -1188,7 +1190,10 @@ def _run_smart_agent(query, schema, fetch_values, *, deadline=None):
             raise _grounding_unavailable() from exc
 
     cfg = ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE
-    llm = LLM(
+    llm = platform_llm(
+        organization=organization,
+        workspace=workspace,
+        operation=OP_SMART_FILTER,
         provider=cfg.provider,
         model_name=cfg.model_name,
         temperature=0.0,
@@ -1846,6 +1851,9 @@ class AIFilterView(APIView):
                     schema,
                     fetch_values,
                     deadline=grounding_deadline,
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    workspace=getattr(request, "workspace", None),
                 )
                 _remaining_request_ms(request_deadline)
                 return self._gm.success_response({"filters": filters})
@@ -1883,11 +1891,15 @@ class AIFilterView(APIView):
 
             # Route through the in-house LLM wrapper (Agentcc gateway with
             # litellm fallback).
-            from agentic_eval.core.llm.llm import LLM
             from agentic_eval.core.utils.model_config import ModelConfigs
+            from model_hub.services.model_route import OP_SMART_FILTER, platform_llm
 
             cfg = ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE
-            llm = LLM(
+            llm = platform_llm(
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+                workspace=getattr(request, "workspace", None),
+                operation=OP_SMART_FILTER,
                 provider=cfg.provider,
                 model_name=cfg.model_name,
                 temperature=0.0,

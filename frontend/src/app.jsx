@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { Suspense, useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import "src/global.css";
 import {
@@ -33,10 +33,8 @@ import {
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { BrowserAgent } from "@newrelic/browser-agent/loaders/browser-agent";
 import { newRelicTracing } from "./newrelic";
-import {
-  CURRENT_ENVIRONMENT,
-  REACT_QUERY_DEVTOOLS_ENABLED,
-} from "./config-global";
+import { CURRENT_ENVIRONMENT } from "./config-global";
+import { queryDevtoolsVisible } from "./utils/queryDevtools";
 import { ErrorBoundary } from "react-error-boundary";
 import ErrorFallback from "./pages/ErrorFallback";
 import UploadLimitNotification from "./components/rate-limit-modal/RateLimitModal";
@@ -75,13 +73,39 @@ const queryClient = new QueryClient({
   },
 });
 
+// R3 G0: the React Query Devtools palm-tree bubble sat over content on every
+// screen. It renders only with `?rqdevtools=1` (remembered for the tab;
+// `?rqdevtools=0` turns it off).
+function useRqDevtoolsFlag(search) {
+  const param = new URLSearchParams(search).get("rqdevtools");
+  try {
+    if (param === "1") window.sessionStorage.setItem("fa.rqdevtools", "1");
+    if (param === "0") window.sessionStorage.removeItem("fa.rqdevtools");
+    return window.sessionStorage.getItem("fa.rqdevtools") === "1";
+  } catch {
+    return param === "1";
+  }
+}
+
+// the capability contract: a prototype build labels every page. The env check is static,
+// so a build without prototype mode emits no label chunk and no label text.
+const PrototypeLabel =
+  import.meta.env.VITE_ENVIRONMENT === "local" &&
+  import.meta.env.VITE_PROTOTYPE_MODE === "true"
+    ? React.lazy(() => import("src/components/prototype-label/PrototypeLabel"))
+    : null;
+
 // Initialize the BrowserAgent, only in a build with New Relic keys.
 const newRelic = newRelicTracing(CURRENT_ENVIRONMENT);
 if (newRelic) new BrowserAgent(newRelic);
 
+// The TanStack Query devtools button: development builds only, never with the embedded Omega console.
+const SHOW_QUERY_DEVTOOLS = queryDevtoolsVisible(import.meta.env);
+
 export default function App() {
   useScrollToTop();
   const location = useLocation();
+  const showRqDevtools = useRqDevtoolsFlag(location.search);
 
   // Register global memory cleanup
   useEffect(() => {
@@ -97,7 +121,7 @@ export default function App() {
 
   const logError = (error, info) => {
     // Chunk errors after a deploy — silently reload once instead of showing error page
-    if (isChunkError(error) && requestChunkReload()) return;
+    if (isChunkError(error) && requestChunkReload(error)) return;
 
     Sentry.captureException(error, {
       contexts: {
@@ -136,6 +160,11 @@ export default function App() {
                   }}
                 >
                   <ThemeProvider>
+                    {PrototypeLabel && (
+                      <Suspense fallback={null}>
+                        <PrototypeLabel />
+                      </Suspense>
+                    )}
                     <MotionLazy>
                       <SnackbarProvider>
                         <AudioPlaybackProvider>
@@ -172,7 +201,7 @@ export default function App() {
           </WorkspaceProvider>
         </OrganizationProvider>
       </AuthProvider>
-      {REACT_QUERY_DEVTOOLS_ENABLED && (
+      {SHOW_QUERY_DEVTOOLS && showRqDevtools && (
         <ReactQueryDevtools initialIsOpen={false} />
       )}
     </QueryClientProvider>

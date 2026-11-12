@@ -8,6 +8,7 @@ import EmbeddingConfigField from "./EmbeddingConfigField";
 import HeadingAndSubHeading from "src/components/HeadingAndSubheading/HeadingAndSubheading";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
+import { vectorStoreAuthHelp } from "./retrievalCopy";
 
 const QdrantForm = ({ allColumns, control }) => {
   return (
@@ -38,7 +39,7 @@ const QdrantForm = ({ allColumns, control }) => {
         fieldName="apiKey"
         fullWidth
         helperText={
-          <HelperText text="API Key for authenticating with Qdrant" />
+          <HelperText text={vectorStoreAuthHelp("Qdrant", "collection")} />
         }
         size="small"
       />
@@ -108,7 +109,7 @@ const QdrantForm = ({ allColumns, control }) => {
             fieldName="key"
             fullWidth
             helperText={
-              <HelperText text="The key to extract from the Weaviate collection" />
+              <HelperText text="The payload key to read from each Qdrant point" />
             }
           />
         </RetrievalFormItemWrapper>

@@ -1,11 +1,12 @@
 import PropTypes from "prop-types";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
 } from "../develop-detail/AccordianElements";
-import { Box, Chip, Tab, Tabs, Typography, useTheme } from "@mui/material";
+import { Box, Chip, Tab, Typography, useTheme } from "@mui/material";
 import { ShowComponent } from "src/components/show";
 import "react-json-view-lite/dist/index.css";
 import {
@@ -25,6 +26,68 @@ import {
   parseAnnotationValue,
   renderAnnotationValue,
 } from "./DevelopCellRenderer/AnnotationCellRenderer/renderAnnotationValue";
+const ICON_SX = { color: "text.secondary" };
+
+/**
+ * The column-type icon of a datapoint card: Run Prompt, eval, optimisation,
+ * annotation label, or the data type (text, JSON, number, …). Shared by the
+ * Row view's FieldCard / OutputCard.
+ */
+export const ColumnTypeIcon = ({ originType, dataType, size = 20 }) => {
+  if (originType === "run_prompt") {
+    return (
+      <SvgColor
+        src={`/assets/icons/action_buttons/ic_run_prompt.svg`}
+        sx={{ width: size, height: size, color: "info.main", flexShrink: 0 }}
+      />
+    );
+  }
+  if (originType === "evaluation") {
+    return (
+      <Iconify
+        icon="solar:check-circle-linear"
+        width={size}
+        sx={{ color: "info.success", flexShrink: 0 }}
+      />
+    );
+  }
+  if (
+    originType === "optimisation" ||
+    originType === "optimisation_evaluation"
+  ) {
+    return (
+      <SvgColor
+        src={`/assets/icons/action_buttons/ic_optimize.svg`}
+        sx={{ width: size, height: size, color: "primary.main", flexShrink: 0 }}
+      />
+    );
+  }
+  const icon =
+    originType === "annotation_label"
+      ? "solar:pen-linear"
+      : {
+          text: "solar:notes-linear",
+          array: "solar:brackets-linear",
+          integer: "solar:hashtag-linear",
+          float: "tabler:decimal",
+          boolean: "material-symbols:toggle-on-outline",
+          datetime: "solar:calendar-linear",
+          json: "solar:braces-linear",
+          image: "solar:gallery-linear",
+          images: "solar:gallery-linear",
+        }[dataType];
+  if (!icon) return null;
+  return (
+    <Iconify icon={icon} width={size} sx={{ ...ICON_SX, flexShrink: 0 }} />
+  );
+};
+
+ColumnTypeIcon.propTypes = {
+  originType: PropTypes.string,
+  dataType: PropTypes.string,
+  size: PropTypes.number,
+};
+
 const DatapointCard = ({
   value,
   column,
@@ -68,61 +131,6 @@ const DatapointCard = ({
     }
     setTabValue(newValue);
   };
-  const iconStyle = {
-    color: "text.secondary",
-  };
-  const renderIcon = () => {
-    if (column?.originType === "run_prompt") {
-      return (
-        <SvgColor
-          src={`/assets/icons/action_buttons/ic_run_prompt.svg`}
-          sx={{ width: 20, height: 20, color: "info.main" }}
-        />
-      );
-    } else if (column?.originType === "evaluation") {
-      return (
-        <Iconify
-          icon="material-symbols:check-circle-outline"
-          sx={{ color: "info.success" }}
-        />
-      );
-    } else if (
-      column?.originType === "optimisation" ||
-      column?.originType === "optimisation_evaluation"
-    ) {
-      return (
-        <SvgColor
-          src={`/assets/icons/action_buttons/ic_optimize.svg`}
-          sx={{ width: 20, height: 20, color: "primary.main" }}
-        />
-      );
-    } else if (column?.originType === "annotation_label") {
-      return <Iconify icon="jam:write" sx={iconStyle} />;
-    } else if (dataType === "text") {
-      return <Iconify icon="material-symbols:notes" sx={iconStyle} />;
-    } else if (dataType === "array") {
-      return <Iconify icon="material-symbols:data-array" sx={iconStyle} />;
-    } else if (dataType === "integer") {
-      return <Iconify icon="material-symbols:tag" sx={iconStyle} />;
-    } else if (dataType === "float") {
-      return <Iconify icon="tabler:decimal" sx={iconStyle} />;
-    } else if (dataType === "boolean") {
-      return (
-        <Iconify icon="material-symbols:toggle-on-outline" sx={iconStyle} />
-      );
-    } else if (dataType === "datetime") {
-      return <Iconify icon="tabler:calendar" sx={iconStyle} />;
-    } else if (dataType === "json") {
-      return <Iconify icon="material-symbols:data-object" sx={iconStyle} />;
-    } else if (dataType === "image") {
-      return <Iconify icon="material-symbols:image-outline" sx={iconStyle} />;
-    } else if (dataType === "images") {
-      return (
-        <Iconify icon="material-symbols:art-track-outline" sx={iconStyle} />
-      );
-    }
-  };
-
   const thoughts = useMemo(() => {
     if (valueInfos) {
       const infoSources = [
@@ -202,8 +210,8 @@ const DatapointCard = ({
       src="/assets/icons/ic_copy.svg"
       alt="Copy"
       sx={{
-        width: 20,
-        height: 20,
+        width: 16,
+        height: 16,
         color: "text.disabled",
         cursor: "pointer",
       }}
@@ -220,7 +228,7 @@ const DatapointCard = ({
     <Accordion
       sx={{
         border: "1px solid",
-        borderColor: isAgentsFinalNode ? "blue.500" : "divider",
+        borderColor: isAgentsFinalNode ? "status.info.solid" : "divider",
       }}
       defaultExpanded
       disableGutters
@@ -230,11 +238,13 @@ const DatapointCard = ({
           flexDirection: "row",
           paddingLeft: 1,
           paddingRight: 2,
-          backgroundColor: isAgentsFinalNode ? "blue.o10" : "background.paper",
+          backgroundColor: isAgentsFinalNode
+            ? "status.info.bg"
+            : "background.paper",
         }}
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          {renderIcon()}
+          <ColumnTypeIcon originType={column?.originType} dataType={dataType} />
           <CustomTooltip
             title={column?.headerName}
             show={column?.headerName?.length > 40}
@@ -257,9 +267,6 @@ const DatapointCard = ({
               sx={{
                 backgroundColor: "success.lighter",
                 color: "success.main",
-                borderRadius: 0.25,
-                fontWeight: 600,
-                fontSize: "11px",
                 ":hover": {
                   backgroundColor: "success.lighter",
                   color: "success.main",
@@ -275,7 +282,7 @@ const DatapointCard = ({
             paddingX: 2,
             paddingBottom: 1,
             backgroundColor: isAgentsFinalNode
-              ? "blue.o10"
+              ? "status.info.bg"
               : "background.paper",
           }}
         >
@@ -300,8 +307,8 @@ const DatapointCard = ({
                   <SvgColor
                     src={"/assets/icons/ic_thoughts.svg"}
                     sx={{
-                      height: "20px",
-                      width: "20px",
+                      height: "16px",
+                      width: "16px",
                       bgcolor: "primary.main",
                     }}
                   />
@@ -323,7 +330,7 @@ const DatapointCard = ({
                     overflowY: "auto",
                     border: "1px solid",
                     borderColor: "divider",
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                   }}
                 >
                   <Typography
@@ -360,37 +367,11 @@ const DatapointCard = ({
                     padding: "8px 12px",
                   }}
                 >
-                  <Tabs
-                    textColor="primary"
-                    value={tabValue}
-                    onChange={handleTabChange}
-                    TabIndicatorProps={{ style: { display: "none" } }}
-                    sx={{
-                      minHeight: 32,
-                      "& .MuiTab-root": {
-                        minHeight: 32,
-                        paddingX: "8px",
-                        paddingY: "4px",
-                        fontWeight: theme.typography["fontWeightMedium"],
-                        typography: "s1",
-                        "&:not(:last-of-type)": {
-                          marginRight: "0px !important",
-                        },
-                        "&:not(.Mui-selected)": {
-                          color: theme.palette.text.secondary,
-                        },
-                        "&.Mui-selected": { color: theme.palette.primary.main },
-                      },
-                      "& .MuiTabs-flexContainer": {
-                        gap: "20px",
-                        display: "flex",
-                      },
-                    }}
-                  >
+                  <SegmentedTabs value={tabValue} onChange={handleTabChange}>
                     <Tab value="markdown" label="Markdown" />
                     <Tab value="raw" label="Raw" />
                     {showDiff && <Tab value="difference" label="Difference" />}
-                  </Tabs>
+                  </SegmentedTabs>
                   {copyIcon}
                 </Box>
               ) : null}
@@ -553,7 +534,7 @@ DatapointCard.propTypes = {
   allowCopy: PropTypes.bool,
   onDiffClick: PropTypes.func,
   showDiff: PropTypes.bool,
-  activeTab: PropTypes.bool,
+  activeTab: PropTypes.string,
   sx: PropTypes.object,
   isEmptyField: PropTypes.bool,
   indColsDifTracker: PropTypes.object,

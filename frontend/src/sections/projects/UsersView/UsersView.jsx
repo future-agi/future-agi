@@ -41,69 +41,25 @@ const PrimaryGraph = lazy(
   () => import("../LLMTracing/GraphSection/PrimaryGraph"),
 );
 
+// Instant eval / Insights
+import { askLink, insightsReportLink } from "../observeHandoff";
+import { USER_FILTER_FIELDS } from "../observeFilterConfig";
+import { dateLabel, isWindowItem, viewSeed } from "../observeScope";
+
 // User-specific
 import useUsersStore from "./Store/usersStore";
-import { getUsersColumnConfig } from "./common";
+import { buildUsersRequestFilters, getUsersColumnConfig } from "./common";
 import UsersGrid from "./UsersGrid";
 import { sanitizeUserColumnState } from "./userSortContract";
 import UsersEmptyScreen from "./UsersEmptyScreen";
 import { useShallow } from "zustand/react/shallow";
-import { filtersContentEqual } from "../saved-view-utils";
+import { dateFilterEqual, filtersContentEqual } from "../saved-view-utils";
 import { useCursorAttributeInventory } from "../LLMTracing/useCursorAttributeInventory";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import {
   DEFAULT_OBSERVE_LIST_DATE_OPTION,
   getDefaultObserveListDateRangeForMode,
 } from "../dateRangeDefaults";
-
-// ---------------------------------------------------------------------------
-// User filter fields for TraceFilterPanel
-// ---------------------------------------------------------------------------
-const USER_FILTER_FIELDS = [
-  { id: "user_id", name: "User ID", category: "system", type: "string" },
-  {
-    id: "num_traces",
-    name: "No. of Traces",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "num_sessions",
-    name: "No. of Sessions",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "total_cost",
-    name: "Total Cost ($)",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "total_tokens",
-    name: "Total Tokens",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "avg_trace_latency",
-    name: "Avg Latency / Trace (ms)",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "num_llm_calls",
-    name: "No. of LLM Calls",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "eval_score",
-    name: "Evals Pass Rate (%)",
-    category: "system",
-    type: "number",
-  },
-];
 
 // Default filter and date range
 const defaultFilterBase = [
@@ -115,12 +71,9 @@ const defaultFilterBase = [
 
 const getDefaultDateRange = () => getDefaultObserveListDateRangeForMode(false);
 
-const getDateLabel = (dateFilter) => {
-  if (!dateFilter) return `Past ${DEFAULT_OBSERVE_LIST_DATE_OPTION}`;
-  return dateFilter.dateOption === "Custom"
-    ? "Custom range"
-    : dateFilter.dateOption || `Past ${DEFAULT_OBSERVE_LIST_DATE_OPTION}`;
-};
+// "Past 7D", "Today", "Custom range": the toolbar's words for the date.
+export const getDateLabel = (dateFilter) =>
+  dateLabel(dateFilter?.dateOption || DEFAULT_OBSERVE_LIST_DATE_OPTION);
 
 const noopExtraProperties = () => ({});
 
@@ -271,6 +224,27 @@ const UsersView = ({
     return [...validatedFilters, ...extraFilters];
   }, [validatedFilters, extraFilters]);
 
+  // --- Instant eval / Insights ---
+  // Both ask about exactly the users the grid lists (UsersGrid sends
+  // buildUsersRequestFilters(finalFilters), date window included).
+  // Both open with the view's date preset and filters, editable there.
+  const userViewSeed = useMemo(
+    () =>
+      viewSeed({
+        unit: "users",
+        filters: buildUsersRequestFilters(finalFilters),
+        dateFilter,
+        search: searchQuery,
+      }),
+    [finalFilters, dateFilter, searchQuery],
+  );
+  // Evaluate → Ask a question: the Ask page, about the users in view.
+  const openAsk = useCallback(() => {
+    navigate(askLink(observeId, userViewSeed));
+  }, [observeId, userViewSeed, navigate]);
+  const openInsights = useCallback(() => {
+    navigate(insightsReportLink(observeId, userViewSeed));
+  }, [observeId, userViewSeed, navigate]);
   // --- Row height ---
   const [cellHeight, setCellHeight] = useUrlState("userCellHeight", "Short");
 
@@ -618,7 +592,6 @@ const UsersView = ({
     const baselineExtraFilters = hydrateStoredFilterList(
       activeViewConfig.extra_filters,
     );
-    const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
 
     // The `actions` column is an always-present UI column (not user data); its
     // visibility/position must not count toward "modified" (TH-6119).
@@ -627,7 +600,7 @@ const UsersView = ({
     );
 
     if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
-    if ((dateFilter?.dateOption ?? null) !== baselineDateOption) return true;
+    if (!dateFilterEqual(dateFilter, baselineDisplay.dateFilter)) return true;
     if (
       baselineDisplay.cellHeight !== undefined &&
       baselineDisplay.cellHeight !== cellHeight
@@ -779,11 +752,70 @@ const UsersView = ({
     };
   }, [clearSelection, resetStore]);
 
+  const handleResetView = useCallback(() => {
+    // Do not call applyConfig(null): that restores local preferences instead
+    // of canonical defaults, and can reapply the very settings being reset.
+    pendingColumnStateRef.current = null;
+    pendingVisibilityRef.current = null;
+    pendingDefaultReorderRef.current = false;
+    setFilters(defaultFilterBase);
+    setExtraFilters([]);
+    setDateFilter(getDefaultDateRange());
+    setCellHeight("Short");
+    setShowErrors(false);
+    setShowNonAnnotated(false);
+    setHasEvalFilter(false);
+    setShowCompare(false);
+    setAutoSizeAllCols(false);
+    useUsersStore.setState({ searchQuery: "", sortParams: [] });
+    const defaults = getUsersColumnConfig({ includeProject });
+    const visibility = Object.fromEntries(
+      defaults.map((col) => [col.field, !col.hide]),
+    );
+    setColumns(
+      reorderColumns(
+        (columns || [])
+          .filter((col) => col.groupBy !== "Custom Columns")
+          .map((col) => ({
+            ...col,
+            isVisible: visibility[col.id] ?? col.isVisible,
+          })),
+        defaults.map((col) => col.field),
+      ),
+    );
+    gridApi?.resetColumnState?.();
+    try {
+      localStorage.removeItem(displayStorageKey);
+    } catch {
+      /* storage is optional */
+    }
+  }, [
+    columns,
+    includeProject,
+    setColumns,
+    gridApi,
+    displayStorageKey,
+    setFilters,
+    setDateFilter,
+    setCellHeight,
+    setShowErrors,
+    setShowNonAnnotated,
+    setHasEvalFilter,
+    setShowCompare,
+  ]);
+
+  // The setup screen says user IDs were never sent, so only a read that
+  // covers all time may show it. The toolbar's date window rides in the
+  // filters (created_at between); no users inside it means a quiet range,
+  // and the grid stays to say so and offer a wider one.
+  const readIsWindowed = finalFilters.some(isWindowItem);
+
   const shouldShowEmptyLayout =
     hasData === false &&
     !isLoading &&
     searchState === "empty" &&
-    !hasActiveFilter;
+    !hasActiveFilter &&
+    !readIsWindowed;
 
   // Every state shows either the confirmed empty screen or the grid. A reload
   // of a confirmed-empty page, or a first page paused at the continuation
@@ -812,6 +844,7 @@ const UsersView = ({
         hasActiveFilter={hasActiveFilter}
         canSaveView={canSaveViewDeferred}
         onSaveView={handleSaveView}
+        onResetView={handleResetView}
         graphFilters={extraFilters}
         isFilterOpen={isFilterOpen}
         externalFilterAnchor={externalFilterAnchor}
@@ -851,6 +884,9 @@ const UsersView = ({
         onGroupByChange={
           observeId
             ? (key) => {
+                if (!["none", "trace", "span", "sessions"].includes(key))
+                  return;
+                setActiveViewConfig(null);
                 switch (key) {
                   case "none":
                   case "trace":
@@ -875,89 +911,100 @@ const UsersView = ({
               }
             : undefined
         }
+        onInstantEval={observeId ? openAsk : undefined}
+        onInsights={observeId ? openInsights : undefined}
       />
 
-      {/* Filter chips. Inject `display_name` so chips render the column's
-          human-readable label instead of the raw snake_case / UUID id. */}
-      <FilterChips
-        extraFilters={extraFilters.map((f) => ({
-          ...f,
-          display_name:
-            f.display_name ||
-            USER_FILTER_FIELDS.find((c) => c.id === f.column_id)?.name,
-        }))}
-        onRemoveFilter={(idx) => {
-          // Chips are keyed by array index, so any removal re-mounts the
-          // later chips and invalidates a chip-anchored popover ref.
-          setExternalFilterAnchor(null);
-          setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
-        }}
-        onClearAll={() => {
-          setExternalFilterAnchor(null);
-          setExtraFilters([]);
-        }}
-        onAddFilter={(anchorEl) => {
-          setExternalFilterAnchor(anchorEl || null);
-          setIsFilterOpen(true);
-        }}
-        onChipClick={(_idx, anchorEl) => {
-          setExternalFilterAnchor(anchorEl || null);
-          setIsFilterOpen(true);
-        }}
-      />
-
-      {/* Graph — hidden in cross-project mode (no project context to
-          aggregate metrics over) */}
-      {observeId && (
-        <Box sx={{ px: 2 }}>
-          <Suspense fallback={null}>
-            <PrimaryGraph
-              filters={finalFilters}
-              dateFilter={dateFilter}
-              graphEndpoint={endpoints.project.getUsersAggregateGraphData()}
-              defaultMetric="latency"
-              graphLabel="User Metrics"
-              trafficLabel="users"
-            />
-          </Suspense>
-        </Box>
-      )}
-
-      {/* Content */}
-      <Box
-        sx={{
-          backgroundColor: "background.paper",
-          height: "100%",
-          display: "flex",
-          flexDirection: "column",
-          px: 2,
-          pt: 1,
-        }}
-      >
-        <Box
-          sx={{
-            flex: 1,
-            display: shouldShowEmptyLayout ? "flex" : "none",
-            justifyContent: "center",
+      {/* Chips, graph and grid share the tab's height: the grid takes what
+          the chips and graph leave, so its pagination stays on screen (as on
+          the Trace tab). A grid sized to the whole tab sat below the graph
+          and pushed the pagination under the fold. */}
+      <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
+        {/* Filter chips. Inject `display_name` so chips render the column's
+            human-readable label instead of the raw snake_case / UUID id. */}
+        <FilterChips
+          extraFilters={extraFilters.map((f) => ({
+            ...f,
+            display_name:
+              f.display_name ||
+              USER_FILTER_FIELDS.find((c) => c.id === f.column_id)?.name,
+          }))}
+          onRemoveFilter={(idx) => {
+            // Chips are keyed by array index, so any removal re-mounts the
+            // later chips and invalidates a chip-anchored popover ref.
+            setExternalFilterAnchor(null);
+            setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
           }}
-        >
-          {shouldShowEmptyLayout && <UsersEmptyScreen />}
-        </Box>
+          onClearAll={() => {
+            setExternalFilterAnchor(null);
+            setExtraFilters([]);
+          }}
+          onAddFilter={(anchorEl) => {
+            setExternalFilterAnchor(anchorEl || null);
+            setIsFilterOpen(true);
+          }}
+          onChipClick={(_idx, anchorEl) => {
+            setExternalFilterAnchor(anchorEl || null);
+            setIsFilterOpen(true);
+          }}
+        />
 
+        {/* Graph — hidden in cross-project mode (no project context to
+            aggregate metrics over) */}
+        {observeId && (
+          <Box sx={{ px: 2, flexShrink: 0 }}>
+            <Suspense fallback={null}>
+              <PrimaryGraph
+                filters={finalFilters}
+                dateFilter={dateFilter}
+                graphEndpoint={endpoints.project.getUsersAggregateGraphData()}
+                defaultMetric="latency"
+                graphLabel="User Metrics"
+                trafficLabel="users"
+              />
+            </Suspense>
+          </Box>
+        )}
+
+        {/* Content */}
         <Box
           sx={{
+            backgroundColor: "background.paper",
             flex: 1,
-            display: shouldShowGrid ? "flex" : "none",
+            minHeight: 0,
+            display: "flex",
             flexDirection: "column",
+            px: 2,
+            pt: 1,
           }}
         >
-          <UsersGrid
-            setHasData={setHasData}
-            setIsLoading={setIsLoading}
-            setSearchState={setSearchState}
-            hasActiveFilter={hasActiveFilter}
-            cellHeight={cellHeight}
-          />
+          <Box
+            sx={{
+              flex: 1,
+              display: shouldShowEmptyLayout ? "flex" : "none",
+              justifyContent: "center",
+            }}
+          >
+            {shouldShowEmptyLayout && <UsersEmptyScreen />}
+          </Box>
+
+          <Box
+            sx={{
+              flex: 1,
+              minHeight: 0,
+              display: shouldShowGrid ? "flex" : "none",
+              flexDirection: "column",
+            }}
+          >
+            <UsersGrid
+              setHasData={setHasData}
+              setIsLoading={setIsLoading}
+              setSearchState={setSearchState}
+              hasActiveFilter={hasActiveFilter}
+              cellHeight={cellHeight}
+              dateLabel={getDateLabel(dateFilter)}
+            />
+          </Box>
         </Box>
       </Box>
 

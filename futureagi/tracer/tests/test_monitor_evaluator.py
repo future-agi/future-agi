@@ -4,9 +4,9 @@ DB-backed (monitor rows), no real ClickHouse."""
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, timedelta
 from types import SimpleNamespace
-from typing import Any, List, Optional
+from typing import Any
 from unittest import mock
 
 import pytest
@@ -14,8 +14,8 @@ from django.core import mail
 from django.test import override_settings
 from django.utils import timezone
 from structlog.testing import capture_logs
-
 from tfc.utils.error_codes import get_error_message
+
 from tracer.models.monitor import MonitorMetricTypeChoices, UserAlertMonitorLog
 from tracer.utils import monitor as monitor_mod
 from tracer.utils.monitor import (
@@ -26,14 +26,13 @@ from tracer.utils.monitor import (
     _process_monitor,
     _send_alert_email,
     build_monitor_ch_builder,
-    get_interval_kind,
     process_monitor_task,
 )
 
 pytestmark = pytest.mark.django_db
 
 
-def _fake_eval_config(output_value: Optional[str]) -> SimpleNamespace:
+def _fake_eval_config(output_value: str | None) -> SimpleNamespace:
     return SimpleNamespace(
         eval_template=SimpleNamespace(config={"output": output_value})
     )
@@ -87,11 +86,11 @@ def test_unknown_eval_output_type_raises_config_error(user_alert_monitor) -> Non
             )
 
 
-def _ch_result(rows: List[dict]) -> SimpleNamespace:
+def _ch_result(rows: list[dict]) -> SimpleNamespace:
     return SimpleNamespace(data=rows)
 
 
-def _patch_ch(results: List[Any]) -> mock._patch:
+def _patch_ch(results: list[Any]) -> mock._patch:
     """Patch AnalyticsQueryService in the evaluator; each call pops a result.
 
     A result that is an Exception instance is raised instead of returned.
@@ -116,8 +115,9 @@ def _patch_ch(results: List[Any]) -> mock._patch:
 
 @pytest.fixture(autouse=True)
 def _mute_notifications():
-    with mock.patch.object(monitor_mod, "_send_alert_email"), mock.patch.object(
-        monitor_mod, "_send_slack_notification"
+    with (
+        mock.patch.object(monitor_mod, "_send_alert_email"),
+        mock.patch.object(monitor_mod, "_send_slack_notification"),
     ):
         yield
 
@@ -153,11 +153,11 @@ def test_static_below_threshold_no_fire(user_alert_monitor) -> None:
     assert UserAlertMonitorLog.objects.count() == 0
 
 
-def test_percentage_change_fires_on_deviation(user_alert_monitor) -> None:
+def test_percentage_change_fires_on_baseline_increase(user_alert_monitor) -> None:
     user_alert_monitor.threshold_type = "percentage_change"
     user_alert_monitor.critical_threshold_value = 50
     user_alert_monitor.save()
-    # current 20 vs mean 10, stddev 2 -> critical threshold 10 + 2*1.5 = 13
+    # Current 20 vs baseline mean 10: a 50% increase sets the boundary at 15.
     with _patch_ch(
         [
             _ch_result([{"value": 20.0}]),
@@ -165,7 +165,141 @@ def test_percentage_change_fires_on_deviation(user_alert_monitor) -> None:
         ]
     ):
         _process_monitor(user_alert_monitor, timezone.now())
-    assert UserAlertMonitorLog.objects.get().type == "critical"
+    log = UserAlertMonitorLog.objects.get()
+    assert log.type == "critical"
+    assert "(greater_than 15.00)" in log.message
+
+
+@pytest.mark.parametrize(
+    "operator,critical,warning,current,expected_type,expected_boundary",
+    [
+        ("greater_than", 50, None, 101, None, None),
+        ("greater_than", 50, None, 150, None, None),
+        ("greater_than", 50, None, 151, "critical", 150),
+        ("greater_than", 50, 20, 120, None, None),
+        ("greater_than", 50, 20, 121, "warning", 120),
+        ("greater_than", 50, 20, 150, "warning", 120),
+        ("greater_than", 50, 20, 151, "critical", 150),
+        ("greater_than", None, 20, 121, "warning", 120),
+        ("less_than", 50, None, 99, None, None),
+        ("less_than", 50, None, 50, None, None),
+        ("less_than", 50, None, 49, "critical", 50),
+        ("less_than", 50, 20, 80, None, None),
+        ("less_than", 50, 20, 79, "warning", 80),
+        ("less_than", 50, 20, 50, "warning", 80),
+        ("less_than", 50, 20, 49, "critical", 50),
+        ("less_than", None, 20, 79, "warning", 80),
+    ],
+)
+def test_percentage_change_uses_stable_baseline(
+    user_alert_monitor,
+    operator,
+    critical,
+    warning,
+    current,
+    expected_type,
+    expected_boundary,
+) -> None:
+    """Percentages apply to the mean, with strict tier boundaries."""
+    user_alert_monitor.threshold_type = "percentage_change"
+    user_alert_monitor.threshold_operator = operator
+    user_alert_monitor.critical_threshold_value = critical
+    user_alert_monitor.warning_threshold_value = warning
+    with _patch_ch(
+        [
+            _ch_result([{"value": current}]),
+            _ch_result([{"mean": 100.0, "stddev": 0.0}]),
+        ]
+    ):
+        _process_monitor(user_alert_monitor, timezone.now())
+
+    if expected_type is None:
+        assert not UserAlertMonitorLog.objects.exists()
+    else:
+        log = UserAlertMonitorLog.objects.get()
+        assert log.type == expected_type
+        assert f"({operator} {expected_boundary:.2f})" in log.message
+
+
+@pytest.mark.parametrize("stddev", [200.0, None])
+@pytest.mark.parametrize(
+    "operator,current,boundary",
+    [("greater_than", 151, 150), ("less_than", 49, 50)],
+)
+def test_percentage_change_does_not_depend_on_stddev(
+    user_alert_monitor, stddev, operator, current, boundary
+) -> None:
+    user_alert_monitor.threshold_type = "percentage_change"
+    user_alert_monitor.threshold_operator = operator
+    user_alert_monitor.critical_threshold_value = 50
+    with _patch_ch(
+        [
+            _ch_result([{"value": current}]),
+            _ch_result([{"mean": 100.0, "stddev": stddev}]),
+        ]
+    ):
+        _process_monitor(user_alert_monitor, timezone.now())
+
+    log = UserAlertMonitorLog.objects.get()
+    assert log.type == "critical"
+    assert f"({operator} {boundary:.2f})" in log.message
+
+
+@pytest.mark.parametrize(
+    "operator,current,expected_type",
+    [
+        ("greater_than", 1, "critical"),
+        ("greater_than", 0, None),
+        ("greater_than", -1, None),
+        ("less_than", 1, None),
+        ("less_than", 0, None),
+        ("less_than", -1, "critical"),
+    ],
+)
+def test_percentage_change_zero_baseline(
+    user_alert_monitor, operator, current, expected_type
+) -> None:
+    user_alert_monitor.threshold_type = "percentage_change"
+    user_alert_monitor.threshold_operator = operator
+    user_alert_monitor.critical_threshold_value = 50
+    user_alert_monitor.warning_threshold_value = 20
+    with _patch_ch(
+        [
+            _ch_result([{"value": current}]),
+            _ch_result([{"mean": 0.0, "stddev": 0.0}]),
+        ]
+    ):
+        _process_monitor(user_alert_monitor, timezone.now())
+
+    if expected_type is None:
+        assert not UserAlertMonitorLog.objects.exists()
+    else:
+        log = UserAlertMonitorLog.objects.get()
+        assert log.type == expected_type
+        assert f"({operator} 0.00)" in log.message
+
+
+def test_percentage_change_uses_selected_historical_window(user_alert_monitor) -> None:
+    user_alert_monitor.auto_threshold_time_window = 180
+    user_alert_monitor.critical_threshold_value = 50
+    now = timezone.now()
+    window_start = now - timedelta(minutes=user_alert_monitor.alert_frequency)
+    builder = mock.sentinel.monitor_builder
+    with mock.patch.object(
+        monitor_mod, "get_previous_period_baseline", return_value=100.0
+    ) as previous_period_baseline:
+        monitor_mod._check_percentage_change_threshold(
+            user_alert_monitor, 151, window_start, now, builder
+        )
+
+    previous_period_baseline.assert_called_once_with(
+        user_alert_monitor, window_start - timedelta(minutes=180), window_start, builder
+    )
+    log = UserAlertMonitorLog.objects.get()
+    assert log.type == "critical"
+    assert "(greater_than 150.00)" in log.message
+    assert log.time_window_start == window_start
+    assert log.time_window_end == now
 
 
 def test_percentage_change_skips_without_history(user_alert_monitor) -> None:
@@ -328,21 +462,71 @@ def test_alert_email_button_links_to_this_deployment(user_alert_monitor) -> None
 
 
 @pytest.mark.parametrize(
-    "metric_type,alert_frequency,expected",
+    "metric_type,alert_frequency,history_minutes,expected",
     [
-        ("count_of_errors", 30, "minute"),
-        ("count_of_errors", 60, "hour"),
-        ("count_of_errors", 60 * 25, "day"),
-        ("daily_tokens_spent", 60, "day"),
-        ("monthly_tokens_spent", 60, "month"),
+        ("count_of_errors", 60, 60, 1.0),
+        ("count_of_errors", 15, 60 * 24 * 7, 672.0),
+        ("count_of_errors", 60, 90, 1.5),
+        # A history shorter than one period is that fraction of a period, so
+        # its total is scaled up to one period (no floor at 1).
+        pytest.param("count_of_errors", 60, 30, 0.5, id="30m-of-an-hour"),
+        pytest.param("count_of_errors", 60, 15, 0.25, id="15m-of-an-hour"),
+        pytest.param("daily_tokens_spent", 60, 60, 1 / 24, id="1h-of-a-day"),
+        ("daily_tokens_spent", 60, 60 * 24 * 7, 7.0),
+        ("monthly_tokens_spent", 60, 60 * 24 * 60, 2.0),
     ],
 )
-def test_interval_kind_mapping(
-    user_alert_monitor, metric_type: str, alert_frequency: int, expected: str
+def test_baseline_periods_count_evaluation_periods_in_the_history(
+    user_alert_monitor,
+    metric_type: str,
+    alert_frequency: int,
+    history_minutes: int,
+    expected: float,
 ) -> None:
     user_alert_monitor.metric_type = metric_type
     user_alert_monitor.alert_frequency = alert_frequency
-    assert get_interval_kind(user_alert_monitor) == expected
+    assert (
+        monitor_mod.baseline_periods(
+            user_alert_monitor, timedelta(minutes=history_minutes)
+        )
+        == expected
+    )
+
+
+def test_previous_period_baseline_passes_periods_and_reads_mean(
+    user_alert_monitor,
+) -> None:
+    # Three hours of history for an hourly monitor: three periods.
+    now = timezone.now()
+    patcher = _patch_ch([_ch_result([{"mean": 1.0, "stddev": None}])])
+    builder = mock.MagicMock()
+    builder.build_historical_stats_query.return_value = ("stats", {})
+    with patcher:
+        baseline = monitor_mod.get_previous_period_baseline(
+            user_alert_monitor, now - timedelta(hours=3), now, builder
+        )
+
+    assert baseline == 1.0
+    builder.build_historical_stats_query.assert_called_once_with(
+        "count_of_errors", now - timedelta(hours=3), now, periods=3.0
+    )
+    _, kwargs = patcher.ch_instance.execute_ch_query.call_args
+    assert kwargs["timeout_ms"] == MONITOR_QUERY_TIMEOUT_MS
+    assert kwargs["settings"] == MONITOR_CH_SETTINGS
+
+
+@pytest.mark.parametrize("row", [{"mean": None}, {"mean": float("nan")}, None])
+def test_previous_period_baseline_without_history_is_none(
+    user_alert_monitor, row
+) -> None:
+    now = timezone.now()
+    builder = mock.MagicMock()
+    builder.build_historical_stats_query.return_value = ("stats", {})
+    with _patch_ch([_ch_result([row] if row else [])]):
+        baseline = monitor_mod.get_previous_period_baseline(
+            user_alert_monitor, now - timedelta(hours=1), now, builder
+        )
+    assert baseline is None
 
 
 def test_graph_static_formats_ch_series(user_alert_monitor) -> None:
@@ -353,9 +537,7 @@ def test_graph_static_formats_ch_series(user_alert_monitor) -> None:
     instance.execute_ch_query.return_value = _ch_result(
         [{"timestamp": ts, "value": 3}, {"timestamp": ts, "value": None}]
     )
-    with mock.patch.object(
-        graphs_mod, "AnalyticsQueryService", return_value=instance
-    ):
+    with mock.patch.object(graphs_mod, "AnalyticsQueryService", return_value=instance):
         data = graphs_mod.get_static_metric_graph_data(user_alert_monitor)
     assert data == [
         {"timestamp": ts.isoformat(), "value": 3},
@@ -363,10 +545,11 @@ def test_graph_static_formats_ch_series(user_alert_monitor) -> None:
     ]
 
 
-def test_percentage_graph_alert_bars_use_evaluator_band(user_alert_monitor) -> None:
-    # The alert bars must be coloured by the evaluator's own historical stats
-    # (build_historical_stats_query), not a divergent per-bucket rolling stddev,
-    # so the preview reflects real firing.
+def test_percentage_graph_bar_holding_now_uses_worker_baseline(
+    user_alert_monitor,
+) -> None:
+    # The bar holding now is coloured by the worker's own baseline query
+    # (get_previous_period_baseline), so the preview reflects real firing.
     from tracer.utils import monitor_graphs as graphs_mod
 
     user_alert_monitor.metric_type = "span_response_time"
@@ -376,22 +559,217 @@ def test_percentage_graph_alert_bars_use_evaluator_band(user_alert_monitor) -> N
     user_alert_monitor.warning_threshold_value = None
     user_alert_monitor.save()
 
-    ts = timezone.now()
+    now = timezone.now().replace(minute=30, second=0, microsecond=0)
     instance = mock.MagicMock()
-    # First CH call = time series (one high bucket); second = evaluator stats.
+    # First CH call = time series (the hour holding now); second = baseline.
     instance.execute_ch_query.side_effect = [
-        _ch_result([{"timestamp": ts, "value": 1000.0}]),
-        _ch_result([{"mean": 100.0, "stddev": 10.0}]),  # per-row band
+        _ch_result([{"timestamp": now.replace(minute=0), "value": 1000.0}]),
+        _ch_result([{"mean": 100.0, "stddev": 10.0}]),  # pooled latency
     ]
-    with mock.patch.object(
-        graphs_mod, "AnalyticsQueryService", return_value=instance
+    with (
+        mock.patch.object(graphs_mod, "AnalyticsQueryService", return_value=instance),
+        mock.patch.object(graphs_mod.timezone, "now", return_value=now),
     ):
         out = graphs_mod.get_percentage_change_metric_graph_data(user_alert_monitor)
 
-    # A second CH query (the evaluator's historical stats) was issued.
+    # A second CH query (the worker's previous-period baseline) was issued.
     assert instance.execute_ch_query.call_count == 2
-    # 1000 > 100 + 10*(1+0/100) = 110 -> critical, using the evaluator band.
+    # 1000 > 100 * (1 + 0/100) -> critical, against the worker's baseline.
     assert out["alert_bar_data"][-1]["status"] == "critical"
+
+
+# --- Monitors saved before the threshold update keep the earlier rule --------
+#
+# Production judged a percentage threshold p against a band around the
+# history's mean, mean +/- stddev * (1 + p / 100). Rows
+# saved before the update and not edited since keep that rule; rows saved
+# after it compare with one previous period, baseline * (1 +/- p / 100).
+
+
+def _fired(monitor, value, band, now) -> UserAlertMonitorLog | None:
+    """Check ``monitor`` at ``now`` with ClickHouse answering ``value`` and the
+    history ``band``; the alert it wrote for that window, if any."""
+    with _patch_ch([_ch_result([{"value": value}]), _ch_result([band])]):
+        _process_monitor(monitor, now)
+    return UserAlertMonitorLog.objects.filter(
+        alert=monitor, time_window_end=now
+    ).first()
+
+
+def test_same_saved_percentages_keep_the_rule_they_were_saved_with(
+    production_alert_monitor, user_alert_monitor
+) -> None:
+    # 400% / 300% (the form's numbers) on history with mean 100, stddev 10.
+    # Earlier rule: critical above 100 + 10 * 5 = 150, warning above
+    # 100 + 10 * 4 = 140. Current rule: critical above 100 * 5 = 500, warning
+    # above 100 * 4 = 400.
+    saved = {"critical_threshold_value": 400, "warning_threshold_value": 300}
+    earlier = production_alert_monitor(**saved)
+    current = user_alert_monitor
+    current.threshold_type = "percentage_change"
+    current.critical_threshold_value = 400
+    current.warning_threshold_value = 300
+    current.save()
+    band = {"mean": 100.0, "stddev": 10.0}
+    start = timezone.now()
+
+    results = {}
+    for step, value in enumerate((151, 141, 130, 401, 501)):
+        now = start + timedelta(hours=step)
+        results[value] = tuple(
+            log.type if log else None
+            for log in (_fired(m, value, band, now) for m in (earlier, current))
+        )
+
+    assert results == {
+        151: ("critical", None),
+        141: ("warning", None),
+        130: (None, None),
+        401: ("critical", "warning"),
+        501: ("critical", "critical"),
+    }
+    earlier_message = UserAlertMonitorLog.objects.get(
+        alert=earlier, time_window_end=start
+    ).message
+    assert "(151.00) breached the critical threshold (greater_than 150.00)" in (
+        earlier_message
+    )
+    assert earlier_message.endswith(
+        "based on historical data (mean: 100.00, stddev: 10.00)."
+    )
+    current_message = UserAlertMonitorLog.objects.get(
+        alert=current, type="critical"
+    ).message
+    assert "(greater_than 500.00)" in current_message
+
+
+def test_less_than_saved_before_the_update_keeps_the_band_below_the_mean(
+    production_alert_monitor,
+) -> None:
+    # Below by 50%: the earlier rule's line is 100 - 10 * 1.5 = 85, so a 16%
+    # drop is critical; the current rule's line is 100 * 0.5 = 50.
+    monitor = production_alert_monitor(
+        threshold_operator="less_than", critical_threshold_value=50
+    )
+
+    log = _fired(monitor, 84, {"mean": 100.0, "stddev": 10.0}, timezone.now())
+
+    assert log is not None and log.type == "critical"
+    assert "(less_than 85.00) based on historical data" in log.message
+
+
+def test_errors_spike_saved_before_the_update_fires_on_every_flat_check(
+    production_alert_monitor, user_alert_monitor
+) -> None:
+    # Omega's "Errors spike" as production created it: 200% / 100%, every 15
+    # minutes, 7 days of history. Production compared each 15-minute total
+    # with per-minute statistics: a flat 100 errors per
+    # 15 minutes (noise sd 10) is 6.667 a minute with sd 10 / sqrt(15) =
+    # 2.582, so its critical line is 6.667 + 2.582 * 3 = 14.41 and every
+    # check is critical. The current rule compares with one period of the
+    # history, 100, and stays quiet.
+    spec = {
+        "critical_threshold_value": 200,
+        "warning_threshold_value": 100,
+        "alert_frequency": 15,
+        "auto_threshold_time_window": 60 * 24 * 7,
+    }
+    earlier = production_alert_monitor(name="Errors spike (production)", **spec)
+    current = user_alert_monitor
+    current.threshold_type = "percentage_change"
+    for field, value in spec.items():
+        setattr(current, field, value)
+    current.save()
+    per_minute = {"mean": 100 / 15, "stddev": 10 / 15**0.5}
+    start = timezone.now()
+
+    band_sql = []
+    for check in range(24):
+        now = start + timedelta(minutes=15 * check)
+        patcher = _patch_ch([_ch_result([{"value": 100.0}]), _ch_result([per_minute])])
+        with patcher:
+            _process_monitor(earlier, now)
+        band_sql.append(patcher.ch_instance.execute_ch_query.call_args_list[1].args[0])
+        _fired(current, 100.0, {"mean": 100.0, "stddev": None}, now)
+
+    logs = UserAlertMonitorLog.objects.filter(alert=earlier)
+    assert [log.type for log in logs] == ["critical"] * 24
+    assert all(
+        "(100.00) breached the critical threshold (greater_than 14.41) based on "
+        "historical data (mean: 6.67, stddev: 2.58)." in log.message
+        for log in logs
+    )
+    assert all("toStartOfMinute(start_time)" in sql for sql in band_sql)
+    assert not UserAlertMonitorLog.objects.filter(alert=current).exists()
+
+
+@pytest.mark.parametrize(
+    "metric_type,alert_frequency,bucket,anchor",
+    [
+        ("count_of_errors", 15, "toStartOfMinute", timedelta(minutes=15)),
+        ("count_of_errors", 60, "toStartOfHour", timedelta(hours=1)),
+        ("token_usage", 240, "toStartOfHour", timedelta(hours=4)),
+        # Daily and monthly tokens keep the current history anchor: the
+        # history ends where the trailing day or 30 days begin.
+        ("daily_tokens_spent", 60, "toStartOfDay", timedelta(days=1)),
+        ("monthly_tokens_spent", 60, "toStartOfMonth", timedelta(days=30)),
+    ],
+)
+def test_earlier_band_reads_production_calendar_buckets(
+    production_alert_monitor, metric_type, alert_frequency, bucket, anchor
+) -> None:
+    monitor = production_alert_monitor(
+        metric_type=metric_type,
+        alert_frequency=alert_frequency,
+        critical_threshold_value=400,
+        auto_threshold_time_window=60 * 24 * 7,
+    )
+    now = timezone.now()
+    patcher = _patch_ch(
+        [_ch_result([{"value": 1.0}]), _ch_result([{"mean": 1.0, "stddev": 0.0}])]
+    )
+    with patcher:
+        _process_monitor(monitor, now)
+
+    band_sql, params = patcher.ch_instance.execute_ch_query.call_args_list[1].args
+    assert f"{bucket}(start_time)" in band_sql
+    assert "stddevSamp(bucket_value)" in band_sql
+    history_end = (now - anchor).astimezone(UTC).replace(tzinfo=None)
+    assert params["end_time"] == history_end
+    assert params["start_time"] == history_end - timedelta(days=7)
+
+
+@pytest.mark.parametrize("threshold_type", ["static", "percentage_change"])
+def test_provider_monitors_read_the_share_their_numbers_were_saved_in(
+    production_alert_monitor, user_alert_monitor, threshold_type
+) -> None:
+    # Saved before the update, the numbers are about the share of providers
+    # with no errors; saved after it, about the share with errors.
+    fields = {
+        "metric_type": "service_provider_error_rates",
+        "threshold_type": threshold_type,
+        "threshold_operator": "less_than",
+        "critical_threshold_value": 95.0,
+    }
+    earlier = production_alert_monitor(**fields)
+    current = user_alert_monitor
+    for field, value in fields.items():
+        setattr(current, field, value)
+    current.save()
+    now = timezone.now()
+
+    def provider_share(monitor) -> str:
+        sql, _ = build_monitor_ch_builder(monitor).build_metric_value_query(
+            monitor.metric_type, now - timedelta(hours=1), now
+        )
+        return " ".join(sql.split())
+
+    assert "uniqIf(provider, error_count = 0) / uniq(provider)" in (
+        provider_share(earlier)
+    )
+    assert "uniqIf(provider, error_count > 0) / uniq(provider)" in (
+        provider_share(current)
+    )
 
 
 # --- Static threshold operators & tiers ---------------------------------------

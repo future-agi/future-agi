@@ -1,9 +1,8 @@
+import { useState } from "react";
 import PropTypes from "prop-types";
+import { LoadingButton } from "@mui/lab";
 import {
   Box,
-  Button,
-  Card,
-  CardContent,
   LinearProgress,
   Stack,
   Table,
@@ -14,6 +13,8 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
+import Section from "src/components/section";
+import MetricStrip from "src/components/metric-strip";
 import { LoadingScreen } from "src/components/loading-screen";
 import Iconify from "src/components/iconify";
 import {
@@ -21,27 +22,10 @@ import {
   useQueueAnalytics,
 } from "src/api/annotation-queues/annotation-queues";
 import { fDateTime } from "src/utils/format-time";
+import { importWithRecovery } from "src/utils/chunkRecovery";
 
-function StatCard({ title, value, color = "text.primary" }) {
-  return (
-    <Card sx={{ flex: 1, minWidth: 140 }}>
-      <CardContent sx={{ py: 2, "&:last-child": { pb: 2 } }}>
-        <Typography variant="caption" color="text.secondary">
-          {title}
-        </Typography>
-        <Typography variant="h4" color={color}>
-          {value}
-        </Typography>
-      </CardContent>
-    </Card>
-  );
-}
-
-StatCard.propTypes = {
-  title: PropTypes.string.isRequired,
-  value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
-  color: PropTypes.string,
-};
+const EXPORT_TOO_LARGE_MESSAGE =
+  "This queue has too many items to export in one file. Use Export > Export to Dataset at the top of the page to export them all.";
 
 function StatusBar({ statusBreakdown, total }) {
   if (!total) return null;
@@ -63,7 +47,7 @@ function StatusBar({ statusBreakdown, total }) {
         sx={{
           display: "flex",
           height: 24,
-          borderRadius: 0.5,
+          borderRadius: "4px",
           overflow: "hidden",
         }}
       >
@@ -85,7 +69,7 @@ function StatusBar({ statusBreakdown, total }) {
               {pct > 10 && (
                 <Typography
                   variant="caption"
-                  sx={{ color: "common.white", fontSize: 10 }}
+                  sx={{ color: "common.white", fontSize: 12 }}
                 >
                   {count}
                 </Typography>
@@ -171,49 +155,47 @@ function LabelDistribution({ labelDistribution }) {
           const entries = Object.entries(label.values || {});
           const total = entries.reduce((s, [, c]) => s + c, 0);
           return (
-            <Card key={id} variant="outlined">
-              <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-                <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                  {label.name}
-                  <Typography
-                    component="span"
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ ml: 1 }}
-                  >
-                    ({label.type})
-                  </Typography>
+            <Section variant="panel" key={id}>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                {label.name}
+                <Typography
+                  component="span"
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ ml: 1 }}
+                >
+                  ({label.type})
                 </Typography>
-                <Stack spacing={0.5}>
-                  {entries.map(([val, count]) => (
-                    <Stack
-                      key={val}
-                      direction="row"
-                      alignItems="center"
-                      spacing={1}
+              </Typography>
+              <Stack spacing={0.5}>
+                {entries.map(([val, count]) => (
+                  <Stack
+                    key={val}
+                    direction="row"
+                    alignItems="center"
+                    spacing={1}
+                  >
+                    <Typography
+                      variant="body2"
+                      sx={{ minWidth: 120, fontSize: 12 }}
                     >
-                      <Typography
-                        variant="body2"
-                        sx={{ minWidth: 120, fontSize: 12 }}
-                      >
-                        {formatLabelValue(val)}
-                      </Typography>
-                      <LinearProgress
-                        variant="determinate"
-                        value={total ? (count / total) * 100 : 0}
-                        sx={{ flex: 1, height: 6, borderRadius: 3 }}
-                      />
-                      <Typography
-                        variant="caption"
-                        sx={{ minWidth: 30, textAlign: "right" }}
-                      >
-                        {count}
-                      </Typography>
-                    </Stack>
-                  ))}
-                </Stack>
-              </CardContent>
-            </Card>
+                      {formatLabelValue(val)}
+                    </Typography>
+                    <LinearProgress
+                      variant="determinate"
+                      value={total ? (count / total) * 100 : 0}
+                      sx={{ flex: 1, height: 6, borderRadius: 3 }}
+                    />
+                    <Typography
+                      variant="caption"
+                      sx={{ minWidth: 30, textAlign: "right" }}
+                    >
+                      {count}
+                    </Typography>
+                  </Stack>
+                ))}
+              </Stack>
+            </Section>
           );
         })}
       </Stack>
@@ -227,11 +209,11 @@ LabelDistribution.propTypes = {
 
 export default function QueueAnalyticsTab({ queueId }) {
   const { data: analytics, isLoading } = useQueueAnalytics(queueId);
+  // Format of the export in flight ("json" / "csv"), or null when idle.
+  const [exporting, setExporting] = useState(null);
 
   if (isLoading) {
-    return (
-      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
-    );
+    return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
   }
 
   if (!analytics) return null;
@@ -255,8 +237,12 @@ export default function QueueAnalyticsTab({ queueId }) {
     : 0;
 
   const handleExport = async (format) => {
+    if (exporting) return;
+    setExporting(format);
     try {
-      const { default: axiosInstance } = await import("src/utils/axios");
+      const { default: axiosInstance } = await importWithRecovery(
+        () => import("src/utils/axios"),
+      );
       const response = await axiosInstance.get(
         annotationQueueEndpoints.export(queueId),
         { params: { export_format: format }, responseType: "blob" },
@@ -271,19 +257,32 @@ export default function QueueAnalyticsTab({ queueId }) {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
-      const { enqueueSnackbar } = await import("notistack");
-      let message = "Export failed";
+      const { enqueueSnackbar } = await importWithRecovery(
+        () => import("notistack"),
+      );
+      let message = null;
       // The request uses responseType:"blob", so an error body arrives as a Blob —
       // read and parse it to surface the server's actionable message (e.g. the 413
       // export_too_large cap) instead of a generic failure.
       try {
         const data = err?.response?.data;
-        const parsed = data instanceof Blob ? JSON.parse(await data.text()) : data;
-        message = parsed?.result || parsed?.message || message;
+        const parsed =
+          data instanceof Blob ? JSON.parse(await data.text()) : data;
+        message = parsed?.result || parsed?.message || null;
       } catch {
         // non-JSON / unreadable error body — keep the generic message
       }
+      // The app's axios interceptor rejects with a flattened error
+      // ({...body, statusCode}) and no `response`; a Blob body spreads to
+      // nothing, so the status code is the only signal left for the size cap.
+      const statusCode = err?.statusCode ?? err?.response?.status;
+      if (!message) {
+        message =
+          statusCode === 413 ? EXPORT_TOO_LARGE_MESSAGE : "Export failed";
+      }
       enqueueSnackbar(message, { variant: "error" });
+    } finally {
+      setExporting(null);
     }
   };
 
@@ -296,38 +295,43 @@ export default function QueueAnalyticsTab({ queueId }) {
         spacing={1}
         sx={{ mb: 3 }}
       >
-        <Button
+        <LoadingButton
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="eva:download-fill" width={16} />}
+          loading={exporting === "json"}
+          loadingPosition="start"
+          disabled={Boolean(exporting)}
+          startIcon={
+            <Iconify icon="solar:download-minimalistic-linear" width={16} />
+          }
           onClick={() => handleExport("json")}
         >
-          Export JSON
-        </Button>
-        <Button
+          {exporting === "json" ? "Exporting..." : "Export JSON"}
+        </LoadingButton>
+        <LoadingButton
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="eva:download-fill" width={16} />}
+          loading={exporting === "csv"}
+          loadingPosition="start"
+          disabled={Boolean(exporting)}
+          startIcon={
+            <Iconify icon="solar:download-minimalistic-linear" width={16} />
+          }
           onClick={() => handleExport("csv")}
         >
-          Export CSV
-        </Button>
+          {exporting === "csv" ? "Exporting..." : "Export CSV"}
+        </LoadingButton>
       </Stack>
 
-      {/* Overview Cards */}
-      <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
-        <StatCard title="Total Items" value={total || 0} />
-        <StatCard
-          title="Completed"
-          value={statusBreak.completed || 0}
-          color="success.main"
-        />
-        <StatCard title="Completion Rate" value={`${completionPct}%`} />
-        <StatCard
-          title="Avg / Day"
-          value={tp.avg_per_day || tp.avgPerDay || 0}
-        />
-      </Stack>
+      <MetricStrip
+        sx={{ mb: 3 }}
+        items={[
+          { label: "Total items", value: total || 0 },
+          { label: "Completed", value: statusBreak.completed || 0 },
+          { label: "Completion rate", value: `${completionPct}%` },
+          { label: "Avg / day", value: tp.avg_per_day || tp.avgPerDay || 0 },
+        ]}
+      />
 
       {/* Status Bar */}
       <Box sx={{ mb: 3 }}>
@@ -362,7 +366,7 @@ export default function QueueAnalyticsTab({ queueId }) {
                       maxWidth: 20,
                       height: `${height}%`,
                       bgcolor: "primary.main",
-                      borderRadius: "2px 2px 0 0",
+                      borderRadius: "4px 4px 0 0",
                       minHeight: 2,
                     }}
                     title={`${d.date}: ${d.count}`}
@@ -390,7 +394,12 @@ export default function QueueAnalyticsTab({ queueId }) {
               <TableHead>
                 <TableRow>
                   <TableCell>Name</TableCell>
-                  <TableCell align="right">Completed</TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Completed
+                  </TableCell>
                   <TableCell>Last Active</TableCell>
                 </TableRow>
               </TableHead>
@@ -398,7 +407,12 @@ export default function QueueAnalyticsTab({ queueId }) {
                 {annotatorPerf.map((a) => (
                   <TableRow key={a.user_id}>
                     <TableCell>{a.name}</TableCell>
-                    <TableCell align="right">{a.completed}</TableCell>
+                    <TableCell
+                      sx={{ fontVariantNumeric: "tabular-nums" }}
+                      align="right"
+                    >
+                      {a.completed}
+                    </TableCell>
                     <TableCell>
                       <Typography variant="caption" color="text.secondary">
                         {a.last_active ? fDateTime(a.last_active) : "—"}

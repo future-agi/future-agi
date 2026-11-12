@@ -17,36 +17,24 @@ export const toAddEvalsFormRows = (sourceFilters = []) => {
     const cfg = f?.filter_config || {};
     const category = COL_TYPE_TO_CATEGORY[cfg.col_type] ?? "system";
     const isAttribute = category === "attribute";
-    const raw = cfg.filter_value;
-    const values = Array.isArray(raw)
-      ? raw
-      : typeof raw === "string"
-        ? raw
-            .split(",")
-            .map((v) => v.trim())
-            .filter(Boolean)
-        : raw != null
-          ? [raw]
-          : [];
-    values.forEach((v) => {
-      if (v === "" || v == null) return;
-      out.push({
-        id: getRandomId(),
-        property: isAttribute ? "attributes" : field,
-        propertyId: field,
-        ...(f?.property_id || f?.registryId
-          ? { registryId: f.property_id || f.registryId }
-          : {}),
-        fieldCategory: category,
-        fieldLabel: field,
-        ...(cfg.col_type ? { apiColType: cfg.col_type } : {}),
-        filterConfig: {
-          filterType: cfg.filter_type === "number" ? "number" : "text",
-          filterOp: cfg.filter_op || "equals",
-          filterValue: v,
-          ...(cfg.col_type ? { colType: cfg.col_type } : {}),
-        },
-      });
+    // A row is one predicate: range endpoints and membership alternatives
+    // belong together, and commas in scalar text are literal content.
+    out.push({
+      id: getRandomId(),
+      property: isAttribute ? "attributes" : field,
+      propertyId: field,
+      ...(f?.property_id || f?.registryId
+        ? { registryId: f.property_id || f.registryId }
+        : {}),
+      fieldCategory: category,
+      fieldLabel: field,
+      ...(cfg.col_type ? { apiColType: cfg.col_type } : {}),
+      filterConfig: {
+        filterType: cfg.filter_type || "text",
+        filterOp: cfg.filter_op || "equals",
+        filterValue: cfg.filter_value,
+        ...(cfg.col_type ? { colType: cfg.col_type } : {}),
+      },
     });
   });
   return out;
@@ -71,7 +59,7 @@ export function buildAddEvalsDraft({
   // create page a guess it can only make on calendar-day granularity. An
   // incoming window with no label is absolute; the fallback above is ours.
   const datePreset = dateFilter?.dateFilter
-    ? (dateFilter?.dateOption ?? "Custom")
+    ? dateFilter?.dateOption ?? "Custom"
     : "12M";
 
   const values = {
@@ -86,6 +74,10 @@ export function buildAddEvalsDraft({
     endDate,
     datePreset,
     runType: "historical",
+    // Historical is only the create page's default here, so the page may
+    // still switch it to new incoming data when the project has no data in
+    // this window yet.
+    runTypeChosen: false,
   };
 
   const draftId = crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;

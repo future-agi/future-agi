@@ -581,7 +581,7 @@ def _append_persona_dataset_rows(dataset, personas, *, columns=None):
             "ALK scenario dataset is missing persona, situation, or outcome columns"
         )
     last_order = (
-        Row.objects.filter(dataset=dataset, deleted=False)
+        Row.all_objects.filter(dataset=dataset)
         .order_by("-order")
         .values_list("order", flat=True)
         .first()
@@ -928,6 +928,9 @@ def ingest_alk_sim_result(
         raise ALKSimulateInvalidCallTypeError(
             "ALK result can only be submitted to VOICE or TEXT call executions"
         )
+    # Before anything is locked, stored or dispatched, so a refused row id
+    # leaves the call exactly as it was.
+    _validate_call_metadata_row_id(call_execution, payload)
 
     with transaction.atomic():
         call_execution = CallExecution.objects.select_for_update().get(
@@ -1012,6 +1015,52 @@ def ingest_alk_sim_result(
         status="ingested",
         eval_dispatched=eval_dispatched,
     )
+
+
+_ROW_ID_NOT_IN_SCENARIO_DATASET = (
+    "call_metadata.row_id must name a row of this call's scenario dataset"
+)
+
+
+def _validate_call_metadata_row_id(
+    call_execution: CallExecution, payload: dict[str, Any]
+) -> None:
+    """Refuse a ``call_metadata.row_id`` that is not this call's own dataset row.
+
+    ``call_metadata`` is merged caller-wins, and every read of a call's dataset
+    row falls back to ``call_metadata["row_id"]`` when the ``row_id`` column is
+    null (a scenario without a dataset). Row has no workspace field, so the
+    model managers do not tenant-filter it: a stored row id is read as given.
+    Accepted: no row id (``None`` or ``""``, which batch creation itself writes
+    for a dataset-less scenario), the row id the call already carries, or a
+    live row of the call's scenario dataset in the execution's organization.
+    Another organization's row, a soft-deleted or made-up row and a malformed
+    id all get the same error, so the answer says nothing about which rows
+    exist.
+    """
+    metadata = payload.get("call_metadata")
+    if not isinstance(metadata, dict) or metadata.get("row_id") in (None, ""):
+        return
+    try:
+        row_id = uuid.UUID(str(metadata["row_id"]))
+    except ValueError as exc:
+        raise ALKSimulateIngestionError(_ROW_ID_NOT_IN_SCENARIO_DATASET) from exc
+    if row_id == call_execution.row_id:
+        return
+    from model_hub.models.develop_dataset import Row
+
+    dataset_id = call_execution.scenario.dataset_id
+    organization_id = call_execution.test_execution.run_test.organization_id
+    if (
+        dataset_id
+        and Row.objects.filter(
+            id=row_id,
+            dataset_id=dataset_id,
+            dataset__organization_id=organization_id,
+        ).exists()
+    ):
+        return
+    raise ALKSimulateIngestionError(_ROW_ID_NOT_IN_SCENARIO_DATASET)
 
 
 def _claim_result_digest(
@@ -1116,11 +1165,17 @@ def _build_expected_call_executions(
     test_executor = TestExecutor(initialize_voice_service=False)
     expected_calls: list[CallExecution] = []
 
+    # The runner's /batch call authenticates with the internal service secret,
+    # which binds no workspace, so the manager adds no tenant filter here. Read
+    # only the execution's own organization's scenarios and rows: an id of
+    # another organization's scenario (stored before execute checked its
+    # scenario_ids, T6 #7e) is skipped like a deleted one.
+    organization_id = run_test.organization_id
     for scenario_id in test_execution.scenario_ids:
         try:
             scenario = Scenarios.objects.select_related(
                 "simulator_agent", "dataset", "agent_definition"
-            ).get(id=scenario_id, deleted=False)
+            ).get(id=scenario_id, organization_id=organization_id, deleted=False)
         except Scenarios.DoesNotExist:
             logger.warning(
                 "livekit_batch_scenario_missing", scenario_id=str(scenario_id)
@@ -1135,6 +1190,7 @@ def _build_expected_call_executions(
                     row_id=row_id,
                     base_prompt=base_prompt,
                     agent_version=selected_version,
+                    organization_id=organization_id,
                 )
                 expected_calls.append(
                     _build_call_execution(
@@ -1229,11 +1285,14 @@ def _build_manifest_call_executions(
         for entry in execution_manifest
         if entry.get("scenario_id")
     }
+    # Same tenant rule as _build_expected_call_executions: only the execution's
+    # own organization's scenarios and rows (T6 #7e).
+    organization_id = run_test.organization_id
     scenarios = {
         str(scenario.id): scenario
         for scenario in Scenarios.objects.select_related(
             "simulator_agent", "dataset", "agent_definition"
-        ).filter(id__in=scenario_ids, deleted=False)
+        ).filter(id__in=scenario_ids, organization_id=organization_id, deleted=False)
     }
     if len(scenarios) != len(scenario_ids):
         raise ALKSimulateIngestionError(
@@ -1252,6 +1311,7 @@ def _build_manifest_call_executions(
                 row_id=row_id,
                 base_prompt=base_prompt,
                 agent_version=selected_version,
+                organization_id=organization_id,
             )
             if row_id
             else None

@@ -79,6 +79,9 @@ export default function FolderView() {
         sx={{
           p: theme.spacing(2),
           pt: 0,
+          // SPFIX-r1: below the field's floor the button group moves to its
+          // own row, so Create prompt is never cut at the right edge.
+          flexWrap: "wrap",
         }}
         display={"flex"}
         direction={"row"}
@@ -88,7 +91,14 @@ export default function FolderView() {
       >
         <FormSearchField
           placeholder={placeholder}
-          sx={{ minWidth: "360px", flexGrow: 1 }}
+          // IT-R5 G4 S5: the field gives way first (one row at 1024 px);
+          // the buttons themselves never wrap.
+          sx={{
+            minWidth: "160px",
+            flexGrow: 1,
+            flexShrink: 1,
+            flexBasis: "160px",
+          }}
           searchQuery={searchQuery}
           onChange={(e) => onSearchQueryChange(e.target.value)}
         />
@@ -96,6 +106,15 @@ export default function FolderView() {
         <Stack
           sx={{
             ml: "auto",
+            // When the three buttons do not fit on one row (a
+            // phone), they wrap onto another row, right-aligned; each label
+            // stays on one line.
+            minWidth: 0,
+            maxWidth: "100%",
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+            rowGap: 1,
+            "& .MuiButton-root": { whiteSpace: "nowrap", flexShrink: 0 },
           }}
           direction={"row"}
           alignItems={"center"}
@@ -107,9 +126,6 @@ export default function FolderView() {
             sx={{
               color: "text.primary",
               borderColor: "divider",
-              padding: 1.5,
-              fontSize: "14px",
-              height: "40.8px",
             }}
             startIcon={<SvgColor src="/assets/icons/ic_docs_single.svg" />}
             component="a"
@@ -121,7 +137,6 @@ export default function FolderView() {
           <Button
             onClick={handleUseTemplate}
             color="primary"
-            sx={{ height: "40.8px" }}
             variant="outlined"
             disabled={!RolePermission.PROMPTS[PERMISSIONS.CREATE][role]}
           >
@@ -131,7 +146,6 @@ export default function FolderView() {
             onClick={handleCreateTemplate}
             variant="contained"
             color="primary"
-            sx={{ height: "40.8px" }}
             disabled={!RolePermission.PROMPTS[PERMISSIONS.CREATE][role]}
           >
             Create prompt

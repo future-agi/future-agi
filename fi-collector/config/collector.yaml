@@ -70,12 +70,22 @@ auth:
   # Auth is active when pg_write is set. Without it, spans land with
   # empty project_id and are unqueryable.
   pg_write: postgres://user:password@db:5432/tfc
-  # Falls back to pg_write if empty. In prod, point to read replica.
+  # Falls back to pg_write if empty. Project/metering reads may use a replica;
+  # credential, grant and membership eligibility always use pg_write.
   pg_read: ""
-  cache_ttl: 5m
-  warm_ttl: 1h
-  # Redis for rate limiting + usage event emission. Empty disables both.
+  cache_ttl: 30s
+  warm_ttl: 0s
+  # Configured fe1 labels accepted during a coordinated rotation (not digests).
+  envelope_kids: [k1]
+  # Redis for auth invalidation, billing admission and usage event emission.
+  # Empty is supported by nonbillable OSS. EE_LICENSE_KEY or CLOUD_DEPLOYMENT
+  # (US/EU/DEV) enables billing, which fails closed when Redis is unavailable.
+  # Helm passes the same intent through FI_BILLING_ENFORCEMENT_ENABLED.
   redis_addr: ""
+  # FI_AUTH_REDIS_TLS: verified TLS 1.2+, without a plaintext fallback.
+  redis_tls: false
+  # FI_AUTH_REDIS_TLS_SERVER_NAME: optional SNI/verification hostname override.
+  redis_tls_server_name: ""
   # Billing events on the usage:events stream (USAGE_EVENTS_ENABLED, on when
   # unset). Only Future AGI Cloud drains it, so the self-hosted compose files
   # and Helm chart set USAGE_EVENTS_ENABLED=false; anywhere else it only grows.

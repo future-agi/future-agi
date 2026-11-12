@@ -48,6 +48,15 @@ const hasAttributeContent = (value) => {
   return true;
 };
 
+// The call's recorded length in seconds, read from the same fields as the
+// header's Duration chip (CallDetailsBar) so Call Analytics agrees with it.
+const readCallDurationSeconds = (data) => {
+  const value = data?.duration_seconds ?? data?.duration;
+  if (value == null) return null;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) ? seconds : null;
+};
+
 const VoiceRightPanel = ({
   data,
   onCompareBaseline,
@@ -92,9 +101,7 @@ const VoiceRightPanel = ({
     const tree = data?.observation_spans || data?.observation_span;
     if (!Array.isArray(tree)) return null;
     const root = tree.find(
-      (entry) =>
-        entry?.eval_rollup &&
-        !entry?.observation_span?.parent_span_id,
+      (entry) => entry?.eval_rollup && !entry?.observation_span?.parent_span_id,
     );
     return root?.eval_rollup || null;
   }, [data?.eval_rollup, data?.observation_span, data?.observation_spans]);
@@ -118,7 +125,19 @@ const VoiceRightPanel = ({
     return [];
   }, [data]);
 
-  const vapiId = getSpanAttributes(observationSpan)?.rawLog?.id;
+  const rawLog = useMemo(() => {
+    const attributes = getSpanAttributes(observationSpan);
+    const value = attributes?.raw_log ?? attributes?.rawLog;
+    try {
+      const decoded = typeof value === "string" ? JSON.parse(value) : value;
+      return decoded && typeof decoded === "object" && !Array.isArray(decoded)
+        ? decoded
+        : null;
+    } catch {
+      return null;
+    }
+  }, [observationSpan]);
+  const vapiId = rawLog?.id;
   const callLogs = getSpanAttributes(observationSpan)?.callLogs;
   const hasLogs = !!vapiId || !!callLogs || !!data?.id;
 
@@ -138,36 +157,36 @@ const VoiceRightPanel = ({
       {
         label: "Call Analytics",
         value: TABS.ANALYTICS,
-        icon: "mdi:chart-line",
+        icon: "solar:graph-up-linear",
       },
       {
         label: "Evals",
         value: TABS.EVALUATIONS,
-        icon: "mdi:checkbox-marked-circle-outline",
+        icon: "solar:check-circle-linear",
       },
       {
         label: "Messages",
         value: TABS.MESSAGES,
-        icon: "mdi:message-text-outline",
+        icon: "solar:chat-round-line-linear",
       },
     ];
     if (hasLogs) {
       t.push({
         label: "Logs",
         value: TABS.LOGS,
-        icon: "mdi:format-list-bulleted",
+        icon: "solar:list-linear",
       });
     }
     t.push({
       label: "Attributes",
       value: TABS.ATTRIBUTES,
-      icon: "mdi:code-json",
+      icon: "solar:code-linear",
     });
     if (!hideAnnotationTab) {
       t.push({
         label: "Annotations",
         value: TABS.ANNOTATIONS,
-        icon: "mdi:pencil-outline",
+        icon: "solar:pen-linear",
       });
     }
 
@@ -175,7 +194,7 @@ const VoiceRightPanel = ({
       t.push({
         label: "Scenario",
         value: TABS.SCENARIO,
-        icon: "mdi:script-text-outline",
+        icon: "solar:document-text-linear",
       });
     }
     return t;
@@ -194,18 +213,20 @@ const VoiceRightPanel = ({
       aiInterruptionCount: data?.ai_interruption_count,
       avgStopTimeAfterInterruptionMs: data?.avg_stop_time_after_interruption,
     };
+    const callDurationSeconds = readCallDurationSeconds(data);
 
     if (isSimulate) {
       return {
         transcript: data?.transcript,
+        callStartedAt: data?.started_at,
         latencies: data?.customer_latency_metrics?.system_metrics,
         analysisSummary: data?.call_summary,
         costBreakdown: data?.customer_cost_breakdown,
         isLiveKit: isLiveKitProvider(data?.provider),
         apiMetrics,
+        callDurationSeconds,
       };
     }
-    const rawLog = getSpanAttributes(observationSpan)?.rawLog;
     // Prefer the customer-agent metrics the backend now surfaces
     // (voice_call_detail looks them up from the matching CallExecution).
     // Fall back to the provider's raw `artifact.performanceMetrics` /
@@ -215,6 +236,7 @@ const VoiceRightPanel = ({
     const customerCost = data?.customer_cost_breakdown;
     return {
       transcript: data?.transcript,
+      callStartedAt: data?.started_at,
       latencies:
         customerLatencies ||
         extractLatencies(rawLog?.artifact?.performanceMetrics),
@@ -223,8 +245,9 @@ const VoiceRightPanel = ({
         customerCost || extractCostBreakdown(rawLog?.costBreakdown),
       isLiveKit: isLiveKitProvider(data?.provider),
       apiMetrics,
+      callDurationSeconds,
     };
-  }, [isSimulate, data, observationSpan]);
+  }, [isSimulate, data, rawLog]);
 
   const evalRows = useMemo(() => {
     if (isSimulate) {
@@ -416,13 +439,12 @@ const VoiceRightPanel = ({
                 color="primary"
                 size="small"
                 disabled={data?.status !== TestRunExecutionStatus.COMPLETED}
-                startIcon={<Iconify icon="mdi:swap-horizontal" width={14} />}
+                startIcon={
+                  <Iconify icon="solar:transfer-horizontal-linear" width={14} />
+                }
                 onClick={() => onCompareBaseline(true)}
                 sx={{
                   whiteSpace: "nowrap",
-                  fontSize: 11,
-                  height: 26,
-                  textTransform: "none",
                 }}
               >
                 Compare with baseline
@@ -500,7 +522,7 @@ const VoiceRightPanel = ({
                   },
                 });
               }}
-              />
+            />
           </ShowComponent>
 
           <ShowComponent condition={currentTab === TABS.MESSAGES}>
@@ -534,17 +556,11 @@ const VoiceRightPanel = ({
                   <Button
                     size="small"
                     variant="outlined"
-                    startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+                    startIcon={<Iconify icon="solar:add-linear" width={14} />}
                     onClick={() => onAction("annotate")}
                     sx={{
-                      textTransform: "none",
-                      fontSize: 12,
-                      fontWeight: 500,
                       borderColor: "divider",
                       color: "text.primary",
-                      borderRadius: "4px",
-                      px: 1.5,
-                      py: 0.25,
                     }}
                   >
                     Add Label

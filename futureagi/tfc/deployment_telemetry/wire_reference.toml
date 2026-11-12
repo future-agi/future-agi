@@ -6,11 +6,18 @@
 # Kept apart from schema.py, whose body is vendored verbatim into the
 # receiver. tests/test_wire_reference.py fails when a field here and a field in
 # schema.py differ, when an example payload would not be valid, or when the
-# opt-out fields differ from the payload payloads.py builds.
+# opt-out incorrectly documents any transmitted fields.
 # The FUTURE_AGI_TELEMETRY_* settings are rows of deploy/env-reference.toml
 # (tag = "telemetry").
 
 [registration]
+after = '''
+With telemetry enabled and email sharing off, an install upgraded from a registration that included emails re-registers once without `users`. Failed attempts may be retried. Changing the email-sharing setting also triggers re-registration.
+'''
+intro = '''
+Registration is attempted when the first owner/admin account exists (an eligible active owner/admin, staff or superuser account). By default the registration contains exactly `schema_version`, `instance_id`, `version`, `deployment_type`, `timestamp` and `telemetry_disabled=false`; the `users` key, email addresses and email domains are omitted. Set `FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true` (Helm: `config.telemetryShareAdminEmails=true`) to include `users[]` entries with `email` and `domain` for eligible accounts. Email sharing defaults to false; `1`, `true`, `yes` and `on` enable it.
+The example below shows email sharing opted in with `FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true`; it is not the default payload.
+'''
 
 [[registration.field]]
 name = "schema_version"
@@ -25,7 +32,7 @@ meaning = "A random UUID created on first run and stored in your database. It id
 [[registration.field]]
 name = "version"
 example = "1.8.0"
-meaning = "The first of `FUTURE_AGI_VERSION`, `SERVICE_VERSION` and `GIT_SHA` that names a release (`unknown` and `latest` are skipped), else `unknown`. `FUTURE_AGI_VERSION` is the image tag in `.env`; `SERVICE_VERSION` and `GIT_SHA` come from the image."
+meaning = "After trimming whitespace, the first of `FUTURE_AGI_VERSION`, `SERVICE_VERSION` and `GIT_SHA` that is non-empty and is not `unknown` or `latest` (case-insensitive). If none qualifies, the first non-empty value is used, or `unknown` if all are empty. `FUTURE_AGI_VERSION` is the image tag in `.env`; `SERVICE_VERSION` and `GIT_SHA` come from the image."
 
 [[registration.field]]
 name = "deployment_type"
@@ -40,21 +47,21 @@ meaning = "When the payload was built (UTC)."
 [[registration.field]]
 name = "telemetry_disabled"
 example = false
-meaning = "`false` here. `true` on the opt-out registration."
+meaning = "`false` on enabled registration. Opted-out installs send no registration."
 
 [[registration.field]]
 name = "users"
-meaning = "One entry for each active account that is an organization owner or admin, or a Django staff or superuser account (for example one made with `manage.py createsuperuser`), at the time of registration, most recent login first, at most 500. On a new install that is normally only the first account."
+meaning = "Sent only when `FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true` (Helm: `config.telemetryShareAdminEmails=true`); omitted otherwise, so by default the registration carries no email or domain. When sent: one entry for each active account that is an organization owner or admin, or a Django staff or superuser account (for example one made with `manage.py createsuperuser`), at the time of registration, most recent login first, at most 500. On a new install that is normally only the first account. Registration waits for the first such account either way."
 
 [[user_field]]
 name = "email"
 example = "owner@example.com"
-meaning = "The account's email address, lowercased."
+meaning = "Sent only when `FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true`; omitted otherwise. The account's email address, lowercased."
 
 [[user_field]]
 name = "domain"
 example = "example.com"
-meaning = "The part of `email` after the `@`."
+meaning = "Sent only when `FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true`; omitted otherwise. The part of `email` after the `@`."
 
 [heartbeat]
 counts_intro = '''
@@ -156,7 +163,7 @@ name = "datasets_count"
 example = 2
 counts = "Datasets created."
 
-# What the opt-out registration (FUTURE_AGI_TELEMETRY_DISABLED=true) still
-# sends: the keys of payloads.build_minimal_registration_payload().
+# Opt-out (FUTURE_AGI_TELEMETRY_DISABLED=true) sends nothing. The minimal
+# registration wire helper remains only for legacy compatibility.
 [opt_out]
-fields = ["schema_version", "instance_id", "version", "deployment_type", "timestamp", "telemetry_disabled"]
+fields = []

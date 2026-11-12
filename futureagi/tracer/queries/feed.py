@@ -5,6 +5,7 @@ Returns typed dataclasses from tracer.types.feed_types — no raw dicts.
 Pure data-access layer: no HTTP, no business logic. Service layer composes.
 """
 
+import ast
 import json
 import re
 import statistics
@@ -24,14 +25,16 @@ from django.db.models import (
     DateTimeField,
     F,
     FloatField,
+    Func,
     IntegerField,
     Max,
     Q,
     QuerySet,
+    TextField,
     Value,
     When,
 )
-from django.db.models.functions import Coalesce, TruncDate
+from django.db.models.functions import Cast, Coalesce, TruncDate
 from django.utils import timezone
 
 from tracer.models.observation_span import EvalLogger, EvalTargetType
@@ -53,7 +56,11 @@ from tracer.models.trace_investigation import (
     TraceInvestigationSource,
     TraceInvestigationTool,
 )
-from tracer.queries import deep_analysis_state
+from tracer.queries import background_analysis_state, deep_analysis_state
+from tracer.services.clickhouse.query_builders.trace_usage import (
+    SUMMARY_NAME,
+    is_repeated_usage_summary,
+)
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.clickhouse.v2.span_reader import CHSpan
 from tracer.services.grouping.human_edits import (
@@ -101,13 +108,42 @@ logger = structlog.get_logger(__name__)
 User = get_user_model()
 
 
+# A dict stored as text at the start of output_str, as JSON
+# ('{"score": 0, "choice": "Fail"}') or as a Python repr
+# ("{'score': 0.5, 'choice': 'Partial'}"). The only capture group is the
+# number under its top-level "score" key; the key scan stops at the first
+# nested list or dict.
+_OUTPUT_STR_SCORE_PATTERN = (
+    r"^\s*\{"
+    r"[^][{}]*"
+    r"""["']score["']\s*:\s*"""
+    r"(-?[0-9]+(?:\.[0-9]+)?(?:[eE][-+]?[0-9]+)?)"
+)
+
 # Coerce EvalLogger rows to a 0..1 score in SQL: prefer output_float when set,
-# otherwise treat output_bool as 1.0/0.0. Mirrors the pattern in
-# tracer/views/trace.py so eval aggregation has one canonical shape.
+# otherwise treat output_bool as 1.0/0.0, otherwise read the numeric "score"
+# of a dict stored in output_str. A choices evaluator writes
+# {"score": 0, "choice": "Fail"} there and leaves output_float empty.
+# output_str also holds plain labels and free text, so that branch matches the
+# pattern first and casts only the captured number: any other text scores as
+# NULL (no data) and never fails the query.
 EVAL_SCORE_EXPR = Case(
     When(output_float__isnull=False, then=F("output_float")),
     When(output_bool=True, then=Value(1.0)),
     When(output_bool=False, then=Value(0.0)),
+    When(
+        output_str__regex=_OUTPUT_STR_SCORE_PATTERN,
+        then=Cast(
+            # substring(text, pattern) returns the first capture group.
+            Func(
+                F("output_str"),
+                Value(_OUTPUT_STR_SCORE_PATTERN),
+                function="substring",
+                output_field=TextField(),
+            ),
+            FloatField(),
+        ),
+    ),
     default=None,
     output_field=FloatField(),
 )
@@ -689,6 +725,18 @@ def get_cluster_detail(
         # (powers the failing-vs-working comparison, e.g. voice call compare).
         # Project scope comes off the eval config (project-scoped, PG-resident)
         # instead of the trace/session FK, which points at the dropped tables.
+        from tracer.queries.eval_clustering import eval_pass_threshold
+
+        # "Passing" is the rule that classified the failures: a False verdict
+        # fails, otherwise a score at or above the eval's pass threshold
+        # passes (not only a perfect score).
+        passing_q = (
+            Q(output_bool=True)
+            | Q(output_float__gte=eval_pass_threshold(cluster.eval_config))
+        ) & ~Q(output_bool=False)
+        # One eval config can run on several targets. Only results at the
+        # issue's own target are its reference: a newer pass on another
+        # target has no anchor at this one and would hide the real reference.
         if cluster.eval_target_type == EvalTargetType.SESSION:
             # Session evals anchor to the session (trace NULL): find a
             # passing session and represent it by its latest trace.
@@ -699,9 +747,10 @@ def get_cluster_detail(
                 EvalLogger.objects.filter(
                     custom_eval_config__project_id=cluster.project_id,
                     custom_eval_config_id=cluster.eval_config_id,
+                    target_type=EvalTargetType.SESSION,
                     deleted=False,
                 )
-                .filter(Q(output_bool=True) | Q(output_float__gte=1.0))
+                .filter(passing_q)
                 .exclude(trace_session_id__in=member_session_ids)
                 .order_by("-created_at")
                 .values_list("trace_session_id", flat=True)
@@ -719,13 +768,21 @@ def get_cluster_detail(
             member_ids = _trace_ids_for_cluster(
                 cluster.cluster_id, str(cluster.project_id)
             )
+            # Issues from before the target was recorded have none: take
+            # either target that anchors to a trace.
+            reference_targets = (
+                [cluster.eval_target_type]
+                if cluster.eval_target_type
+                else [EvalTargetType.SPAN, EvalTargetType.TRACE]
+            )
             passing_trace_id = (
                 EvalLogger.objects.filter(
                     custom_eval_config__project_id=cluster.project_id,
                     custom_eval_config_id=cluster.eval_config_id,
+                    target_type__in=reference_targets,
                     deleted=False,
                 )
-                .filter(Q(output_bool=True) | Q(output_float__gte=1.0))
+                .filter(passing_q)
                 .exclude(trace_id__in=member_ids)
                 .order_by("-created_at")
                 .values_list("trace_id", flat=True)
@@ -1072,7 +1129,10 @@ def _trace_ids_for_cluster(cluster_id: str, project_id: str) -> list[str]:
 def _fetch_events_over_time(
     cluster_id: str, days: int = 14, project_id: str | None = None
 ) -> list[EventsOverTimePoint]:
-    """Bucket current occurrences; Omega uses report recorded time."""
+    """Bucket current occurrences and their distinct end users per day.
+
+    Omega uses report recorded time.
+    """
     since = timezone.now() - timedelta(days=days)
     members = _members_with_occurrence_time().filter(
         cluster__cluster_id=cluster_id, occurrence_at__gte=since
@@ -1085,12 +1145,13 @@ def _fetch_events_over_time(
         .annotate(errors=Count("id", distinct=False))
         .order_by("bucket")
     )
+    users_by_day = _users_by_day(cluster_id, project_id, since)
     return [
         EventsOverTimePoint(
             date=row["bucket"].isoformat() if row["bucket"] else "",
             errors=row["errors"],
             passing=0,
-            users=0,
+            users=users_by_day.get(row["bucket"], 0),
         )
         for row in rows
     ]
@@ -1868,6 +1929,7 @@ def _get_trace_totals_batch(
 
 
 _SPAN_EVAL_SCORE_Q = Q(target_type=EvalTargetType.SPAN)
+_SESSION_EVAL_SCORE_Q = Q(target_type=EvalTargetType.SESSION)
 # Shown for a metric with nothing to measure, so an empty window is not read as 0.
 _NO_DATA = "—"
 
@@ -1877,19 +1939,55 @@ def _cluster_eval_score_q(cluster: TraceErrorGroup | None) -> Q:
 
     Scanner and Omega issues average span-level evals. An eval issue is scored
     by its own eval at its own unit; a span-only read gives a trace-target eval
-    issue no score at all. Session issues keep the span read and fall back to
-    ``_avg_session_eval_score``.
+    issue no score at all, and gives a session issue other evaluators' span
+    scores. Session rows carry no trace, so trace reads find nothing and fall
+    back to ``_avg_session_eval_score`` with ``_cluster_session_score_q``.
     """
     if (
         cluster is None
         or cluster.source != ClusterSource.EVAL
-        or cluster.eval_target_type not in (EvalTargetType.TRACE, EvalTargetType.SPAN)
+        or cluster.eval_target_type
+        not in (EvalTargetType.TRACE, EvalTargetType.SPAN, EvalTargetType.SESSION)
     ):
         return _SPAN_EVAL_SCORE_Q
     score_q = Q(target_type=cluster.eval_target_type)
     if cluster.eval_config_id:
         score_q &= Q(custom_eval_config_id=cluster.eval_config_id)
     return score_q
+
+
+def _cluster_session_score_q(cluster: TraceErrorGroup | None) -> Q:
+    """Which session-target EvalLogger rows score a cluster's session members.
+
+    A session eval issue reads only its own eval; any other issue keeps every
+    session-target eval.
+    """
+    if (
+        cluster is not None
+        and cluster.source == ClusterSource.EVAL
+        and cluster.eval_target_type == EvalTargetType.SESSION
+    ):
+        return _cluster_eval_score_q(cluster)
+    return _SESSION_EVAL_SCORE_Q
+
+
+def _cluster_judge_q(cluster: TraceErrorGroup) -> Q:
+    """Which EvalLogger rows explain an issue's member traces and sessions.
+
+    An eval issue explains its own evaluator at its own unit, including
+    sessions. Issues from before the target was recorded have no unit, so
+    their own evaluator is read at every target; another evaluator's
+    reasoning is never quoted. Scanner and Omega issues keep their
+    trace-wide judge selection.
+    """
+    if cluster.source != ClusterSource.EVAL:
+        return Q()
+    if not cluster.eval_target_type:
+        return Q(custom_eval_config_id=cluster.eval_config_id)
+    return Q(
+        target_type=cluster.eval_target_type,
+        custom_eval_config_id=cluster.eval_config_id,
+    )
 
 
 def _get_trace_score(trace_id: str) -> float | None:
@@ -2364,14 +2462,15 @@ def trace_judge(trace_id: str) -> tuple[str | None, float | None]:
 
 def _trace_judges_batch(
     trace_ids: list[str],
+    judge_q: Q = Q(),
 ) -> dict[str, tuple[str | None, float | None]]:
     """Batch form of trace_judge — one query for the whole rep-trace page
-    instead of one per trace. Lowest-scoring eval wins per trace (ordering
-    guarantees the first row seen per trace_id is the explainer)."""
+    instead of one per trace. Lowest-scoring eval matching ``judge_q`` wins
+    per trace (the first row seen per trace_id is the explainer)."""
     if not trace_ids:
         return {}
     rows = (
-        EvalLogger.objects.filter(trace_id__in=trace_ids, deleted=False)
+        EvalLogger.objects.filter(judge_q, trace_id__in=trace_ids, deleted=False)
         .exclude(eval_explanation__isnull=True)
         .exclude(eval_explanation="")
         .annotate(_score=EVAL_SCORE_EXPR)
@@ -2387,14 +2486,17 @@ def _trace_judges_batch(
 
 def _session_judges_batch(
     session_ids: list[str],
+    judge_q: Q = Q(),
 ) -> dict[str, tuple[str | None, float | None]]:
     """Session twin of ``_trace_judges_batch`` — session-target EvalLogger
     rows anchor to trace_session (trace FK NULL), so the per-trace lookup
-    never sees them. Keyed by session_id."""
+    never sees them. Keyed by session_id and restricted by ``judge_q``."""
     if not session_ids:
         return {}
     rows = (
-        EvalLogger.objects.filter(trace_session_id__in=session_ids, deleted=False)
+        EvalLogger.objects.filter(
+            judge_q, trace_session_id__in=session_ids, deleted=False
+        )
         .exclude(eval_explanation__isnull=True)
         .exclude(eval_explanation="")
         .annotate(_score=EVAL_SCORE_EXPR)
@@ -2408,13 +2510,15 @@ def _session_judges_batch(
     return out
 
 
-def _avg_session_eval_score(session_ids: list[str]) -> float | None:
+def _avg_session_eval_score(
+    session_ids: list[str], score_q: Q = _SESSION_EVAL_SCORE_Q
+) -> float | None:
     """Average session-target eval score over the given sessions
-    (bool counted 0/1 via EVAL_SCORE_EXPR)."""
+    (bool counted 0/1 via EVAL_SCORE_EXPR), restricted by ``score_q``."""
     if not session_ids:
         return None
     return EvalLogger.objects.filter(
-        trace_session_id__in=session_ids, target_type=EvalTargetType.SESSION
+        score_q, trace_session_id__in=session_ids, target_type=EvalTargetType.SESSION
     ).aggregate(avg=Avg(EVAL_SCORE_EXPR))["avg"]
 
 
@@ -2426,6 +2530,7 @@ def _build_representative_trace(
     *,
     root: CHSpan | None = None,
     totals: tuple[int | None, int | None, int | None] | None = None,
+    cost: float | None = None,
     score: float | None = None,
     investigation_report: TraceInvestigationReport | None = None,
     selected_receipts: list | None = None,
@@ -2440,7 +2545,8 @@ def _build_representative_trace(
     can be supplied by ``_fetch_representative_traces`` to avoid the per-
     trace round-trips. Pass ``_prefetched=True`` to skip the single-trace
     fallbacks even when a prefetched value is missing (i.e. genuine None
-    rather than "not provided").
+    rather than "not provided"). ``cost`` is the recorded trace cost from
+    ``_get_trace_costs_batch``; it is never estimated from tokens.
 
     ``highlight_terms`` should come from ``_cluster_highlight_terms`` — a
     TF-IDF ranking computed once per cluster — so every trace in the same
@@ -2513,6 +2619,7 @@ def _build_representative_trace(
             model=model,
             input_tokens=prompt_tokens,
             output_tokens=completion_tokens,
+            cost=cost,
         ),
         evidence=TraceEvidence(
             input=input_text,
@@ -2587,6 +2694,7 @@ def _fetch_representative_traces(
     pass_reel: list[dict] | None = None,
     highlight_terms: list[str] | None = None,
     score_q: Q = _SPAN_EVAL_SCORE_Q,
+    judge_q: Q = Q(),
 ) -> list[RepresentativeTrace]:
     """
     Failing traces in the cluster (Overview tab's "Traces affected" list).
@@ -2672,6 +2780,10 @@ def _fetch_representative_traces(
     trace_ids = [str(t.id) for t in deduped]
     roots = _get_root_spans_batch(trace_ids, project_id)
     totals = _get_trace_totals_batch(trace_ids, project_id)
+    # Same recorded cost as the Traces tab; a trace without spans stays null.
+    costs = _get_trace_costs_batch(
+        [tid for tid in trace_ids if tid in totals], project_id
+    )
     scores = _get_trace_scores_batch(trace_ids, score_q)
     reports = _get_investigation_reports_batch(trace_ids, project_id)
     findings_by_trace = (
@@ -2684,8 +2796,8 @@ def _fetch_representative_traces(
         if findings_by_trace is not None
         else {}
     )
-    judges = _trace_judges_batch(trace_ids)
-    session_judges = _session_judges_batch(list(session_by_trace.values()))
+    judges = _trace_judges_batch(trace_ids, judge_q)
+    session_judges = _session_judges_batch(list(session_by_trace.values()), judge_q)
 
     def _judge_for(tid: str) -> tuple[str | None, float | None] | None:
         sid = session_by_trace.get(tid)
@@ -2708,6 +2820,7 @@ def _fetch_representative_traces(
             highlight_terms=highlight_terms,
             root=roots.get(str(trace.id)),
             totals=totals.get(str(trace.id)),
+            cost=costs.get(str(trace.id)),
             score=_score_for(str(trace.id)),
             investigation_report=reports.get(str(trace.id)),
             selected_findings=(
@@ -2771,6 +2884,10 @@ def get_overview(
     pass_reel = _fetch_success_trace_pass_reel(cluster_id, project_id)
     highlight_terms = _cluster_highlight_terms(cluster_id, project_id)
 
+    # An eval issue is scored and explained by its own evaluator; scanner
+    # issues keep the trace-wide judge and the span score average.
+    judge_q = _cluster_judge_q(cluster)
+
     return OverviewResponse(
         events_over_time=_fetch_events_over_time(cluster_id, project_id=project_id),
         pattern_summary=_fetch_pattern_summary(cluster_id, project_id),
@@ -2780,7 +2897,8 @@ def get_overview(
             limit=rep_limit,
             pass_reel=pass_reel,
             highlight_terms=highlight_terms,
-            score_q=_cluster_eval_score_q(cluster),
+            score_q=judge_q or _cluster_eval_score_q(cluster),
+            judge_q=judge_q,
         ),
         representative_total=member_total or 0,
     )
@@ -2805,7 +2923,11 @@ def _percentile(values: list[int], pct: float) -> int:
 
 
 def _fetch_traces_aggregates(
-    cluster_id: str, project_id: str, *, score_q: Q = _SPAN_EVAL_SCORE_Q
+    cluster_id: str,
+    project_id: str,
+    *,
+    score_q: Q = _SPAN_EVAL_SCORE_Q,
+    session_score_q: Q = _SESSION_EVAL_SCORE_Q,
 ) -> TracesAggregates:
     """Compute per-cluster aggregates for the Traces tab stat bar.
 
@@ -2838,7 +2960,7 @@ def _fetch_traces_aggregates(
     # score lives on the session-target rows instead.
     avg_score = _avg_eval_score(trace_ids, score_q)
     if avg_score is None and member_session_ids:
-        avg_score = _avg_session_eval_score(member_session_ids)
+        avg_score = _avg_session_eval_score(member_session_ids, session_score_q)
 
     # Latency percentiles: sum(latency_ms) per trace via CH batch helper.
     totals_by_trace = _get_trace_totals_batch(trace_ids, project_id)
@@ -2871,8 +2993,55 @@ def _fetch_traces_aggregates(
     )
 
 
-# Very rough per-token cost (blended across providers). Callers can refine later.
-_COST_PER_TOKEN = 0.0000037
+def _get_trace_costs_batch(
+    trace_ids: list[str], project_id: str
+) -> dict[str, float | None]:
+    """Recorded whole-trace cost; unknown billable coverage stays null.
+
+    Read only the current page. Use the same nonadditive/repeated-summary
+    rules as Observe trace rollups, without repricing or rounding span costs.
+    """
+    if not trace_ids:
+        return {}
+    with get_reader() as reader:
+        spans = reader.list_by_trace_ids(
+            trace_ids, project_id=project_id, include_heavy=False
+        )
+
+    # Only candidate wrappers need children; do not scan the trace per span.
+    summary_children = {
+        (span.trace_id, span.id): []
+        for span in spans
+        if span.name == SUMMARY_NAME and span.observation_type != "llm"
+    }
+    if summary_children:
+        for span in spans:
+            children = summary_children.get((span.trace_id, span.parent_span_id))
+            if children is not None:
+                children.append(vars(span))
+
+    costs: dict[str, float | None] = {}
+    for span in spans:
+        tid = str(span.trace_id)
+        costs.setdefault(tid, 0.0)
+        attrs = span.attrs_string or {}
+        if attrs.get("fi.usage.contribution") == "none" or is_repeated_usage_summary(
+            vars(span), summary_children.get((span.trace_id, span.id), [])
+        ):
+            continue
+        # Unknown tokenless activity is not an unpriced billable request.
+        has_usage = (
+            (span.total_tokens or 0) > 0
+            or (span.prompt_tokens or 0) > 0
+            or (span.completion_tokens or 0) > 0
+            or span.observation_type == "llm"
+            or attrs.get("fi.usage.scope") == "turn"
+        )
+        if has_usage and (span.cost is None or attrs.get("fi.cost.kind") == "unknown"):
+            costs[tid] = None
+        elif costs[tid] is not None:
+            costs[tid] += span.cost or 0.0
+    return costs
 
 
 def _fetch_trace_rows(
@@ -2882,6 +3051,7 @@ def _fetch_trace_rows(
     offset: int,
     *,
     score_q: Q = _SPAN_EVAL_SCORE_Q,
+    session_score_q: Q = Q(),
 ) -> tuple[list[TracesListRow], int]:
     """Paginated list of traces in the cluster for the AG Grid."""
     base = (
@@ -2904,35 +3074,46 @@ def _fetch_trace_rows(
             str(row["trace_id"]) for row in distinct_traces[offset : offset + limit]
         ]
     else:
-        # Keep the legacy session/span unit; only Omega has finding fan-out.
-        total = base.aggregate(
-            c=Count(Coalesce("trace_id", "trace_session_id"), distinct=True)
-        )["c"]
-        page_ects = list(base[offset : offset + limit * 3])
+        # Eval results can repeat a trace; page the same distinct units we count.
+        # A trace takes precedence over a session, and provenance-only rows
+        # (neither target set) must not consume a pagination slot.
+        distinct_members = (
+            base.exclude(trace_id__isnull=True, trace_session_id__isnull=True)
+            .order_by()
+            .annotate(
+                member_session_id=Case(
+                    When(trace_id__isnull=True, then=F("trace_session_id")),
+                    default=None,
+                )
+            )
+            .values("trace_id", "member_session_id")
+            .annotate(latest=Max("occurrence_at"))
+            .order_by("-latest", "trace_id", "member_session_id")
+        )
+        total = distinct_members.count()
+        page_members = list(distinct_members[offset : offset + limit])
         page_session_ids = [
-            str(e.trace_session_id)
-            for e in page_ects
-            if e.trace_session_id and not e.trace_id
+            str(member["member_session_id"])
+            for member in page_members
+            if member["member_session_id"]
         ]
         rep_map = _session_rep_trace_map(page_session_ids, project_id)
         page_trace_ids = []
         seen: set = set()
-        for ect in page_ects:
-            if ect.trace_id:
-                tid = str(ect.trace_id)
-            elif ect.trace_session_id:
-                tid = rep_map.get(str(ect.trace_session_id))
+        for member in page_members:
+            if member["trace_id"]:
+                tid = str(member["trace_id"])
+            elif member["member_session_id"]:
+                tid = rep_map.get(str(member["member_session_id"]))
                 if not tid:
                     continue
-                session_by_trace[tid] = str(ect.trace_session_id)
+                session_by_trace[tid] = str(member["member_session_id"])
             else:
                 continue
             if tid in seen:
                 continue
             seen.add(tid)
             page_trace_ids.append(tid)
-            if len(page_trace_ids) >= limit:
-                break
 
     # PG Trace where it exists, else CH-backed shim (post-cutover CH-only traces).
     traces_by_id = _resolve_member_traces(
@@ -2945,10 +3126,17 @@ def _fetch_trace_rows(
         return [], total
 
     page_trace_ids = [str(t.id) for t in page_traces]
-    session_judges = _session_judges_batch(list(session_by_trace.values()))
+    session_judges = _session_judges_batch(
+        list(session_by_trace.values()), session_score_q
+    )
 
     # Pre-batch CH/PG lookups: one round-trip each.
     totals_by_trace = _get_trace_totals_batch(page_trace_ids, project_id)
+    # An absent aggregate key means CH found no spans, not zero token usage.
+    # Keep unavailable rows null without another read; tokenless prices still read.
+    costs_by_trace = _get_trace_costs_batch(
+        [tid for tid in page_trace_ids if tid in totals_by_trace], project_id
+    )
     scores_by_trace = _get_trace_scores_batch(page_trace_ids, score_q)
     roots_by_trace = _get_root_spans_batch(page_trace_ids, project_id)
     reports_by_trace = _get_investigation_reports_batch(page_trace_ids, project_id)
@@ -2986,7 +3174,7 @@ def _fetch_trace_rows(
                 timestamp=trace.created_at,
                 latency_ms=latency,
                 tokens=tokens if tokens else None,
-                cost=round(tokens * _COST_PER_TOKEN, 6) if tokens else None,
+                cost=costs_by_trace.get(tid),
                 score=score,
                 turns=turns,
             )
@@ -3008,9 +3196,17 @@ def get_traces_tab(
 
     project_id = str(cluster.project_id)
     score_q = _cluster_eval_score_q(cluster)
-    aggregates = _fetch_traces_aggregates(cluster_id, project_id, score_q=score_q)
+    session_score_q = _cluster_session_score_q(cluster)
+    aggregates = _fetch_traces_aggregates(
+        cluster_id, project_id, score_q=score_q, session_score_q=session_score_q
+    )
     rows, total = _fetch_trace_rows(
-        cluster_id, project_id, limit=limit, offset=offset, score_q=score_q
+        cluster_id,
+        project_id,
+        limit=limit,
+        offset=offset,
+        score_q=score_q,
+        session_score_q=session_score_q,
     )
     return TracesTabResponse(aggregates=aggregates, traces=rows, total=total)
 
@@ -3149,18 +3345,24 @@ def _fetch_trend_metrics(
         project_id, cluster_source, prev_start, cur_start, omega=omega
     )
 
-    cur_numerator = len(set(cur_traces)) if omega else len(cur_traces)
-    prev_numerator = len(set(prev_traces)) if omega else len(prev_traces)
+    # Eval rates use distinct project traces as their denominator, not eval rows.
+    # Keep raw membership occurrences intact for the other metrics.
+    use_distinct_traces = omega or cluster_source == ClusterSource.EVAL
+    cur_numerator = len(set(cur_traces)) if use_distinct_traces else len(cur_traces)
+    prev_numerator = len(set(prev_traces)) if use_distinct_traces else len(prev_traces)
     cur_err_rate = (100.0 * cur_numerator / cur_total) if cur_total else 0.0
     prev_err_rate = (100.0 * prev_numerator / prev_total) if prev_total else 0.0
 
     # Session clusters score on session-target eval rows, not span evals. A real
     # 0.0 average is a score, so fall back only on None.
     score_q = _cluster_eval_score_q(cluster)
+    session_score_q = _cluster_session_score_q(cluster)
 
     def _window_score(traces: list[str], sessions: list[str]) -> float | None:
         score = _avg_eval_score(traces, score_q)
-        return _avg_session_eval_score(sessions) if score is None else score
+        if score is None:
+            return _avg_session_eval_score(sessions, session_score_q)
+        return score
 
     cur_score = _window_score(cur_traces, cur_sessions)
     prev_score = _window_score(prev_traces, prev_sessions)
@@ -3192,25 +3394,8 @@ def _fetch_trend_metrics(
     ]
 
 
-def _fetch_events_over_time_with_passing(
-    cluster_id: str, project_id: str, days: int
-) -> list[EventsOverTimePoint]:
-    """Daily bucket: cluster errors + project-wide passing + users."""
-    since = timezone.now() - timedelta(days=days)
-
-    err_rows = (
-        _members_with_occurrence_time()
-        .filter(
-            cluster__cluster_id=cluster_id,
-            cluster__project_id=project_id,
-            occurrence_at__gte=since,
-        )
-        .annotate(bucket=TruncDate("occurrence_at"))
-        .values("bucket")
-        .annotate(errors=Count("id"))
-    )
-    errors_by_day: dict = {row["bucket"]: row["errors"] for row in err_rows}
-
+def _users_by_day(cluster_id: str, project_id: str | None, since: datetime) -> dict:
+    """{day: distinct end users} across the cluster's occurrences since ``since``."""
     # Distinct end users affected per day (via the cluster's traces).
     # Was: ObservationSpan.filter(
     #          trace__error_cluster_traces__cluster__cluster_id=,
@@ -3226,22 +3411,21 @@ def _fetch_events_over_time_with_passing(
     # source-aware timestamp (report time for Omega, junction time otherwise),
     # while affected users are distinct within each day bucket.
     users_by_day: dict[object, set] = {}
+    members = _members_with_occurrence_time().filter(
+        cluster__cluster_id=cluster_id, occurrence_at__gte=since
+    )
+    if project_id is not None:
+        members = members.filter(cluster__project_id=project_id)
     ect_rows_in_window = list(
-        _members_with_occurrence_time()
-        .filter(
-            cluster__cluster_id=cluster_id,
-            cluster__project_id=project_id,
-            occurrence_at__gte=since,
-        )
-        .values_list("trace_id", "trace_session_id", "occurrence_at")
+        members.values_list("trace_id", "trace_session_id", "occurrence_at")
     )
     if ect_rows_in_window:
         # trace_id → list of bucket-dates (one ECT row may pair a trace
         # with multiple buckets; that's preserved 1:1 in the legacy join).
         # Use timezone.localtime to match Django's TruncDate semantics
         # (which converts to the active timezone before truncating —
-        # otherwise UTC-side .date() can disagree with the err_rows /
-        # pass_rows keys, breaking the day-bucket union below).
+        # otherwise UTC-side .date() can disagree with the callers' TruncDate
+        # bucket keys, breaking their day-bucket union).
         # Session members resolve to their session's rep trace first.
         window_session_ids = [str(s) for t, s, _ in ect_rows_in_window if s and not t]
         rep_map = _session_rep_trace_map(window_session_ids, project_id)
@@ -3269,7 +3453,28 @@ def _fetch_events_over_time_with_passing(
                 for bucket in buckets:
                     users_by_day.setdefault(bucket, set()).add(uid)
 
-    users_by_day = {bucket: len(users) for bucket, users in users_by_day.items()}
+    return {bucket: len(users) for bucket, users in users_by_day.items()}
+
+
+def _fetch_events_over_time_with_passing(
+    cluster_id: str, project_id: str, days: int
+) -> list[EventsOverTimePoint]:
+    """Daily bucket: cluster errors + project-wide passing + users."""
+    since = timezone.now() - timedelta(days=days)
+
+    err_rows = (
+        _members_with_occurrence_time()
+        .filter(
+            cluster__cluster_id=cluster_id,
+            cluster__project_id=project_id,
+            occurrence_at__gte=since,
+        )
+        .annotate(bucket=TruncDate("occurrence_at"))
+        .values("bucket")
+        .annotate(errors=Count("id"))
+    )
+    errors_by_day: dict = {row["bucket"]: row["errors"] for row in err_rows}
+    users_by_day = _users_by_day(cluster_id, project_id, since)
 
     # Project-wide passing investigations per day — context for
     # the dual-axis chart
@@ -3314,10 +3519,10 @@ def _fetch_score_trends(
 ) -> list[ScoreTrend]:
     """Per-CustomEvalConfig.name score sparkline over the last ``days``.
 
-    Reads the members and eval rows the score cards read: members that fall in
-    the window, scored by ``_cluster_eval_score_q``. Splits the window in half:
-    first half = prev, second half = current. Daily sparkline is average
-    ``output_float`` per day over the full window.
+    Reads members that fall in the window, scored by ``_cluster_eval_score_q``.
+    Only non-deleted eval rows created in the same window contribute. Splits
+    the window in half: first half = prev, second half = current. Daily
+    sparkline is average ``output_float`` per day over the full window.
     """
     now = timezone.now()
     since = now - timedelta(days=days)
@@ -3337,6 +3542,8 @@ def _fetch_score_trends(
     rows = list(
         EvalLogger.objects.filter(
             member_q,
+            created_at__gte=since,
+            deleted=False,
             custom_eval_config__isnull=False,
         )
         .annotate(day=TruncDate("created_at"), score=EVAL_SCORE_EXPR)
@@ -3492,14 +3699,15 @@ def _fetch_sidebar_ai_metadata(
     # Otherwise show the cluster-wide average (current no-selection default).
     # Session clusters score on session-target eval rows, not span evals.
     score_q = _cluster_eval_score_q(cluster)
+    session_score_q = _cluster_session_score_q(cluster)
     if selected_trace_id:
         eval_score = _avg_eval_score([selected_trace_id], score_q)
         if eval_score is None and selected_session_id:
-            eval_score = _avg_session_eval_score([selected_session_id])
+            eval_score = _avg_session_eval_score([selected_session_id], session_score_q)
     else:
         eval_score = _avg_eval_score(trace_ids, score_q)
         if eval_score is None and session_ids:
-            eval_score = _avg_session_eval_score(session_ids)
+            eval_score = _avg_session_eval_score(session_ids, session_score_q)
     if eval_score is not None:
         eval_score = round(eval_score, 4)
 
@@ -3510,6 +3718,28 @@ def _fetch_sidebar_ai_metadata(
         eval_score=eval_score,
         trace_id=focus_trace_id,
     )
+
+
+def _choice_label(text: str) -> str | None:
+    """The ``choice`` label of a dict stored as text, else None.
+
+    Reads JSON first, then a Python-repr dict. Plain labels, free text and
+    dicts without a text ``choice`` return None.
+    """
+    stripped = text.strip()
+    if not stripped.startswith("{"):
+        return None
+    try:
+        parsed = json.loads(stripped)
+    except (ValueError, RecursionError):
+        try:
+            parsed = ast.literal_eval(stripped)
+        except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+            return None
+    if not isinstance(parsed, dict):
+        return None
+    choice = parsed.get("choice")
+    return choice if isinstance(choice, str) and choice else None
 
 
 def _fetch_sidebar_evaluations(
@@ -3593,6 +3823,8 @@ def _fetch_sidebar_evaluations(
         value: str | None = None
         if not has_floats and g["strs"]:
             value = Counter(g["strs"]).most_common(1)[0][0]
+            # A choices eval stores {"score": …, "choice": …}: show the label.
+            value = _choice_label(value) or value
         elif not has_floats and g["bools"]:
             # For pure pass/fail evals, surface the verdict as the value so
             # the chip has something meaningful to render.
@@ -3902,22 +4134,40 @@ def get_deep_analysis(
     if not _cluster_has_trace(cluster_id, trace_id, project_ids):
         return None
 
-    analysis = (
-        TraceErrorAnalysis.objects.filter(trace_id=trace_id)
-        .order_by("-analysis_date")
-        .first()
+    from tracer.services.analysis_result_snapshot import trace_snapshot
+
+    lifecycle, analysis = trace_snapshot(trace_id, project_ids=project_ids)
+    if lifecycle is not None and lifecycle.status != "completed":
+        return DeepAnalysisResponse(
+            status=deep_analysis_state.background_status(lifecycle),
+            trace_id=str(trace_id),
+            code=lifecycle.reason_code or None
+            if lifecycle.status == "aborted"
+            else None,
+        )
+
+    # Completed background status and children belong to the same pinned UUID.
+    # Only legacy traces retain the cache-based status contract.
+    status = (
+        ("done" if analysis else "failed")
+        if lifecycle is not None
+        else deep_analysis_state.status(
+            str(trace_id), has_analysis=bool(analysis), project_ids=project_ids
+        )
     )
-    status = deep_analysis_state.status(str(trace_id), has_analysis=bool(analysis))
 
     if not analysis or status != "done":
         return DeepAnalysisResponse(
             status=status,
             trace_id=str(trace_id),
+            code=deep_analysis_state.failure_code(
+                str(trace_id), project_ids=project_ids
+            )
+            if status == "failed"
+            else None,
         )
 
-    details = list(
-        TraceErrorDetail.objects.filter(analysis=analysis).order_by("error_id")
-    )
+    details = analysis._analysis_snapshot_details
     root_causes = _build_root_causes(details)
     recommendations = _build_recommendations(details, root_causes)
 
@@ -3958,15 +4208,15 @@ def dispatch_deep_analysis(
     - If cached results already exist and ``force=False``, return a
       ``done`` response without dispatching — the frontend will just
       scroll to the existing panel.
+    - If background analysis is disabled, return ``temporarily_unavailable``
+      without claiming a running marker or dispatching (including forced runs).
+      The view maps this to its existing HTTP 400 error envelope.
     - If the trace is already running, return ``running`` without
       re-dispatching (idempotent double-click protection).
     - Otherwise: claim the running marker and dispatch the Temporal
-      activity. The view returns 202 ``running``.
+      activity. The view returns HTTP 200 with status ``running``.
     """
-    # Import here to avoid pulling the Temporal runtime into module-load
-    # time for everything that imports `feed.py`. Task modules can have
-    # slow transitive imports (agentic_eval, CH vector clients, etc).
-    from tracer.tasks import run_deep_analysis_on_demand
+    from tfc.capabilities.background_analysis import background_analysis_enabled
 
     if not _cluster_qs_for_access(cluster_id, project_ids).exists():
         return None
@@ -3974,12 +4224,58 @@ def dispatch_deep_analysis(
     if not _cluster_has_trace(cluster_id, trace_id, project_ids):
         return None
 
-    has_analysis = TraceErrorAnalysis.objects.filter(trace_id=trace_id).exists()
+    lifecycle = background_analysis_state.get_state(trace_id, project_ids=project_ids)
+    replace_partial = False
+    if lifecycle is not None:
+        if lifecycle.status == "completed" and not force:
+            return DeepAnalysisDispatchResponse(status="done", trace_id=str(trace_id))
+    else:
+        has_analysis = TraceErrorAnalysis.objects.filter(trace_id=trace_id).exists()
 
-    # Idempotent click: cached result exists and user didn't ask for a
-    # re-run → no-op, frontend reads existing results from GET.
-    if has_analysis and not force:
-        return DeepAnalysisDispatchResponse(status="done", trace_id=str(trace_id))
+        # Idempotent click: cached result exists and user didn't ask for a
+        # re-run → no-op, frontend reads existing results from GET.
+        state = deep_analysis_state.status(
+            str(trace_id), has_analysis=has_analysis, project_ids=project_ids
+        )
+        if state == "done" and not force:
+            return DeepAnalysisDispatchResponse(status="done", trace_id=str(trace_id))
+        # Retry must replace partial findings, not have the legacy worker skip
+        # the run merely because a pre-abort analysis row exists.
+        replace_partial = state == "failed" and has_analysis
+
+    # One switch dominates both dispatch paths below, including forced runs.
+    if not background_analysis_enabled():
+        return DeepAnalysisDispatchResponse(
+            status="temporarily_unavailable", trace_id=str(trace_id)
+        )
+
+    if lifecycle is not None:
+        generation = background_analysis_state.begin(lifecycle.project_id, trace_id)
+        if generation is not None:
+            try:
+                # Keep the existing legacy retry worker; only its lifecycle is
+                # generation-fenced. Always replace aborted/previous findings.
+                from tracer.tasks import run_deep_analysis_on_demand
+
+                run_deep_analysis_on_demand.delay(
+                    str(trace_id),
+                    True,
+                    project_id=str(lifecycle.project_id),
+                    generation=generation,
+                )
+            except Exception:
+                background_analysis_state.abort(
+                    lifecycle.project_id,
+                    trace_id,
+                    generation,
+                    "analysis_dispatch_failed",
+                    expected_status="retry_pending",
+                )
+                raise
+        return DeepAnalysisDispatchResponse(status="running", trace_id=str(trace_id))
+
+    # Keep the Temporal runtime out of disabled/cached requests.
+    from tracer.tasks import run_deep_analysis_on_demand
 
     # Atomic claim (cache.add): a second click while a run is in flight gets
     # False and returns ``running`` without re-dispatching. ``force`` re-runs
@@ -3988,6 +4284,6 @@ def dispatch_deep_analysis(
     if not claimed and not force:
         return DeepAnalysisDispatchResponse(status="running", trace_id=str(trace_id))
 
-    run_deep_analysis_on_demand.delay(str(trace_id), bool(force))
+    run_deep_analysis_on_demand.delay(str(trace_id), bool(force or replace_partial))
 
     return DeepAnalysisDispatchResponse(status="running", trace_id=str(trace_id))

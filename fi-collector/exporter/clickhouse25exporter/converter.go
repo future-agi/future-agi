@@ -15,12 +15,15 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/adapter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/detid"
+	"github.com/future-agi/future-agi/fi-collector/pkg/normalization"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -67,7 +70,7 @@ const (
 var knownObservationTypes = map[string]struct{}{
 	"tool": {}, "chain": {}, "llm": {}, "retriever": {}, "embedding": {},
 	"agent": {}, "reranker": {}, "guardrail": {}, "evaluator": {},
-	"conversation": {}, "unknown": {},
+	"conversation": {}, "unknown": {}, "internal": {},
 }
 
 // Pricer computes token-based cost for spans that carried no user cost
@@ -161,6 +164,7 @@ var spanKindSynonyms = map[string]string{
 	"embeddings":       "embedding",
 	"execute_tool":     "tool",
 	"invoke":           "chain",
+	"invoke_agent":     "agent",
 }
 
 // resolveObservationType mirrors Python get_observation_type ∘ normalize_span_kind:
@@ -227,6 +231,10 @@ func Convert(traces ptrace.Traces) ([]map[string]any, error) {
 // the CH side via ReplacingMergeTree(version), so only within-batch dedup is
 // done here.
 func ConvertWithIdentities(ctx context.Context, traces ptrace.Traces, pricer Pricer) ([]map[string]any, *curatedwriter.Batch, error) {
+	if reason := normalization.IngestionHold(traces); reason != "" {
+		return nil, nil, fmt.Errorf("%s", reason)
+	}
+	normalization.Prepare(traces)
 	rows := make([]map[string]any, 0, traces.SpanCount())
 	ids := curatedwriter.NewBatch()
 
@@ -359,7 +367,30 @@ func spanToRow(
 	// OpenRouter) is priced with OpenRouter's own rate for its model slug
 	// when that slug has no exact key.
 	cost := hot.Cost
-	if !hot.CostUserSet && pricer != nil {
+	nonAdditive := normalization.NonAdditive(span.Attributes())
+	trackCost := nonAdditive || attrsStr["fi.normalization.profile"] != ""
+	if nonAdditive {
+		cost = 0
+	}
+	// Two-count pricing cannot account for separately billed cache or reasoning
+	// units. For qualified native producers, retain the observed usage but mark
+	// monetary coverage unknown rather than manufacturing an uncached USD price.
+	// Explicit reported USD (including zero) still takes precedence. Unqualified
+	// legacy producers keep their existing compatibility path.
+	unknownDetailedCost := false
+	if trackCost && !nonAdditive && !hot.CostUserSet {
+		for _, key := range []string{
+			"gen_ai.usage.cache_read_tokens", "gen_ai.usage.cache_write_tokens",
+			"gen_ai.usage.cache_read.input_tokens", "gen_ai.usage.cache_write.input_tokens",
+			"gen_ai.usage.output_tokens.reasoning", "gen_ai.usage.reasoning.output_tokens",
+		} {
+			if _, exists := attrsNum[key]; exists {
+				unknownDetailedCost = true
+				break
+			}
+		}
+	}
+	if !nonAdditive && !hot.CostUserSet && !unknownDetailedCost && pricer != nil {
 		var c float64
 		var ok bool
 		if fromOpenRouter || adapter.ProviderIs(attrsStr, openRouterName) {
@@ -369,6 +400,16 @@ func spanToRow(
 		}
 		if ok {
 			cost = c
+			if trackCost {
+				attrsStr["fi.cost.kind"] = "estimated"
+			}
+		}
+	}
+	if trackCost {
+		if nonAdditive || (!hot.CostUserSet && attrsStr["fi.cost.kind"] != "estimated") {
+			attrsStr["fi.cost.kind"] = "unknown"
+		} else if hot.CostUserSet && attrsStr["fi.cost.kind"] == "" {
+			attrsStr["fi.cost.kind"] = "provider_reported"
 		}
 	}
 
@@ -420,10 +461,19 @@ func spanToRow(
 	// Inputs/outputs: the first non-empty content key in inputContentKeys /
 	// outputContentKeys. OpenInference `input.value` / `output.value` still
 	// win; the GenAI keys after them fill spans that only carry those
-	// (OpenRouter Broadcast, plain OTel GenAI). The source attribute stays
-	// where adapter.Split put it; this only fills the hot column.
+	// (OpenRouter Broadcast, plain OTel GenAI, OTel GenAI tool spans). The
+	// source attribute stays where adapter.Split put it; this only fills the
+	// hot column.
 	input := contentValue(attrsStr, overflow, inputContentKeys)
 	output := contentValue(attrsStr, overflow, outputContentKeys)
+	// OpenLLMetry's legacy indexed messages are a last resort. An explicit
+	// input.value/output.value (even empty) must not expose alternate content.
+	if _, explicit := span.Attributes().Get("input.value"); input == "" && !explicit {
+		input = indexedMessageContent(span.Attributes(), "gen_ai.prompt.")
+	}
+	if _, explicit := span.Attributes().Get("output.value"); output == "" && !explicit {
+		output = indexedMessageContent(span.Attributes(), "gen_ai.completion.")
+	}
 
 	// CH-derived dimensions (P3b step2): stamp the DETERMINISTIC end_user_id /
 	// trace_session_id so collector-written spans unify with the read-side
@@ -822,22 +872,27 @@ func stringFromMap(m map[string]string, key string) string {
 //     which OpenRouter Broadcast also sets.
 //   - gen_ai.input.messages / gen_ai.output.messages: current OTel GenAI, a
 //     JSON string of the messages.
+//   - gen_ai.tool.call.arguments / gen_ai.tool.call.result: an OTel GenAI
+//     execute_tool span's arguments and result (the gateway's MCP tools/call
+//     spans carry nothing else). Last, so any message key above wins.
 //
-// Only these exact keys are read. Indexed keys such as gen_ai.prompt.0.content
-// (OpenLLMetry) and gen_ai.input.messages.0.message.role (traceAI's flattened
-// messages) don't match.
+// These lists match exact keys only. OpenLLMetry's indexed prompt/completion
+// messages are handled separately as a fallback by indexedMessageContent.
+// traceAI's gen_ai.input.messages.0.message.role still doesn't match here.
 var (
 	inputContentKeys = []string{
 		"input.value",
 		"span.input",
 		"gen_ai.prompt",
 		"gen_ai.input.messages",
+		"gen_ai.tool.call.arguments",
 	}
 	outputContentKeys = []string{
 		"output.value",
 		"span.output",
 		"gen_ai.completion",
 		"gen_ai.output.messages",
+		"gen_ai.tool.call.result",
 	}
 )
 
@@ -856,6 +911,64 @@ func contentValue(attrsStr map[string]string, overflow map[string]any, keys []st
 		}
 	}
 	return ""
+}
+
+// indexedMessageContent mirrors the OpenLLMetry adapter's indexed extraction:
+// numeric message order, JSON-decoded content, and all other fields retained
+// verbatim (including tool_calls.N.* and tool_call_id). Read pdata rather than
+// one split tier so structured, numeric and boolean fields are not lost. Only
+// the hot content is synthesized; the original attributes remain untouched.
+func indexedMessageContent(attrs pcommon.Map, prefix string) string {
+	byIndex := make(map[int]map[string]any)
+	attrs.Range(func(key string, value pcommon.Value) bool {
+		if !strings.HasPrefix(key, prefix) {
+			return true
+		}
+		index, field, ok := strings.Cut(strings.TrimPrefix(key, prefix), ".")
+		if !ok || index == "" || field == "" {
+			return true
+		}
+		for _, digit := range index {
+			if digit < '0' || digit > '9' {
+				return true
+			}
+		}
+		i, err := strconv.Atoi(index)
+		if err != nil {
+			return true
+		}
+		if byIndex[i] == nil {
+			byIndex[i] = map[string]any{"role": "user", "content": ""}
+		}
+		v := value.AsRaw()
+		if field == "content" && value.Type() == pcommon.ValueTypeStr {
+			// Preserve valid JSON, including large numbers, without a float64
+			// round-trip. Invalid JSON is ordinary message text.
+			if raw := json.RawMessage(value.Str()); json.Valid(raw) {
+				v = raw
+			}
+		}
+		byIndex[i][field] = v
+		return true
+	})
+	if len(byIndex) == 0 {
+		return ""
+	}
+	indices := make([]int, 0, len(byIndex))
+	for index := range byIndex {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	// Sparse producer indices must not allocate index-sized arrays.
+	messages := make([]map[string]any, 0, len(indices))
+	for _, index := range indices {
+		messages = append(messages, byIndex[index])
+	}
+	encoded, err := json.Marshal(messages)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 // overflowAsString lifts the value at `key` from the overflow map and
@@ -894,23 +1007,16 @@ func statusString(c ptrace.StatusCode) string {
 // string (not []any) because the CH `span_events String` column stores it
 // verbatim — saves a re-serialise on the writer side.
 func spanEventsJSON(events ptrace.SpanEventSlice) string {
-	if events.Len() == 0 {
-		return "[]"
-	}
-	var b strings.Builder
-	b.WriteByte('[')
+	values := make([]map[string]any, 0, events.Len())
 	for i := 0; i < events.Len(); i++ {
-		if i > 0 {
-			b.WriteByte(',')
-		}
 		ev := events.At(i)
-		b.WriteByte('{')
-		fmt.Fprintf(&b, `"name":%q,"timestamp":%q`,
-			ev.Name(), formatDateTime64(ev.Timestamp().AsTime()))
-		b.WriteByte('}')
+		values = append(values, map[string]any{
+			"name": ev.Name(), "timestamp": formatDateTime64(ev.Timestamp().AsTime()),
+			"attributes": ev.Attributes().AsRaw(), "dropped_attributes_count": ev.DroppedAttributesCount(),
+		})
 	}
-	b.WriteByte(']')
-	return b.String()
+	encoded, _ := json.Marshal(values) // only finite sanitized scalars
+	return string(encoded)
 }
 
 // formatDateTime64 emits CH's DateTime64(6) text form: "YYYY-MM-DD HH:MM:SS.ffffff".

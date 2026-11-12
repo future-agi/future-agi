@@ -106,9 +106,9 @@ async function main() {
     );
     const sdkCodePayload = await responseJson(sdkCodeResponse);
     await waitForVisibleText(page, "New Projects", { exact: true });
-    await waitForVisibleText(page, "Install Dependencies", { exact: true });
+    await waitForVisibleText(page, "Install dependencies", { exact: true });
     await waitForVisibleText(page, "Load API keys", { exact: true });
-    await waitForVisibleText(page, "Setup Telemetry", { exact: true });
+    await waitForVisibleText(page, "Set up telemetry", { exact: true });
     await assertPrototypeDrawerHasPlaceholders(page);
     assert(
       !browserMutations.some((request) => request.includes("/tracer/project/")),
@@ -199,9 +199,9 @@ async function main() {
           add_prototype_behavior:
             "opens setup SDK drawer; no browser project create mutation",
           sdk_sections_present: [
-            "Install Dependencies",
+            "Install dependencies",
             "Load API keys",
-            "Setup Telemetry",
+            "Set up telemetry",
           ],
           sdk_response_sections: Object.keys(
             sdkCodePayload?.result || sdkCodePayload || {},

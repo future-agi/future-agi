@@ -3,45 +3,52 @@ import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import ButtonBase from "@mui/material/ButtonBase";
 import Typography from "@mui/material/Typography";
-import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import { isPrototypeMode } from "src/utils/prototype";
 
+// Each prompt must work when sent unedited: the trace drawer's Imagine panel
+// sends on click, and a new workspace may have no traces, agents or data yet.
+// So no blanks to fill in; the assistant asks for what it needs, and each
+// prompt says what to do when there is no data.
 const QUICK_ACTIONS = [
   {
-    icon: "mdi:alert-circle-outline",
+    icon: "solar:danger-circle-linear",
     label: "Analyse my error feed",
     prompt:
-      "Analyse the errors in my error feed from [time range — e.g. last 24 hours, last 7 days]. Focus on [scope — e.g. a specific project, agent, or error type]. Group similar failures together, identify the root cause for each group from the trace context, and suggest the most likely fix for each one. Prioritise by [what matters most — e.g. trace impact, recency, severity].",
+      "Summarise the errors in my error feed from the last 7 days. Group similar errors, explain the likely cause of each group and suggest a fix. If there are no errors or traces yet, tell me how to start sending traces.",
   },
   {
-    icon: "mdi:view-dashboard-outline",
+    icon: "solar:widget-4-linear",
     label: "Create an Imagine view",
+    // Only the trace drawer's Imagine tab can build a view, so elsewhere the
+    // prompt names the Imagine button before any questions are asked.
     prompt:
-      "Open a recent trace and create a new Imagine view in the trace detail drawer. Surface [which span attributes you want to see — e.g. system prompt, user input, tool calls, retrieved context, model output, latency] in a [layout — e.g. side-by-side, stacked, table] so I can [what you're trying to check at a glance]. Save it so I can reuse it across traces.",
+      "Help me create an Imagine view that shows the parts of a trace I care about at a glance. If you can't build it from this chat, tell me to open a trace and click Imagine in its detail view. Otherwise ask me what I want to see. If I have no traces yet, tell me how to send my first one.",
   },
   {
-    icon: "mdi:database-outline",
+    icon: "solar:database-linear",
     label: "Build a dataset",
     prompt:
-      "Build a dataset from my traces in [time range — e.g. last 7 days, this month]. Filter to traces where [filter criteria — e.g. user input mentions a keyword, latency exceeds X, evaluation score below Y]. Pull [which fields to extract — e.g. user message, retrieved context, tool calls, final response] into separate columns. I want to use it for [purpose — e.g. regression testing, fine-tuning, eval baseline].",
+      "Help me build a dataset from my traces. First ask me which time range and what kind of traces to include. If I have no traces yet, tell me how to start sending them, or another way to create a dataset, such as uploading a file.",
   },
   {
-    icon: "mdi:clipboard-check-outline",
+    icon: "solar:checklist-minimalistic-linear",
     label: "Create an evaluation",
     prompt:
-      "Create an evaluation that checks [what quality you want to measure — e.g. groundedness, factual accuracy, tone, format compliance, instruction following]. My agent does [brief description of what the agent does]. Score each response from 0 to 1 and flag responses that fail because [the failure mode you care about most]. Run it on [scope — e.g. last 100 traces, a specific dataset].",
+      "Help me create an evaluation for my AI agent. First ask me what the agent does and what I want to check, such as accuracy or tone. Then suggest an evaluation and what to run it on. If I don't have data to run it on yet, tell me what I need.",
   },
   {
-    icon: "mdi:play-circle-outline",
+    icon: "solar:play-circle-linear",
     label: "Run simulation for my agent",
     prompt:
-      "Run a simulation against [which agent — e.g. my support agent, the checkout assistant]. Generate around [number] multi-turn conversations covering [scenarios you want to stress-test — e.g. happy path, edge cases, adversarial inputs, specific topics]. Show me which conversations the agent failed to resolve and what the common failure modes look like.",
+      "Help me run a simulation for my agent. First ask me which agent to test and what situations to cover. If I have no agent set up yet, tell me how to add one.",
   },
 ];
 
+// The settled prototype-only starter action is removed; real actions are unchanged.
+
 export default function QuickActions({ onAction }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
+  const actions = isPrototypeMode() ? [] : QUICK_ACTIONS;
 
   return (
     <Box
@@ -54,7 +61,7 @@ export default function QuickActions({ onAction }) {
         mx: "auto",
       }}
     >
-      {QUICK_ACTIONS.map((action) => (
+      {actions.map((action) => (
         <ButtonBase
           key={action.label}
           onClick={() => onAction?.(action.prompt)}
@@ -66,18 +73,12 @@ export default function QuickActions({ onAction }) {
             py: 1,
             borderRadius: "12px",
             border: 1,
-            borderColor: isDark
-              ? alpha(theme.palette.common.white, 0.1)
-              : alpha(theme.palette.common.black, 0.1),
+            borderColor: "border.default",
             bgcolor: "transparent",
             transition: "all 0.15s ease",
             "&:hover": {
-              bgcolor: isDark
-                ? alpha(theme.palette.common.white, 0.04)
-                : alpha(theme.palette.common.black, 0.03),
-              borderColor: isDark
-                ? alpha(theme.palette.common.white, 0.2)
-                : alpha(theme.palette.common.black, 0.2),
+              bgcolor: "action.hover",
+              borderColor: "border.default",
             },
           }}
         >

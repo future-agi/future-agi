@@ -1,9 +1,12 @@
 import json
+from pathlib import Path
 
-with open("accounts/demo_dataset/table_data.json") as f:
+DEMO_DATASET = Path(__file__).resolve().parent / "demo_dataset"
+
+with (DEMO_DATASET / "table_data.json").open() as f:
     dataset_data = json.load(f)
 
-with open("accounts/demo_dataset/run_prompt_config.json") as f:
+with (DEMO_DATASET / "run_prompt_config.json").open() as f:
     run_prompt_config = json.load(f)
 
 prompt_config = [
@@ -32,8 +35,8 @@ prompt_config = [
     }
 ]
 
-with open("accounts/demo_dataset/experiment.json") as f:
+with (DEMO_DATASET / "experiment.json").open() as f:
     experiment_data = json.load(f)
 
-with open("accounts/demo_dataset/img_dataset_data.json") as f:
+with (DEMO_DATASET / "img_dataset_data.json").open() as f:
     image_dataset_data = json.load(f)

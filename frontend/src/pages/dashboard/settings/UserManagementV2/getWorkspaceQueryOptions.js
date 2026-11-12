@@ -1,8 +1,10 @@
 //
 import axios, { endpoints } from "src/utils/axios";
 
+export const workspaceDirectoryKey = ["Workspace-detail"];
+
 export const getWorkspaceQueryKey = (pageNumber, sort, searchQuery) => {
-  return ["Workspace-detail", pageNumber, sort, searchQuery];
+  return [...workspaceDirectoryKey, pageNumber, sort, searchQuery];
 };
 
 export const getWorkspaceQueryOptions = (
@@ -17,7 +19,7 @@ export const getWorkspaceQueryOptions = (
           page: pageNumber + 1,
           sort: sort,
           search: search,
-          limit: 10,
+          limit: 20,
         },
       }),
     staleTime: Infinity,

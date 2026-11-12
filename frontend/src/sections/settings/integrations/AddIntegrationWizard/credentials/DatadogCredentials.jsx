@@ -20,7 +20,6 @@ import { DATADOG_SITES } from "../../constants";
 export default function DatadogCredentials({ data, onUpdate, onNext, onBack }) {
   const [site, setSite] = useState(data.credentials?.site || "us1");
   const [apiKey, setApiKey] = useState(data.credentials?.api_key || "");
-  const [appKey, setAppKey] = useState(data.credentials?.app_key || "");
   const [showApiKey, setShowApiKey] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
 
@@ -35,11 +34,7 @@ export default function DatadogCredentials({ data, onUpdate, onNext, onBack }) {
     }
     setFieldErrors({});
 
-    const credentials = {
-      api_key: apiKey.trim(),
-      site,
-      app_key: appKey.trim(),
-    };
+    const credentials = { api_key: apiKey.trim(), site };
 
     validate(
       { platform: "datadog", credentials },
@@ -103,17 +98,6 @@ export default function DatadogCredentials({ data, onUpdate, onNext, onBack }) {
         }}
       />
 
-      <TextField
-        label="Application Key (Optional)"
-        value={appKey}
-        onChange={(e) => setAppKey(e.target.value)}
-        size="small"
-        fullWidth
-        type="password"
-        helperText="Optional — needed for creating Datadog dashboard templates"
-        placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-      />
-
       {error && (
         <Alert severity="error">
           {getErrorMessage(error, "Failed to validate credentials")}
@@ -125,7 +109,9 @@ export default function DatadogCredentials({ data, onUpdate, onNext, onBack }) {
           size="small"
           variant="outlined"
           onClick={onBack}
-          startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
+          startIcon={
+            <Iconify icon="solar:arrow-left-linear" width={16} height={16} />
+          }
           sx={backButtonSx}
         >
           Back
@@ -136,7 +122,6 @@ export default function DatadogCredentials({ data, onUpdate, onNext, onBack }) {
           size="small"
           loading={isPending}
           onClick={handleValidate}
-          sx={{ fontWeight: 500 }}
         >
           Validate & Continue
         </LoadingButton>

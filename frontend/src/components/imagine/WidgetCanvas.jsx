@@ -22,6 +22,7 @@ export default function WidgetCanvas({
   emptyState,
   chatRef,
   traceId,
+  projectId,
 }) {
   // Cache lookup function for dynamic analysis widgets
   const analysisCache = useImagineStore((s) => s.analysisCache);
@@ -40,13 +41,13 @@ export default function WidgetCanvas({
     [widgets, traceData, getAnalysisCache],
   );
 
-  // Watch for Falcon WS updates and cache analysis results
-  useDynamicAnalysis(resolvedWidgets, traceData, chatRef, traceId);
+  // Run analysis with the drawer's project (never the URL) and cache results
+  useDynamicAnalysis(resolvedWidgets, traceData, chatRef, traceId, projectId);
 
   // Handler for "Run Analysis" / "Rerun" button on dynamic widgets
   const handleRunAnalysis = useCallback(
-    (widget) => runAnalysis(widget, traceId),
-    [traceId],
+    (widget) => runAnalysis(widget, traceId, projectId),
+    [traceId, projectId],
   );
 
   if (!resolvedWidgets?.length) {
@@ -65,11 +66,11 @@ export default function WidgetCanvas({
           }}
         >
           <Iconify
-            icon="mdi:creation-outline"
+            icon="solar:stars-minimalistic-linear"
             width={48}
             sx={{ opacity: 0.3 }}
           />
-          <Typography fontSize={14} fontWeight={500} color="text.secondary">
+          <Typography fontSize={13} fontWeight={500} color="text.secondary">
             Describe what you want to visualize
           </Typography>
           <Typography
@@ -116,9 +117,9 @@ export default function WidgetCanvas({
               minHeight: 0,
               display: "flex",
               flexDirection: "column",
-              transition: "box-shadow 150ms",
+              transition: "border-color 150ms",
               "&:hover": {
-                boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+                borderColor: "border.hover",
               },
             }}
           >
@@ -145,4 +146,5 @@ WidgetCanvas.propTypes = {
   emptyState: PropTypes.node,
   chatRef: PropTypes.object,
   traceId: PropTypes.string,
+  projectId: PropTypes.string,
 };

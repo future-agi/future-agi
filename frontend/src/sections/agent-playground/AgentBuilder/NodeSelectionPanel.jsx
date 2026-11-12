@@ -14,8 +14,8 @@ const NodeCardSkeleton = () => (
     <Stack direction="row" spacing={1.5} alignItems="flex-start">
       <Skeleton
         variant="rounded"
-        width={36}
-        height={36}
+        width={28}
+        height={28}
         sx={{ flexShrink: 0 }}
       />
       <Stack sx={{ flex: 1 }} gap={0.5}>
@@ -63,6 +63,17 @@ export default function NodeSelectionPanel({ width, disabled = false }) {
       guardNodeInsert(node.id, () => insertNode(node));
     },
     [disabled, guardNodeInsert, insertNode],
+  );
+
+  // Cards are divs, so keyboard users get Enter and Space wired by hand; both
+  // go through the same click path (and the same Agent guard).
+  const handleNodeKeyDown = useCallback(
+    (event, node) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      handleNodeClick(node);
+    },
+    [handleNodeClick],
   );
 
   // Dragging onto the canvas bypasses the click guard, so the Agent card is
@@ -123,11 +134,15 @@ export default function NodeSelectionPanel({ width, disabled = false }) {
             <Box
               key={node.id}
               data-testid={`sidebar-node-${node.id}`}
+              role="button"
+              tabIndex={disabled ? -1 : 0}
+              aria-disabled={disabled || undefined}
               onClick={() => handleNodeClick(node)}
+              onKeyDown={(e) => handleNodeKeyDown(e, node)}
               onDragStart={(e) => handleDragStart(e, node)}
               draggable={isDraggable(node)}
               sx={{
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 overflow: "hidden",
                 cursor: disabled ? "not-allowed" : "pointer",
                 "&:hover": {

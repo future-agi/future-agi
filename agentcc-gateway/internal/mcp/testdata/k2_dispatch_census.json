@@ -1,0 +1,802 @@
+{
+  "cmd/agentcc-cassette/record/proxy.go|*Proxy.ServeHTTP|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "cmd/agentcc-cassette/record/rpc.go|*rpcClient.end|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "cmd/agentcc-cassette/record/rpc.go|*rpcClient.post|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "cmd/agentcc/main.go|main|NewClient": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "cmd/credit-reconciler/main.go|run|NewClient": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "cmd/loadtest/main.go|doRequest|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/a2a/client.go|*Client.GetTask|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/a2a/client.go|*Client.SendMessage|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/a2a/provider.go|*Provider.ChatCompletion|NewClient": {
+    "count": 1,
+    "reason": "Existing A2A client constructor, not an MCP personal-grant sender; exact constructor/count only."
+  },
+  "internal/a2a/registry.go|*Registry.FetchCards|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/a2a/registry.go|applyAuth|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/alerting/alerting.go|*WebhookChannel.Send|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/auth/sync.go|SyncKeysFromControlPlane|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/auth/sync.go|SyncKeysFromControlPlane|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/billing/inclusive/http.go|HTTPAdapters.send|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/billing/inclusive/http.go|HTTPAdapters.send|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/cache/backend_azblob.go|*AzBlobBackend.Delete|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/cache/backend_azblob.go|*AzBlobBackend.Get|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/cache/backend_azblob.go|*AzBlobBackend.Set|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/cache/backend_azblob.go|*AzBlobBackend.signRequest|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/cache/backend_gcs.go|*GCSBackend.Delete|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/cache/backend_gcs.go|*GCSBackend.Get|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/cache/backend_gcs.go|*GCSBackend.Set|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/cache/backend_gcs.go|*GCSBackend.authorize|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/cache/backend_gcs.go|*GCSBackend.getToken|http.Post": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/cache/backend_redis.go|newRedisBackend|NewClient": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/cache/backend_s3.go|*S3Backend.Delete|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/cache/backend_s3.go|*S3Backend.Get|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/cache/backend_s3.go|*S3Backend.Set|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/cache/backend_s3.go|*S3Backend.signRequest|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/cache/semantic_pinecone.go|*PineconeBackend.Len|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/cache/semantic_pinecone.go|*PineconeBackend.Search|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/cache/semantic_pinecone.go|*PineconeBackend.Set|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/cache/semantic_qdrant.go|*QdrantBackend.Len|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/cache/semantic_qdrant.go|*QdrantBackend.Search|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/cache/semantic_qdrant.go|*QdrantBackend.Set|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/cache/semantic_qdrant.go|*QdrantBackend.ensureCollection|Do": {
+    "count": 2,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/cache/semantic_qdrant.go|*QdrantBackend.ensureScopeIndex|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/cache/semantic_weaviate.go|*WeaviateBackend.Len|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/cache/semantic_weaviate.go|*WeaviateBackend.Search|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/cache/semantic_weaviate.go|*WeaviateBackend.Set|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/cache/semantic_weaviate.go|*WeaviateBackend.ensureClass|Do": {
+    "count": 2,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/cache/semantic_weaviate.go|*WeaviateBackend.ensureScopeProperty|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/cache/semantic_weaviate.go|*WeaviateBackend.setAuth|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/capability/core.go|Do|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/capability/echo.go|EchoAdapter.Call|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/capability/echo.go|EchoAdapter.Call|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/catalog/refresh.go|*Refresher.get|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/connectorcatalog/restmcp/credential.go|*credentialSpec.extract|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/connectorcatalog/restmcp/k2drive/main.go|drive|NewClient": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/connectorcatalog/restmcp/vendor.go|*vendorClient.do|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/guardrails/external/crowdstrike.go|*crowdstrikeAdapter.getToken|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/guardrails/external/external.go|*ExternalGuardrail.doCall|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/guardrails/external/llamaguard.go|*llamaGuardAdapter.buildRequest|AuthorizationIndex": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/guardrails/external/presidio.go|*presidioAdapter.buildRequest|AuthorizationIndex": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/guardrails/futureagi/eval_api.go|*FutureAGIGuardrail.doRequest|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/guardrails/webhook/webhook.go|*WebhookGuardrail.doRequest|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/keyscope/report.go|*Reporter.post|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/keyscope/report.go|*Reporter.post|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/mcp/credentials/cache.go|*TokenCache.do|Do": {
+    "count": 1,
+    "reason": "Redis callback dispatch for credential epochs, not an HTTP sender; exact function/count only."
+  },
+  "internal/mcp/credentials/upstream_token.go|*TokenClient.fetch|Do": {
+    "count": 1,
+    "reason": "Existing credential-service token fetch, not a connector dispatch; exact fetch function/count only."
+  },
+  "internal/mcp/credtemplate/roundtrip.go|*roundTripper.RoundTrip|RoundTrip": {
+    "count": 2,
+    "reason": "Existing secret-template placement; governed use delegates through credentialDispatch and restores the outer request."
+  },
+  "internal/mcp/egress/catalogue_preflight.go|*cataloguePreflightTransport.RoundTrip|RoundTrip": {
+    "count": 1,
+    "reason": "Existing build-tagged preflight egress wrapper; included in census, not proof of serving compatibility."
+  },
+  "internal/mcp/egress/catalogue_synthetic.go|*catalogueSyntheticTransport.RoundTrip|RoundTrip": {
+    "count": 1,
+    "reason": "Existing build-tagged synthetic egress wrapper; included in census, not proof of serving compatibility."
+  },
+  "internal/mcp/oauthrs/redis.go|*RedisKeyStore.do|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/mcp/pool_static.go|BuildStaticPool|NewClient": {
+    "count": 1,
+    "reason": "Existing static-pool constructor consumes its supplied ClientConfig, separate from per-user entry construction; exact constructor/count only."
+  },
+  "internal/mcp/probe.go|*prober.endSession|Do": {
+    "count": 1,
+    "reason": "Existing one-shot admin endpoint probe uses caller-supplied inline probe credentials, not a sealed pooled personal grant; exact probe function/count only. Its standalone policy is not re-evaluated by this packet."
+  },
+  "internal/mcp/probe.go|*prober.httpSSE|Do": {
+    "count": 1,
+    "reason": "Existing one-shot admin endpoint probe uses caller-supplied inline probe credentials, not a sealed pooled personal grant; exact probe function/count only. Its standalone policy is not re-evaluated by this packet."
+  },
+  "internal/mcp/probe.go|*prober.send|Do": {
+    "count": 1,
+    "reason": "Existing one-shot admin endpoint probe uses caller-supplied inline probe credentials, not a sealed pooled personal grant; exact probe function/count only. Its standalone policy is not re-evaluated by this packet."
+  },
+  "internal/mcp/request_credential.go|credentialDispatch.RoundTrip|RoundTrip": {
+    "count": 1,
+    "reason": "The sole governed credential-attaching transport and final delegated send boundary."
+  },
+  "internal/mcp/request_credential.go|credentialTransport.RoundTrip|AuthorizationSet": {
+    "count": 1,
+    "reason": "The sole governed credential-attaching transport and final delegated send boundary."
+  },
+  "internal/mcp/request_credential.go|credentialTransport.RoundTrip|RoundTrip": {
+    "count": 2,
+    "reason": "The sole governed credential-attaching transport and final delegated send boundary."
+  },
+  "internal/mcp/transport.go|*HTTPTransport.applyAuth|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing shared HTTP/SSE transport and legacy auth compatibility; governed configs are sealed by the AST-asserted installer."
+  },
+  "internal/mcp/transport.go|*HTTPTransport.stream|Do": {
+    "count": 1,
+    "reason": "Existing shared HTTP/SSE transport and legacy auth compatibility; governed configs are sealed by the AST-asserted installer."
+  },
+  "internal/mcp/transport.go|sourceTransport.RoundTrip|RoundTrip": {
+    "count": 1,
+    "reason": "Existing shared HTTP/SSE transport and legacy auth compatibility; governed configs are sealed by the AST-asserted installer."
+  },
+  "internal/mcp/upstream/factory.go|*Factory.Build|NewClient": {
+    "count": 1,
+    "reason": "The sole upstream factory constructor; entry-bound custody calls are separately asserted in AST."
+  },
+  "internal/mcp/upstream/wire/httpsse.go|*Session.Send|Do": {
+    "count": 1,
+    "reason": "Existing SSE GET/POST through the supplied shared credential-attaching HTTP client."
+  },
+  "internal/mcp/upstream/wire/httpsse.go|OpenSession|Do": {
+    "count": 1,
+    "reason": "Existing SSE GET/POST through the supplied shared credential-attaching HTTP client."
+  },
+  "internal/mcp/upstream/wire/post.go|Post|Do": {
+    "count": 1,
+    "reason": "Existing protocol POST through the supplied shared credential-attaching HTTP client."
+  },
+  "internal/mcp/upstream_iface.go|DefaultClientFactory|NewClient": {
+    "count": 1,
+    "reason": "Existing default factory constructor consumes its supplied ClientConfig; governed configs carry the sealed transport. Exact constructor/count only."
+  },
+  "internal/mcp/vendors/grantclient/client.go|*Client.Fetch|Do": {
+    "count": 1,
+    "reason": "Existing grant-authority HTTP RPC, not a connector dispatch; exact grant-client function/count only."
+  },
+  "internal/otel/otlp.go|*OTLPExporter.send|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/plugins/auth/auth.go|*Plugin.ProcessRequest|AuthorizationIndex": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/plugins/logging/flusher.go|*LogFlusher.post|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/anthropic/anthropic.go|*Provider.ChatCompletion|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/anthropic/anthropic.go|*Provider.CountAnthropicTokens|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/anthropic/anthropic.go|*Provider.CreateAnthropicMessage|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/anthropic/anthropic.go|*Provider.StreamAnthropicMessage|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/anthropic/anthropic.go|*Provider.StreamChatCompletion|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/azure/azure.go|*Provider.ChatCompletion|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/azure/azure.go|*Provider.CreateEmbedding|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/azure/azure.go|*Provider.CreateImage|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/azure/azure.go|*Provider.CreateSpeech|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/azure/azure.go|*Provider.CreateTranscription|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/azure/azure.go|*Provider.ListModels|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/azure/azure.go|*Provider.StreamChatCompletion|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/azure/azure.go|*Provider.setAuth|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/bedrock/auth.go|signRequest|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/bedrock/bedrock.go|*Provider.ChatCompletion|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/bedrock/bedrock.go|*Provider.StreamChatCompletion|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/bedrock/converse.go|*Provider.chatCompletionConverse|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/bedrock/converse.go|*Provider.streamChatCompletionConverse|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/cohere/cohere.go|*Provider.ChatCompletion|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/cohere/cohere.go|*Provider.CreateEmbedding|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/cohere/cohere.go|*Provider.Rerank|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/cohere/cohere.go|*Provider.StreamChatCompletion|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/cohere/cohere.go|*Provider.setHeaders|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/gemini/embedding.go|*Provider.doBatchEmbed|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/gemini/embedding.go|*Provider.doSingleEmbed|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/gemini/gemini.go|*Provider.ChatCompletion|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/gemini/gemini.go|*Provider.StreamChatCompletion|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/gemini/gemini.go|*Provider.StreamGenerateContent|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/gemini/gemini.go|*Provider.doGenAIRequest|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/gemini/gemini.go|*Provider.setAPIKey|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/gemini/gemini.go|*Provider.setNativeGenAIHeaders|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/gemini/image.go|*Provider.postImage|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/gemini/speech.go|*Provider.CreateSpeech|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/openai/decisions.go|*Provider.CreateDecision|AuthorizationSet": {
+    "count": 1,
+    "reason": "c2.6 existing OpenAI Decisions provider credential attachment, not an MCP connector credential; exact function/count only."
+  },
+  "internal/providers/openai/decisions.go|*Provider.CreateDecision|Do": {
+    "count": 1,
+    "reason": "c2.6 existing OpenAI Decisions HTTP send with provider-owned key and no redirects, separate from MCP connector dispatch; exact function/count only."
+  },
+  "internal/providers/systemone/systemone.go|*Provider.SystemOne|Do": {
+    "count": 1,
+    "reason": "c2.6 existing structured-decisions provider HTTP send, not a personal MCP connector send; exact function/count only."
+  },
+  "internal/providers/openai/headers.go|*Provider.do|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/openai/openai.go|*Provider.ChatCompletion|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/openai/openai.go|*Provider.CreateEmbedding|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/openai/openai.go|*Provider.CreateImage|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/openai/openai.go|*Provider.CreateResponse|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/openai/openai.go|*Provider.CreateSpeech|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/openai/openai.go|*Provider.CreateTranscription|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/openai/openai.go|*Provider.CreateTranslation|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/openai/openai.go|*Provider.ListModels|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/openai/openai.go|*Provider.OCR|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/openai/openai.go|*Provider.ProxyAssistantsRequest|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/openai/openai.go|*Provider.ProxyVectorStoresRequest|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/openai/openai.go|*Provider.StreamAssistantsRequest|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/openai/openai.go|*Provider.StreamChatCompletion|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/openai/openai.go|*Provider.StreamResponse|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/openai/openai.go|*Provider.TextCompletion|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/providers/speech/speech.go|<package>|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/redisstate/agentbudget.go|*AgentBudgetStore.run|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/agentsignals.go|*AgentSignalStore.do|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/budget.go|*BudgetStore.GetSpend|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/budget.go|*BudgetStore.RecordSpend|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/budget.go|*BudgetStore.SeedSpend|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/client.go|NewClient|NewClient": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/cluster.go|*ClusterStore.Deregister|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/cluster.go|*ClusterStore.Heartbeat|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/cluster.go|*ClusterStore.ListNodes|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/credits.go|*CreditStore.AddMicros|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/credits.go|*CreditStore.DeductMicros|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/credits.go|*CreditStore.ForceDeductMicros|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/credits.go|*CreditStore.GetBalance|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/credits.go|*CreditStore.SeedBalance|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/credits.go|*CreditStore.SetBalance|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/license.go|*LicenseStore.AllowRate|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/license.go|*LicenseStore.GetMonthlyCostUSD|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/license.go|*LicenseStore.GrantActive|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/license.go|*LicenseStore.IncrMonthlyCostUSD|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/license.go|*LicenseStore.IncrMonthlyUsage|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/license.go|*LicenseStore.InstanceActive|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/license.go|*LicenseStore.PeekMonthlyUsage|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/license.go|*LicenseStore.SessionActive|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/managedcredits.go|*ManagedCreditStore.run|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/mcpapprovals.go|*MCPApprovalStore.do|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/mcpsessions.go|*MCPSessionStore.do|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/ratelimit.go|*RateLimiter.Allow|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/ratelimit_multi.go|*RateLimiter.AllowN|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/ratelimit_multi.go|*RateLimiter.Settle|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/readiness.go|*Client.Ready|NewClient": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/revocation.go|*KeyRevocationBroadcaster.PublishWithError|Do": {
+    "count": 1,
+    "reason": "Redis wrapper Do, no credential (key ID is not secret): PublishWithError (Publish calls it) PUBLISHes the revoked key's ID, an identifier (\"key_\" + random hex) and never the key, on the gateway's own Redis channel agentcc:key:revoke; its warning log carries the ID only. Exact function/count only."
+  },
+  "internal/redisstate/revocation_authority.go|*KeyRevocationBroadcaster.CheckKeyRevocation|Do": {
+    "count": 1,
+    "reason": "Redis wrapper Do, no credential (a credential hash is not a credential): CheckKeyRevocation runs SISMEMBER of a key credential hash on the gateway's own Redis; the gateway authenticates only by hashing a presented raw key, so the hash cannot be presented in its place. Exact function/count only."
+  },
+  "internal/redisstate/revocation_credential.go|*KeyRevocationBroadcaster.PublishCredentialWithError|Do": {
+    "count": 1,
+    "reason": "Redis wrapper Do, no credential (a credential hash is not a credential): PublishCredentialWithError SADDs a revoked credential hash and PUBLISHes \"sha256:\"+hash on the gateway's own Redis. Exact function/count only."
+  },
+  "internal/redisstate/revocation_historical.go|*KeyRevocationBroadcaster.CheckCredentialRevocation|Do": {
+    "count": 1,
+    "reason": "Redis wrapper Do, no credential (key ID and hash are not secret): CheckCredentialRevocation runs SISMEMBER of the historical key ID, then of the credential hash, on the gateway's own Redis. Exact function/count only."
+  },
+  "internal/sessionlease/client.go|NewSingle|NewClient": {
+    "count": 1,
+    "reason": "Redis client constructor, no caller credential: NewSingle builds a Redis client from the redis.Options its caller passes (the operator's Redis address and auth); it never carries a caller credential and has no non-test caller at 91521bfe. Exact function/count only."
+  },
+  "internal/redisstate/spendguard.go|*SpendGuardStore.run|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/toolcallbudget.go|*ToolCallBudgetStore.do|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/redisstate/toolcallbudget_rest.go|*ToolCallBudget.run|Do": {
+    "count": 1,
+    "reason": "Existing Redis client/callback owner, not an MCP HTTP sender; exact function/count only."
+  },
+  "internal/routing/shadow_flush.go|*ShadowFlusher.flush|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/secrets/aws.go|*AWSBackend.Resolve|Do": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/secrets/aws.go|*AWSBackend.signRequest|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/secrets/azure.go|*AzureBackend.Resolve|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/secrets/azure.go|*AzureBackend.Resolve|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/secrets/azure.go|azureGetToken|http.PostForm": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/secrets/gcp.go|*GCPBackend.Resolve|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/secrets/gcp.go|*GCPBackend.Resolve|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/secrets/gcp.go|gcpAccessToken|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/secrets/vault.go|*VaultBackend.Resolve|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/secrets/vault.go|vaultAppRoleLogin|http.Post": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/server/handlers.go|*Handlers.lookupRequestKey|AuthorizationIndex": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/server/handlers.go|cloneRequestHeaders|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/server/handlers.go|setAuthMetadataFromRequest|AuthorizationIndex": {
+    "count": 2,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/server/handlers_genai.go|*Handlers.GenAIHandler|AuthorizationIndex": {
+    "count": 3,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/server/handlers_speech.go|*Handlers.relaySpeech|AuthorizationIndex": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/server/hook_capability.go|capabilityCall|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/server/mcp_search_embedding.go|*mcpSearchEmbeddingRoute.embed|AuthorizationSet": {
+    "count": 1,
+    "reason": "caller's own verified gateway key, in-process to the gateway's own /v1/embeddings handler; never dialled. embed re-reads the key the caller presented (Bearer or x-api-key), requires it active with the MCP principal's key ID and org and a scope allowing POST /v1/embeddings, then sets it as Bearer on a request that CreateEmbedding serves through ServeHTTP into a local writer: no http.Client, no network send. Exact function/count only."
+  },
+  "internal/server/mcp_search_embedding.go|searchAdmission|Do": {
+    "count": 1,
+    "reason": "Redis wrapper Do, no credential (key ID is not secret): searchAdmission runs the per-org fixed-window quota script (EVAL) on the gateway's own Redis at key agentcc:mcp-search:<sha256(org)>; it sends no key and no key ID. Exact function/count only."
+  },
+  "internal/server/server.go|New|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing authentication handling in this named owner; exact function/count only, no file-wide attachment exemption."
+  },
+  "internal/tenant/spend_sync.go|SyncSpendFromControlPlane|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/tenant/spend_sync.go|SyncSpendFromControlPlane|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/tenant/sync.go|SyncFromControlPlane|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/tenant/sync.go|SyncFromControlPlane|Do": {
+    "count": 1,
+    "reason": "Existing non-personal-MCP module owner at this exact function/count; adding another sender anywhere requires explicit review."
+  },
+  "internal/providers/openai/responses_get.go|*Provider.GetResponse|AuthorizationSet": {
+    "count": 1,
+    "reason": "Existing OpenAI provider credential attachment on the Responses GET that retrieves a background answer from the same provider instance (provider-owned key, as CreateResponse), not an MCP connector credential; its send goes through Provider.do; exact function/count only."
+  }
+}

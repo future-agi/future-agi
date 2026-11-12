@@ -1,0 +1,98 @@
+# Common mock services extended by BOTH managed-stack overlays. Paths are
+# relative to this file (Compose extends rebases them); no developer .env.
+services:
+  mock-certs:
+    image: futureagi-e2e/walk-node:local
+    build:
+      context: .
+      dockerfile: walk-mocks/Dockerfile.node
+    command: [node, /srv/cert-init.mjs]
+    volumes: [walk-mock-certs:/certs]
+    restart: "no"
+  mcp-mock:
+    image: futureagi-e2e/walk-go:local
+    build:
+      context: ../../agentcc-gateway
+      dockerfile: ../e2e/stack/walk-mocks/Dockerfile.go
+    command:
+      [
+        mcpmock,
+        --addr,
+        "0.0.0.0:8443",
+        --auth,
+        oauth,
+        --public-url,
+        "https://mcp.e2e-public.test:8443",
+        --tls-cert,
+        /certs/cert.pem,
+        --tls-key,
+        /certs/key.pem,
+      ]
+    depends_on:
+      mock-certs: { condition: service_completed_successfully }
+    volumes: [walk-mock-certs:/certs:ro]
+    ports: ["127.0.0.1:28443:8443"]
+    networks:
+      default:
+      e2e-public:
+        ipv4_address: 11.88.0.13
+        aliases: [mcp.e2e-public.test]
+    restart: "no"
+  k2-mock:
+    image: futureagi-e2e/walk-node:local
+    build:
+      context: .
+      dockerfile: walk-mocks/Dockerfile.node
+    command: [node, /srv/k2.mjs]
+    depends_on:
+      mock-certs: { condition: service_completed_successfully }
+    volumes:
+      - walk-mock-certs:/certs:ro
+      - ./walk-mocks/http.mjs:/srv/http.mjs:ro
+      - ./walk-mocks/k2.mjs:/srv/k2.mjs:ro
+    ports: ["127.0.0.1:28445:8443", "127.0.0.1:28086:8081"]
+    networks:
+      default:
+      e2e-public:
+        ipv4_address: 11.88.0.16
+        aliases: [k2.e2e-public.test]
+    restart: "no"
+  otlp-sink:
+    image: futureagi-e2e/walk-go:local
+    build:
+      context: ../../agentcc-gateway
+      dockerfile: ../e2e/stack/walk-mocks/Dockerfile.go
+    command: [otlpmock, --addr, "0.0.0.0:4318", --control, "0.0.0.0:8081"]
+    ports: ["127.0.0.1:28084:8081", "127.0.0.1:28418:4318"]
+    networks:
+      default:
+      e2e-public:
+        ipv4_address: 11.88.0.14
+        aliases: [otlp.e2e-public.test]
+    restart: "no"
+  siem-sink:
+    image: futureagi-e2e/walk-node:local
+    build:
+      context: .
+      dockerfile: walk-mocks/Dockerfile.node
+    command: [node, /srv/siem.mjs]
+    depends_on:
+      mock-certs: { condition: service_completed_successfully }
+    volumes:
+      - walk-mock-certs:/certs:ro
+      - ./walk-mocks/http.mjs:/srv/http.mjs:ro
+      - ./walk-mocks/siem.mjs:/srv/siem.mjs:ro
+    ports: ["127.0.0.1:28446:8443", "127.0.0.1:28085:8081"]
+    networks:
+      default:
+      e2e-public:
+        ipv4_address: 11.88.0.15
+        aliases: [siem.e2e-public.test]
+    restart: "no"
+volumes:
+  walk-mock-certs:
+networks:
+  default:
+  e2e-public:
+    ipam:
+      config: [{ subnet: 11.88.0.0/24 }]

@@ -24,26 +24,25 @@ const ApiKeyBar = ({ searchQuery, setSearchQuery, handleCreateClick }) => {
         searchQuery={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
       />
-      <Box>
-        <Button
-          onClick={handleCreateClick}
-          variant="contained"
-          color="primary"
-          startIcon={
-            <Iconify
-              icon="octicon:plus-24"
-              color="background.paper"
-              sx={{
-                width: "20px",
-                height: "20px",
-              }}
-            />
-          }
-          sx={{ px: "24px", typography: "s1" }}
-        >
-          Add API Key
-        </Button>
-      </Box>
+      {handleCreateClick ? (
+        <Box>
+          <Button
+            onClick={handleCreateClick}
+            variant="contained"
+            color="primary"
+            startIcon={
+              <Iconify
+                width={20}
+                icon="solar:add-linear"
+                color="background.paper"
+              />
+            }
+            sx={{ typography: "s1" }}
+          >
+            Add API Key
+          </Button>
+        </Box>
+      ) : null}
     </Box>
   );
 };

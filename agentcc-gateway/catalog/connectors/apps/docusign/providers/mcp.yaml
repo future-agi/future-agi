@@ -1,0 +1,95 @@
+# The Docusign MCP server for production accounts (the demo environment,
+# mcp-d.docusign.com, serves developer accounts only and is not in this
+# record). It takes an access token from Docusign's Confidential
+# Authorization Code Grant, so a client is an integration key with a secret.
+# Docusign recommends its own official connectors for production accounts;
+# a custom connector reaches a production account only after Docusign
+# allow-lists the integration key and the account, so clientApproval has no
+# approvedAt. The scopes are those Docusign's MCP page names for the tool
+# groups available in production that the authorization server advertises;
+# it also names models_read, which the server does not advertise, so that
+# scope is left out until a test account checks it. PKCE is off: the grant
+# is confidential and the server advertises no code challenge method. EE and
+# OSS get none until Docusign approves a client.
+schema: "connector-manifest/v1#provider"
+app: docusign
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: ga
+  source: https://www.docusign.com/blog/developers/claude-docusign-mcp-connector-guide
+transport:
+  kind: http
+  url: https://mcp.docusign.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://account.docusign.com/oauth/auth
+    tokenUrl: https://account.docusign.com/oauth/token
+    scopes:
+      - signature
+      - adm_store_unified_repo_read
+      - aow_manage
+      - spring_read
+      - spring_write
+    pkce: false
+    tokenBody: form
+    clientAuth: body
+    registration: [preregistered]
+  clientApproval:
+    required: true
+    program: "Docusign allow-list of a custom connector's integration key and production account"
+    url: https://developers.docusign.com/platform/mcp-server/
+    source: https://developers.docusign.com/page-data/platform/mcp-server/page-data.json
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.docusign.com/page-data/platform/mcp-server/page-data.json
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://developers.docusign.com/page-data/platform/mcp-server/page-data.json
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://developers.docusign.com/page-data/platform/mcp-server/page-data.json
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://account.docusign.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://account.docusign.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://developers.docusign.com/page-data/platform/mcp-server/page-data.json
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://account.docusign.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://account.docusign.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://account.docusign.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://developers.docusign.com/page-data/platform/mcp-server/page-data.json
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://www.docusign.com/blog/developers/claude-docusign-mcp-connector-guide
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://account.docusign.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.clientApproval
+    url: https://developers.docusign.com/page-data/platform/mcp-server/page-data.json
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

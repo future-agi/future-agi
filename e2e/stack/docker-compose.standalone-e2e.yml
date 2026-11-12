@@ -12,6 +12,15 @@
 #     register a custom model with the Distributed gateway URL
 #     (http://agentcc-gateway:8080/v1, e2e/lib/managed-mock.ts MOCK_BASE).
 #     In Standalone the gateway listens on 127.0.0.1:8080 in the same container.
+#   - the public-classified `e2e-public` network (e2e/lib/public-network.ts):
+#     internal, 11.88.0.0/24, so the product's SSRF guards save and call a
+#     webhook or an org provider there with their defaults on. `app` joins it;
+#     mock-llm (llm.e2e-public.test, scoped routes, host port 28082 for reads),
+#     webhook-sink (hooks.e2e-public.test, host port 28083 for reads) and
+#     smtp-sink (smtp.e2e-public.test, host port 28025 for reads) sit on it at
+#     fixed addresses, with those aliases defined there only;
+#   - under the mcp gateway profile only, mcp-mock (mcp.e2e-public.test), the
+#     MCP upstream, on e2e-public alone.
 services:
   app:
     # Never read the checkout's own .env: it belongs to the developer's
@@ -21,11 +30,29 @@ services:
     # The public API URL, as docker-compose.e2e.yml sets it for Distributed:
     # SAML checks the response Destination against BASE_URL/saml2_auth/acs/.
     environment:
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?Run bin/e2e to set INTEGRATION_ENCRYPTION_KEY}
+      WEBHOOKS_ENCRYPTION_KEYS: ${WEBHOOKS_ENCRYPTION_KEYS:?Run bin/e2e to set WEBHOOKS_ENCRYPTION_KEYS}
       BASE_URL: http://localhost:${BACKEND_PORT:-8100}
+      DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
+      # Use the bundled cost map; application startup must not fetch a hosted map.
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      # The new-org default (agentcc/services/managed_models_default.py), as
+      # docker-compose.e2e.yml sets it: off unless the run declares
+      # E2E_MANAGED_MODELS_ON_FOR_NEW_ORGS=1 (the @new-org-default flows).
+      AGENTCC_MANAGED_MODELS_ON_FOR_NEW_ORGS: ${E2E_MANAGED_MODELS_ON_FOR_NEW_ORGS:-}
+    volumes:
+      - ./e2e/stack/backend/settings_e2e.py:/app/backend/tfc/settings/e2e.py:ro
+      - ./e2e/stack/backend/urls_e2e.py:/app/backend/tfc/urls_e2e.py:ro
+      - ./e2e/stack/backend/e2e_clean_signup.py:/app/backend/accounts/views/e2e_clean_signup.py:ro
+      - ./e2e/stack/backend/e2e_feed_issue.py:/app/backend/tracer/views/e2e_feed_issue.py:ro
     extra_hosts:
       - "agentcc-gateway:127.0.0.1"
+    # A service that names its networks must list `default` too.
+    networks:
+      - default
+      - e2e-public
     # A crash should fail the run loudly instead of restarting quietly.
     restart: "no"
   postgres:
@@ -38,9 +65,79 @@ services:
       - "127.0.0.1:${CH_PORT:-29000}:9000"
     restart: "no"
   mock-llm:
+    depends_on: [mcp-mock, k2-mock, otlp-sink, siem-sink]
     image: node:22-alpine
     command: ["node", "/srv/server.mjs"]
     volumes:
       # Paths resolve against the project directory (repo root).
       - ./e2e/stack/mock-llm/server.mjs:/srv/server.mjs:ro
+      - ./e2e/stack/mock-llm/wire.mjs:/srv/wire.mjs:ro
+    networks:
+      default:
+      e2e-public:
+        ipv4_address: 11.88.0.11
+        aliases: [llm.e2e-public.test]
+    ports:
+      - "127.0.0.1:28082:8080"
     restart: "no"
+  webhook-sink:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/webhook-sink/server.mjs:/srv/server.mjs:ro
+    networks:
+      default:
+      e2e-public:
+        ipv4_address: 11.88.0.10
+        aliases: [hooks.e2e-public.test]
+    ports:
+      - "127.0.0.1:28083:8080"
+    restart: "no"
+  smtp-sink:
+    # H3 (e2e/lib/sinks.ts MailSink): the console saves SMTP alerts with use_tls
+    # true, so the product always STARTTLSes; mailpit generates a self-signed
+    # certificate for smtp-sink at start (smtplib's default STARTTLS context does
+    # not verify it). The product checks an SMTP host as it checks a provider
+    # base URL (agentcc url_safety: no private address with the opt-in off), so
+    # alerts save smtp.e2e-public.test:1025, the public-classified address,
+    # defined on e2e-public only; HTTP API on host 127.0.0.1:28025 for reads.
+    image: axllent/mailpit:v1.31.4
+    environment:
+      MP_SMTP_TLS_CERT: sans:smtp-sink
+      MP_SMTP_TLS_KEY: sans:smtp-sink
+    networks:
+      default:
+      e2e-public:
+        ipv4_address: 11.88.0.12
+        aliases: [smtp.e2e-public.test]
+    ports:
+      - "127.0.0.1:28025:8025"
+    restart: "no"
+  mock-certs:
+    extends:
+      file: ./e2e/stack/docker-compose.walk-mocks.yml
+      service: mock-certs
+  mcp-mock:
+    extends:
+      file: ./e2e/stack/docker-compose.walk-mocks.yml
+      service: mcp-mock
+  k2-mock:
+    extends:
+      file: ./e2e/stack/docker-compose.walk-mocks.yml
+      service: k2-mock
+  otlp-sink:
+    extends:
+      file: ./e2e/stack/docker-compose.walk-mocks.yml
+      service: otlp-sink
+  siem-sink:
+    extends:
+      file: ./e2e/stack/docker-compose.walk-mocks.yml
+      service: siem-sink
+volumes:
+  walk-mock-certs:
+networks:
+  e2e-public:
+    internal: false
+    ipam:
+      config:
+        - subnet: 11.88.0.0/24

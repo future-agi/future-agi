@@ -1,12 +1,21 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Box, Stack, Tab, Tabs, Typography } from "@mui/material";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import useEnvironmentsTab from "./hooks/useEnvironmentsTab";
-import { resetEnvironmentsEntryState } from "./store/useEnvironmentsStore";
+import {
+  resetEnvironmentsEntryState,
+  useEnvironmentsStore,
+} from "./store/useEnvironmentsStore";
 import BuildEnvironmentTab from "./BuildEnvironmentTab";
 import MyEnvironmentsTab from "./MyEnvironmentsTab";
 import PersonasTab from "./PersonasTab";
-import { ENTRY_TAB, ENVIRONMENTS_HEADER, ENV_TABS_SX } from "./environmentOptions";
+import {
+  DRAFT_KIND_OPTION,
+  ENTRY_TAB,
+  ENVIRONMENTS_HEADER,
+  REBUILD_PARAM,
+} from "./environmentOptions";
 
 const TAB_PANELS = {
   [ENTRY_TAB.BUILD]: BuildEnvironmentTab,
@@ -17,6 +26,9 @@ const TAB_PANELS = {
 export default function EnvironmentsHome() {
   const { tab, setTab } = useEnvironmentsTab();
   const TabPanel = TAB_PANELS[tab];
+  const [params] = useSearchParams();
+  // Read once: only the mount decides whether the form starts clean.
+  const rebuildFor = useRef(params.get(REBUILD_PARAM));
 
   const onTabChange = (next) => {
     // Keeps the event the old Personas menu item fired.
@@ -30,13 +42,29 @@ export default function EnvironmentsHome() {
 
   // The draft must survive the hop to the build page, so the matrix starts clean
   // on mount instead of clearing on unmount. Only the entry/build slice is
-  // cleared — adopted workspaces persist.
+  // cleared — adopted workspaces persist. "Start a new build" on a failed or
+  // canceled environment arrives with ?rebuild=<envId>: when the kept draft
+  // built that environment, its source form reopens on that draft instead.
   useEffect(() => {
-    resetEnvironmentsEntryState();
+    const { draft, setChoice } = useEnvironmentsStore.getState();
+    const reopen =
+      rebuildFor.current && draft?.envId === rebuildFor.current
+        ? DRAFT_KIND_OPTION[draft.kind]
+        : null;
+    if (reopen) setChoice(reopen);
+    else resetEnvironmentsEntryState();
   }, []);
 
   return (
-    <Box sx={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
+    <Box
+      sx={{
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        overflow: "hidden",
+      }}
+    >
       <Stack
         direction={{ xs: "column", sm: "row" }}
         justifyContent="space-between"
@@ -44,9 +72,15 @@ export default function EnvironmentsHome() {
         spacing={2}
         sx={{ px: 2, pt: 2, pb: 1.5, flexShrink: 0 }}
       >
-        <Stack direction="row" alignItems="flex-start" spacing={1.5} flex={1} minWidth={0}>
+        <Stack
+          direction="row"
+          alignItems="flex-start"
+          spacing={1.5}
+          flex={1}
+          minWidth={0}
+        >
           <Box>
-            <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
+            <Typography sx={{ typography: "m1", fontWeight: 600 }}>
               {ENVIRONMENTS_HEADER.title}
             </Typography>
             <Typography sx={{ typography: "s1", color: "text.secondary" }}>
@@ -56,11 +90,24 @@ export default function EnvironmentsHome() {
         </Stack>
       </Stack>
 
-      {/* Tab rail — matches the product's other tab bars (HarnessDetail): tabs
-          flush, padding-spaced, one continuous underline against the divider. */}
-      <Box sx={{ px: 2, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
-        <Tabs value={tab} onChange={(_, v) => onTabChange(v)} sx={ENV_TABS_SX}>
-          <Tab value={ENTRY_TAB.BUILD} disableRipple label="Build environment" />
+      {/* Tab rail — the theme's tabs, unstyled, over one divider. The three
+          tabs (about 330 px) fit every window the app supports, so the rail
+          does not scroll: as the theme's scrollable strip it drew scroll
+          arrows around them at 1280 and 1440 px. */}
+      <Box
+        sx={{ px: 2, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}
+      >
+        <Tabs
+          variant="standard"
+          sx={{ boxShadow: "none" }}
+          value={tab}
+          onChange={(_, v) => onTabChange(v)}
+        >
+          <Tab
+            value={ENTRY_TAB.BUILD}
+            disableRipple
+            label="Build environment"
+          />
           <Tab value={ENTRY_TAB.MY} disableRipple label="My Environments" />
           <Tab value={ENTRY_TAB.PERSONAS} disableRipple label="Personas" />
         </Tabs>

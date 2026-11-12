@@ -22,6 +22,9 @@ INSTALL_SH = ROOT / "bin" / "install"
 INSTALL_PS1 = ROOT / "bin" / "install.ps1"
 # Sourced by bin/install, bin/uninstall and bin/dev.
 INSTALL_LIB = ROOT / "bin" / "lib"
+# The code-executor base the sandbox checkout's Dockerfile pins.
+SANDBOX_EXECUTOR_BASE = "futureagi/code-executor-base:v0.0.0-sandbox"
+EXECUTOR_BUILD = "build -t futureagi/code-executor:local futureagi/code-executor"
 BACKFILL_SH = ROOT / "bin" / "property-catalog-backfill"
 BACKFILL_PS1 = ROOT / "bin" / "property-catalog-backfill.ps1"
 
@@ -320,6 +323,23 @@ env_value() {
   grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2-
 }
 
+# VAR's .env value as Compose reads it (checked against docker-compose v2.40.3
+# `config`): the last `[export ]VAR=value` line, blanks around `=` and the
+# value dropped, quotes removed, and an unquoted value's ` #` comment cut.
+dotenv_value() {
+  local line value
+  line=$(grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" .env 2>/dev/null | tail -1)
+  [ -n "$line" ] || return 0
+  value=${line#*=}
+  value=${value#"${value%%[![:space:]]*}"}
+  case "$value" in
+    \"*) value=${value#\"}; value=${value%%\"*} ;;
+    \'*) value=${value#\'}; value=${value%%\'*} ;;
+    *) value=${value%%[[:space:]]#*}; value=${value%"${value##*[![:space:]]}"} ;;
+  esac
+  printf '%s' "$value"
+}
+
 last_arg=""
 for arg in "$@"; do last_arg="$arg"; done
 
@@ -334,13 +354,16 @@ if [ "$1" = "compose" ]; then
       # The resolved config for the stack COMPOSE_FILE selects, as `docker
       # compose config` prints it: services at two spaces, their keys at four.
       version=$(env_value FUTURE_AGI_VERSION)
+      # As in Compose: FI_COLLECTOR_VERSION from the shell, even empty, wins
+      # over .env.
+      collector=${FI_COLLECTOR_VERSION-$(dotenv_value FI_COLLECTOR_VERSION)}
       printf 'name: futureagi\nservices:\n'
       if printf '%s' "$compose_file" | grep -q 'docker-compose.distributed.yml'; then
         frontend=$(env_value FRONTEND_VERSION)
         gateway=$(env_value AGENTCC_GATEWAY_VERSION)
         set -- "agentcc-gateway futureagi/agentcc-gateway:${gateway:-latest}" \
           "backend futureagi/future-agi:${version:-latest}" \
-          "fi-collector futureagi/fi-collector:local" \
+          "fi-collector futureagi/fi-collector:${collector:-local}" \
           "frontend futureagi/frontend:${frontend:-latest}" \
           "postgres postgres:16"
       else
@@ -349,10 +372,36 @@ if [ "$1" = "compose" ]; then
           "postgres postgres:16"
       fi
       for pair in "$@"; do
-        printf '  %s:\n    environment:\n      image: nested\n    image: %s\n' \
-          "${pair%% *}" "${pair#* }"
+        printf '  %s:\n' "${pair%% *}"
+        # The distributed stack builds fi-collector from this checkout.
+        if [ "${pair%% *}" = fi-collector ]; then
+          printf '    build:\n      context: %s/fi-collector\n' "$PWD"
+        fi
+        printf '    environment:\n      build: nested\n      image: nested\n    image: %s\n' \
+          "${pair#* }"
       done
+      # A docker-compose.override.yml in COMPOSE_FILE adds the services it
+      # lists, written as `config` prints them, with the collector tag
+      # interpolated.
+      case ":$compose_file:" in
+        *:docker-compose.override.yml:*)
+          placeholder='${FI_COLLECTOR_VERSION:-local}'
+          in_services=0
+          while IFS= read -r line; do
+            case "$line" in
+              services:*) in_services=1; continue ;;
+              [!\ ]*) in_services=0 ;;
+            esac
+            [ "$in_services" = 1 ] && printf '%s\n' "${line//"$placeholder"/${collector:-local}}"
+          done < docker-compose.override.yml ;;
+      esac
       printf 'volumes:\n  postgres-data:\n    name: futureagi_postgres-data\n'
+      exit 0 ;;
+    build)
+      # Services built by name, and when, next to `up`.
+      printf '%s\n' "$@" > "$state/compose_build.argv"
+      printf 'build\n' >> "$state/compose_calls.log"
+      [ "$FAGI_STUB_COMPOSE_BUILD" = "fail" ] && exit 1
       exit 0 ;;
     pull)
       case " $* " in
@@ -367,6 +416,8 @@ if [ "$1" = "compose" ]; then
       exit 0 ;;
     up)
       # What the stack starts with, and from which compose files.
+      printf '%s\n' "$@" > "$state/up.argv"
+      printf 'up\n' >> "$state/compose_calls.log"
       cp .env "$state/env_at_up"
       printf '%s\n' "$compose_file" > "$state/compose_file_at_up"
       exit 0 ;;
@@ -541,6 +592,13 @@ def _installer_sandbox(
     # Only their presence is checked; the stub docker answers `compose config`.
     for compose in ("docker-compose.yml", "docker-compose.distributed.yml"):
         (repo / compose).write_text("services: {}\n", encoding="utf-8")
+    # --from-source reads the executor's base pin from its Dockerfile.
+    executor = repo / "futureagi" / "code-executor"
+    executor.mkdir(parents=True)
+    (executor / "Dockerfile").write_text(
+        f"ARG CODE_EXECUTOR_BASE={SANDBOX_EXECUTOR_BASE}\nFROM ${{CODE_EXECUTOR_BASE}}\n",
+        encoding="utf-8",
+    )
 
     stubs = tmp_path / "stubs"
     stubs.mkdir()
@@ -689,6 +747,7 @@ def test_installer_rejects_a_control_character_in_the_typed_email_before_create_
         b"Abhijai\n"
         b"correct-horse-battery\n"
         b"correct-horse-battery\n"
+        b"n\n"  # the one-time automatic-update opt-in that follows readiness
     )
 
     code, stdout, stderr = _run_installer(script, environment, typed=typed, timeout=120)
@@ -708,6 +767,24 @@ def test_installer_rejects_a_control_character_in_the_typed_email_before_create_
 ADMIN_PASSWORD = "correct-horse-battery"
 
 
+def test_the_automatic_update_opt_in_follows_the_account_and_defaults_to_off(
+    tmp_path: Path,
+) -> None:
+    """Pressing Enter at the one-time opt-in must leave automatic updates off."""
+    script, environment, _ = _installer_sandbox(tmp_path)
+    answers = ["abhijai@futureagi.com", "Abhijai", ADMIN_PASSWORD, ADMIN_PASSWORD, ""]
+
+    code, stdout, stderr = _run_installer(
+        script, environment, typed="\n".join(answers + [""]).encode(), timeout=120
+    )
+
+    assert code == 0, stderr
+    assert "Opt in once to supported automatic updates? [y/N]" in stderr
+    assert stdout.index("Email    : ") < stdout.index("Optional automatic updates:")
+    # Setup never ran: it would have created the private automation state.
+    assert not (script.parents[1] / ".futureagi-updates").exists()
+
+
 @pytest.mark.parametrize("typed", [False, True], ids=["FAGI_ADMIN_PASSWORD", "typed"])
 def test_the_admin_password_reaches_create_user_on_stdin_only(
     tmp_path: Path, typed: bool
@@ -716,7 +793,8 @@ def test_the_admin_password_reaches_create_user_on_stdin_only(
     can read every process's command line."""
     if typed:
         script, environment, state = _installer_sandbox(tmp_path)
-        answers = ["abhijai@futureagi.com", "Abhijai", ADMIN_PASSWORD, ADMIN_PASSWORD]
+        # The last answer declines the one-time automatic-update opt-in.
+        answers = ["abhijai@futureagi.com", "Abhijai", ADMIN_PASSWORD, ADMIN_PASSWORD, "n"]
         code, _, stderr = _run_installer(
             script, environment, typed="\n".join(answers + [""]).encode(), timeout=120
         )
@@ -1504,16 +1582,54 @@ def test_an_existing_install_keeps_its_secrets_and_fills_only_stateless_keys(
         "CH_PASSWORD",
     ):
         assert key not in values
-    assert values["AGENTCC_ADMIN_TOKEN"] == ""
     assert (
-        "PG_PASSWORD MINIO_ROOT_PASSWORD AGENTCC_INTERNAL_API_KEY AGENTCC_ADMIN_TOKEN "
+        "PG_PASSWORD MINIO_ROOT_PASSWORD AGENTCC_INTERNAL_API_KEY "
         "CH_PASSWORD still use the defaults published in this repository"
     ) in stderr
-    # No state depends on these three, so an existing install gets them too.
+    # No state depends on these four, so an existing install gets them too.
     assert re.fullmatch(r"[0-9a-f]{64}", values["REDIS_PASSWORD"])
     assert len(base64.urlsafe_b64decode(values["INTEGRATION_ENCRYPTION_KEY"])) == 32
     # Without it the app refuses the gateway's request logs.
     assert re.fullmatch(r"[0-9a-f]{64}", values["AGENTCC_WEBHOOK_SECRET"])
+    # Without it the gateway refuses to start on the compose default, and
+    # the API's admin endpoints refuse that default.
+    assert re.fullmatch(r"[0-9a-f]{64}", values["AGENTCC_ADMIN_TOKEN"])
+
+
+@pytest.mark.parametrize(
+    "configured, replaced",
+    [
+        pytest.param(
+            "local-dev-only-admin-token-replace-me", True, id="compose-default"
+        ),
+        pytest.param("CHANGEME-set-by-bin-install", True, id="placeholder"),
+        pytest.param("e" * 64, False, id="operator-chosen"),
+    ],
+)
+def test_an_existing_install_replaces_only_an_empty_or_published_admin_token(
+    tmp_path: Path, configured: str, replaced: bool
+) -> None:
+    script, environment, _ = _installer_sandbox(
+        tmp_path,
+        CI="1",
+        FAGI_STUB_VOLUMES="futureagi_app-data futureagi_postgres-data",
+    )
+    repo = script.parents[1]
+    (repo / ".env").write_text(
+        SANDBOX_ENV_EXAMPLE + f"AGENTCC_ADMIN_TOKEN={configured}\n",
+        encoding="utf-8",
+    )
+
+    code, stdout, stderr = _run_installer(script, environment, "--no-up")
+
+    assert code == 0, stderr
+    token = _env_values(repo)["AGENTCC_ADMIN_TOKEN"]
+    if replaced:
+        assert re.fullmatch(r"[0-9a-f]{64}", token)
+        assert "Generated AGENTCC_ADMIN_TOKEN" in stdout
+    else:
+        assert token == configured
+        assert "Generated AGENTCC_ADMIN_TOKEN" not in stdout
 
 
 CLICKHOUSE_BEFORE_CH_PASSWORD = (
@@ -1858,8 +1974,39 @@ def test_from_source_builds_every_image_in_order_and_never_pulls_them(
         "AGENTCC_GATEWAY_IMAGE=futureagi/agentcc-gateway:local",
     ):
         assert f"--build-arg {arg}" in builds[4]
-    assert _env_values(script.parents[1])["FUTURE_AGI_VERSION"] == "local"
+    # The code-evaluation sandbox: a published executor of another release
+    # cannot start under this checkout's non-root, read-only settings.
+    assert builds[5:] == [EXECUTOR_BUILD]
+    values = _env_values(script.parents[1])
+    assert values["FUTURE_AGI_VERSION"] == "local"
+    assert values["CODE_EXECUTOR_VERSION"] == "local"
     assert _lines(state / "pull.argv") == ["pull", "clickhouse", "postgres"]
+
+
+def test_from_source_builds_an_unpublished_executor_base_first(tmp_path: Path) -> None:
+    script, environment, state = _installer_sandbox(
+        tmp_path, CI="1", FAGI_STUB_MISSING_IMAGES=SANDBOX_EXECUTOR_BASE, FAGI_STUB_MANIFEST="missing"
+    )
+
+    code, _, stderr = _run_installer(script, environment, "--from-source", "--skip-user-creation")
+
+    assert code == 0, stderr
+    builds = _lines(state / "build.log")
+    assert builds[-2:] == [
+        f"build -t {SANDBOX_EXECUTOR_BASE} -f futureagi/code-executor/Dockerfile.base futureagi/code-executor",
+        EXECUTOR_BUILD,
+    ]
+
+
+def test_from_source_reuses_an_executor_base_already_on_the_host(tmp_path: Path) -> None:
+    script, environment, state = _installer_sandbox(tmp_path, CI="1", FAGI_STUB_MANIFEST="missing")
+
+    code, _, stderr = _run_installer(script, environment, "--from-source", "--skip-user-creation")
+
+    assert code == 0, stderr
+    builds = _lines(state / "build.log")
+    assert not any("code-executor-base" in build for build in builds)
+    assert builds[-1] == EXECUTOR_BUILD
 
 
 def test_distributed_from_source_tags_its_own_images_local(tmp_path: Path) -> None:
@@ -1871,7 +2018,8 @@ def test_distributed_from_source_tags_its_own_images_local(tmp_path: Path) -> No
 
     assert code == 0, stderr
     builds = _lines(state / "build.log")
-    assert len(builds) == 4
+    assert len(builds) == 5
+    assert builds[4] == EXECUTOR_BUILD
     assert not any("standalone" in build for build in builds)
     # The standard backend variant, as the published futureagi/future-agi.
     assert builds[0] == (
@@ -1883,6 +2031,7 @@ def test_distributed_from_source_tags_its_own_images_local(tmp_path: Path) -> No
         "FRONTEND_VERSION",
         "AGENTCC_GATEWAY_VERSION",
         "FI_COLLECTOR_VERSION",
+        "CODE_EXECUTOR_VERSION",
     ):
         assert values[key] == "local"
     assert _lines(state / "pull.argv") == ["pull", "--ignore-buildable", "postgres"]
@@ -1901,6 +2050,63 @@ def test_a_local_tag_without_its_image_points_at_from_source(tmp_path: Path) -> 
     assert code == 1
     assert "futureagi/standalone:local is not built yet" in stderr
     assert "--from-source" in stderr
+
+
+def test_both_installers_build_the_code_executor_from_source() -> None:
+    """Static pin, as pwsh is not on every host; the test below runs it."""
+    powershell = _read(INSTALL_PS1)
+    from_source = _power_shell_section(powershell, "build from source (-FromSource)")
+    assert "Build-LocalCodeExecutor" in from_source
+    assert "Set-EnvValue 'CODE_EXECUTOR_VERSION' 'local'" in from_source
+    assert "function Build-LocalCodeExecutor {" in _read(INSTALL_LIB / "build-local.ps1")
+    # A local tag without its image names the executor's setting too.
+    for installer in (_read(INSTALL_SH), powershell):
+        assert "CODE_EXECUTOR_VERSION for the code executor" in installer
+
+
+@pytest.mark.parametrize(
+    ("stub_env", "builds"),
+    [
+        pytest.param({}, [EXECUTOR_BUILD], id="base-on-the-host"),
+        pytest.param(
+            {"FAGI_STUB_MISSING_IMAGES": SANDBOX_EXECUTOR_BASE, "FAGI_STUB_MANIFEST": "missing"},
+            [
+                f"build -t {SANDBOX_EXECUTOR_BASE} -f futureagi/code-executor/Dockerfile.base futureagi/code-executor",
+                EXECUTOR_BUILD,
+            ],
+            id="unpublished-base",
+        ),
+        pytest.param(
+            {"FAGI_STUB_MANIFEST": "missing"}, [EXECUTOR_BUILD], id="unpublished-base-on-the-host"
+        ),
+        pytest.param(
+            {"FAGI_STUB_MISSING_IMAGES": SANDBOX_EXECUTOR_BASE}, [EXECUTOR_BUILD], id="published-base"
+        ),
+    ],
+)
+def test_power_shell_from_source_builds_the_code_executor(
+    tmp_path: Path, stub_env: dict[str, str], builds: list[str]
+) -> None:
+    """As ./bin/install --from-source: a published executor of another release
+    cannot start under this checkout's non-root, read-only settings, and every
+    code evaluation would fail."""
+    if shutil.which("pwsh") is None:
+        pytest.skip("pwsh is unavailable")
+
+    result, repo, state = TestInstallersKeepAPinnedCollector._power_shell_pull_and_up(
+        tmp_path, "", True, **stub_env
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Containers started" in result.stdout
+    assert _lines(state / "build.log") == builds
+    values = _env_values(repo)
+    assert values["FUTURE_AGI_VERSION"] == "local"
+    assert values["CODE_EXECUTOR_VERSION"] == "local"
+    assert (
+        "FUTURE_AGI_VERSION=local and CODE_EXECUTOR_VERSION=local written to .env"
+        in result.stdout
+    )
 
 
 def test_placeholders_next_to_existing_volumes_are_never_replaced(
@@ -2141,20 +2347,510 @@ def test_the_telemetry_notice_comes_before_the_admin_email_is_asked(
     """The first account's email is part of the registration."""
     script, environment, _ = _installer_sandbox(tmp_path)
 
-    code, stdout, stderr = _run_installer(script, environment, typed=b"\n", timeout=120)
+    # A blank email skips the account; "n" declines the automatic-update opt-in.
+    code, stdout, stderr = _run_installer(script, environment, typed=b"\nn\n", timeout=120)
 
     assert code == 0, stderr
     notice = stdout.index("this install registers with api.futureagi.com")
     assert notice < stdout.index("Email    : ")
     # Worded as the telemetry page (https://docs.futureagi.com/docs/self-hosting/configuration/telemetry).
     for fact in (
-        "instance id, version, deployment type, and the emails and domains of owners,",
-        "admins and staff/superuser accounts",
+        "instance id, version and deployment type. It sends no email addresses unless",
+        "FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true is set in .env.",
         "usage counts every 6 h",
         "Opt out: --no-telemetry, or FUTURE_AGI_TELEMETRY_DISABLED=true in .env",
-        "registration remains: instance id, version, deployment type, timestamp.",
+        "Opting out sends no deployment telemetry to Future AGI, including registration.",
     ):
         assert fact in stdout
+    # Admin emails are opt-in: the default notice does not promise to send them.
+    assert "emails and domains of owners" not in stdout
+
+
+def test_the_telemetry_notice_names_the_admin_emails_when_opted_in(
+    tmp_path: Path,
+) -> None:
+    script, environment, _ = _installer_sandbox(tmp_path)
+    (script.parents[1] / ".env").write_text(
+        SANDBOX_ENV_EXAMPLE + "FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true\n",
+        encoding="utf-8",
+    )
+
+    code, stdout, stderr = _run_installer(script, environment, typed=b"\n", timeout=120)
+
+    assert code == 0, stderr
+    notice = stdout.index("this install registers with api.futureagi.com")
+    assert notice < stdout.index("Email    : ")
+    for fact in (
+        "instance id, version and deployment type, plus the emails and domains of owners,",
+        "admins and staff/superuser accounts (FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true).",
+        "usage counts every 6 h",
+        "Opt out: --no-telemetry, or FUTURE_AGI_TELEMETRY_DISABLED=true in .env",
+    ):
+        assert fact in stdout
+    assert "It sends no email addresses" not in stdout
+
+
+@pytest.mark.parametrize("shares", [False, True])
+def test_the_telemetry_notice_says_why_when_and_which_fields(
+    tmp_path: Path, shares: bool
+) -> None:
+    """Worded as site gate DH-007-A (DH-009-A for bin/install.ps1)."""
+    script, environment, _ = _installer_sandbox(tmp_path, CI="1")
+    if shares:
+        (script.parents[1] / ".env").write_text(
+            SANDBOX_ENV_EXAMPLE + "FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true\n",
+            encoding="utf-8",
+        )
+
+    code, stdout, stderr = _run_installer(script, environment, "--no-up")
+
+    assert code == 0, stderr
+    why = stdout.index(
+        "Deployment telemetry is on so Future AGI can count installs and plan "
+        "release testing."
+    )
+    when = stdout.index(
+        "When the first owner/admin account exists, this install registers with "
+        "api.futureagi.com:"
+    )
+    assert why < when
+    assert (
+        "Fields: schema_version, instance_id, version, deployment_type, timestamp,"
+        in stdout
+    )
+    users = "telemetry_disabled=false, users[] (email, domain)."
+    assert (users in stdout) is shares
+    assert ("telemetry_disabled=false.\n" in stdout) is not shares
+    then = "Then it sends usage counts every 6 h and content-free journey events;"
+    assert then in stdout
+
+
+# Padded FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS values, as (where it is set,
+# value, whether admin emails are sent). The app trims the value before it
+# matches 1/true/yes/on (config.telemetry_shares_admin_emails()), so the
+# installers' notices do too.
+PADDED_ADMIN_EMAIL_OPT_INS = [
+    (".env", " true ", True),
+    (".env", "\tOn", True),
+    (".env", " 1 ", True),
+    ("shell", "\tOn\n", True),
+    ("shell", " true ", True),
+    (".env", " false ", False),
+    (".env", "t rue", False),
+]
+
+
+@pytest.mark.parametrize(("source", "value", "shares"), PADDED_ADMIN_EMAIL_OPT_INS)
+def test_the_telemetry_notice_reads_a_padded_admin_email_opt_in_as_the_app_does(
+    tmp_path: Path, source: str, value: str, shares: bool
+) -> None:
+    shell = {}
+    if source == "shell":
+        shell["FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS"] = value
+    script, environment, _ = _installer_sandbox(tmp_path, CI="1", **shell)
+    if source == ".env":
+        (script.parents[1] / ".env").write_text(
+            SANDBOX_ENV_EXAMPLE + f"FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS={value}\n",
+            encoding="utf-8",
+        )
+
+    code, stdout, stderr = _run_installer(script, environment, "--no-up")
+
+    assert code == 0, stderr
+    assert "this install registers with api.futureagi.com" in stdout
+    assert ("plus the emails and domains of owners," in stdout) is shares
+    assert ("It sends no email addresses unless" in stdout) is not shares
+
+
+def test_power_shell_trims_the_admin_email_opt_in_before_matching() -> None:
+    """Static pin, as pwsh is not on every host; the test below runs it."""
+    installer = _read(INSTALL_PS1)
+    start = installer.index("function Test-TelemetrySharesAdminEmails {")
+    helper = installer[start : installer.index("\n}\n", start)]
+    assert '"$value".Trim() -match ' in helper
+
+
+@pytest.mark.parametrize(("source", "value", "shares"), PADDED_ADMIN_EMAIL_OPT_INS)
+def test_power_shell_telemetry_notice_reads_a_padded_admin_email_opt_in_as_the_app_does(
+    tmp_path: Path, source: str, value: str, shares: bool
+) -> None:
+    if shutil.which("pwsh") is None:
+        pytest.skip("pwsh is unavailable")
+    environment = {"PATH": os.environ["PATH"], "HOME": str(tmp_path)}
+    if source == "shell":
+        environment["FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS"] = value
+    else:
+        (tmp_path / ".env").write_text(
+            f"FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS={value}\n", encoding="utf-8"
+        )
+    script = "\n".join(
+        [
+            f". '{INSTALL_LIB / 'env.ps1'}'",
+            "$NoTelemetry = $false",
+            "function Step { param($m) }",
+            "function Ok { param($m) Write-Output $m }",
+            "function Warn { param($m) Write-Output $m }",
+            "function Say { param($m) Write-Output $m }",
+            _power_shell_section(_read(INSTALL_PS1), "telemetry and unsafe settings"),
+            "Show-TelemetryNotice",
+        ]
+    )
+
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", script],
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "this install registers with api.futureagi.com" in result.stdout
+    assert ("plus the emails and domains of owners," in result.stdout) is shares
+    assert ("It sends no email addresses unless" in result.stdout) is not shares
+
+
+# .env values as Compose reads them (its dotenv parser), as (the text after
+# "X=", the value Compose gives X). Leading whitespace goes. A value in matching
+# double or single quotes is what lies between them; whitespace or a # comment
+# may follow the closing quote. An unquoted value ends before " #" (a space,
+# then #; a tab does not start a comment) and loses trailing whitespace. The
+# installers read .env the same way, so what they print and check is what the
+# stack they start runs with.
+COMPOSE_DOTENV_VALUES = [
+    ('"true"', "true"),
+    ("'true'", "true"),
+    ("true # opt in", "true"),
+    ("true", "true"),
+    ("false", "false"),
+    ('"false"', "false"),
+    # A # with no space before it is part of the value.
+    ("abc#def", "abc#def"),
+    ("true#x", "true#x"),
+    # So is " #" inside quotes.
+    ('"a #b"', "a #b"),
+    ("'a #b'", "a #b"),
+    ('"true" # opt in', "true"),
+    ("'true'# opt in", "true"),
+    (' "true"', "true"),
+    ("  true  ", "true"),
+    ("true\r", "true"),
+    ('"true"\r', "true"),
+    ('" true "', " true "),
+    ("true\t# opt in", "true\t# opt in"),
+    ("8000 # api", "8000"),
+    ('""', ""),
+    ('"docker-compose.distributed.yml"', "docker-compose.distributed.yml"),
+    ('"CHANGEME-x"', "CHANGEME-x"),
+    ("0123abcdef", "0123abcdef"),
+    ('pa"ss', 'pa"ss'),
+    ("it's", "it's"),
+    # Compose refuses an unclosed quote; the installers keep the text as written.
+    ('"abc', '"abc'),
+]
+
+
+def _shell_env_value(
+    directory: Path, call: str, shell: dict[str, str] | None = None
+) -> str:
+    """CALL (an env.sh function) under bin/install's shell options."""
+    command = f'set -eEuo pipefail; trap "exit 70" ERR; . "$1"; v=$({call})'
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'{command}; printf "[%s]" "$v"',
+            "bash",
+            INSTALL_LIB / "env.sh",
+        ],
+        cwd=directory,
+        env={"PATH": "/usr/bin:/bin", **(shell or {})},
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("[") and result.stdout.endswith("]")
+    return result.stdout[1:-1]
+
+
+@pytest.mark.parametrize(("text", "value"), COMPOSE_DOTENV_VALUES)
+def test_the_shell_installer_reads_an_env_value_as_compose_does(
+    tmp_path: Path, text: str, value: str
+) -> None:
+    (tmp_path / ".env").write_text(f"OTHER=1\nX={text}\n", encoding="utf-8")
+
+    assert _shell_env_value(tmp_path, "env_value X") == value
+    assert _shell_env_value(tmp_path, "compose_env_value X") == value
+
+
+def test_the_shell_installer_takes_a_value_exported_in_the_shell_as_it_is(
+    tmp_path: Path,
+) -> None:
+    """Compose reads quotes and comments in .env, not in the environment."""
+    (tmp_path / ".env").write_text("X=from-env-file\n", encoding="utf-8")
+
+    exported = {"X": '"true" # c'}
+    assert _shell_env_value(tmp_path, "compose_env_value X", exported) == '"true" # c'
+
+
+def _power_shell_function(text: str, name: str) -> str:
+    start = text.index(f"function {name} {{")
+    return text[start : text.index("\n}\n", start)]
+
+
+def test_power_shell_reads_env_values_through_the_compose_parse() -> None:
+    """Static pin, as pwsh is not on every host; the tests below run it."""
+    env_ps1 = _read(INSTALL_LIB / "env.ps1")
+    assert "ConvertFrom-EnvText" in _power_shell_function(env_ps1, "Get-EnvValue")
+    parse = _power_shell_function(env_ps1, "ConvertFrom-EnvText")
+    for step in (
+        ".TrimStart()",  # leading whitespace goes
+        "-match '^[\"'']'",  # a quoted value
+        ".IndexOf($quote, 1)",  # ends at its closing quote
+        "-like '#*'",  # which a comment may follow
+        ".IndexOf(' #', [System.StringComparison]::Ordinal)",  # unquoted: " #"
+        ".TrimEnd()",  # and trailing whitespace go
+    ):
+        assert step in parse, step
+
+
+def _power_shell_env(
+    directory: Path,
+    command: str,
+    shell: dict[str, str] | None = None,
+    *,
+    strict: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    """COMMAND after env.ps1; STRICT: under install.ps1's strict mode."""
+    preamble = ["$ErrorActionPreference = 'Stop'", "Set-StrictMode -Version 3.0"]
+    script = "\n".join(
+        [*(preamble if strict else []), f". '{INSTALL_LIB / 'env.ps1'}'", command]
+    )
+    return subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", script],
+        cwd=directory,
+        env={"PATH": os.environ["PATH"], "HOME": str(directory), **(shell or {})},
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+@pytest.mark.parametrize(("text", "value"), COMPOSE_DOTENV_VALUES)
+def test_power_shell_reads_an_env_value_as_compose_does(
+    tmp_path: Path, text: str, value: str
+) -> None:
+    if shutil.which("pwsh") is None:
+        pytest.skip("pwsh is unavailable")
+    (tmp_path / ".env").write_text(f"OTHER=1\nX={text}\n", encoding="utf-8")
+
+    result = _power_shell_env(
+        tmp_path,
+        "Write-Output ('[' + (Get-EnvValue 'X') + ']|[' + (Get-ComposeEnvValue 'X') + ']')",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.rstrip("\r\n") == f"[{value}]|[{value}]"
+
+
+def test_power_shell_takes_a_value_exported_in_the_shell_as_it_is(
+    tmp_path: Path,
+) -> None:
+    if shutil.which("pwsh") is None:
+        pytest.skip("pwsh is unavailable")
+    (tmp_path / ".env").write_text("X=from-env-file\n", encoding="utf-8")
+
+    result = _power_shell_env(
+        tmp_path,
+        "Write-Output ('[' + (Get-ComposeEnvValue 'X') + ']')",
+        {"X": '"true" # c'},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.rstrip("\r\n") == '["true" # c]'
+
+
+# Texts after "X=" that the installers copy as written. A CR is left out: it
+# ends the line for PowerShell, and Python's text mode reads it as a newline.
+ENV_LINE_TEXTS = [text for text, _ in COMPOSE_DOTENV_VALUES if "\r" not in text]
+
+
+@pytest.mark.parametrize("text", ENV_LINE_TEXTS)
+def test_the_shell_installer_reads_an_env_line_as_written(
+    tmp_path: Path, text: str
+) -> None:
+    (tmp_path / ".env").write_text(f"X=old\nOTHER=1\nX={text}\n", encoding="utf-8")
+
+    assert _shell_env_value(tmp_path, "env_text X") == text
+    assert _shell_env_value(tmp_path, "env_text UNSET") == ""
+
+
+@pytest.mark.parametrize("text", ENV_LINE_TEXTS)
+def test_power_shell_reads_an_env_line_as_written(tmp_path: Path, text: str) -> None:
+    if shutil.which("pwsh") is None:
+        pytest.skip("pwsh is unavailable")
+    (tmp_path / ".env").write_text(f"X=old\nOTHER=1\nX={text}\n", encoding="utf-8")
+
+    result = _power_shell_env(
+        tmp_path,
+        "Write-Output ('[' + (Get-EnvText 'X') + ']|[' + (Get-EnvText 'UNSET') + ']')",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.rstrip("\r\n") == f"[{text}]|[]"
+
+
+# MINIO_ROOT_PASSWORD lines an operator may write, as (the text after the "=",
+# the password Compose gives MinIO). On a fresh install the installers give a
+# placeholder S3_SECRET_KEY the same password, so the S3 client can sign in to
+# MinIO. They copy the line's text as written: the password itself, written
+# without its quotes, would lose a " #" tail, surrounding spaces or the quote
+# characters it holds when Compose reads S3_SECRET_KEY.
+MINIO_PASSWORD_LINES = [
+    ('"a #b"', "a #b"),
+    ('" padded "', " padded "),
+    ("\"'inner'\"", "'inner'"),
+    ("'\"inner\"'", '"inner"'),
+    ('"plain"', "plain"),
+    ("plain#hash", "plain#hash"),
+    ("plain # mine", "plain"),
+]
+
+
+@pytest.mark.parametrize(("text", "password"), MINIO_PASSWORD_LINES)
+def test_a_fresh_install_gives_s3_the_password_compose_gives_minio(
+    tmp_path: Path, text: str, password: str
+) -> None:
+    script, environment, _ = _installer_sandbox(tmp_path, CI="1")
+    repo = script.parents[1]
+    (repo / ".env").write_text(
+        SANDBOX_ENV_EXAMPLE
+        + f"MINIO_ROOT_PASSWORD={text}\n"
+        + "S3_SECRET_KEY=CHANGEME-set-by-bin-install\n",
+        encoding="utf-8",
+    )
+
+    code, stdout, stderr = _run_installer(script, environment, "--no-up")
+
+    assert code == 0, stderr
+    assert "Aligned S3_SECRET_KEY with MINIO_ROOT_PASSWORD" in stdout
+    assert _env_values(repo)["MINIO_ROOT_PASSWORD"] == text
+    # Each line as Compose reads it (COMPOSE_DOTENV_VALUES).
+    assert _shell_env_value(repo, "env_value MINIO_ROOT_PASSWORD") == password
+    assert _shell_env_value(repo, "env_value S3_SECRET_KEY") == password
+
+
+def test_power_shell_copies_the_minio_password_line_to_s3_as_written() -> None:
+    """Static pin, as pwsh is not on every host; the test below runs it."""
+    env_ps1 = _read(INSTALL_LIB / "env.ps1")
+    assert "Get-EnvText" in _power_shell_function(env_ps1, "Get-EnvValue")
+    write_secrets = _power_shell_function(
+        _read(INSTALL_LIB / "secrets.ps1"), "Write-Secrets"
+    )
+    assert (
+        "Set-EnvValue 'S3_SECRET_KEY' (Get-EnvText 'MINIO_ROOT_PASSWORD')"
+        in write_secrets
+    )
+
+
+@pytest.mark.parametrize(("text", "password"), MINIO_PASSWORD_LINES)
+def test_power_shell_gives_s3_the_password_compose_gives_minio(
+    tmp_path: Path, text: str, password: str
+) -> None:
+    if shutil.which("pwsh") is None:
+        pytest.skip("pwsh is unavailable")
+    (tmp_path / ".env").write_text(
+        f"MINIO_ROOT_PASSWORD={text}\nS3_SECRET_KEY=CHANGEME-set-by-bin-install\n",
+        encoding="utf-8",
+    )
+
+    result = _power_shell_write_secrets(tmp_path, True, "")
+
+    assert result.returncode == 0, result.stderr
+    assert "Aligned S3_SECRET_KEY with MINIO_ROOT_PASSWORD" in result.stdout
+    assert _env_values(tmp_path)["MINIO_ROOT_PASSWORD"] == text
+    read = _power_shell_env(
+        tmp_path,
+        "Write-Output ('[' + (Get-EnvValue 'MINIO_ROOT_PASSWORD') + ']|['"
+        " + (Get-EnvValue 'S3_SECRET_KEY') + ']')",
+    )
+    assert read.returncode == 0, read.stderr
+    assert read.stdout.rstrip("\r\n") == f"[{password}]|[{password}]"
+
+
+# FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS lines in .env, as (the text after the
+# =, whether admin emails are sent). The app gets the value Compose reads
+# (COMPOSE_DOTENV_VALUES) and trims it before it matches 1/true/yes/on.
+QUOTED_OR_COMMENTED_ADMIN_EMAIL_OPT_INS = [
+    ('"true"', True),
+    ("'true'", True),
+    ("true # opt in", True),
+    ('"true" # opt in', True),
+    ('" yes "', True),
+    ("true", True),
+    ("false", False),
+    ('"false"', False),
+    ("true#x", False),
+    ('"true #x"', False),
+    ("true\t# opt in", False),
+]
+
+
+@pytest.mark.parametrize(("text", "shares"), QUOTED_OR_COMMENTED_ADMIN_EMAIL_OPT_INS)
+def test_the_telemetry_notice_reads_a_quoted_or_commented_opt_in_as_compose_does(
+    tmp_path: Path, text: str, shares: bool
+) -> None:
+    script, environment, _ = _installer_sandbox(tmp_path, CI="1")
+    (script.parents[1] / ".env").write_text(
+        SANDBOX_ENV_EXAMPLE + f"FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS={text}\n",
+        encoding="utf-8",
+    )
+
+    code, stdout, stderr = _run_installer(script, environment, "--no-up")
+
+    assert code == 0, stderr
+    assert "this install registers with api.futureagi.com" in stdout
+    assert ("plus the emails and domains of owners," in stdout) is shares
+    assert ("It sends no email addresses unless" in stdout) is not shares
+
+
+@pytest.mark.parametrize(("text", "shares"), QUOTED_OR_COMMENTED_ADMIN_EMAIL_OPT_INS)
+def test_power_shell_telemetry_notice_reads_a_quoted_or_commented_opt_in_as_compose_does(
+    tmp_path: Path, text: str, shares: bool
+) -> None:
+    if shutil.which("pwsh") is None:
+        pytest.skip("pwsh is unavailable")
+    (tmp_path / ".env").write_text(
+        f"FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS={text}\n", encoding="utf-8"
+    )
+
+    result = _power_shell_env(
+        tmp_path,
+        "\n".join(
+            [
+                "$NoTelemetry = $false",
+                "function Step { param($m) }",
+                "function Ok { param($m) Write-Output $m }",
+                "function Warn { param($m) Write-Output $m }",
+                "function Say { param($m) Write-Output $m }",
+                _power_shell_section(
+                    _read(INSTALL_PS1), "telemetry and unsafe settings"
+                ),
+                "Show-TelemetryNotice",
+            ]
+        ),
+        strict=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "this install registers with api.futureagi.com" in result.stdout
+    assert ("plus the emails and domains of owners," in result.stdout) is shares
+    assert ("It sends no email addresses unless" in result.stdout) is not shares
 
 
 def test_no_telemetry_is_in_env_before_the_stack_starts(tmp_path: Path) -> None:
@@ -2168,7 +2864,7 @@ def test_no_telemetry_is_in_env_before_the_stack_starts(tmp_path: Path) -> None:
     env_at_up = _read(state / "env_at_up").splitlines()
     assert "FUTURE_AGI_TELEMETRY_DISABLED=true" in env_at_up
     assert "Off (FUTURE_AGI_TELEMETRY_DISABLED=true)" in stdout
-    assert "instance id, version, deployment type, timestamp" in stdout
+    assert "Deployment telemetry sends nothing to Future AGI." in stdout
 
     # .env keeps it: a later run without the flag stays opted out.
     code, stdout, stderr = _run_installer(script, environment, "--skip-user-creation")
@@ -2628,7 +3324,655 @@ def test_startup_guard_admits_create_user_and_still_blocks_unlisted_commands() -
     assert guarded_management_command(["manage.py", "shell"]) == "shell"
     assert guarded_management_command(["manage.py", "migrate"]) == "migrate"
     assert guarded_management_command(["gunicorn", "tfc.wsgi"]) is None
+    # The Hub's and the rollout's operator commands run on a production
+    # install (deploy/README.md, "Omega Hub"); a lookalike name does not.
+    for command in (
+        [
+            "manage.py",
+            "omega_hub_maintainer",
+            "grant",
+            "--email",
+            "a@example.com",
+            "--by",
+            "b@example.com",
+        ],
+        ["manage.py", "omega_rollout", "status"],
+        [
+            "python",
+            "-m",
+            "django",
+            "omega_rollout",
+            "allow",
+            "hub",
+            "--org",
+            "o",
+            "--actor",
+            "a@example.com",
+        ],
+    ):
+        assert guarded_management_command(command) is None, command
+    assert (
+        guarded_management_command(["manage.py", "omega_hub_seed_dev"])
+        == "omega_hub_seed_dev"
+    )
+    assert (
+        guarded_management_command(["manage.py", "omega_hub_dev_approve"])
+        == "omega_hub_dev_approve"
+    )
 
     from model_hub.apps import explicit_management_mutation_authorized
 
     assert explicit_management_mutation_authorized(["manage.py", "shell"]) is False
+
+
+class TestInstallersKeepAPinnedCollector:
+    """bin/update pins the distributed stack's fi-collector to a published,
+    verified release (FI_COLLECTOR_VERSION in .env). A later install pulls that
+    image like every other published one and starts the stack with --no-build,
+    so a build from this checkout never replaces it under the release's tag.
+    Unset, empty or `local`, Compose builds it from the checkout as before."""
+
+    PINNED_PULL = [
+        "pull",
+        "agentcc-gateway",
+        "backend",
+        "fi-collector",
+        "frontend",
+        "postgres",
+    ]
+    BUILT_PULL = [
+        "pull",
+        "--ignore-buildable",
+        "agentcc-gateway",
+        "backend",
+        "frontend",
+        "postgres",
+    ]
+    UP_BUILD = ["up", "-d", "--build", "--wait", "--wait-timeout", "1200"]
+    UP_NO_BUILD = ["up", "-d", "--no-build", "--wait", "--wait-timeout", "1200"]
+
+    def test_a_rerun_after_bin_update_pulls_the_pinned_collector_and_builds_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        script, environment, state = _installer_sandbox(tmp_path, CI="1")
+        repo = script.parents[1]
+        code, _, stderr = _run_installer(
+            script, environment, "--distributed", "--skip-user-creation"
+        )
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == self.BUILT_PULL
+        assert _lines(state / "up.argv") == self.UP_BUILD
+        # What `bin/update apply` leaves in .env on a distributed install.
+        with (repo / ".env").open("a", encoding="utf-8") as env:
+            env.write("FI_COLLECTOR_VERSION=v1.52.0\n")
+
+        code, stdout, stderr = _run_installer(
+            script, environment, "--skip-user-creation"
+        )
+
+        assert code == 0, stderr
+        assert "Mode: Distributed" in stdout
+        assert _lines(state / "pull.argv") == self.PINNED_PULL
+        assert _lines(state / "up.argv") == self.UP_NO_BUILD
+        assert not (state / "build.log").exists()
+        assert _env_values(repo)["FI_COLLECTOR_VERSION"] == "v1.52.0"
+
+    def test_a_pinned_collector_on_a_fresh_distributed_install_is_pulled(
+        self, tmp_path: Path
+    ) -> None:
+        script, environment, state = _installer_sandbox(tmp_path, CI="1")
+        (script.parents[1] / ".env").write_text(
+            SANDBOX_ENV_EXAMPLE + "FI_COLLECTOR_VERSION=v1.52.0\n", encoding="utf-8"
+        )
+
+        code, _, stderr = _run_installer(
+            script, environment, "--distributed", "--skip-user-creation"
+        )
+
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == self.PINNED_PULL
+        assert _lines(state / "up.argv") == self.UP_NO_BUILD
+
+    def test_a_tag_exported_in_the_shell_counts_as_compose_reads_it(
+        self, tmp_path: Path
+    ) -> None:
+        script, environment, state = _installer_sandbox(
+            tmp_path, CI="1", FI_COLLECTOR_VERSION="v1.52.0"
+        )
+
+        code, _, stderr = _run_installer(
+            script, environment, "--distributed", "--skip-user-creation"
+        )
+
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == self.PINNED_PULL
+        assert _lines(state / "up.argv") == self.UP_NO_BUILD
+
+    @pytest.mark.parametrize(
+        "setting",
+        ["", "FI_COLLECTOR_VERSION=\n", "FI_COLLECTOR_VERSION=local\n"],
+        ids=["unset", "empty", "local"],
+    )
+    def test_an_unpinned_collector_is_still_built_from_the_checkout(
+        self, tmp_path: Path, setting: str
+    ) -> None:
+        script, environment, state = _installer_sandbox(tmp_path, CI="1")
+        (script.parents[1] / ".env").write_text(
+            SANDBOX_ENV_EXAMPLE + setting, encoding="utf-8"
+        )
+
+        code, _, stderr = _run_installer(
+            script, environment, "--distributed", "--skip-user-creation"
+        )
+
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == self.BUILT_PULL
+        assert _lines(state / "up.argv") == self.UP_BUILD
+
+    def test_from_source_still_builds_the_collector_over_a_pinned_tag(
+        self, tmp_path: Path
+    ) -> None:
+        script, environment, state = _installer_sandbox(tmp_path, CI="1")
+        repo = script.parents[1]
+        (repo / ".env").write_text(
+            SANDBOX_ENV_EXAMPLE + "FI_COLLECTOR_VERSION=v1.52.0\n", encoding="utf-8"
+        )
+
+        code, _, stderr = _run_installer(
+            script,
+            environment,
+            "--distributed",
+            "--from-source",
+            "--skip-user-creation",
+        )
+
+        assert code == 0, stderr
+        assert "build -t futureagi/fi-collector:local fi-collector" in _lines(
+            state / "build.log"
+        )
+        assert _env_values(repo)["FI_COLLECTOR_VERSION"] == "local"
+        assert _lines(state / "pull.argv") == ["pull", "--ignore-buildable", "postgres"]
+        assert _lines(state / "up.argv") == self.UP_BUILD
+
+    def test_a_standalone_install_starts_as_before(self, tmp_path: Path) -> None:
+        script, environment, state = _installer_sandbox(tmp_path, CI="1")
+        (script.parents[1] / ".env").write_text(
+            SANDBOX_ENV_EXAMPLE + "FI_COLLECTOR_VERSION=v1.52.0\n", encoding="utf-8"
+        )
+
+        code, _, stderr = _run_installer(script, environment, "--skip-user-creation")
+
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == ["pull", "app", "clickhouse", "postgres"]
+        assert _lines(state / "up.argv") == ["up", "-d"]
+
+    def test_both_installers_start_a_pinned_collector_without_building(self) -> None:
+        # The PowerShell installer runs only under pwsh (below); this keeps the
+        # two installers' choice in step where pwsh is unavailable.
+        shell = _read(INSTALL_SH)
+        powershell = _read(INSTALL_PS1)
+        # Round 6: both decide from fi-collector's resolved image (asserted in
+        # TestInstallersReadThePinFromTheResolvedCollectorImage).
+        assert (
+            "collector_image=$(awk -F'\\t' '$1 == \"fi-collector\" {print $2; exit}'"
+            ' <<<"$SERVICE_IMAGES")' in shell
+        )
+        assert '$DC up -d "$build_flag" --wait --wait-timeout 1200' in shell
+        assert "$collectorImage = @($serviceImages | Where-Object" in powershell
+        assert (
+            "Invoke-Compose up -d $buildFlag --wait --wait-timeout 1200" in powershell
+        )
+        for installer in (shell, powershell):
+            assert "--no-build" in installer
+            assert "up -d --build" not in installer
+
+    @staticmethod
+    def _power_shell_pull_and_up(
+        tmp_path: Path,
+        setting: str,
+        from_source: bool,
+        override: str = "",
+        **shell_env: str,
+    ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
+        """install.ps1's build-from-source, pull and bring-up sections under
+        pwsh, against the installer tests' stub docker. OVERRIDE, when given,
+        is written to docker-compose.override.yml. Build-LocalImages is
+        stubbed; the rest of bin/lib/build-local.ps1 runs, so the code
+        executor's builds reach the stub docker's build.log."""
+        stubs = tmp_path / "stubs"
+        stubs.mkdir()
+        stub = stubs / "docker"
+        stub.write_text(STUB_DOCKER, encoding="utf-8")
+        stub.chmod(0o755)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        # -FromSource reads the executor's base pin from its Dockerfile.
+        executor = repo / "futureagi" / "code-executor"
+        executor.mkdir(parents=True)
+        (executor / "Dockerfile").write_text(
+            f"ARG CODE_EXECUTOR_BASE={SANDBOX_EXECUTOR_BASE}\nFROM ${{CODE_EXECUTOR_BASE}}\n",
+            encoding="utf-8",
+        )
+        if override:
+            (repo / "docker-compose.override.yml").write_text(
+                override, encoding="utf-8"
+            )
+        (repo / ".env").write_text(
+            SANDBOX_ENV_EXAMPLE
+            + "COMPOSE_FILE=docker-compose.distributed.yml\n"
+            + setting,
+            encoding="utf-8",
+        )
+        state = tmp_path / "state"
+        state.mkdir()
+        installer = _read(INSTALL_PS1)
+        script = "\n".join(
+            [
+                "$ErrorActionPreference = 'Stop'; Set-StrictMode -Version 3.0",
+                f". '{INSTALL_LIB / 'env.ps1'}'",
+                "$DcCmd = 'docker'; $DcArgs = @('compose'); $DcText = 'docker compose'",
+                "function Invoke-Compose { & $DcCmd @DcArgs @args }",
+                "function Invoke-Probe { param($Command) & $Command }",
+                "function Append-Log { param($Lines) }",
+                f". '{INSTALL_LIB / 'build-local.ps1'}'",
+                "function Build-LocalImages { param($Distributed) }",
+                "function Step { param($m) }",
+                "function Say { param($m) Write-Output $m }",
+                "function Ok { param($m) Write-Output $m }",
+                "function Warn { param($m) Write-Output $m }",
+                "function Die { param($m) Write-Output $m; exit 1 }",
+                "function Fail-Preflight { param($m) Die $m }",
+                "$Distributed = $true; $IsDistributed = $true; $AppService = 'backend'",
+                f"$FromSource = ${str(from_source).lower()}",
+                "$VmArch = ''; $projectServices = @(); $projectName = 'futureagi'",
+                _power_shell_section(installer, "build from source (-FromSource)"),
+                _power_shell_section(installer, "pull"),
+                _power_shell_section(installer, "bring up"),
+            ]
+        )
+        result = subprocess.run(
+            ["pwsh", "-NoProfile", "-Command", script],
+            cwd=repo,
+            env={
+                "PATH": f"{stubs}:{os.environ['PATH']}",
+                "HOME": str(tmp_path),
+                "FAGI_STUB_STATE": str(state),
+                "FAGI_STUB_PULL": "ok",
+                "FAGI_STUB_MISSING_IMAGES": "",
+                **shell_env,
+            },
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        return result, repo, state
+
+    @pytest.mark.parametrize(
+        ("setting", "from_source", "shell_env", "pull", "up"),
+        [
+            pytest.param(
+                "FI_COLLECTOR_VERSION=v1.52.0\n",
+                False,
+                {},
+                PINNED_PULL,
+                UP_NO_BUILD,
+                id="pinned",
+            ),
+            pytest.param(
+                "",
+                False,
+                {"FI_COLLECTOR_VERSION": "v1.52.0"},
+                PINNED_PULL,
+                UP_NO_BUILD,
+                id="pinned-in-the-shell",
+            ),
+            pytest.param("", False, {}, BUILT_PULL, UP_BUILD, id="unset"),
+            pytest.param(
+                "FI_COLLECTOR_VERSION=\n", False, {}, BUILT_PULL, UP_BUILD, id="empty"
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION=local\n",
+                False,
+                {},
+                BUILT_PULL,
+                UP_BUILD,
+                id="local",
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION=v1.52.0\n",
+                True,
+                {},
+                ["pull", "--ignore-buildable", "postgres"],
+                UP_BUILD,
+                id="from-source",
+            ),
+        ],
+    )
+    def test_power_shell_installer_keeps_a_pinned_collector(
+        self,
+        tmp_path: Path,
+        setting: str,
+        from_source: bool,
+        shell_env: dict[str, str],
+        pull: list[str],
+        up: list[str],
+    ) -> None:
+        if shutil.which("pwsh") is None:
+            pytest.skip("pwsh is unavailable")
+
+        result, repo, state = self._power_shell_pull_and_up(
+            tmp_path, setting, from_source, **shell_env
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Containers started" in result.stdout
+        assert _lines(state / "pull.argv") == pull
+        assert _lines(state / "up.argv") == up
+        if from_source:
+            assert _env_values(repo)["FI_COLLECTOR_VERSION"] == "local"
+
+
+class TestInstallersReadThePinFromTheResolvedCollectorImage:
+    """Round 6 (U28, U29, U30, U34, U35, U36). Whether fi-collector is pinned
+    comes from the image Compose resolves for the fi-collector service, never
+    from the .env text: Compose reads `export ` and spaced lines, drops quotes
+    and comments, and lets the shell, even an empty value, win over .env.
+    Pinned (futureagi/fi-collector:<tag>, tag not `local`): pulled with the
+    other published images, every other service with `build:` built by name,
+    then `up --no-build`. Otherwise exactly as before. --from-source always
+    builds, whatever the shell exports."""
+
+    PINNED_PULL = TestInstallersKeepAPinnedCollector.PINNED_PULL
+    BUILT_PULL = TestInstallersKeepAPinnedCollector.BUILT_PULL
+    UP_BUILD = TestInstallersKeepAPinnedCollector.UP_BUILD
+    UP_NO_BUILD = TestInstallersKeepAPinnedCollector.UP_NO_BUILD
+    FROM_SOURCE_PULL = ["pull", "--ignore-buildable", "fi-collector", "postgres"]
+
+    # Written as `docker compose config` prints services: a buildable worker
+    # with a published-looking tag, a build-only service, and a service sharing
+    # the collector's image (as fi-property-catalog-consumer does).
+    OVERRIDE = (
+        "services:\n"
+        "  worker-extra:\n"
+        "    build:\n"
+        "      context: /checkout/worker\n"
+        "    image: example/worker:dev\n"
+        "  sidecar:\n"
+        "    build:\n"
+        "      context: /checkout/sidecar\n"
+        "  fi-property-catalog-consumer:\n"
+        "    image: futureagi/fi-collector:${FI_COLLECTOR_VERSION:-local}\n"
+        "    build:\n"
+        "      context: /checkout/fi-collector\n"
+    )
+    OVERRIDE_PINNED_PULL = [*PINNED_PULL, "fi-property-catalog-consumer"]
+    OVERRIDE_BUILD = ["build", "worker-extra", "sidecar"]
+
+    PINNED_LINES = [
+        pytest.param("export FI_COLLECTOR_VERSION=v1.52.0\n", id="export"),
+        pytest.param("  FI_COLLECTOR_VERSION=v1.52.0\n", id="indented"),
+        pytest.param("FI_COLLECTOR_VERSION = v1.52.0\n", id="spaced"),
+    ]
+    LOCAL_SETTINGS = [
+        pytest.param('FI_COLLECTOR_VERSION="local"\n', {}, id="double-quoted"),
+        pytest.param("FI_COLLECTOR_VERSION='local'\n", {}, id="single-quoted"),
+        pytest.param(
+            "FI_COLLECTOR_VERSION=local # built from source\n", {}, id="comment"
+        ),
+        pytest.param(
+            "FI_COLLECTOR_VERSION=v1.53.0\n",
+            {"FI_COLLECTOR_VERSION": ""},
+            id="emptied-in-the-shell",
+        ),
+        pytest.param(
+            "FI_COLLECTOR_VERSION=v1.53.0\n",
+            {"FI_COLLECTOR_VERSION": "local"},
+            id="local-in-the-shell",
+        ),
+    ]
+
+    @staticmethod
+    def _install(
+        tmp_path: Path, setting: str, *args: str, override: str = "", **env: str
+    ) -> tuple[int, str, str, Path, Path]:
+        script, environment, state = _installer_sandbox(tmp_path, CI="1", **env)
+        repo = script.parents[1]
+        (repo / ".env").write_text(SANDBOX_ENV_EXAMPLE + setting, encoding="utf-8")
+        if override:
+            (repo / "docker-compose.override.yml").write_text(
+                override, encoding="utf-8"
+            )
+        code, stdout, stderr = _run_installer(
+            script, environment, "--distributed", "--skip-user-creation", *args
+        )
+        return code, stdout, stderr, repo, state
+
+    @pytest.mark.parametrize("setting", PINNED_LINES)
+    def test_a_pin_compose_reads_from_any_env_line_is_pulled_and_never_built(
+        self, tmp_path: Path, setting: str
+    ) -> None:
+        code, _, stderr, _, state = self._install(tmp_path, setting)
+
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == self.PINNED_PULL
+        assert _lines(state / "up.argv") == self.UP_NO_BUILD
+        assert not (state / "compose_build.argv").exists()
+        assert not (state / "build.log").exists()
+
+    @pytest.mark.parametrize(("setting", "shell"), LOCAL_SETTINGS)
+    def test_a_collector_compose_resolves_to_local_is_built_as_before(
+        self, tmp_path: Path, setting: str, shell: dict[str, str]
+    ) -> None:
+        code, _, stderr, _, state = self._install(tmp_path, setting, **shell)
+
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == self.BUILT_PULL
+        assert _lines(state / "up.argv") == self.UP_BUILD
+        assert not (state / "compose_build.argv").exists()
+
+    def test_from_source_builds_whatever_the_shell_exports(
+        self, tmp_path: Path
+    ) -> None:
+        code, _, stderr, repo, state = self._install(
+            tmp_path,
+            "FI_COLLECTOR_VERSION=v1.52.0\n",
+            "--from-source",
+            FI_COLLECTOR_VERSION="v1.52.0",
+        )
+
+        assert code == 0, stderr
+        assert "build -t futureagi/fi-collector:local fi-collector" in _lines(
+            state / "build.log"
+        )
+        assert _env_values(repo)["FI_COLLECTOR_VERSION"] == "local"
+        # As before: Compose skips the buildable collector's pull, and
+        # `up --build` builds it from this checkout under the exported tag.
+        assert _lines(state / "pull.argv") == self.FROM_SOURCE_PULL
+        assert _lines(state / "up.argv") == self.UP_BUILD
+        assert not (state / "compose_build.argv").exists()
+
+    def test_other_buildable_services_are_built_by_name_and_the_pin_never_is(
+        self, tmp_path: Path
+    ) -> None:
+        code, _, stderr, repo, state = self._install(
+            tmp_path, "FI_COLLECTOR_VERSION=v1.52.0\n", override=self.OVERRIDE
+        )
+
+        assert code == 0, stderr
+        assert _lines(state / "compose_file_at_up") == [
+            "docker-compose.distributed.yml:docker-compose.override.yml"
+        ]
+        # The worker is built rather than pulled; both images sharing the pin
+        # are pulled and never built.
+        assert _lines(state / "pull.argv") == self.OVERRIDE_PINNED_PULL
+        assert _lines(state / "compose_build.argv") == self.OVERRIDE_BUILD
+        assert _lines(state / "compose_calls.log") == ["build", "up"]
+        assert _lines(state / "up.argv") == self.UP_NO_BUILD
+        assert not (state / "build.log").exists()
+        assert _env_values(repo)["FI_COLLECTOR_VERSION"] == "v1.52.0"
+
+    def test_an_unpinned_stack_with_an_override_starts_as_before(
+        self, tmp_path: Path
+    ) -> None:
+        code, _, stderr, _, state = self._install(tmp_path, "", override=self.OVERRIDE)
+
+        assert code == 0, stderr
+        assert _lines(state / "pull.argv") == [*self.BUILT_PULL, "worker-extra"]
+        assert _lines(state / "compose_calls.log") == ["up"]
+        assert _lines(state / "up.argv") == self.UP_BUILD
+
+    def test_a_failed_build_of_another_service_stops_before_the_stack_starts(
+        self, tmp_path: Path
+    ) -> None:
+        code, _, stderr, _, state = self._install(
+            tmp_path,
+            "FI_COLLECTOR_VERSION=v1.52.0\n",
+            override=self.OVERRIDE,
+            FAGI_STUB_COMPOSE_BUILD="fail",
+        )
+
+        assert code == 1
+        assert (
+            "docker compose build worker-extra sidecar failed; the output above"
+            " names the error. Fix it, then re-run ./bin/install." in stderr
+        )
+        assert not (state / "up.argv").exists()
+
+    def test_both_installers_read_the_resolved_image_not_the_env_file(self) -> None:
+        shell = _read(INSTALL_SH)
+        powershell = _read(INSTALL_PS1)
+        assert "compose_env_value FI_COLLECTOR_VERSION" not in shell
+        assert "Get-ComposeEnvValue 'FI_COLLECTOR_VERSION'" not in powershell
+        assert "(( DISTRIBUTED == 1 && FROM_SOURCE == 0 ))" in shell
+        assert "$IsDistributed -and -not $FromSource -and $collectorImage" in (
+            powershell
+        )
+        assert '$DC build "${build_services[@]}"' in shell
+        assert "Invoke-Compose build @buildServices" in powershell
+
+    @pytest.mark.parametrize(
+        ("setting", "from_source", "override", "shell_env", "pull", "build", "up"),
+        [
+            pytest.param(
+                "export FI_COLLECTOR_VERSION=v1.52.0\n",
+                False,
+                "",
+                {},
+                PINNED_PULL,
+                [],
+                UP_NO_BUILD,
+                id="export",
+            ),
+            pytest.param(
+                "  FI_COLLECTOR_VERSION=v1.52.0\n",
+                False,
+                "",
+                {},
+                PINNED_PULL,
+                [],
+                UP_NO_BUILD,
+                id="indented",
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION = v1.52.0\n",
+                False,
+                "",
+                {},
+                PINNED_PULL,
+                [],
+                UP_NO_BUILD,
+                id="spaced",
+            ),
+            pytest.param(
+                'FI_COLLECTOR_VERSION="local"\n',
+                False,
+                "",
+                {},
+                BUILT_PULL,
+                [],
+                UP_BUILD,
+                id="double-quoted",
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION='local'\n",
+                False,
+                "",
+                {},
+                BUILT_PULL,
+                [],
+                UP_BUILD,
+                id="single-quoted",
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION=local # built from source\n",
+                False,
+                "",
+                {},
+                BUILT_PULL,
+                [],
+                UP_BUILD,
+                id="comment",
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION=v1.53.0\n",
+                False,
+                "",
+                {"FI_COLLECTOR_VERSION": "local"},
+                BUILT_PULL,
+                [],
+                UP_BUILD,
+                id="local-in-the-shell",
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION=v1.52.0\n",
+                True,
+                "",
+                {"FI_COLLECTOR_VERSION": "v1.52.0"},
+                FROM_SOURCE_PULL,
+                [],
+                UP_BUILD,
+                id="from-source-over-a-shell-pin",
+            ),
+            pytest.param(
+                "FI_COLLECTOR_VERSION=v1.52.0\n"
+                "COMPOSE_FILE=docker-compose.distributed.yml:docker-compose.override.yml\n",
+                False,
+                OVERRIDE,
+                {},
+                OVERRIDE_PINNED_PULL,
+                OVERRIDE_BUILD,
+                UP_NO_BUILD,
+                id="override",
+            ),
+        ],
+    )
+    def test_power_shell_installer_reads_the_resolved_collector_image(
+        self,
+        tmp_path: Path,
+        setting: str,
+        from_source: bool,
+        override: str,
+        shell_env: dict[str, str],
+        pull: list[str],
+        build: list[str],
+        up: list[str],
+    ) -> None:
+        if shutil.which("pwsh") is None:
+            pytest.skip("pwsh is unavailable")
+
+        result, repo, state = (
+            TestInstallersKeepAPinnedCollector._power_shell_pull_and_up(
+                tmp_path, setting, from_source, override, **shell_env
+            )
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Containers started" in result.stdout
+        assert _lines(state / "pull.argv") == pull
+        assert _lines(state / "compose_build.argv") == build
+        assert _lines(state / "up.argv") == up
+        if build:
+            assert _lines(state / "compose_calls.log") == ["build", "up"]
+        if from_source:
+            assert _env_values(repo)["FI_COLLECTOR_VERSION"] == "local"

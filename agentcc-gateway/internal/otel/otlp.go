@@ -414,6 +414,9 @@ func encodeSpan(s *Span) *tracepb.Span {
 		StartTimeUnixNano: uint64(s.StartTime.UnixNano()),
 		Attributes:        attrs,
 	}
+	if s.Kind == KindServer {
+		pb.Kind = tracepb.Span_SPAN_KIND_SERVER
+	}
 	if s.ParentID != "" {
 		pb.ParentSpanId = normalizeID(s.ParentID, 8)
 	}

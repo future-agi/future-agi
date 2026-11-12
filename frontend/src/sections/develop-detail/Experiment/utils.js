@@ -6,6 +6,15 @@ import {
 } from "../RunPrompt/common";
 import _ from "lodash";
 import { DEFAULT_MESSAGES } from "./constants";
+import { targetTypeOf } from "./runPlan";
+import { r2RunPayload } from "./experimentFormValues";
+import {
+  escapeModelKey,
+  modelParamsFor,
+  formModelParams,
+  requestModelParams,
+} from "./modelParamNames";
+export { escapeModelKey, unescapeModelKey } from "./modelParamNames";
 
 // Normalize key for matching (remove special chars, lowercase)
 const normalizeKey = (key) => {
@@ -21,9 +30,61 @@ const createKeyMapping = (modelParams) => {
   return keyMapping;
 };
 
-// Escape/unescape dots in model keys to prevent RHF from interpreting them as nested paths
-export const escapeModelKey = (key) => key?.replace(/\./g, "__DOT__") ?? key;
-export const unescapeModelKey = (key) => key?.replace(/__DOT__/g, ".") ?? key;
+// options-truth L2 G8 (P1): model params carry parameter values only.
+// Keep scalars, known form groups and supported provider containers (stop
+// strings and logit_bias numeric maps), never arbitrary nested form state
+// or arrays of cards. Unchanged saves must retain these provider settings.
+const PARAM_GROUPS = new Set(["booleans", "dropdowns", "reasoning"]);
+const isScalar = (v) =>
+  v === null || ["number", "string", "boolean"].includes(typeof v);
+export function slimModelParams(params) {
+  if (!params || typeof params !== "object" || Array.isArray(params)) return {};
+  const out = {};
+  Object.entries(params).forEach(([k, v]) => {
+    if (isScalar(v)) out[k] = v;
+    else if (
+      k === "stop" &&
+      Array.isArray(v) &&
+      v.every((value) => typeof value === "string")
+    )
+      out[k] = [...v];
+    else if (
+      k === "logit_bias" &&
+      v &&
+      typeof v === "object" &&
+      !Array.isArray(v) &&
+      Object.values(v).every(
+        (value) => typeof value === "number" && Number.isFinite(value),
+      )
+    )
+      out[k] = { ...v };
+    else if (k === "responseFormat" && v && typeof v === "object")
+      out[k] = Object.fromEntries(
+        Object.entries(v).filter(
+          ([sk, x]) =>
+            isScalar(x) || (sk === "schema" && typeof x === "object"),
+        ),
+      );
+    else if (PARAM_GROUPS.has(k) && v && typeof v === "object")
+      out[k] = Object.fromEntries(
+        Object.entries(v).flatMap(([gk, gv]) =>
+          isScalar(gv)
+            ? [[gk, gv]]
+            : gv && typeof gv === "object" && !Array.isArray(gv)
+              ? [
+                  [
+                    gk,
+                    Object.fromEntries(
+                      Object.entries(gv).filter(([, x]) => isScalar(x)),
+                    ),
+                  ],
+                ]
+              : [],
+        ),
+      );
+  });
+  return out;
+}
 
 // Main function to match and create new modelParams
 export const matchModelParams = (item) => {
@@ -198,7 +259,6 @@ const normalizePromptConfigItem = (item = {}) => ({
   outputFormat: item.output_format,
   voiceInputColumnId: item.voice_input_column_id ?? "",
 });
-
 
 export const getExperimentDefaultValue = (
   editConfigData = {},
@@ -484,7 +544,7 @@ export const reversePromptConfigTransform = (data, experimentType) => {
             ),
           )
         : {};
-      group.modelParams[item.model] = cleanModelParams;
+      group.modelParams[escapeModelKey(item.model)] = cleanModelParams;
     });
     return Array.from(groups.values());
   }
@@ -528,7 +588,7 @@ export const reversePromptConfigTransform = (data, experimentType) => {
               ),
             )
           : {};
-        group.modelParams[modelName] = cleanModelParams;
+        group.modelParams[escapeModelKey(modelName)] = cleanModelParams;
       }
       if (voice) modelEntry.voices.push({ voice, promptConfigId: item.id });
     });
@@ -568,7 +628,7 @@ export const reversePromptConfigTransform = (data, experimentType) => {
             ),
           )
         : {};
-      group.modelParams[item.model] = cleanModelParams;
+      group.modelParams[escapeModelKey(item.model)] = cleanModelParams;
     });
 
     return Array.from(groups.values());
@@ -605,13 +665,24 @@ export const reversePromptConfigTransform = (data, experimentType) => {
             ),
           )
         : {};
-      group.modelParams[item.model] = cleanModelParams;
+      group.modelParams[escapeModelKey(item.model)] = cleanModelParams;
     });
 
     return Array.from(groups.values());
   }
 
   return [];
+};
+
+/**
+ * A TTS / STT / Image entry's configuration: the card's own settings minus
+ * tools and tool choice (a media run calls no tools; options-truth L7b
+ * typed:add-tool). Empty when nothing else is set.
+ */
+export const mediaConfigurationOf = (configuration) => {
+  // eslint-disable-next-line no-unused-vars
+  const { tools, toolChoice, tool_choice, ...rest } = configuration ?? {};
+  return rest;
 };
 
 export const promptConfigTransform = (
@@ -622,16 +693,61 @@ export const promptConfigTransform = (
 ) => {
   const defaultConfig = { toolChoice: "auto", tools: [] };
 
+  // options-truth L2 G8 (P1): only parameter values travel (model keys
+  // are stored escaped when they hold a dot, e.g. gemini-2.5-flash).
   const buildModelParams = (modelParams, e) => ({
     providers: e?.providers || "",
     logoUrl: e?.logoUrl || "",
-    ...modelParams?.[e?.value],
+    ...requestModelParams(
+      slimModelParams(formModelParams(modelParamsFor(modelParams, e?.value))),
+    ),
   });
 
   if (experimentType === MODEL_TYPES.LLM) {
+    // One entry per run, in card order (prompt cards: one per model), so the
+    // run letters the drawer shows are the letters the server assigns.
     return (data ?? []).flatMap((promptConfig) => {
+      const type = targetTypeOf(promptConfig);
+      const mapping = promptConfig?.variableMapping ?? {};
+      const variableMapping = Object.keys(mapping).length
+        ? { variable_mapping: mapping }
+        : {};
+      const runRef = (runIdValue) =>
+        isEditing && runIdValue ? { run_id: runIdValue } : {};
+
+      // R2 cards (code / traces / harness) pass their fields through.
+      const r2Run = r2RunPayload(promptConfig, runRef(promptConfig?.runId));
+      if (r2Run) return [r2Run];
+
+      if (type === "external") {
+        return [
+          {
+            target_type: "external",
+            name: String(promptConfig?.runName ?? "").trim(),
+            ...runRef(promptConfig?.runId),
+          },
+        ];
+      }
+
+      if (type === "http") {
+        const h = promptConfig?.http ?? {};
+        return [
+          {
+            target_type: "http",
+            ...variableMapping,
+            http: {
+              url: String(h.url ?? "").trim(),
+              method: h.method ?? "POST",
+              body_template: h.bodyTemplate ?? "",
+              output_path: String(h.outputPath ?? "").trim(),
+            },
+            ...runRef(promptConfig?.runId),
+          },
+        ];
+      }
+
       // Handle agents - no model transformation needed
-      if (promptConfig?.agentId) {
+      if (type === "agent") {
         return [
           {
             ...(isEditing &&
@@ -639,10 +755,12 @@ export const promptConfigTransform = (
               isUUID(promptConfig.promptConfigId) && {
                 id: promptConfig.promptConfigId,
               }),
-
+            target_type: "agent",
             name: promptConfig.name,
             agent_id: promptConfig.agentId,
             agent_version: promptConfig.agentVersion || null,
+            ...variableMapping,
+            ...runRef(promptConfig?.runId),
           },
         ];
       }
@@ -655,14 +773,17 @@ export const promptConfigTransform = (
       });
       return models.map((e) => ({
         ...(isEditing && e?.id && isUUID(e.id) && { id: e.id }),
+        target_type: "prompt",
         output_format: (promptConfig?.outputFormat || outputFormat) ?? "string",
         prompt_id: promptConfig?.promptId || null,
         prompt_version: promptConfig?.promptVersion || null,
-        agent_id: promptConfig?.agentId || null,
-        agent_version: promptConfig?.agentVersion || null,
+        agent_id: null,
+        agent_version: null,
         model: e.value,
         model_params: updatedModelParams[e.value] || {},
         configuration: promptConfig?.configuration || defaultConfig,
+        ...variableMapping,
+        ...runRef(e?.runId),
       }));
     });
   }
@@ -694,7 +815,7 @@ export const promptConfigTransform = (
         messages: promptConfig?.messages || [],
         model: { name, config },
         model_params: updatedModelParams[name] || {},
-        configuration: promptConfig?.configuration || defaultConfig,
+        configuration: mediaConfigurationOf(promptConfig?.configuration),
       }));
     });
   }
@@ -713,7 +834,7 @@ export const promptConfigTransform = (
         model: e.value,
         voice_input_column_id: promptConfig?.voiceInputColumnId || "",
         model_params: updatedModelParams[e.value] || {},
-        configuration: promptConfig?.configuration || defaultConfig,
+        configuration: mediaConfigurationOf(promptConfig?.configuration),
       }));
     });
   }
@@ -731,7 +852,7 @@ export const promptConfigTransform = (
         messages: promptConfig?.messages || [],
         model: e.value,
         model_params: updatedModelParams[e.value] || {},
-        configuration: promptConfig?.configuration || defaultConfig,
+        configuration: mediaConfigurationOf(promptConfig?.configuration),
       }));
     });
   }

@@ -1,8 +1,8 @@
 import {
   Avatar,
   Box,
+  Button,
   Chip,
-  IconButton,
   ListItemIcon,
   ListItemText,
   Menu,
@@ -22,14 +22,15 @@ import axios, { endpoints } from "src/utils/axios";
 import { useMutation } from "@tanstack/react-query";
 import { LoadingButton } from "@mui/lab";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import SecretKeyRenderer from "./SecretKeyRenderer";
 
 const allMenuItems = [
   {
     id: 1,
     title: "Disable Key",
-    icon: "mdi:cancel",
-    iconColor: "red.500",
-    titleColor: "red.500",
+    icon: "solar:forbidden-circle-linear",
+    iconColor: "status.danger.fg",
+    titleColor: "status.danger.fg",
     iconType: "iconify",
     actionType: "disable",
   },
@@ -46,8 +47,8 @@ const allMenuItems = [
     id: 3,
     title: "Delete Key",
     icon: "/assets/icons/ic_delete.svg",
-    iconColor: "red.500",
-    titleColor: "red.500",
+    iconColor: "status.danger.fg",
+    titleColor: "status.danger.fg",
     iconType: "svg",
     actionType: "delete",
   },
@@ -79,6 +80,7 @@ const ActionMenu = (props) => {
   };
 
   const handleMenuItemClick = (action) => {
+    if (data?.type === "system") return;
     setOpenConfirmation(action);
   };
   const handledialogClose = () => {
@@ -93,6 +95,9 @@ const ActionMenu = (props) => {
      * @returns
      */
     mutationFn: (variable) => {
+      if (data?.type === "system") {
+        throw new Error("System keys cannot be changed.");
+      }
       const payload = { key_id: data.id };
       if (variable?.action == "disable") {
         return axios.post(endpoints.keys.disablekey, payload);
@@ -123,41 +128,29 @@ const ActionMenu = (props) => {
           height: "100%",
         }}
       >
-        <Box
-          sx={{
-            display: "flex",
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: "8px",
-            height: "26px",
-            width: "71px",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            "&:hover": {
-              backgroundColor: "background.default",
-            },
-          }}
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          aria-label="Actions"
           onClick={handleClick}
-        >
-          <SvgColor
-            sx={{
-              color: "text.disabled",
-              width: "16px",
-              height: "16px",
-              ml: 1,
-            }}
-            src="/assets/icons/action_buttons/ic_configure.svg"
-          />
-          <IconButton size="small" sx={{ ml: 0.2 }}>
+          startIcon={
+            <SvgColor
+              width={16}
+              sx={{ color: "text.disabled" }}
+              src="/assets/icons/action_buttons/ic_configure.svg"
+            />
+          }
+          endIcon={
             <Iconify
               icon={`fluent:chevron-${open ? "up" : "down"}-16-filled`}
               width="18px"
               height="18px"
               color="text.disabled"
             />
-          </IconButton>
-        </Box>
+          }
+          sx={{ borderColor: "divider" }}
+        />
       </Box>
 
       <Menu
@@ -177,7 +170,7 @@ const ActionMenu = (props) => {
         }}
         PaperProps={{
           sx: {
-            width: 224,
+            width: 240,
             border: "1px solid",
             borderColor: (theme) => theme.palette.divider,
             borderRadius: "8px",
@@ -202,9 +195,7 @@ const ActionMenu = (props) => {
                   py: 0.5,
                   "&:hover": {
                     bgcolor: "action.hover",
-                    "& .MuiTypography-root": {
-                      fontWeight: 500,
-                    },
+                    "& .MuiTypography-root": {},
                   },
                 }}
               >
@@ -212,14 +203,14 @@ const ActionMenu = (props) => {
                   {item.iconType === "svg" && (
                     <SvgColor
                       src={item.icon}
-                      sx={{ width: 20, height: 20, color: item.iconColor }}
+                      sx={{ width: 16, height: 16, color: item.iconColor }}
                     />
                   )}
                   {item.iconType === "iconify" && (
                     <Iconify
                       icon={item.icon}
-                      width="20px"
-                      height="20px"
+                      width="16px"
+                      height="16px"
                       color={item.iconColor}
                     />
                   )}
@@ -254,6 +245,7 @@ const ActionMenu = (props) => {
         action={
           <LoadingButton
             loading={loading}
+            disabled={data?.type === "system"}
             size="small"
             variant="contained"
             color="error"
@@ -298,6 +290,7 @@ const ActionMenu = (props) => {
         action={
           <LoadingButton
             loading={loading}
+            disabled={data?.type === "system"}
             size="small"
             variant="contained"
             color="error"
@@ -332,6 +325,7 @@ const ActionMenu = (props) => {
         action={
           <LoadingButton
             loading={loading}
+            disabled={data?.type === "system"}
             size="small"
             variant="contained"
             color="primary"
@@ -363,6 +357,11 @@ const CellRenderer = (props) => {
   const { value } = props;
   const columnKey = props?.column?.colDef?.field || "";
 
+  // Key columns show the server's masked hint as sent, never a copy action.
+  if (["api_key", "secret_key", "apiKey", "secretKey"].includes(columnKey)) {
+    return <SecretKeyRenderer value={value} />;
+  }
+
   if (columnKey === "createdBy" || columnKey === "created_by") {
     if (!props?.value?.length) {
       return "-";
@@ -382,8 +381,6 @@ const CellRenderer = (props) => {
           sx={{
             width: (theme) => theme.spacing(3),
             height: (theme) => theme.spacing(3),
-            color: "pink.500",
-            backgroundColor: "background.neutral",
           }}
         />
         <Typography typography="s2" fontWeight={"fontWeightRegular"}>
@@ -420,12 +417,9 @@ const CellRenderer = (props) => {
           <Chip
             label="Disabled"
             sx={{
-              padding: "4px 8px",
-              borderRadius: "4px",
               ml: 1,
               flexShrink: 0,
               color: "text.primary",
-              height: "26px",
               backgroundColor: "background.neutral",
               "&:hover": {
                 backgroundColor: "action.hover",

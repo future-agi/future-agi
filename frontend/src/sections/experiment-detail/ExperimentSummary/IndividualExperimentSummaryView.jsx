@@ -45,7 +45,7 @@ const IndividualExperimentSummaryView = () => {
 
   const columns = useMemo(() => {
     let colData = [];
-    if (data?.metadata?.isWinnerChosen) {
+    if (data?.metadata?.is_winner_chosen || data?.metadata?.isWinnerChosen) {
       colData.push({
         field: "rank",
         headerCellRenderer: null,
@@ -92,11 +92,12 @@ const IndividualExperimentSummaryView = () => {
         columns={columns}
         rows={data?.table_data || data?.tableData}
         evalsList={data?.column_config || data?.columnConfig}
+        legacyExperimentId={summaryExperimentId}
       />
       <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
         {(data?.column_config || data?.columnConfig)?.map((col) => (
           <ExperimentEvaluationChart
-            key={col.id}
+            key={col.id ?? col.name}
             col={col}
             rows={data?.table_data || data?.tableData}
           />

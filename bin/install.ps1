@@ -4,9 +4,10 @@
 
 .DESCRIPTION
   PowerShell counterpart of bin/install. Sets up .env (a fresh install gets
-  generated secrets; an existing install's values are never changed), runs
-  docker compose pull + up, waits for health, and prints the URLs to open.
-  Re-running is idempotent.
+  generated secrets), runs docker compose pull + up, waits for health, and
+  prints the URLs to open. Re-running is idempotent. On upgrades, an empty or
+  published-default API pepper is rotated with the default retired so existing
+  API keys still verify; operator-set peppers are preserved (lib/secrets.ps1).
 
   The standalone install is docker-compose.yml: one app container plus
   Postgres and ClickHouse. -Distributed records COMPOSE_FILE=docker-compose.distributed.yml
@@ -195,8 +196,8 @@ if (-not (Test-Path '.env')) {
 }
 
 # ---- telemetry and unsafe settings ----
-# Written before anything starts, so the first account's registration is
-# already the minimal opt-out one.
+# Written before anything starts, so deployment telemetry sends nothing,
+# including when the first account is created.
 if ($NoTelemetry) {
   Set-EnvValue 'FUTURE_AGI_TELEMETRY_DISABLED' 'true'
   Ok "FUTURE_AGI_TELEMETRY_DISABLED=true written to .env: telemetry is off"
@@ -211,6 +212,13 @@ function Test-TelemetryOff {
   return ("$value" -match '^(1|true|yes|on)$')
 }
 
+# Admin emails join the registration only on this opt-in (off by default).
+# Trimmed first, as the app reads it (config.telemetry_shares_admin_emails).
+function Test-TelemetrySharesAdminEmails {
+  $value = Get-ComposeEnvValue 'FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS'
+  return ("$value".Trim() -match '^(1|true|yes|on)$')
+}
+
 # What deployment telemetry sends, before any account (and so any admin
 # email) exists. Worded as the telemetry page,
 # https://docs.futureagi.com/docs/self-hosting/configuration/telemetry.
@@ -222,14 +230,25 @@ function Show-TelemetryNotice {
   if (-not $hours) { $hours = 6 }
   Step "Telemetry"
   if (Test-TelemetryOff) {
-    Ok "Off (FUTURE_AGI_TELEMETRY_DISABLED=true). One minimal registration still goes to ${telemetryHost}: instance id, version, deployment type, timestamp."
+    Ok "Off (FUTURE_AGI_TELEMETRY_DISABLED=true). Deployment telemetry sends nothing to Future AGI."
   } else {
-    Say "  When the first account is created, this install registers with ${telemetryHost}:"
-    Say "  instance id, version, deployment type, and the emails and domains of owners,"
-    Say "  admins and staff/superuser accounts. Then it"
-    Say "  sends usage counts every $hours h; never traces, prompts or other content."
-    Say "  Opt out: -NoTelemetry, or FUTURE_AGI_TELEMETRY_DISABLED=true in .env. One minimal"
-    Say "  registration remains: instance id, version, deployment type, timestamp."
+    Say "  Deployment telemetry is on so Future AGI can count installs and plan release testing."
+    Say "  When the first owner/admin account exists, this install registers with ${telemetryHost}:"
+    if (Test-TelemetrySharesAdminEmails) {
+      Say "  instance id, version and deployment type, plus the emails and domains of owners,"
+      Say "  admins and staff/superuser accounts (FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true)."
+      Say "  Fields: schema_version, instance_id, version, deployment_type, timestamp,"
+      Say "  telemetry_disabled=false, users[] (email, domain)."
+    } else {
+      Say "  instance id, version and deployment type. It sends no email addresses unless"
+      Say "  FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true is set in .env."
+      Say "  Fields: schema_version, instance_id, version, deployment_type, timestamp,"
+      Say "  telemetry_disabled=false."
+    }
+    Say "  Then it sends usage counts every $hours h and content-free journey events;"
+    Say "  never traces, prompts or other content."
+    Say "  Opt out: -NoTelemetry, or FUTURE_AGI_TELEMETRY_DISABLED=true in .env."
+    Say "  Opting out sends no deployment telemetry to Future AGI, including registration."
   }
   Say "  Details: https://docs.futureagi.com/docs/self-hosting/configuration/telemetry"
 }
@@ -587,8 +606,8 @@ if ($vmProbeRan) {
 Save-Mode
 
 # ---- collect first-user creds (up-front so the rest runs unattended) ----
-# The telemetry notice comes first: the first account's email is part of the
-# registration.
+# The telemetry notice comes first: it says whether the registration carries the
+# first account's email (only with FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true).
 Show-TelemetryNotice
 
 # Terminal input carries raw bytes, so a stray escape sequence (Shift+Tab emits
@@ -675,6 +694,11 @@ if (-not $SkipUserCreation -and -not $NonInteractive) {
 if ($FromSource) {
   Step "Building images from this checkout"
   Build-LocalImages $IsDistributed
+  # Code evaluations run in this sandbox; Compose would otherwise pull the
+  # published code-executor:latest, which may not start under this checkout's
+  # non-root, read-only settings.
+  Build-LocalCodeExecutor
+  Set-EnvValue 'CODE_EXECUTOR_VERSION' 'local'
   Set-EnvValue 'FUTURE_AGI_VERSION' 'local'
   if ($IsDistributed) {
     # The distributed stack tags these images separately.
@@ -682,14 +706,16 @@ if ($FromSource) {
     Set-EnvValue 'AGENTCC_GATEWAY_VERSION' 'local'
     Set-EnvValue 'FI_COLLECTOR_VERSION' 'local'
   }
-  Ok "FUTURE_AGI_VERSION=local written to .env"
+  Ok "FUTURE_AGI_VERSION=local and CODE_EXECUTOR_VERSION=local written to .env"
 }
 
 # ---- pull ----
 Step "Pulling images"
 
-# Service and image of every service in the resolved compose file.
+# Service and image of every service in the resolved compose file, and the
+# services with a `build:` section, in its order.
 $serviceImages = @()
+$buildableServices = @()
 $inServices = $false
 $service = $null
 foreach ($line in @(Invoke-Probe { & $DcCmd @DcArgs config })) {
@@ -700,6 +726,8 @@ foreach ($line in @(Invoke-Probe { & $DcCmd @DcArgs config })) {
     $service = $matches[1]
   } elseif ($service -and $line -match '^    image: (.+)$') {
     $serviceImages += [pscustomobject]@{ Service = $service; Image = $matches[1].Trim().Trim('"') }
+  } elseif ($service -and $line -match '^    build:') {
+    $buildableServices += $service
   }
 }
 
@@ -707,8 +735,26 @@ foreach ($line in @(Invoke-Probe { & $DcCmd @DcArgs config })) {
 # distributed stack's fi-collector) and are never pulled. The distributed stack also skips
 # anything it builds itself; the standalone install pulls every other image, so
 # a failed pull can never turn into a surprise source build.
+# bin/update pins the distributed stack's fi-collector to a published release
+# (FI_COLLECTOR_VERSION in .env). A pinned fi-collector is pulled like every
+# other published image and never built: a build from this checkout would
+# replace the verified release image under the release's tag. Whether it is
+# pinned comes from the image Compose resolved for it above, which reads the
+# shell over .env, and .env with its quotes, comments and `export ` lines;
+# -FromSource always builds.
+$collectorImage = @($serviceImages | Where-Object { $_.Service -eq 'fi-collector' } | ForEach-Object { $_.Image }) | Select-Object -First 1
+$collectorPinned = [bool]($IsDistributed -and -not $FromSource -and $collectorImage -and
+  $collectorImage -clike 'futureagi/fi-collector:?*' -and $collectorImage -cne 'futureagi/fi-collector:local')
+# Every other service with `build:` (one a docker-compose.override.yml adds,
+# say) is still built from this checkout, by name, before the stack starts.
+# Services sharing the pinned image (fi-property-catalog-consumer) are not.
+$buildServices = @()
+if ($collectorPinned) {
+  $sharesPin = @($serviceImages | Where-Object { $_.Image -ceq $collectorImage } | ForEach-Object { $_.Service })
+  $buildServices = @($buildableServices | Where-Object { $sharesPin -cnotcontains $_ })
+}
 $pullArgs = @('pull')
-if ($IsDistributed) {
+if ($IsDistributed -and -not $collectorPinned) {
   $pullHelp = (& $DcCmd @DcArgs pull --help 2>&1 | Out-String)
   if ($pullHelp -match '--ignore-buildable') {
     $pullArgs += '--ignore-buildable'
@@ -716,16 +762,19 @@ if ($IsDistributed) {
 }
 $pullServices = @()
 foreach ($entry in $serviceImages) {
+  # Built by name before the stack starts.
+  if ($buildServices -ccontains $entry.Service) { continue }
   if (-not $entry.Image.EndsWith(':local')) {
     $pullServices += $entry.Service
     continue
   }
-  # fi-collector:local has a build: section in the distributed stack; anything
-  # else tagged `local` exists only after -FromSource.
-  if ($entry.Image -eq 'futureagi/fi-collector:local') { continue }
+  # fi-collector:local (distributed) and the Omega Hub checker and its runner
+  # daemon (both stacks) have a build: section; compose builds them from this
+  # checkout. Anything else tagged `local` exists only after -FromSource.
+  if (@('futureagi/fi-collector:local', 'futureagi/omega-hub-checker:local', 'futureagi/omega-hub-runner-host:local') -contains $entry.Image) { continue }
   Invoke-Probe { docker image inspect $entry.Image } | Out-Null
   if ($LASTEXITCODE -ne 0) {
-    Fail-Preflight "$($entry.Image) is not built yet. Re-run with -FromSource to build it from this checkout, or set its tag in .env (FUTURE_AGI_VERSION) back to a published release"
+    Fail-Preflight "$($entry.Image) is not built yet. Re-run with -FromSource to build it from this checkout, or set its tag in .env (FUTURE_AGI_VERSION, or CODE_EXECUTOR_VERSION for the code executor) back to a published release"
   }
 }
 if ((Get-EnvValue 'FUTURE_AGI_VERSION') -eq 'local' -and -not $FromSource) {
@@ -768,10 +817,22 @@ if ($appEntry -and $VmArch) {
 # ---- bring up ----
 Step "Starting the stack"
 if ($IsDistributed) {
+  # --build rebuilds fi-collector from this checkout, so a stale image tag
+  # doesn't carry old source into a new install. A pinned fi-collector was
+  # pulled above, so every other service with `build:` is built by name first
+  # and the stack starts with --no-build, which never rebuilds the pinned image.
+  $buildFlag = if ($collectorPinned) { '--no-build' } else { '--build' }
+  if ($buildServices.Count -gt 0) {
+    Append-Log @("running: $DcText build $($buildServices -join ' ')")
+    Invoke-Compose build @buildServices
+    if ($LASTEXITCODE -ne 0) {
+      Die "docker compose build $($buildServices -join ' ') failed; the output above names the error. Fix it, then re-run .\bin\install.ps1."
+    }
+  }
   # One attempt, as in bin/e2e: replaying compose up can rerun an exited schema
   # or mirror job after an uncertain write. Inspect retained state before resuming.
   # Preserve services omitted by an upgrade; legacy retirement is an explicit step.
-  Invoke-Compose up -d --build --wait --wait-timeout 1200
+  Invoke-Compose up -d $buildFlag --wait --wait-timeout 1200
   if ($LASTEXITCODE -ne 0) {
     Die "docker compose startup failed or timed out; partial state retained, no automatic retry. Inspect 'docker compose ps -a' and 'docker compose logs' before explicitly resuming."
   }
@@ -793,6 +854,23 @@ if ($IsDistributed -and ($projectServices -contains 'rabbitmq')) {
   Warn "  Once the stack is healthy, remove it with: $DcText up -d --remove-orphans"
   Warn "  Its data volume stays until you delete it: docker volume rm ${projectName}_rabbitmq-data"
 }
+
+# Profile removal does not retire containers from a previous default-on install.
+# Report only: never remove an operator's checker or privileged runner silently.
+function Warn-DisabledHubContainers {
+  if (-not $IsDistributed) { return }
+  # Distinguish an explicitly empty shell value from an absent variable.
+  $profiles = if (Test-Path Env:COMPOSE_PROFILES) { $env:COMPOSE_PROFILES } else { Get-EnvValue 'COMPOSE_PROFILES' }
+  $selected = @("$profiles" -split ',' | ForEach-Object { $_.Trim() })
+  if (($selected -ccontains 'hub') -or ($selected -contains '*')) { return }
+  if (($projectServices -contains 'hub-runner') -or ($projectServices -contains 'hub-checker')) {
+    Warn "The hub profile is off, but this project's Hub containers still exist. Turning the profile off does not stop them."
+    Warn "  Production intentionally keeps its external-runner checker; leave that checker running."
+    $quotedProject = "'" + $projectName.Replace("'", "''") + "'"
+    Warn "  If you intended to disable Hub, stop and remove its containers explicitly: $DcText -f docker-compose.distributed.yml -p $quotedProject --profile hub rm -sf hub-runner hub-checker"
+  }
+}
+Warn-DisabledHubContainers
 
 # ---- readiness wait ----
 if ($IsDistributed) {

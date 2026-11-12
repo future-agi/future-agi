@@ -1,0 +1,5 @@
+{
+  "name": "omega-hub-{{id}}",
+  "private": true,
+  "type": "module"
+}

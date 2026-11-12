@@ -1,51 +1,36 @@
 import PropTypes from "prop-types";
-import { Chip } from "@mui/material";
-import Iconify from "src/components/iconify";
+import RunStatusBadge from "src/components/status-badge/StatusBadge";
 
+/*
+  Integration state, drawn by the shared badge: the tint and dot come from
+  theme.palette.status via the one status map.
+*/
 const STATUS_CONFIG = {
-  active: {
-    color: "success",
-    label: "Active",
-    icon: "solar:check-circle-bold",
-  },
-  syncing: {
-    color: "info",
-    label: "Syncing",
-    icon: "solar:refresh-bold",
-  },
-  paused: {
-    color: "warning",
-    label: "Paused",
-    icon: "solar:pause-bold",
-  },
-  error: {
-    color: "error",
-    label: "Error",
-    icon: "solar:danger-bold",
-  },
-  backfilling: {
-    color: "info",
-    label: "Backfilling",
-    icon: "solar:download-bold",
-  },
+  active: { role: "success", label: "Active" },
+  syncing: { role: "info", label: "Syncing" },
+  paused: { role: "warning", label: "Paused" },
+  error: { role: "danger", label: "Error" },
+  backfilling: { role: "info", label: "Backfilling" },
 };
 
-export default function StatusBadge({ status }) {
-  const config = STATUS_CONFIG[status] || {
-    color: "default",
+// An export's first sync sends request logs out; it imports nothing.
+const EXPORT_LABELS = { backfilling: "First export" };
+
+export default function StatusBadge({ status, isExport = false }) {
+  const known = STATUS_CONFIG[status];
+  const config = (known && {
+    ...known,
+    label: (isExport && EXPORT_LABELS[status]) || known.label,
+  }) || {
+    role: "neutral",
     label: status || "Unknown",
-    icon: "solar:question-circle-bold",
   };
   return (
-    <Chip
-      size="small"
-      color={config.color}
-      label={config.label}
-      icon={<Iconify icon={config.icon} width={16} />}
-    />
+    <RunStatusBadge status={status} label={config.label} role={config.role} />
   );
 }
 
 StatusBadge.propTypes = {
   status: PropTypes.string,
+  isExport: PropTypes.bool,
 };

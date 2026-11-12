@@ -1,0 +1,38 @@
+# Fixture for credtemplate's catalogparts tests, not catalog data. Facts are
+# illustrative: the constant Close-Scope value here stands for whatever the
+# real manifest declares (a non-secret constant part).
+schema: "connector-manifest/v1#provider"
+app: close
+id: close-mcp
+version: 1.3.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: ga, source: https://developer.close.com/mcp }
+transport: { kind: http, url: https://mcp.close.com/mcp }
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Close-API-Key
+      secret: true
+      label: API key
+      helpUrl: https://developer.close.com/mcp
+    - in: header
+      name: Close-Scope
+      secret: false
+      value: fixture-scope
+      label: Scope
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developer.close.com/mcp
+    fetchedAt: 2026-10-19
+  - fact: auth.credentialParts
+    url: https://developer.close.com/mcp
+    fetchedAt: 2026-10-19

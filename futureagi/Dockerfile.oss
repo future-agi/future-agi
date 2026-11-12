@@ -86,10 +86,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl ca-certificates xz-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/ffmpeg
-# The pipe only feeds sha256sum a checksum line; sha256sum -c fails the RUN.
-# hadolint ignore=DL4006
-RUN curl -fsSLo /tmp/ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
-    && echo "${FFMPEG_SHA256}  /tmp/ffmpeg.tar.xz" | sha256sum -c - \
+COPY docker/ffmpeg/download-source.sh /src/ffmpeg-tools/
+# Every mirror must supply the same pinned archive; no unverified fallback.
+RUN sh /src/ffmpeg-tools/download-source.sh "${FFMPEG_VERSION}" "${FFMPEG_SHA256}" /tmp/ffmpeg.tar.xz \
     && tar -xJf /tmp/ffmpeg.tar.xz --strip-components=1 \
     && rm /tmp/ffmpeg.tar.xz
 COPY docker/ffmpeg/configure-minimal.sh /src/ffmpeg-tools/

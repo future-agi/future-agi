@@ -94,14 +94,14 @@ def _widget_query_config(qc):
     return changed
 
 
-def _migrate_model(apps, model_name, field, transform, stats):
+def _migrate_model(apps, model_name, field, transform, stats, alias):
     try:
         Model = apps.get_model("tracer", model_name)
     except Exception as exc:  # model missing in historical state — skip
         logger.warning("[rewrite_latency_ms] load %s failed: %s", model_name, exc)
         return
     try:
-        rows = Model.objects.all().iterator(chunk_size=500)
+        rows = Model.objects.using(alias).all().iterator(chunk_size=500)
     except Exception as exc:  # querying failed — skip the whole model
         logger.warning("[rewrite_latency_ms] query %s failed: %s", model_name, exc)
         return
@@ -119,7 +119,7 @@ def _migrate_model(apps, model_name, field, transform, stats):
                 continue
             if transform(blob):
                 setattr(obj, field, blob)
-                obj.save(update_fields=[field])
+                obj.save(using=alias, update_fields=[field])
                 stats["updated"] += 1
         except Exception as exc:  # per-row failure — log + skip, never abort
             stats["failed"] += 1
@@ -130,11 +130,12 @@ def _migrate_model(apps, model_name, field, transform, stats):
 
 
 def forwards(apps, schema_editor):
+    alias = schema_editor.connection.alias
     stats = {"updated": 0, "failed": 0}
     try:
-        _migrate_model(apps, "SavedView", "config", _saved_view_config, stats)
-        _migrate_model(apps, "EvalTask", "filters", _eval_task_filters, stats)
-        _migrate_model(apps, "DashboardWidget", "query_config", _widget_query_config, stats)
+        _migrate_model(apps, "SavedView", "config", _saved_view_config, stats, alias)
+        _migrate_model(apps, "EvalTask", "filters", _eval_task_filters, stats, alias)
+        _migrate_model(apps, "DashboardWidget", "query_config", _widget_query_config, stats, alias)
     except Exception as exc: 
         logger.warning("[rewrite_latency_ms] aborted early (ignored): %s", exc)
     print(

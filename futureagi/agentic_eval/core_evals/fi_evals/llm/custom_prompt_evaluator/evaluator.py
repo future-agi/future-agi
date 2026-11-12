@@ -1,15 +1,12 @@
 import json
 import math
-import re
 import time
 
-import jinja2
 import structlog
 from django.conf import settings
-from jinja2.sandbox import SandboxedEnvironment
+from jinja2.exceptions import UndefinedError
 
 from agentic_eval.core.llm.llm import LLM
-from agentic_eval.core.utils.jinja_utils import nest_dotted_value
 from agentic_eval.core.utils.json_utils import extract_dict_from_string
 from agentic_eval.core.utils.llm_payloads import (
     choices_judge_instructions,
@@ -23,6 +20,9 @@ from agentic_eval.core_evals.fi_utils.evals_result import EvalResult
 from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
 from model_hub.utils.ground_truth_retrieval import GT_CALIBRATION_INSTRUCTION
 
+from .template_render import render_prompt
+from .template_sandbox import build_prompt_environment
+
 logger = structlog.get_logger(__name__)
 
 # Maximum chars of context that get injected into the eval prompt. Larger
@@ -35,6 +35,9 @@ class CustomPromptEvaluator(LLM):
     """
     This evaluator can be configured with custom examples and instructions.
     """
+
+    # A custom model that cannot be reached is named as the judge.
+    endpoint_model_role = "judge model"
 
     def __init__(
         self,
@@ -65,14 +68,10 @@ class CustomPromptEvaluator(LLM):
         # Multi-message support: full message chain from the LLM-as-a-judge editor
         self._messages = kwargs.get("messages")
         self._few_shot_examples = kwargs.get("few_shot_examples")
-        # Sandboxed: templates are user-authored; a plain Environment lets
-        # `{{ ''.__class__.__mro__[1].__subclasses__() }}` reach subprocess/os
-        # (SSTI -> RCE). PreserveUndefined keeps unmapped `{{ var }}` literal.
-        self.env = SandboxedEnvironment(
-            variable_start_string="{{",
-            variable_end_string="}}",
-            undefined=PreserveUndefined,
-        )
+        # Immutable, fail-closed sandbox for user-authored templates. Values
+        # enter through render variables only, never through template source.
+        # Keep text semantics (no HTML autoescape) and unmapped placeholders.
+        self.env = build_prompt_environment(PreserveUndefined)
         self.provider = kwargs.get("provider", None)
         self.check_internet = kwargs.get("check_internet", False)
         self.knowledge_base_id = kwargs.get("knowledge_base_id", None)
@@ -83,6 +82,10 @@ class CustomPromptEvaluator(LLM):
             model_name=model,
             provider=self.provider,
             api_key=api_key,
+            # One key: a managed binding resolved by the caller puts the
+            # judge in managed-route mode; each judge call is admitted on
+            # its own, with the binding's organization and workspace.
+            model_route=kwargs.get("model_route"),
         )
 
     @property
@@ -159,43 +162,12 @@ class CustomPromptEvaluator(LLM):
     def _render_template(
         self, template_str: str, safe_context: dict, fallback_kwargs: dict | None = None
     ) -> str:
-        """Render a fragment with the same edge-case handling as rule_prompt.
+        """Render System/editor text through the same value-free preparation.
 
-        `safe_context.pop(...)` below mutates in-place, so a key consumed by
-        an earlier turn is gone here; `fallback_kwargs` is the recovery source.
+        Later turns retain the base context shaping and spaced-name fallback;
+        a sandbox refusal or output-limit error must propagate to the caller.
         """
-        if not template_str:
-            return template_str
-        fallback_kwargs = fallback_kwargs or {}
-        to_render = template_str
-
-        raw_vars = re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", to_render)
-        for var_name in raw_vars:
-            stripped = var_name.strip()
-            if " " in stripped:
-                if stripped in safe_context:
-                    replacement = str(safe_context.pop(stripped))
-                else:
-                    replacement = str(
-                        fallback_kwargs.get(stripped, "{{" + stripped + "}}")
-                    )
-                to_render = to_render.replace("{{" + var_name + "}}", replacement)
-                to_render = to_render.replace("{{ " + stripped + " }}", replacement)
-            elif "." in stripped and stripped in safe_context:
-                parts = stripped.split(".")
-                value = safe_context.pop(stripped)
-                nest_dotted_value(safe_context, parts, value)
-
-        try:
-            return self.env.from_string(to_render).render(**safe_context)
-        except (jinja2.TemplateSyntaxError, jinja2.exceptions.SecurityError):
-            # Sandbox rejection or parse failure: str.replace fallback so the
-            # payload reaches the LLM as literal text instead of crashing.
-            rendered = to_render
-            for key, value in safe_context.items():
-                rendered = rendered.replace("{{" + key + "}}", str(value))
-                rendered = rendered.replace("{{ " + key + " }}", str(value))
-            return rendered
+        return render_prompt(self.env, template_str, safe_context, fallback_kwargs)
 
     @staticmethod
     def _normalize_choice(value, choices):
@@ -323,64 +295,17 @@ class CustomPromptEvaluator(LLM):
         # Render the rule prompt with the template context using Jinja2
         # IMPORTANT: Use a local variable to avoid mutating self.rule_prompt (which would break reuse)
         try:
-            # Pre-process: handle variable names with spaces (e.g., {{TTS Testing}})
-            # Jinja2 doesn't allow spaces in variable names, so we do simple string
-            # replacement for these before Jinja2 parsing.
-            prompt_to_render = self.rule_prompt
+            # Alias mapped names, not values, in real print tags only. JSON
+            # inputs retain the base Jinja-mode loop behaviour. The helper
+            # bounds emitted text and refuses unsafe access before any LLM call.
             safe_context = dict(template_context)
-
-            # Find all {{...}} variables and check for ones with spaces
-            raw_vars = re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", prompt_to_render)
-            for var_name in raw_vars:
-                stripped = var_name.strip()
-                if " " in stripped:
-                    if stripped in safe_context:
-                        replacement = str(safe_context.pop(stripped))
-                    else:
-                        # Variable has a space but isn't mapped — substitute it
-                        # as literal text so Jinja2 doesn't crash trying to parse it.
-                        replacement = str(kwargs.get(stripped, "{{" + stripped + "}}"))
-                    prompt_to_render = prompt_to_render.replace(
-                        "{{" + var_name + "}}", replacement
-                    )
-                    prompt_to_render = prompt_to_render.replace(
-                        "{{ " + stripped + " }}", replacement
-                    )
-                elif "." in stripped and stripped in safe_context:
-                    # Jinja parses dots as nested access; numeric segments
-                    # become list indices.
-                    parts = stripped.split(".")
-                    value = safe_context.pop(stripped)
-                    nest_dotted_value(safe_context, parts, value)
-
-            # In Jinja mode, parse JSON strings to native objects right
-            # before rendering so {% for %} loops work correctly.
-            if self.template_format == "jinja":
-                for key in list(safe_context.keys()):
-                    val = safe_context[key]
-                    if isinstance(val, str):
-                        stripped = val.strip()
-                        if (stripped.startswith("[") and stripped.endswith("]")) or (
-                            stripped.startswith("{") and stripped.endswith("}")
-                        ):
-                            try:
-                                safe_context[key] = json.loads(val)
-                            except (ValueError, json.JSONDecodeError):
-                                pass
-
-            try:
-                template = self.env.from_string(prompt_to_render)
-                rendered_prompt = template.render(**safe_context)
-            except (jinja2.TemplateSyntaxError, jinja2.exceptions.SecurityError):
-                # Parse failure or sandbox rejection: str.replace fallback.
-                rendered_prompt = prompt_to_render
-                for key, value in safe_context.items():
-                    rendered_prompt = rendered_prompt.replace(
-                        "{{" + key + "}}", str(value)
-                    )
-                    rendered_prompt = rendered_prompt.replace(
-                        "{{ " + key + " }}", str(value)
-                    )
+            rendered_prompt = render_prompt(
+                self.env,
+                self.rule_prompt,
+                safe_context,
+                kwargs,
+                parse_json=self.template_format == "jinja",
+            )
 
             # Append data section with XML-tagged values for clarity
             if template_context:
@@ -462,7 +387,9 @@ class CustomPromptEvaluator(LLM):
                 system_content = self._render_template(
                     self.system_prompt, safe_context, kwargs
                 )
-            except Exception:
+            except UndefinedError:
+                # Preserve the whole authored turn for benign missing variables.
+                # Security refusals and output-limit failures must still escape.
                 system_content = self.system_prompt
         else:
             system_content = self._system_message()
@@ -506,7 +433,7 @@ class CustomPromptEvaluator(LLM):
                 if content.strip():
                     try:
                         rendered = self._render_template(content, safe_context, kwargs)
-                    except Exception:
+                    except UndefinedError:
                         rendered = content
                     messages.append({"role": role, "content": rendered})
 

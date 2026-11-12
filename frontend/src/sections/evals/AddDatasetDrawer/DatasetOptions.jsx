@@ -1,7 +1,10 @@
 import { Box, Chip, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
+import { NOT_IN_RELEASE } from "src/components/NotInRelease/notInRelease";
 
+// A disabled option is an import path not built in this release: it stays
+// visible and dimmed with the shared line, and clicking it does nothing.
 const DatasetOptions = ({ title, subTitle, onClick, disabled }) => {
   return (
     <Box
@@ -14,17 +17,18 @@ const DatasetOptions = ({ title, subTitle, onClick, disabled }) => {
         borderRadius: 1,
         border: "1px solid",
         borderColor: "divider",
-        cursor: "pointer",
+        cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.5 : 1,
       }}
-      onClick={onClick}
+      aria-disabled={disabled || undefined}
+      onClick={disabled ? undefined : onClick}
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
         <Typography variant="body2" fontWeight={500} color="text.primary">
           {title}
         </Typography>
         {disabled && (
-          <Chip variant="outlined" label="Coming Soon" size="small" />
+          <Chip variant="outlined" label={NOT_IN_RELEASE} size="small" />
         )}
       </Box>
       <Typography variant="caption" color="text.secondary">

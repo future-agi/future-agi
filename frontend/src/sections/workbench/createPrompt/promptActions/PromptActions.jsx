@@ -5,6 +5,7 @@ import {
   CircularProgress,
   Divider,
   IconButton,
+  Popover,
   Skeleton,
   Stack,
   Tab,
@@ -23,9 +24,11 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import _ from "lodash";
 import { format, isValid } from "date-fns";
 import CustomTooltip from "src/components/tooltip";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 
 import { usePromptWorkbenchContext } from "../WorkbenchContext";
 import { useIsVariablesDefined } from "../hooks/use-is-variables-defined";
+import { useExtractAllVariables } from "../hooks/use-extract-all-variables";
 import { usePromptVersions } from "../hooks/use-prompt-versions";
 import {
   changeVersion,
@@ -45,10 +48,12 @@ import { NavLink } from "react-router-dom";
 import { createDraftPayload } from "../../constant";
 import { getMetricsTabSx } from "../Metrics/common";
 import SaveAndCommit from "./SaveAndCommit";
+import { useRunOnDraftGuard } from "./SaveDraftFirstDialog";
 import SvgColor from "src/components/svg-color";
 import { DraftBadge } from "../SharedStyledComponents";
 import VersionStyle from "./VersionStyle";
 import MoreActions from "./MoreActions";
+import RunOnRowsButton from "src/sections/common/RunSources/RunOnRowsButton"; // R4-F frozen line
 import { getColorMap as getTagColorMap } from "../VersionHistory/common";
 
 const PromptActions = () => {
@@ -78,6 +83,7 @@ const PromptActions = () => {
     isEmptyPrompt,
     prompts,
     variableData,
+    setVariableData,
     setPromptName,
     promptGeneratingStatus,
     setLoadingStatus,
@@ -149,6 +155,66 @@ const PromptActions = () => {
   );
 
   const isSingleVersion = selectedVersions.length === 1;
+
+  // IT-R4 G4 P3: a run with an empty variable asks first (`Not run yet ·
+  // {{x}} has no value, so lookup_order would be called with no x.
+  // [Fill it] [Run anyway]`).
+  const allVariables = useExtractAllVariables(prompts, templateFormat);
+  const [emptyAsk, setEmptyAsk] = useState(null); // {anchor, names}
+  const emptyVariables = (allVariables ?? []).filter((n) => {
+    const v = variableData?.[n];
+    return !(Array.isArray(v) ? v : [v]).some(
+      (x) => x != null && String(x).trim(),
+    );
+  });
+  const toolNames = (modelConfig?.[0]?.tools ?? [])
+    .map((t) => t?.function?.name ?? t?.name)
+    .filter(Boolean);
+  const emptyLead = (names) =>
+    `{{${names[0]}}}${names.length > 1 ? ` and ${names.length - 1} more` : ""} ${names.length > 1 ? "have" : "has"} no value`;
+  // Run anyway defines a missing name as "" and the server fills {{name}}
+  // with it (nothing is evaluated), so the run leaves it blank.
+  const emptySentence = (names) => {
+    const first = names[0];
+    const what = first.replace(/_/g, " ");
+    const lead = emptyLead(names);
+    return toolNames.length
+      ? `${lead}, so ${toolNames[0]} would be called with no ${what}.`
+      : `${lead}. Fill it, or Run anyway and the run leaves ${names.length > 1 ? "them" : "it"} blank.`;
+  };
+  // Walk row 15: Escape, a click outside the box or a second press on Run
+  // Prompt (it lands on the box's invisible backdrop) closed the box with
+  // nothing sent and nothing said. Every way out other than its two buttons
+  // now says that nothing ran and what to do.
+  const closeEmptyAsk = () => {
+    if (!emptyAsk) return; // already closing
+    const names = emptyAsk.names ?? [];
+    setEmptyAsk(null);
+    enqueueSnackbar(
+      names.length
+        ? `Not run: ${emptyLead(names)}. Type a value under Variables, or press Run Prompt and choose Run anyway to send ${names.length > 1 ? "them" : "it"} blank.`
+        : "Not run. Press Run Prompt again to run.",
+      { variant: "info" },
+    );
+  };
+  const fillFirstEmpty = () => {
+    const name = emptyAsk?.names?.[0];
+    setEmptyAsk(null);
+    // Compared as text, not built into a selector: a name with a quote or a
+    // backslash made querySelector throw after the box had closed.
+    const el =
+      name == null
+        ? null
+        : Array.from(
+            document.querySelectorAll('[data-testid^="variable-value-"]'),
+          ).find(
+            (node) =>
+              node.getAttribute("data-testid") === `variable-value-${name}`,
+          );
+    // After the popover has handed focus back to Run.
+    if (el) setTimeout(() => el.focus(), 200);
+    else setVariableDrawerOpen(true);
+  };
 
   const noModelIndex = modelConfig?.findIndex((m) => !m?.model);
 
@@ -319,7 +385,28 @@ const PromptActions = () => {
     () => !!selectedVersions?.some((version) => version?.isDraft),
     [selectedVersions],
   );
-  const disableCommit = isAnyPromptDraft || selectedVersions.length > 1;
+  // IT-R2 G4 P2: Commit works once the prompt has content (no run needed);
+  // when it can't, the tooltip says why.
+  const commitBlocked =
+    selectedVersions.length > 1
+      ? "To commit one of these versions, use the commit icon on its column."
+      : isEmptyPrompt?.includes(0)
+        ? "Write a message first, then commit it as a version."
+        : !baseVersion?.version
+          ? "Saving your draft…"
+          : null;
+  const disableCommit = Boolean(commitBlocked);
+  // The stored version (prompt history) says whether it is still a draft:
+  // a run alone does not save a version for experiments.
+  const storedDraft = Boolean(
+    versions?.find((v) => v?.template_version === baseVersion?.version)
+      ?.is_draft,
+  );
+  const runGuard = useRunOnDraftGuard({
+    promptId: id,
+    version: baseVersion?.version,
+    isDraft: Boolean(baseVersion?.isDraft) || storedDraft,
+  });
 
   // const selectedVersion = useMemo(() => {
   //   return versions?.find(
@@ -335,6 +422,15 @@ const PromptActions = () => {
         justifyContent={"space-between"}
         padding={2}
         paddingBottom={1.5}
+        // At every width, when the name, chips and actions do not fit on one
+        // row, the actions move to their own right-aligned row instead of
+        // squeezing the name to nothing or covering the Draft chip (a forced
+        // single row lost the name at 1280 px with More open on a draft).
+        sx={{
+          flexWrap: "wrap",
+          columnGap: 1.5,
+          rowGap: 1,
+        }}
       >
         <Box
           sx={{
@@ -343,6 +439,15 @@ const PromptActions = () => {
             alignItems: "center",
             gap: "12px",
             flexGrow: 1,
+            // IT-R1 G4: on its own row the title still gives way (ellipsis)
+            // when the name is very long.
+            minWidth: 0,
+            // On a phone (below sm) the name, version,
+            // chips and rename button wrap onto a second line instead of
+            // squeezing the name to nothing; from sm up they stay on one line.
+            flexWrap: "wrap",
+            rowGap: 0.5,
+            [theme.breakpoints.up("sm")]: { flexWrap: "nowrap" },
           }}
         >
           <NavLink
@@ -364,9 +469,9 @@ const PromptActions = () => {
           </NavLink>
           <span style={{ display: "inline-block", marginTop: "6px" }}>
             <Iconify
-              icon="fluent:chevron-right-12-regular"
-              width={24}
-              height={24}
+              icon="solar:alt-arrow-right-linear"
+              width={16}
+              height={16}
             />
           </span>
 
@@ -374,36 +479,31 @@ const PromptActions = () => {
             condition={RolePermission.PROMPTS[PERMISSIONS.CREATE][userRole]}
           >
             <CustomTooltip show title="Add New Prompt" arrow size="small">
-              <Box
+              <IconButton
+                size="small"
                 sx={{
-                  cursor: "pointer",
                   border: "1px solid",
                   borderColor: "divider",
-                  color: "text.disabled",
-                  borderRadius: theme.spacing(0.5),
-                  padding: theme.spacing(0.5),
-                  lineHeight: 0,
-                  height: "32px",
-                  width: "32px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
+                  // An enabled control, readable in both
+                  // themes (text.disabled made it look disabled).
+                  color: "text.secondary",
                   flexShrink: 0,
                 }}
                 onClick={handleWritePrompt}
+                aria-label="Add new prompt"
               >
                 <ShowComponent condition={!isLoadingCreate}>
-                  <Iconify icon="eva:plus-fill" width="16px" height="16px" />
+                  <Iconify icon="solar:add-linear" width="16px" height="16px" />
                 </ShowComponent>
                 <ShowComponent condition={isLoadingCreate}>
                   <CircularProgress size={16} sx={{ color: "text.primary" }} />
                 </ShowComponent>
-              </Box>
+              </IconButton>
             </CustomTooltip>
           </ShowComponent>
           {!isLoadingCreate ? (
             <>
-              <Box>
+              <Box sx={{ minWidth: 0, overflow: "hidden" }}>
                 <ShowComponent condition={editName}>
                   <TextField
                     value={title}
@@ -426,32 +526,36 @@ const PromptActions = () => {
                   />
                 </ShowComponent>
                 <ShowComponent condition={!editName}>
-                  <CustomTooltip
-                    show={promptName?.length > 30}
-                    title={promptName}
-                  >
+                  {/* The name is cut by width only (about 30 characters at
+                      most) and ends in an ellipsis; whenever it is cut, a
+                      hover shows the full name. */}
+                  <OverflowTooltip title={promptName}>
+                    {/* RS-13: the prompt's name is the page's one h1. */}
                     <Typography
+                      component="h1"
                       typography="M3"
                       fontWeight={"fontWeightMedium"}
                       color="text.primary"
                       sx={{
-                        cursor: promptName?.length > 30 ? "pointer" : "cursor",
+                        m: 0,
+                        maxWidth: "24ch",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
                       }}
                       width={"auto"}
                       whiteSpace={"nowrap"}
                     >
-                      {promptName?.length > 30
-                        ? `${promptName?.slice(0, 30)}..`
-                        : `${promptName}`}
+                      {`${promptName}`}
                     </Typography>
-                  </CustomTooltip>
+                  </OverflowTooltip>
                 </ShowComponent>
 
                 <Typography
                   typography="s3"
                   fontWeight={"fontWeightRegular"}
+                  noWrap
                   color={
-                    currentTab === "Metrics" ? "text.primary" : "text.disabled"
+                    currentTab === "Metrics" ? "text.primary" : "text.tertiary"
                   }
                 >
                   {currentTab === "Metrics"
@@ -469,7 +573,7 @@ const PromptActions = () => {
                     variant="rectangular"
                     width={25}
                     height={23}
-                    sx={{ borderRadius: "2px" }}
+                    sx={{ borderRadius: "4px" }}
                   />
                 )}
                 {baseVersion?.isDraft ? <DraftBadge>Draft</DraftBadge> : null}
@@ -497,10 +601,7 @@ const PromptActions = () => {
                           backgroundColor: getTagColorMap(label?.name, theme)
                             ?.backgroundColor,
                           color: getTagColorMap(label?.name, theme)?.color,
-                          borderRadius: "100px",
                           typography: "s3",
-                          fontWeight: "fontWeightMedium",
-                          height: 24,
                           "&:hover": {
                             backgroundColor: getTagColorMap(label?.name, theme)
                               ?.hoverBackgroundColor,
@@ -516,12 +617,7 @@ const PromptActions = () => {
                 !isLoadingCreate &&
                 RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole] && (
                   <span style={{ display: "inline-block" }}>
-                    <IconButton
-                      onClick={handleEdit}
-                      sx={{
-                        padding: 0.5,
-                      }}
-                    >
+                    <IconButton onClick={handleEdit} aria-label="Rename prompt">
                       <SvgColor
                         src="/assets/icons/ic_edit_pencil.svg"
                         sx={{
@@ -543,7 +639,25 @@ const PromptActions = () => {
           )}
         </Box>
 
-        <Box display="flex" gap={theme.spacing(1.5)} alignItems={"flex-start"}>
+        <Box
+          display="flex"
+          gap={theme.spacing(1.5)}
+          alignItems={"flex-start"}
+          sx={{
+            ml: "auto",
+            // Below lg the actions wrap onto more rows
+            // (right-aligned) when the screen is narrower than all of them,
+            // so Commit, Variables and Run Prompt stay on screen at 390 px.
+            // From lg up they stay on one row, as before.
+            minWidth: 0,
+            maxWidth: "100%",
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+            rowGap: 1,
+            [theme.breakpoints.up("lg")]: { flexShrink: 0, flexWrap: "nowrap" },
+          }}
+          onClickCapture={runGuard.onClickCapture}
+        >
           {/* Hide More Actions, Variables, and Run Prompt on Simulation tab */}
           <ShowComponent condition={currentTab !== "Simulation"}>
             <ShowComponent
@@ -552,9 +666,8 @@ const PromptActions = () => {
               <CustomTooltip
                 show
                 title={
-                  disableCommit
-                    ? "Please run the prompt before saving and committing"
-                    : "Save your prompt changes with a clear message, so every update becomes a trackable version."
+                  commitBlocked ??
+                  "Save this prompt as a version (its tools and variables too), so experiments can run it."
                 }
                 arrow
                 size="small"
@@ -569,11 +682,10 @@ const PromptActions = () => {
               >
                 <span style={{ display: "inline-block" }}>
                   <Button
+                    size="small"
                     variant="contained"
                     color="primary"
                     sx={{
-                      borderRadius: "4px",
-                      height: "30px",
                       whiteSpace: "nowrap",
                     }}
                     disabled={
@@ -588,10 +700,7 @@ const PromptActions = () => {
                       });
                     }}
                     startIcon={
-                      <SvgColor
-                        sx={{ width: "20px", height: "20px" }}
-                        src="/assets/icons/ic_commit.svg"
-                      />
+                      <SvgColor width={16} src="/assets/icons/ic_commit.svg" />
                     }
                   >
                     <Typography variant="s1" fontWeight={"fontWeightMedium"}>
@@ -643,12 +752,11 @@ const PromptActions = () => {
               }}
             >
               <Button
+                size="small"
                 sx={{
-                  borderRadius: "4px",
                   backgroundColor: "background.paper",
                   border: "1px solid",
                   borderColor: "divider",
-                  height: "30px",
                   "&:hover": {
                     backgroundColor: `${theme.palette.background.neutral} !important`,
                   },
@@ -686,11 +794,12 @@ const PromptActions = () => {
                 </Typography>
               </Button>
             </CustomTooltip>
-            <CustomTooltip
-              show={Boolean(buttonTooltip)}
-              title={buttonTooltip || ""}
-              arrow
-            >
+            {/* IT-R4 G4 P2: the tooltip wrapper stays mounted (an empty
+                title shows nothing). Toggling `show` swapped a Fragment for
+                a Tooltip under the pointer: the click that blurred a
+                variable's input (committing its value) re-mounted the
+                button between mousedown and mouseup, so Run did nothing. */}
+            <CustomTooltip show title={buttonTooltip || ""} arrow>
               <span style={{ display: "inline-flex" }}>
                 <ShowComponent condition={isGenerating}>
                   <StopGeneratingButton
@@ -705,13 +814,14 @@ const PromptActions = () => {
                 </ShowComponent>
                 <ShowComponent condition={!isGenerating}>
                   <RunPromptButton
+                    data-testid="run-prompt"
                     disabled={
                       loadingPrompt ||
                       currentTab === "Evaluation" ||
                       currentTab === "Metrics" ||
                       !RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]
                     }
-                    onClick={() => {
+                    onClick={(e) => {
                       if (buttonTooltip) {
                         if (noModelIndex !== -1) {
                           setOpenSelectModel(noModelIndex);
@@ -723,7 +833,20 @@ const PromptActions = () => {
                             ),
                           });
                         } else if (!isVariablesDefined) {
-                          setVariableDrawerOpen(true);
+                          // IT-R4 G4 P3: ask in place, not a full-screen
+                          // drawer.
+                          setEmptyAsk({
+                            anchor: e.currentTarget,
+                            names: emptyVariables,
+                          });
+                        } else {
+                          // IT-R4 G4 P2: never a silent click.
+                          enqueueSnackbar(
+                            `Couldn't run yet: ${buttonTooltip}`,
+                            {
+                              variant: "info",
+                            },
+                          );
                         }
                         return;
                       }
@@ -734,6 +857,13 @@ const PromptActions = () => {
                           (item) => item?.version,
                         ),
                       });
+                      if (emptyVariables.length && !emptyAsk) {
+                        setEmptyAsk({
+                          anchor: e.currentTarget,
+                          names: emptyVariables,
+                        });
+                        return;
+                      }
                       if (
                         !checkIfAudioModelHasAudioContent(modelConfig, prompts)
                       ) {
@@ -754,6 +884,66 @@ const PromptActions = () => {
                 </ShowComponent>
               </span>
             </CustomTooltip>
+            <Popover
+              open={Boolean(emptyAsk)}
+              anchorEl={emptyAsk?.anchor ?? null}
+              onClose={closeEmptyAsk}
+              anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+              transformOrigin={{ vertical: "top", horizontal: "right" }}
+              slotProps={{
+                paper: {
+                  role: "alertdialog",
+                  "aria-labelledby": "run-empty-variables-title",
+                  "aria-describedby": "run-empty-variables-text",
+                  sx: { mt: 0.5, p: 1.5, maxWidth: 340 },
+                },
+              }}
+            >
+              <Stack gap={1} data-testid="run-empty-variables">
+                <Typography
+                  id="run-empty-variables-title"
+                  typography="s1"
+                  fontWeight="fontWeightMedium"
+                >
+                  Not run yet
+                </Typography>
+                <Typography id="run-empty-variables-text" typography="s2">
+                  {emptyAsk ? emptySentence(emptyAsk.names) : ""}
+                </Typography>
+                <Stack direction="row" gap={1} justifyContent="flex-end">
+                  <Button size="small" variant="text" onClick={fillFirstEmpty}>
+                    Fill it
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    onClick={() => {
+                      setEmptyAsk(null);
+                      if (!isVariablesDefined) {
+                        // Define the missing names (empty) so the run
+                        // leaves them blank.
+                        const next = { ...(variableData ?? {}) };
+                        (allVariables ?? []).forEach((n) => {
+                          if (!(n in next)) next[n] = [""];
+                        });
+                        setVariableData(next);
+                        setTimeout(() => saveAndRun(), 0);
+                      } else saveAndRun();
+                    }}
+                  >
+                    Run anyway
+                  </Button>
+                </Stack>
+              </Stack>
+            </Popover>
+            {/* R4-F frozen line: Run on a dataset… (D24; lane Rb fills it) */}
+            <RunOnRowsButton
+              source="prompt"
+              promptId={id}
+              promptVersionId={runGuard.savedVersion ?? baseVersion?.version}
+              label="Run on a dataset…"
+              variant="text"
+            />
           </ShowComponent>
         </Box>
       </Box>
@@ -762,14 +952,11 @@ const PromptActions = () => {
         sx={{
           borderColor: "divider",
           marginBottom: 0.5,
-          marginRight: "-16px",
-          marginLeft: "-16px",
         }}
       />
 
       <Box sx={{ paddingX: "16px", marginBottom: "8px" }}>
         <Tabs
-          textColor="primary"
           value={currentTab}
           onChange={(e, value) => {
             // Prevent tab change if conditions aren't met
@@ -791,24 +978,24 @@ const PromptActions = () => {
               value: value,
             });
           }}
-          TabIndicatorProps={{
-            style: {
-              backgroundColor: theme.palette.primary.main,
-              height: "2px",
-              borderRadius: "20px",
-            },
-          }}
-          sx={{ ...tabSx, borderColor: "divider" }}
+          sx={tabSx}
         >
           <Tab
-            icon={<SvgColor src={"/assets/icons/navbar/ic_evaluate.svg"} />}
+            icon={
+              <SvgColor
+                width={16}
+                src={"/assets/icons/navbar/ic_evaluate.svg"}
+              />
+            }
             iconPosition="start"
             label={"Playground"}
             value={"Playground"}
           />
 
           <Tab
-            icon={<SvgColor src={"/assets/icons/navbar/ic_eval.svg"} />}
+            icon={
+              <SvgColor width={16} src={"/assets/icons/navbar/ic_eval.svg"} />
+            }
             iconPosition="start"
             label={
               versions.length === 0 ||
@@ -835,7 +1022,7 @@ const PromptActions = () => {
           />
 
           <Tab
-            icon={<SvgColor src={"/assets/icons/ic_metrics.svg"} />}
+            icon={<SvgColor width={16} src={"/assets/icons/ic_metrics.svg"} />}
             iconPosition="start"
             label={
               versions.length === 0 ||
@@ -865,9 +1052,9 @@ const PromptActions = () => {
             <Tab
               icon={
                 <Iconify
-                  icon="mdi:chat-processing-outline"
-                  width={18}
-                  height={18}
+                  icon="solar:chat-round-line-linear"
+                  width={16}
+                  height={16}
                 />
               }
               iconPosition="start"
@@ -902,7 +1089,12 @@ const PromptActions = () => {
         onClose={() => setSaveCommitOpen(false)}
         data={baseVersion}
         promptName={promptName}
+        // WLA-R2-01: a run also saves the version (is_draft false), so the
+        // name is asked until a version has a commit message (what Commit
+        // History lists).
+        askName={!versions?.some((v) => Boolean(v?.commit_message))}
       />
+      {runGuard.dialog}
     </Stack>
   );
 };

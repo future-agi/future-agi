@@ -1,6 +1,5 @@
 import json
 
-from django.db.models import Q
 from rest_framework import serializers
 
 from tfc.utils.serializer_fields import JSON_VALUE_SCHEMA, JsonValueField
@@ -20,6 +19,10 @@ from tracer.serializers.filters import (
     StrictInputSerializer,
     bounded_filter_list_query_param_field,
     filter_list_query_param_field,
+)
+from tracer.serializers.usage_coverage import (
+    CaptureCoverageSerializer,
+    CostCoverageSerializer,
 )
 from tracer.services.user_attribute_contract import unsupported_user_attribute_keys
 from tracer.services.user_filter_capabilities import validate_users_filter_capabilities
@@ -60,62 +63,20 @@ class TraceSerializer(serializers.ModelSerializer):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        request = self.context.get("request")
-        if not request:
-            return
+        from tracer.serializers.relation_scope import scope_relations
 
-        organization = getattr(request, "organization", None) or getattr(
-            request.user, "organization", None
+        scope_relations(
+            self,
+            {
+                "project": ("organization", "workspace"),
+                "project_version": ("project__organization", "project__workspace"),
+                "session": ("project__organization", "project__workspace"),
+            },
         )
-        if not organization:
-            return
-
-        project_scope = Q(organization=organization)
-        related_project_scope = Q(project__organization=organization)
-        workspace = getattr(request, "workspace", None)
-        if workspace:
-            if getattr(workspace, "is_default", False):
-                project_scope &= (
-                    Q(workspace=workspace)
-                    | Q(
-                        workspace__is_default=True, workspace__organization=organization
-                    )
-                    | Q(workspace__isnull=True)
-                )
-                related_project_scope &= (
-                    Q(project__workspace=workspace)
-                    | Q(
-                        project__workspace__is_default=True,
-                        project__workspace__organization=organization,
-                    )
-                    | Q(project__workspace__isnull=True)
-                )
-            else:
-                project_scope &= Q(workspace=workspace)
-                related_project_scope &= Q(project__workspace=workspace)
-
-        project_manager = getattr(Project, "no_workspace_objects", Project.objects)
-        self.fields["project"].queryset = project_manager.filter(
-            project_scope, deleted=False
-        )
-
-        project_version_manager = getattr(
-            ProjectVersion, "no_workspace_objects", ProjectVersion.objects
-        )
-        self.fields["project_version"].queryset = project_version_manager.filter(
-            related_project_scope,
-            project__deleted=False,
-            deleted=False,
-        )
-
-        trace_session_manager = getattr(
-            TraceSession, "no_workspace_objects", TraceSession.objects
-        )
-        self.fields["session"].queryset = trace_session_manager.filter(
-            related_project_scope,
-            project__deleted=False,
-            deleted=False,
-        )
+        for name in ("project_version", "session"):
+            self.fields[name].queryset = self.fields[name].queryset.filter(
+                project__deleted=False
+            )
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -370,6 +331,18 @@ class TraceObserveColumnConfigSerializer(serializers.Serializer):
 
 
 class TraceObserveListResultSerializer(serializers.Serializer):
+    # The dynamic table must retain arbitrary eval/attribute columns. A typed,
+    # page-bounded sidecar gives generators a stable coverage contract without
+    # changing any existing cell type. Both identity coordinates are required:
+    # org-scoped pages can contain the same trace ID in different projects.
+    trace_capture_coverage = serializers.DictField(
+        child=serializers.DictField(child=CaptureCoverageSerializer()),
+        required=False,
+        help_text=(
+            "Capture coverage for returned rows only, keyed by project ID then trace ID. "
+            "Omitted entries retain legacy presentation; never implies complete capture."
+        ),
+    )
     metadata = TraceObserveListMetadataSerializer()
     # allow_null: real rows carry null cells (cost, latency on error traces).
     table = serializers.ListField(
@@ -446,6 +419,8 @@ class TraceSessionTableRowSerializer(_ExtraSessionCellsMixin, serializers.Serial
     created_at = serializers.DateTimeField(required=False, allow_null=True)
     duration = serializers.FloatField(required=False, allow_null=True)
     total_cost = serializers.FloatField(required=False, allow_null=True)
+    cost_coverage = CostCoverageSerializer(required=False)
+    capture_coverage = CaptureCoverageSerializer(required=False)
     total_tokens = serializers.IntegerField(required=False, allow_null=True)
     total_traces_count = serializers.IntegerField(required=False, allow_null=True)
     first_message = JsonValueField(required=False, allow_null=True)
@@ -889,6 +864,7 @@ class TraceAgentGraphNodeSerializer(serializers.Serializer):
     avg_latency_ms = serializers.FloatField(min_value=0)
     total_tokens = serializers.IntegerField(min_value=0)
     total_cost = serializers.FloatField(min_value=0)
+    cost_coverage = CostCoverageSerializer(required=False)
     error_count = serializers.IntegerField(min_value=0)
     trace_count = serializers.IntegerField(min_value=0, allow_null=True)
     trace_count_exact = serializers.BooleanField(required=False)
@@ -903,6 +879,7 @@ class TraceAgentGraphEdgeSerializer(serializers.Serializer):
     avg_latency_ms = serializers.FloatField(min_value=0)
     total_tokens = serializers.IntegerField(min_value=0)
     total_cost = serializers.FloatField(min_value=0)
+    cost_coverage = CostCoverageSerializer(required=False)
     error_count = serializers.IntegerField(min_value=0)
     trace_count = serializers.IntegerField(min_value=0, allow_null=True)
     trace_count_exact = serializers.BooleanField(required=False)
@@ -1034,6 +1011,7 @@ class UsersQuerySerializer(StrictInputSerializer):
 class UsersTableRowSerializer(serializers.Serializer):
     user_id = serializers.CharField(required=False, allow_null=True)
     total_cost = serializers.FloatField()
+    cost_coverage = CostCoverageSerializer(required=False)
     total_tokens = serializers.IntegerField(required=False, allow_null=True)
     input_tokens = serializers.IntegerField(required=False, allow_null=True)
     output_tokens = serializers.IntegerField(required=False, allow_null=True)
@@ -1127,6 +1105,8 @@ class TraceDetailResultSerializer(serializers.Serializer):
     trace = serializers.JSONField()
     observation_spans = TraceDetailSpanSerializer(many=True)
     summary = serializers.JSONField()
+    cost_coverage = CostCoverageSerializer(required=False)
+    capture_coverage = CaptureCoverageSerializer(required=False)
     graph = serializers.JSONField()
 
 

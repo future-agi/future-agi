@@ -14,7 +14,8 @@ Isolation from the HTTP event loop:
   requests.
 * Every queue gets its own ``Worker``, with its own workflow-task pool
   (temporalio sizes it to the queue's workflow-task slots) and its own
-  **activity thread pool sized to its activity slots**. The loop's default
+  **activity thread pool sized to its activity slots**. Sync ``def``
+  activities run on that pool (it is the Worker's ``activity_executor``). The loop's default
   executor sends ``run_in_executor(None, ...)`` (which drop-in activities use
   via ``sync_to_async(thread_sensitive=False)``) to the pool of the queue the
   activity came from, so long ``tasks_xl`` work cannot starve
@@ -192,7 +193,9 @@ def _activity_interceptor(pool: concurrent.futures.Executor):
     return _Interceptor()
 
 
-def _worker_kwargs(client, plan: _QueuePlan, interceptor) -> dict:
+def _worker_kwargs(
+    client, plan: _QueuePlan, interceptor, pool: concurrent.futures.Executor
+) -> dict:
     from temporalio.worker import PollerBehaviorSimpleMaximum, UnsandboxedWorkflowRunner
 
     from tfc.management.commands.start_temporal_worker import _workflow_cache_kwargs
@@ -206,6 +209,10 @@ def _worker_kwargs(client, plan: _QueuePlan, interceptor) -> dict:
         "task_queue": plan.queue,
         "workflows": plan.workflows,
         "activities": plan.activities,
+        # Sync ``def`` activities (the webhooks dispatch loop, health and
+        # retention passes) run on the queue's own pool; temporalio refuses to
+        # build a Worker that registers one without an activity executor.
+        "activity_executor": pool,
         "workflow_runner": UnsandboxedWorkflowRunner(),
         # No workflow_task_executor: each Worker builds its own pool sized to
         # its workflow-task slots. A smaller shared pool makes activations
@@ -515,6 +522,10 @@ class EmbeddedTemporalWorker:
             return
 
         plans = _worker_plans()
+        if any(plan.queue == "webhooks" for plan in plans):
+            from webhooks.temporal.boot import start_dispatchers_safely
+
+            await start_dispatchers_safely(client)
         pools: list[concurrent.futures.ThreadPoolExecutor] = []
         try:
             workers = []
@@ -525,7 +536,11 @@ class EmbeddedTemporalWorker:
                 )
                 pools.append(pool)
                 workers.append(
-                    Worker(**_worker_kwargs(client, plan, _activity_interceptor(pool)))
+                    Worker(
+                        **_worker_kwargs(
+                            client, plan, _activity_interceptor(pool), pool
+                        )
+                    )
                 )
             self._queues = [plan.queue for plan in plans]
             logger.info(

@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import {
   Box,
   Button,
@@ -27,7 +28,6 @@ const PopoverOptions = ({
   multiSelect,
   selectedModels,
   setSelectedModels,
-  fields,
   valueIsObject,
 }) => {
   const theme = useTheme();
@@ -120,13 +120,6 @@ const PopoverOptions = ({
                     : "transparent",
 
                 ml: multiSelect ? 0 : 0,
-                color: fields?.some((field) =>
-                  valueIsObject
-                    ? field.value.name === modelName
-                    : field.value === modelName,
-                )
-                  ? "text.disabled"
-                  : "text.primary",
               }}
             >
               {multiSelect && (
@@ -141,7 +134,7 @@ const PopoverOptions = ({
                 />
               )}
               <Image
-                src={logoUrl}
+                src={localProviderLogo(providers)}
                 alt=""
                 width={theme.spacing(2)}
                 disableThemeFilter={

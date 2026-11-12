@@ -10,14 +10,12 @@ network access or ML models inside the sandbox.
 
 import base64
 import json
-import os
 
 import structlog
 
 from agentic_eval.core.embeddings.serving_client import (
     ServingUnavailableError,
     require_serving,
-    serving_base_url,
 )
 from tfc.utils.ssrf_guard import safe_fetch
 
@@ -57,7 +55,12 @@ def _fetch_url_bytes(url):
                 url=stripped[:120],
             )
             return None
-        ct = (response.headers.get("Content-Type", "") or "").split(";")[0].strip().lower()
+        ct = (
+            (response.headers.get("Content-Type", "") or "")
+            .split(";")[0]
+            .strip()
+            .lower()
+        )
         if ct in _REJECTED_CONTENT_TYPES:
             logger.warning(
                 "image_preprocess_rejected_content_type",
@@ -67,7 +70,9 @@ def _fetch_url_bytes(url):
             return None
         return response.content, ct or "application/octet-stream"
     except Exception as e:
-        logger.warning("image_preprocess_fetch_failed", url=stripped[:120], error=str(e))
+        logger.warning(
+            "image_preprocess_fetch_failed", url=stripped[:120], error=str(e)
+        )
         return None
 
 
@@ -187,14 +192,15 @@ def preprocess_inputs(eval_name, inputs):
 @register_preprocessor("embedding_similarity")
 @register_preprocessor("semantic_list_contains")
 def _preprocess_serving_embeddings(inputs):
-    """Evals whose sandbox code calls model serving directly.
+    """The built-in embedding evals, which score in the backend through model
+    serving (``calculate_embedding_similarity`` and
+    ``calculate_semantic_list_contains``).
 
-    Fails fast when serving is not running, instead of letting the sandbox
-    time out on it and report a 0 score, and hands the sandbox the configured
-    ``MODEL_SERVING_URL`` in place of its built-in ``http://serving:8080``.
+    Fails fast with the reason when serving is not running, before the eval
+    runs. The inputs carry no serving URL: the backend has it, and the
+    result echoes its inputs.
     """
     require_serving()
-    inputs["_model_serving_url"] = serving_base_url()
     return inputs
 
 
@@ -292,7 +298,7 @@ def _preprocess_fid(inputs):
         return inputs
 
     try:
-        import numpy as np
+        import numpy as np  # noqa: F401 - availability check
         import torch
         from torchmetrics.image.fid import FrechetInceptionDistance
 
@@ -312,7 +318,9 @@ def _preprocess_fid(inputs):
         fake_pil = _parse_image_list(fake_images)
 
         if len(real_pil) < 2 or len(fake_pil) < 2:
-            inputs["_fid_error"] = f"FID requires at least 2 images per set (got {len(real_pil)} real, {len(fake_pil)} fake)"
+            inputs["_fid_error"] = (
+                f"FID requires at least 2 images per set (got {len(real_pil)} real, {len(fake_pil)} fake)"
+            )
             return inputs
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -330,8 +338,8 @@ def _preprocess_fid(inputs):
             fid_metric.update(x, real=False)
 
         # Extract the raw features
-        real_features = fid_metric.real_features_sum.cpu().numpy()
-        fake_features = fid_metric.fake_features_sum.cpu().numpy()
+        _real_features = fid_metric.real_features_sum.cpu().numpy()
+        _fake_features = fid_metric.fake_features_sum.cpu().numpy()
 
         # Actually, we need per-image features, not sums.
         # Simpler approach: compute FID directly and pass the score
@@ -415,6 +423,7 @@ def _preprocess_dead_air_detection(inputs):
 
     try:
         import io
+
         import librosa
     except ImportError as e:
         logger.warning("dead_air_preprocess_librosa_missing", error=str(e))
@@ -440,26 +449,37 @@ def _preprocess_dead_air_detection(inputs):
 
     frame_length = max(1, int(0.1 * sr))
     hop_length = max(1, frame_length // 2)
-    rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
+    rms = librosa.feature.rms(
+        y=y, frame_length=frame_length, hop_length=hop_length, center=True
+    )[0]
 
     silent_frames = rms < silence_threshold
     total_frames = len(rms)
-    dead_air_duration = float(silent_frames.sum()) * (hop_length / sr)
-    dead_air_percentage = (dead_air_duration / duration) * 100.0
-
-    gaps_ms = []
-    in_gap = False
-    gap_start = 0
+    total_samples = len(y)
+    silent_samples = 0
+    gap_samples = 0
+    max_gap_samples = 0
+    frame_start = 0
     for i, is_silent in enumerate(silent_frames):
-        if is_silent and not in_gap:
-            in_gap = True
-            gap_start = i
-        elif not is_silent and in_gap:
-            in_gap = False
-            gaps_ms.append((i - gap_start) * (hop_length / sr) * 1000.0)
-    if in_gap:
-        gaps_ms.append((total_frames - gap_start) * (hop_length / sr) * 1000.0)
-    max_gap_ms = float(max(gaps_ms)) if gaps_ms else 0.0
+        # Split real samples at midpoints between the centered RMS frames.
+        # The first/last bins stop at the clip boundaries, including any tail;
+        # analysis padding must not contribute to silence or gap duration.
+        frame_end = (
+            min(total_samples, (i + 1) * hop_length - hop_length // 2)
+            if i + 1 < total_frames
+            else total_samples
+        )
+        frame_samples = frame_end - frame_start
+        if is_silent:
+            silent_samples += frame_samples
+            gap_samples += frame_samples
+            max_gap_samples = max(max_gap_samples, gap_samples)
+        else:
+            gap_samples = 0
+        frame_start = frame_end
+
+    dead_air_percentage = (silent_samples / total_samples) * 100.0
+    max_gap_ms = float(max_gap_samples / sr * 1000.0)
 
     inputs["_dead_air_percentage"] = float(dead_air_percentage)
     inputs["_dead_air_max_gap_ms"] = max_gap_ms

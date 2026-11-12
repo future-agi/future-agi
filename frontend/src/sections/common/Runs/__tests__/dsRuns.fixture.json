@@ -1,0 +1,339 @@
+[
+  {
+    "run_id": "a1000000-0000-4000-8000-00000000004a",
+    "label": "#4A",
+    "is_dataset_baseline": false,
+    "examples": 248,
+    "trials": 3,
+    "config": {
+      "kind": "agent",
+      "agent": {
+        "graph_id": "6a000000-0000-4000-8000-000000000001",
+        "name": "Support Agent",
+        "version": "v3",
+        "status": "active",
+        "nodes": [
+          {
+            "id": "classify_intent",
+            "type": "llm",
+            "model": "gpt-4o-mini",
+            "prompt": "Extract the order number as digits only."
+          },
+          { "id": "lookup_order", "type": "tool" },
+          { "id": "search_kb", "type": "retriever" },
+          { "id": "issue_refund", "type": "tool" },
+          { "id": "escalate_to_human", "type": "tool" },
+          {
+            "id": "respond",
+            "type": "llm",
+            "model": "gpt-4o",
+            "prompt": "Write the reply."
+          }
+        ],
+        "limits": { "max_iterations": 12 }
+      },
+      "tools": [
+        { "name": "lookup_order", "mode": "live" },
+        { "name": "issue_refund", "mode": "live" },
+        { "name": "escalate_to_human", "mode": "live" }
+      ],
+      "dataset": { "version": "v6", "split": null, "rows": 248 },
+      "evals": [
+        { "id": "correctness", "version": "v2" },
+        { "id": "groundedness", "version": "v3" },
+        { "id": "tone", "version": "v1" },
+        { "id": "tool_call_accuracy", "version": "v1" },
+        { "id": "task_completion", "version": "v1" }
+      ],
+      "trials": 3
+    },
+    "metrics": {
+      "aggregates": {
+        "eval:correctness": {
+          "avg": 0.8211382113821137,
+          "median": 1,
+          "delta": 0.025423728813559313,
+          "significant": false,
+          "n": 246
+        },
+        "ops:latency": {
+          "avg": 3930.154471544713,
+          "median": 3884.333333333333,
+          "delta": 2485.6398305084763,
+          "significant": true,
+          "n": 246
+        },
+        "ops:cost": {
+          "avg": 0.0060999999999999995,
+          "median": 0.006045833333333334,
+          "delta": 0.005220206214689264,
+          "significant": true,
+          "n": 246
+        }
+      }
+    }
+  },
+  {
+    "run_id": "a1000000-0000-4000-8000-00000000003a",
+    "label": "#3A",
+    "is_dataset_baseline": false,
+    "examples": 238,
+    "trials": 1,
+    "config": {
+      "kind": "agent",
+      "agent": {
+        "graph_id": "6a000000-0000-4000-8000-000000000001",
+        "name": "Support Agent",
+        "version": "v2",
+        "status": "active",
+        "nodes": [
+          {
+            "id": "classify_intent",
+            "type": "llm",
+            "model": "gpt-4o-mini",
+            "prompt": "Copy the order reference exactly as written."
+          },
+          { "id": "lookup_order", "type": "tool" },
+          { "id": "search_kb", "type": "retriever" },
+          { "id": "issue_refund", "type": "tool" },
+          { "id": "escalate_to_human", "type": "tool" },
+          {
+            "id": "respond",
+            "type": "llm",
+            "model": "gpt-4o",
+            "prompt": "Write the reply."
+          }
+        ],
+        "limits": { "max_iterations": 12 }
+      },
+      "tools": [
+        { "name": "lookup_order", "mode": "live" },
+        { "name": "issue_refund", "mode": "live" },
+        { "name": "escalate_to_human", "mode": "live" }
+      ],
+      "dataset": { "version": "v5", "split": null, "rows": 238 },
+      "evals": [
+        { "id": "correctness", "version": "v2" },
+        { "id": "groundedness", "version": "v3" },
+        { "id": "tone", "version": "v1" },
+        { "id": "tool_call_accuracy", "version": "v1" },
+        { "id": "task_completion", "version": "v1" }
+      ],
+      "trials": 1
+    },
+    "metrics": {
+      "aggregates": {
+        "eval:correctness": {
+          "avg": 0.8025210084033614,
+          "median": 1,
+          "delta": 0.008403361344537815,
+          "significant": false,
+          "n": 238
+        },
+        "ops:latency": {
+          "avg": 3156.0546218487393,
+          "median": 3087.5,
+          "delta": 1711.9705882352941,
+          "significant": true,
+          "n": 238
+        },
+        "ops:cost": {
+          "avg": 0.005200004201680669,
+          "median": 0.005693,
+          "delta": 0.004317642857142854,
+          "significant": true,
+          "n": 238
+        }
+      }
+    }
+  },
+  {
+    "run_id": "a1000000-0000-4000-8000-00000000002a",
+    "label": "#2A",
+    "is_dataset_baseline": false,
+    "examples": 238,
+    "trials": 1,
+    "config": {
+      "kind": "prompt",
+      "prompt": {
+        "id": "3f000000-0000-4000-8000-000000000001",
+        "name": "Support Reply",
+        "version": "V4",
+        "version_id": "3f100001-0000-4000-8000-000000000004",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are Acme's customer support assistant. Use the policy below and the customer's tier. Confirm what you did and give timelines.\n\nPolicy: refunds post in 5\u20137 business days; returns within 30 days; express shipping 2\u20133 business days."
+          },
+          {
+            "role": "user",
+            "content": "Customer tier: {{customer_tier}}\n\nCustomer message:\n{{customer_message}}"
+          }
+        ],
+        "text_hash": "ab5e"
+      },
+      "model": {
+        "id": "gpt-4o-mini",
+        "params": { "temperature": 0.3, "max_tokens": 400 }
+      },
+      "dataset": { "version": "v5", "split": null, "rows": 238 },
+      "evals": [
+        { "id": "correctness", "version": "v2" },
+        { "id": "groundedness", "version": "v2" },
+        { "id": "tone", "version": "v1" }
+      ],
+      "trials": 1
+    },
+    "metrics": {
+      "aggregates": {
+        "eval:correctness": {
+          "avg": 0.7711864406779662,
+          "median": 1,
+          "delta": -0.0211864406779661,
+          "significant": false,
+          "n": 236
+        },
+        "ops:latency": {
+          "avg": 1478.2796610169491,
+          "median": 1451.5,
+          "delta": 31.423728813559322,
+          "significant": false,
+          "n": 236
+        },
+        "ops:cost": {
+          "avg": 0.000932186440677966,
+          "median": 0.0009305,
+          "delta": 4.951694915254237e-5,
+          "significant": true,
+          "n": 236
+        }
+      }
+    }
+  },
+  {
+    "run_id": "a1000000-0000-4000-8000-00000000002b",
+    "label": "#2B",
+    "is_dataset_baseline": false,
+    "examples": 238,
+    "trials": 1,
+    "config": {
+      "kind": "prompt",
+      "prompt": {
+        "id": "3f000000-0000-4000-8000-000000000001",
+        "name": "Support Reply",
+        "version": "V4",
+        "version_id": "3f100001-0000-4000-8000-000000000004",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are Acme's customer support assistant. Use the policy below and the customer's tier. Confirm what you did and give timelines.\n\nPolicy: refunds post in 5\u20137 business days; returns within 30 days; express shipping 2\u20133 business days."
+          },
+          {
+            "role": "user",
+            "content": "Customer tier: {{customer_tier}}\n\nCustomer message:\n{{customer_message}}"
+          }
+        ],
+        "text_hash": "ab5e"
+      },
+      "model": {
+        "id": "claude-sonnet-4-5",
+        "params": { "temperature": 0.3, "max_tokens": 400 }
+      },
+      "dataset": { "version": "v5", "split": null, "rows": 238 },
+      "evals": [
+        { "id": "correctness", "version": "v2" },
+        { "id": "groundedness", "version": "v2" },
+        { "id": "tone", "version": "v1" }
+      ],
+      "trials": 1
+    },
+    "metrics": {
+      "aggregates": {
+        "eval:correctness": {
+          "avg": 0.865546218487395,
+          "median": 1,
+          "delta": 0.07142857142857142,
+          "significant": true,
+          "n": 238
+        },
+        "ops:latency": {
+          "avg": 2002.357142857143,
+          "median": 1957.5,
+          "delta": 558.2731092436975,
+          "significant": true,
+          "n": 238
+        },
+        "ops:cost": {
+          "avg": 0.003109247899159664,
+          "median": 0.003101,
+          "delta": 0.002226886554621847,
+          "significant": true,
+          "n": 238
+        }
+      }
+    }
+  },
+  {
+    "run_id": "a1000000-0000-4000-8000-00000000001a",
+    "label": "#1A",
+    "is_dataset_baseline": true,
+    "examples": 238,
+    "trials": 1,
+    "config": {
+      "kind": "prompt",
+      "prompt": {
+        "id": "3f000000-0000-4000-8000-000000000001",
+        "name": "Support Reply",
+        "version": "V3",
+        "version_id": "3f100001-0000-4000-8000-000000000003",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are Acme's customer support assistant. Answer the customer's message using Acme policy. Be brief."
+          },
+          {
+            "role": "user",
+            "content": "Customer tier: {{customer_tier}}\n\nCustomer message:\n{{customer_message}}"
+          }
+        ],
+        "text_hash": "0fd4"
+      },
+      "model": {
+        "id": "gpt-4o-mini",
+        "params": { "temperature": 0.3, "max_tokens": 400 }
+      },
+      "dataset": { "version": "v5", "split": null, "rows": 238 },
+      "evals": [
+        { "id": "correctness", "version": "v2" },
+        { "id": "groundedness", "version": "v2" },
+        { "id": "tone", "version": "v1" }
+      ],
+      "trials": 1
+    },
+    "metrics": {
+      "aggregates": {
+        "eval:correctness": {
+          "avg": 0.7941176470588235,
+          "median": 1,
+          "delta": null,
+          "significant": null,
+          "n": 238
+        },
+        "ops:latency": {
+          "avg": 1444.0840336134454,
+          "median": 1418.5,
+          "delta": null,
+          "significant": null,
+          "n": 238
+        },
+        "ops:cost": {
+          "avg": 0.0008823613445378153,
+          "median": 0.000878,
+          "delta": null,
+          "significant": null,
+          "n": 238
+        }
+      }
+    }
+  }
+]

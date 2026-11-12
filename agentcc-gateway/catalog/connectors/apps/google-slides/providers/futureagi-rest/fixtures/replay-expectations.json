@@ -1,0 +1,93 @@
+{
+  "schema": "k2-replay-expectations/v1",
+  "app": "google-slides",
+  "source": "V10 synthetic catalog fixtures; not live acceptance",
+  "test_account": "v10-synthetic-unverified-google-slides",
+  "tools": 9,
+  "vendor_404": "Google slides.googleapis.com 404",
+  "drive_checks": [
+    {
+      "name": "first_tool_read_only",
+      "jq": ".tools[] | select(.name == \"get_page\") | .annotations.readOnlyHint",
+      "want": "true"
+    },
+    {
+      "name": "fixture_resource_returned",
+      "jq": ".calls[0].result.content[0].text | contains(\"fixture\")",
+      "want": "true"
+    },
+    {
+      "name": "whole_presentation_text",
+      "jq": ".calls[8].result.content[0].text | fromjson | .slides[0].pageElements[0].shape.text.textElements[0].textRun.content",
+      "want": "Synthetic slide text"
+    },
+    {
+      "name": "typed_first_projection",
+      "jq": ".calls[0].result.content[0].text | fromjson | .objectId",
+      "want": "slide-fixture"
+    },
+    {
+      "name": "get_page_annotations",
+      "jq": ".tools[] | select(.name == \"get_page\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "get_thumbnail_annotations",
+      "jq": ".tools[] | select(.name == \"get_thumbnail\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    },
+    {
+      "name": "create_presentation_annotations",
+      "jq": ".tools[] | select(.name == \"create_presentation\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    },
+    {
+      "name": "create_slide_annotations",
+      "jq": ".tools[] | select(.name == \"create_slide\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    },
+    {
+      "name": "insert_text_annotations",
+      "jq": ".tools[] | select(.name == \"insert_text\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    },
+    {
+      "name": "replace_text_annotations",
+      "jq": ".tools[] | select(.name == \"replace_text\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false true false false"
+    },
+    {
+      "name": "delete_object_annotations",
+      "jq": ".tools[] | select(.name == \"delete_object\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false true false false"
+    },
+    {
+      "name": "duplicate_object_annotations",
+      "jq": ".tools[] | select(.name == \"duplicate_object\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "false false false false"
+    },
+    {
+      "name": "get_presentation_annotations",
+      "jq": ".tools[] | select(.name == \"get_presentation\") | .annotations | [.readOnlyHint, .destructiveHint, .idempotentHint, .openWorldHint] | map(tostring) | join(\" \")",
+      "want": "true false true false"
+    }
+  ],
+  "vendor_request_checks": [
+    {
+      "name": "whole_presentation_path",
+      "index": 8,
+      "want": "GET /v1/presentations/deck-fixture?"
+    },
+    {
+      "name": "documented_first_request",
+      "index": 0,
+      "want": "GET /v1/presentations/deck-fixture/pages/slide-fixture?"
+    }
+  ],
+  "every_vendor_request": [
+    {
+      "name": "documented_api_prefix",
+      "jq": ".path | startswith(\"/v1/presentations\")"
+    }
+  ]
+}

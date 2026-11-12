@@ -1,0 +1,53 @@
+# Fixture for the manifest validator tests, not catalog data. Facts are
+# illustrative; the catalog itself lives in agentcc-gateway/catalog/connectors.
+schema: "connector-manifest/v1#provider"
+app: slack
+id: slack-mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: ga, source: https://docs.slack.dev/ai/slack-mcp-server/ }
+transport: { kind: http, url: https://mcp.slack.com/mcp }
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://slack.com/oauth/v2_user/authorize
+    tokenUrl: https://slack.com/api/oauth.v2.user.access
+    scopes: [search:read, channels:history, chat:write]
+    pkce: false
+    tokenBody: form
+    clientAuth: body
+    registration: [preregistered]
+  clientApproval:
+    required: true
+    program: Slack Marketplace listing
+    url: https://api.slack.com/apps
+    source: https://docs.slack.dev/ai/slack-mcp-server/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: free }
+quality: { tier: listed }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.slack.dev/ai/slack-mcp-server/
+    fetchedAt: 2026-10-19
+  - fact: auth.oauth2.authorizeUrl
+    url: https://docs.slack.dev/ai/slack-mcp-server/
+    fetchedAt: 2026-10-19
+  - fact: auth.oauth2.tokenUrl
+    url: https://docs.slack.dev/ai/slack-mcp-server/
+    fetchedAt: 2026-10-19
+  - fact: auth.oauth2.scopes
+    url: https://docs.slack.dev/ai/slack-mcp-server/
+    fetchedAt: 2026-10-19
+x-omega:
+  publicClient:
+    supported: false
+    evidence:
+      - url: https://docs.slack.dev/ai/slack-mcp-server/
+        fetchedAt: 2026-10-20
+        sha256: 2e6daeb1dbe00dd14ffc6c27dd2352615c53b57f7f720684caccb86e38f96703
+        quote: "Slack supports confidential OAuth for MCP clients. You'll need to use your app's client_id and client_secret for Slack OAuth."

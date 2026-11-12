@@ -1,10 +1,12 @@
-import { Box, Typography } from "@mui/material";
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
+import { Box, Button } from "@mui/material";
 import React from "react";
 import HeaderContent from "./HeaderContent";
 import CreateDatasetLinks from "./CreateDatasetLinks";
 import { useNavigate } from "react-router";
 import PropTypes from "prop-types";
 import { createFirstEvalsLinks } from "../../constant";
+import ModelRoutes from "../../ModelRoutes";
 
 const CreateFirstEvaluation = ({ setCurrentLabel }) => {
   const navigate = useNavigate();
@@ -16,18 +18,21 @@ const CreateFirstEvaluation = ({ setCurrentLabel }) => {
       <Box sx={{ display: "flex", justifyContent: "space-between" }}>
         <HeaderContent
           title="Create your first evaluation"
-          description="This tour will guide you through the key features and functionalities"
+          description="Create an evaluation to score your model outputs automatically instead of checking each one by hand."
         />
-        <Typography
-          variant="s1"
-          fontWeight={"fontWeightSemiBold"}
-          color="text.disabled"
-          sx={{ cursor: "pointer" }}
+        <Button
+          variant="text"
+          size="small"
+          sx={{ color: "text.secondary" }}
           onClick={() => setCurrentLabel("RunFirstExperiment")}
         >
           Skip
-        </Typography>
+        </Button>
       </Box>
+      <ModelRoutes
+        sentence="Evaluations can call a model you pick, and your organization has no provider key of its own."
+        onAddProviderKey={() => setCurrentLabel("addKeys")}
+      />
       <Box
         sx={{
           display: "flex",
@@ -54,7 +59,7 @@ const CreateFirstEvaluation = ({ setCurrentLabel }) => {
               width: "100%",
             }}
           >
-            <iframe
+            <ExternalContentFrame
               src={iframeVideoLinks}
               title="Evaluation: Future AGI"
               frameBorder="0"
@@ -74,9 +79,9 @@ const CreateFirstEvaluation = ({ setCurrentLabel }) => {
         </Box>
         <CreateDatasetLinks
           links={links}
-          heading="Set Up Your First Evaluation"
+          heading="What you can do"
           descriptions={descriptions}
-          buttonTitle="Create evaluation"
+          buttonTitle="Go to Evals"
           buttonAction={() => navigate("/dashboard/evaluations")}
         />
       </Box>

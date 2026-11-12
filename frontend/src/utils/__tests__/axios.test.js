@@ -154,6 +154,112 @@ describe("axios response shape", () => {
     });
   });
 
+  describe("an account with no active organization", () => {
+    const original = window.location;
+    // A browser location: the interceptor reads the path as well as the URL.
+    const at = (href) => {
+      const { origin, pathname, search } = new URL(href);
+      return Object.defineProperty(window, "location", {
+        configurable: true,
+        writable: true,
+        value: { href, origin, pathname, search },
+      });
+    };
+    const refusal = (code) => ({
+      config: { url: "/model-hub/develops/get-datasets/", method: "get" },
+      response: {
+        status: 403,
+        config: { url: "/model-hub/develops/get-datasets/", method: "get" },
+        data: {
+          status: false,
+          type: "client_error",
+          code,
+          detail: "This account has no active organization membership.",
+          message: "This account has no active organization membership.",
+          result: "This account has no active organization membership.",
+        },
+      },
+    });
+    const rejected = () =>
+      axiosInstance.interceptors.response.handlers.find(
+        (handler) => handler.rejected,
+      )?.rejected;
+
+    afterEach(() => {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        writable: true,
+        value: original,
+      });
+    });
+
+    it("opens the org-removed screen on the no_active_organization refusal", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      at("http://localhost/dashboard/develop");
+
+      await expect(
+        rejected()(refusal("no_active_organization")),
+      ).rejects.toMatchObject({
+        code: "no_active_organization",
+        statusCode: 403,
+      });
+      expect(window.location.href).toBe("/auth/jwt/org-removed");
+    });
+
+    it("stays put when the org-removed screen itself gets the refusal", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      at("http://localhost/auth/jwt/org-removed");
+
+      await expect(
+        rejected()(refusal("no_active_organization")),
+      ).rejects.toMatchObject({ statusCode: 403 });
+      expect(window.location.href).toBe(
+        "http://localhost/auth/jwt/org-removed",
+      );
+    });
+
+    it("leaves any other 403 answer to the caller", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      at("http://localhost/dashboard/develop");
+
+      await expect(
+        rejected()(refusal("permission_denied")),
+      ).rejects.toMatchObject({ code: "permission_denied", statusCode: 403 });
+      expect(window.location.href).toBe("http://localhost/dashboard/develop");
+    });
+  });
+
+  it.each([
+    ["any other error", 400, "required"],
+    ["a workspace refusal no recovery claimed", 403, "workspace_unavailable"],
+  ])(
+    "never lets a response body mark %s as handled",
+    async (_, status, code) => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const rejected = axiosInstance.interceptors.response.handlers.find(
+        (handler) => handler.rejected,
+      )?.rejected;
+      const config = { url: "/model-hub/datasets/create/", method: "post" };
+      let caught;
+      await rejected({
+        config,
+        response: {
+          status,
+          config,
+          data: {
+            code,
+            message: "Shown only when no recovery explains it.",
+            handledBy: "workspace-recovery",
+          },
+        },
+      }).catch((error) => {
+        caught = error;
+      });
+      expect(caught).toMatchObject({ code, statusCode: status });
+      expect(caught.handledBy).toBeUndefined();
+    },
+  );
+
   it("preserves errors raised before a request receives a response", async () => {
     const rejected = axiosInstance.interceptors.response.handlers.find(
       (handler) => handler.rejected,

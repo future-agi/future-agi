@@ -1,7 +1,7 @@
 import { AGENT_TYPES } from "src/sections/agents/constants";
 
 // The agent-type picker on the Hosted-platform panel. Voice and Chat are live;
-// the remaining modalities are gated until their rosters ship.
+// the remaining modalities are shown disabled, not built in this release.
 export const ENTRY_AGENT_TYPES = [
   {
     id: AGENT_TYPES.VOICE,

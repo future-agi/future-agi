@@ -1,0 +1,49 @@
+{
+  "contract": "omega-ee-attach/v1",
+  "source": {
+    "file": "MCP-PLAN.md",
+    "section": "Omega hand-off additions, items 6 (Typed results) and 7 (Read-back)",
+    "lines": [1179, 1180],
+    "sha256": "d2c096eba21e77f6b497860a896af283813b91d53dd2fa42ebffda2fea833dff",
+    "sha256_of": "line 1179, a newline, then line 1180, without a trailing newline",
+    "text": [
+      "6. **Typed results.** `approval_required`: checkpoint the run, surface `approve_url`, poll `poll_url`, then retry the same call with `_meta[\"io.futureagi/approval_id\"]`. `auth_required`: show `connect_url` to the user (URL-mode elicitation where supported). `tool_rate_limited`: retry after `retry_after_s`. `tool_budget_exhausted` and `agentcc_agent_budget` map to `OmegaSpendBudgetExceededError` (`spend-budget.ts:1397`); `managed_credits_*` and `managed_billing_unavailable` stay tool errors (BPC#24's rule applied to tools).",
+      "7. **Read-back.** Each result's `_meta[\"io.futureagi/tool_call\"] {tool_call_id, executed, billing_mode (byok | managed), billed_usd, latency_ms}` (written by M15's `evidenceMeta`, chain step 20, on results and denials alike) and `[\"io.futureagi/budget\"]` feed Omega's telemetry and, in phase 2, its spend ledger (`reportsBilledCost` for tool calls, as §10.8 does for models)."
+    ],
+    "text_is": "lines 1179 and 1180 verbatim, so MCP_PLAN=none (CI, without the plan file) still extracts the names from them"
+  },
+  "extraction": [
+    "every backticked token on line 1179 that is snake_case, optionally ending in *: ^[a-z][a-z0-9_]*\\*?$",
+    "every io.futureagi/<key> on lines 1179 and 1180: io\\.futureagi/[a-z_]+",
+    "the comma-separated field list in the braces after io.futureagi/tool_call\"] on line 1180, with parenthesised enums removed"
+  ],
+  "plan_names": [
+    "agentcc_agent_budget",
+    "approval_required",
+    "approve_url",
+    "auth_required",
+    "billed_usd",
+    "billing_mode",
+    "connect_url",
+    "executed",
+    "io.futureagi/approval_id",
+    "io.futureagi/budget",
+    "io.futureagi/tool_call",
+    "latency_ms",
+    "managed_billing_unavailable",
+    "managed_credits_*",
+    "poll_url",
+    "retry_after_s",
+    "tool_budget_exhausted",
+    "tool_call_id",
+    "tool_rate_limited"
+  ],
+  "billing_modes": ["byok", "managed"],
+  "required_in_doc": [
+    "auth_required",
+    "approval_required",
+    "tool_rate_limited",
+    "tool_budget_exhausted",
+    "io.futureagi/tool_call"
+  ]
+}

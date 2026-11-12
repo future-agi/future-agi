@@ -11,9 +11,10 @@ import EditImageZoom from "./EditImageZoom";
 import EditImages from "./EditImages";
 import AudioWaveformModal from "src/components/custom-audio/AudioPlayerModal";
 import { useEditCellStore } from "../../states";
-import { onCellValueChangedWrapper } from "../common";
+import { cellWriter } from "../common";
 import { useQueryClient } from "@tanstack/react-query";
 import EditFile from "./EditFile";
+import { documentMetaOf } from "./mediaEditorRoute";
 import EditPersona from "./EditPersona";
 import PropTypes from "prop-types";
 
@@ -27,7 +28,10 @@ const DoubleClickEditCell = ({ dataset }) => {
   const dataType = params?.colDef?.dataType;
   const queryClient = useQueryClient();
 
-  const onCellValueChanged = onCellValueChangedWrapper(queryClient, dataset);
+  // The column's own writer: on the versioned dataset grid a dialog edit is
+  // one pending change (Save version commits it); scenario grids write now.
+  const versioned = Boolean(params?.colDef?.cellRendererParams?.versioned);
+  const onCellValueChanged = cellWriter({ versioned, queryClient, dataset });
 
   const formattedValue = useMemo(() => {
     if (dataType !== "persona") return {};
@@ -53,7 +57,7 @@ const DoubleClickEditCell = ({ dataset }) => {
         pb={0}
       >
         <Box>
-          <Typography color="text.primary" fontSize="16px" fontWeight="700">
+          <Typography color="text.primary" fontSize="16px" fontWeight="600">
             Edit {capitalized}
           </Typography>
         </Box>
@@ -65,7 +69,7 @@ const DoubleClickEditCell = ({ dataset }) => {
             p: 0,
           }}
         >
-          <Iconify width="24px" icon="mingcute:close-line" />
+          <Iconify width="24px" icon="solar:close-linear" />
         </IconButton>
       </Box>
     ) : (
@@ -93,7 +97,7 @@ const DoubleClickEditCell = ({ dataset }) => {
             onClick={onClose}
             sx={{ color: "text.primary" }}
           >
-            <Iconify width="24px" icon="mingcute:close-line" />
+            <Iconify width="24px" icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -105,9 +109,13 @@ const DoubleClickEditCell = ({ dataset }) => {
       <Dialog
         open={open && dataType !== "persona"}
         onClose={onClose}
-        maxWidth="md"
+        maxWidth={false}
         PaperProps={{
-          sx: { borderRadius: "0px !important", minWidth: "250px" },
+          sx: {
+            maxWidth: 960,
+            borderRadius: "0px !important",
+            minWidth: "250px",
+          },
         }}
       >
         {open && dataType !== null && <TitleComponent />}
@@ -132,7 +140,8 @@ const DoubleClickEditCell = ({ dataset }) => {
           />
         ) : open && dataType === "document" ? (
           <EditFile
-            params={params}
+            // Review 2 (S5): the name and type the cell shows (documentMetaOf).
+            params={{ ...documentMetaOf(params?.value), ...params }}
             onClose={onClose}
             onCellValueChanged={onCellValueChanged}
           />

@@ -4,7 +4,10 @@ import json
 import uuid
 
 import structlog
+from django.db import IntegrityError, transaction
+from rest_framework.exceptions import PermissionDenied
 
+from mcp_server.constants import DEFAULT_TOOL_GROUPS
 from mcp_server.models.connection import MCPConnection
 from mcp_server.models.session import MCPSession
 from mcp_server.models.tool_config import MCPToolGroupConfig
@@ -13,15 +16,57 @@ from mcp_server.models.usage import MCPUsageRecord
 logger = structlog.get_logger(__name__)
 
 
-def get_or_create_connection(user, organization, workspace):
-    """Get or create an MCPConnection for the given user + workspace."""
-    connection, _ = MCPConnection.no_workspace_objects.get_or_create(
-        user=user,
-        workspace=workspace,
-        deleted=False,
-        defaults={"organization": organization, "connection_mode": "stdio"},
-    )
-    MCPToolGroupConfig.no_workspace_objects.get_or_create(connection=connection)
+def owned_connections(user, organization):
+    """Owner + tenant boundary, including legacy NULL-workspace rows.
+
+    Workspace compatibility/default-manager rules are not an ownership check.
+    Callers may further narrow this queryset, but may never omit either owner.
+    """
+    queryset = MCPConnection.no_workspace_objects.all()
+    if not user or not user.is_authenticated or not organization:
+        return queryset.none()
+    return queryset.filter(user=user, organization=organization, deleted=False)
+
+
+def get_connection(user, organization, workspace):
+    """Read an exact workspace without creating or adopting a legacy row."""
+    require_connection_scope(user, organization, workspace)
+    return owned_connections(user, organization).filter(workspace=workspace).first()
+
+
+def require_connection_scope(user, organization, workspace):
+    """All connection use requires an explicit, internally consistent scope."""
+    if (
+        not user
+        or not user.is_authenticated
+        or not organization
+        or workspace is None
+        or workspace.organization_id != organization.pk
+    ):
+        raise PermissionDenied(
+            "An explicit user, organization and workspace are required"
+        )
+
+
+def get_or_create_connection(user, organization, workspace, *, connection_mode="stdio"):
+    """State-changing callers only; never create a NULL-workspace connection."""
+    require_connection_scope(user, organization, workspace)
+    try:
+        with transaction.atomic():
+            connection, _ = MCPConnection.no_workspace_objects.get_or_create(
+                user=user,
+                organization=organization,
+                workspace=workspace,
+                deleted=False,
+                defaults={"connection_mode": connection_mode},
+            )
+            MCPToolGroupConfig.no_workspace_objects.get_or_create(connection=connection)
+    except IntegrityError as exc:
+        # The DB uniqueness constraint is user/workspace, not user/org/workspace.
+        # An inconsistent legacy row must not be adopted or reassigned on conflict.
+        raise PermissionDenied(
+            "MCP connection scope conflicts with an existing row"
+        ) from exc
     return connection
 
 
@@ -39,6 +84,10 @@ def get_or_create_session(connection, session_id=None, transport="stdio"):
     if session_id:
         try:
             session = MCPSession.objects.get(id=session_id, connection=connection)
+            if session.status == "revoked":
+                raise PermissionDenied(
+                    "MCP session has been revoked", code="session_revoked"
+                )
             if session.status == "disconnected":
                 session.status = "active"
                 session.save(update_fields=["status", "last_activity_at"])
@@ -73,18 +122,20 @@ def get_or_create_session(connection, session_id=None, transport="stdio"):
 
 
 def get_enabled_tools(connection):
-    """Get the set of enabled tool names for a connection."""
+    """Read a scoped connection's config, or unsaved defaults; never write on GET."""
     from mcp_server.generated_registry import registry
 
-    try:
-        config = connection.tool_config
-    except MCPToolGroupConfig.DoesNotExist:
-        config, _ = MCPToolGroupConfig.no_workspace_objects.get_or_create(
-            connection=connection
-        )
+    config = None
+    if connection is not None:
+        try:
+            config = connection.tool_config
+        except MCPToolGroupConfig.DoesNotExist:
+            pass
 
-    enabled_groups = config.enabled_groups
-    disabled_tools = set(config.disabled_tools or [])
+    enabled_groups = (
+        config.enabled_groups if config is not None else DEFAULT_TOOL_GROUPS
+    )
+    disabled_tools = set(config.disabled_tools or []) if config is not None else set()
 
     enabled_tool_names = set()
     for tool in registry.list_all():

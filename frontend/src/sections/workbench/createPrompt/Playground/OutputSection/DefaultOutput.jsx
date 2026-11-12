@@ -2,11 +2,11 @@ import { Box, Typography } from "@mui/material";
 import React from "react";
 
 const descriptions = [
-  "Write a prompt in the left column, and click run to see the response",
+  "Write a prompt in the left column, then click Run Prompt to see the response",
   "Editing the prompt, or changing model parameters creates a new version",
   "Write variables like this: {{VARIABLE_NAME}}",
-  "Add messages using to simulate a conversation",
-  "High quality examples greatly improve performance. After drafting a prompt, click EXAMPLES to add some",
+  "Click Add Message to add more turns and simulate a conversation",
+  "Good examples improve responses. Add them as user and assistant messages",
 ];
 
 const DefaultOutput = () => {
@@ -18,7 +18,7 @@ const DefaultOutput = () => {
         flexDirection: "column",
         "& > ul > li::marker": {
           fontSize: "12px",
-          color: "text.disabled",
+          color: "text.tertiary",
         },
         width: "100%",
       }}

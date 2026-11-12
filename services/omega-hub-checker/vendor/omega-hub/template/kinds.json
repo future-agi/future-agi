@@ -1,0 +1,10 @@
+{
+  "about": "What `omega hub new <id> --kind <kind>` fills in: files come from base/, then the kind's own folder (same names replace); these values replace the {{placeholders}}.",
+  "app": { "folder": "base", "title": "A starter app", "tagline": "A front desk that answers opening-hours questions from a tool, ready to put behind a page.", "emoji": "🖥️", "from": "blue", "to": "purple", "tags": ["starter", "app"] },
+  "agent": { "folder": "base", "title": "A starter agent", "tagline": "One agent with one tool that answers opening-hours questions in one sentence.", "emoji": "🤖", "from": "blue", "to": "indigo", "tags": ["starter", "agent"] },
+  "team": { "folder": "base", "title": "A starter team", "tagline": "A starting point for a team of agents: one front-desk agent with a tool, ready to grow.", "emoji": "👥", "from": "indigo", "to": "purple", "tags": ["starter", "team"] },
+  "workflow": { "folder": "base", "title": "A starter workflow", "tagline": "A starting point for a workflow: one agent step that calls a tool and answers.", "emoji": "🔁", "from": "green", "to": "blue", "tags": ["starter", "workflow"] },
+  "skill": { "folder": "skill", "title": "A starter skill", "tagline": "A skill pack with one SKILL.md that tells an agent how to write release notes.", "emoji": "🧩", "from": "purple", "to": "pink", "tags": ["starter", "skill"] },
+  "plugin": { "folder": "plugin", "title": "A starter plugin", "tagline": "A plugin that declares one MCP server with a greet tool, installed switched off.", "emoji": "🔌", "from": "yellow", "to": "green", "tags": ["starter", "plugin"] },
+  "mcp": { "folder": "mcp", "title": "A starter MCP server", "tagline": "An MCP server over stdio with one greet tool, and a client that calls it.", "emoji": "🛰️", "from": "gray", "to": "blue", "tags": ["starter", "mcp"] }
+}

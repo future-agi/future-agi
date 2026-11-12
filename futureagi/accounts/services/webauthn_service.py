@@ -1,4 +1,5 @@
 import json
+from urllib.parse import urlsplit
 
 import structlog
 from django.conf import settings
@@ -25,9 +26,49 @@ logger = structlog.get_logger(__name__)
 
 WEBAUTHN_CHALLENGE_TTL = getattr(settings, "WEBAUTHN_CHALLENGE_TTL", 120)
 
+# Built-in passkey address of a local install (UI on localhost:3031).
+_DEFAULT_RP_ID = "localhost"
+_DEFAULT_ORIGIN = "http://localhost:3031"
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _public_app_address():
+    """(rp_id, origin) of the deployment's public app address, or None.
+
+    The address is FRONTEND_BASE_URL, else APP_BASE_URL. The origin is
+    scheme://host[:port] as a browser sends it: lower-case host, no path, and
+    the port only when the address names a non-default one. None when the
+    address is empty, is not an http(s) URL with a hostname (a bare host has
+    no scheme to trust), or names a local host. Never taken from a request.
+    """
+    address = str(
+        getattr(settings, "FRONTEND_BASE_URL", "")
+        or getattr(settings, "APP_BASE_URL", "")
+        or ""
+    ).strip()
+    try:
+        parts = urlsplit(address)
+        port = parts.port
+    except ValueError:
+        return None
+    host = parts.hostname
+    if parts.scheme not in _DEFAULT_PORTS or not host or host in _LOCAL_HOSTS:
+        return None
+    netloc = f"[{host}]" if ":" in host else host
+    if port is not None and port != _DEFAULT_PORTS[parts.scheme]:
+        netloc = f"{netloc}:{port}"
+    return host, f"{parts.scheme}://{netloc}"
+
 
 def _get_rp_id():
-    return getattr(settings, "WEBAUTHN_RP_ID", "localhost")
+    """WEBAUTHN_RP_ID when set to something other than the built-in default,
+    else the public app address's hostname, else "localhost"."""
+    configured = getattr(settings, "WEBAUTHN_RP_ID", "")
+    if configured and configured != _DEFAULT_RP_ID:
+        return configured
+    derived = _public_app_address()
+    return derived[0] if derived else _DEFAULT_RP_ID
 
 
 def _get_rp_name():
@@ -35,7 +76,13 @@ def _get_rp_name():
 
 
 def _get_origin():
-    return getattr(settings, "WEBAUTHN_ORIGIN", "http://localhost:3031")
+    """WEBAUTHN_ORIGIN when set to something other than the built-in default,
+    else the public app address's origin, else "http://localhost:3031"."""
+    configured = getattr(settings, "WEBAUTHN_ORIGIN", "")
+    if configured and configured != _DEFAULT_ORIGIN:
+        return configured
+    derived = _public_app_address()
+    return derived[1] if derived else _DEFAULT_ORIGIN
 
 
 def get_registration_options(user):

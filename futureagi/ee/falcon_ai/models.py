@@ -291,6 +291,9 @@ class MCPConnector(BaseModel):
         blank=True, default=""
     )  # encrypted in production
 
+    # Monotonic generation shared by every runtime credential-row writer.
+    credential_generation = models.PositiveBigIntegerField(default=0, editable=False)
+
     # OAuth 2.1 fields
     oauth_client_id = models.CharField(max_length=500, blank=True, default="")
     oauth_client_secret = models.TextField(blank=True, default="")
@@ -325,6 +328,11 @@ class MCPConnector(BaseModel):
 
     def __str__(self):
         return f"{self.name} ({self.server_url})"
+
+    def delete(self, using=None, keep_parents=False):
+        from ee.falcon_ai.disconnect import disconnect_mcp
+
+        return disconnect_mcp(self)
 
 
 class FalconFile(models.Model):

@@ -1,20 +1,23 @@
-import React, { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import {
   Box,
-  Card,
   Typography,
   Checkbox,
   FormControlLabel,
   Button,
   Alert,
   CircularProgress,
+  Link,
   Stack,
   Divider,
 } from "@mui/material";
-import { useTheme } from "@mui/material/styles";
+import Section from "src/components/section";
+import Iconify from "src/components/iconify";
+import { alpha, useTheme } from "@mui/material/styles";
 import axios from "src/utils/axios";
 import { endpoints } from "src/utils/axios";
+import { paths } from "src/routes/paths";
 
 // ---------------------------------------------------------------------------
 
@@ -145,6 +148,37 @@ export default function OAuthConsent() {
     fetchConsentData();
   }, [isNewFlow, requestId, clientId, redirectUri, responseType, scope, state]);
 
+  // The permission list scrolls inside the card, and many systems hide
+  // scrollbars until someone scrolls. While part of the list is still below,
+  // a fade and a short line over its bottom edge say so.
+  const scrollRef = useRef(null);
+  const [moreBelow, setMoreBelow] = useState(false);
+
+  const updateMoreBelow = useCallback(() => {
+    const list = scrollRef.current;
+    setMoreBelow(
+      Boolean(list) &&
+        list.scrollHeight - list.scrollTop - list.clientHeight > 1,
+    );
+  }, []);
+
+  // Measure again once the list is on screen and whenever the list or its
+  // content resizes (a window resize, a phone's toolbars changing the card's
+  // height, or text reflowing once fonts load).
+  useEffect(() => {
+    updateMoreBelow();
+    const list = scrollRef.current;
+    if (!list) return undefined;
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateMoreBelow);
+      return () => window.removeEventListener("resize", updateMoreBelow);
+    }
+    const observer = new ResizeObserver(updateMoreBelow);
+    observer.observe(list);
+    Array.from(list.children).forEach((child) => observer.observe(child));
+    return () => observer.disconnect();
+  }, [updateMoreBelow, loading, error, consentData]);
+
   const handleToggleGroup = (slug) => {
     setSelectedGroups((prev) => ({ ...prev, [slug]: !prev[slug] }));
   };
@@ -177,8 +211,7 @@ export default function OAuthConsent() {
         });
       }
 
-      const redirectUrl =
-        response.data?.result?.redirect_url;
+      const redirectUrl = response.data?.result?.redirect_url;
       if (response.data?.status && redirectUrl) {
         window.location.href = redirectUrl;
       } else {
@@ -203,7 +236,9 @@ export default function OAuthConsent() {
   return (
     <Box
       sx={{
-        height: "100vh",
+        // dvh, not vh: the page body never scrolls, so on a phone the card
+        // must fit the area left by the browser toolbars.
+        height: "100dvh",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -211,16 +246,30 @@ export default function OAuthConsent() {
         p: 2,
       }}
     >
-      <Card
+      <Section
+        variant="panel"
+        data-testid="mcp-consent-card"
         sx={{
           maxWidth: 480,
           width: "100%",
-          maxHeight: "90vh",
+          maxHeight: "90dvh",
           display: "flex",
           flexDirection: "column",
           boxShadow: theme.customShadows?.card || theme.shadows[8],
           borderRadius: 2,
           overflow: "hidden",
+          // Section wraps its children in a body box. Make that box the
+          // flex column (the header, list and footer below are its children)
+          // so the card's height limit reaches the list: the list scrolls
+          // and the Deny/Authorize footer stays on screen. Padding goes
+          // because each part already sets its own.
+          "& > :last-child": {
+            display: "flex",
+            flexDirection: "column",
+            flex: "1 1 auto",
+            minHeight: 0,
+            p: 0,
+          },
         }}
       >
         {/* Fixed header */}
@@ -265,88 +314,158 @@ export default function OAuthConsent() {
                 Authorize MCP Connection
               </Typography>
               <Typography variant="body2" color="text.secondary" align="center">
-                 <strong>{consentData.client_name}</strong> wants to access your
+                <strong>{consentData.client_name}</strong> wants to access your
                 Future AGI account
               </Typography>
             </>
           )}
         </Box>
 
-        {/* Scrollable permissions */}
+        {/* Tool groups: read-only in the editor sign-in flow, ticks in the legacy flow */}
         {!loading && !error && consentData && (
           <>
             <Divider />
             <Box
+              data-testid="mcp-consent-scroll"
+              ref={scrollRef}
+              onScroll={updateMoreBelow}
               sx={{
-                flex: 1,
+                flex: "1 1 auto",
+                minHeight: 0,
                 overflow: "auto",
                 px: 4,
                 py: 2,
               }}
             >
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                fontWeight={600}
-                sx={{
-                  mb: 1,
-                  display: "block",
-                  textTransform: "uppercase",
-                  letterSpacing: 0.5,
-                }}
-              >
-                Permissions ({selectedCount} of {totalCount})
-              </Typography>
-              <Stack spacing={0}>
-                {(consentData.available_groups || []).map((group) => (
-                  <FormControlLabel
-                    key={group.slug}
-                    control={
-                      <Checkbox
-                        checked={!!selectedGroups[group.slug]}
-                        onChange={() => handleToggleGroup(group.slug)}
-                        size="small"
-                      />
-                    }
-                    label={
-                      <Box>
-                        <Typography
-                          variant="body2"
-                          fontWeight={600}
-                          lineHeight={1.3}
-                        >
-                          {group.name}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {group.description}
-                        </Typography>
-                      </Box>
-                    }
+              {isNewFlow ? (
+                // In this flow the editor's tool list comes from the person's
+                // MCP Server settings, not from a choice made here, so the page
+                // only says where that list is set. The approval still sends the
+                // groups the server pre-selected (see handleConsent).
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  data-testid="mcp-consent-tools-note"
+                >
+                  This editor gets the tool groups that are switched on for you
+                  in{" "}
+                  <Link
+                    component={RouterLink}
+                    to={paths.dashboard.settings.mcpServer}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {"Settings > MCP Server"}
+                  </Link>
+                  .
+                </Typography>
+              ) : (
+                <>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    fontWeight={600}
                     sx={{
-                      alignItems: "flex-start",
-                      mx: 0,
-                      py: 0.75,
-                      borderBottom: `1px solid ${theme.palette.divider}`,
-                      "&:last-of-type": { borderBottom: "none" },
-                      "& .MuiCheckbox-root": { pt: 0.25 },
+                      mb: 1,
+                      display: "block",
+                      textTransform: "none",
+                      letterSpacing: 0.5,
                     }}
-                  />
-                ))}
-              </Stack>
+                  >
+                    Permissions ({selectedCount} of {totalCount})
+                  </Typography>
+                  <Stack spacing={0}>
+                    {(consentData.available_groups || []).map((group) => (
+                      <FormControlLabel
+                        key={group.slug}
+                        control={
+                          <Checkbox
+                            checked={!!selectedGroups[group.slug]}
+                            onChange={() => handleToggleGroup(group.slug)}
+                            size="small"
+                          />
+                        }
+                        label={
+                          <Box>
+                            <Typography
+                              variant="body2"
+                              fontWeight={600}
+                              lineHeight={1.3}
+                            >
+                              {group.name}
+                            </Typography>
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              {group.description}
+                            </Typography>
+                          </Box>
+                        }
+                        sx={{
+                          alignItems: "flex-start",
+                          mx: 0,
+                          py: 0.75,
+                          borderBottom: `1px solid ${theme.palette.divider}`,
+                          "&:last-of-type": { borderBottom: "none" },
+                          "& .MuiCheckbox-root": { pt: 0.25 },
+                        }}
+                      />
+                    ))}
+                  </Stack>
+                </>
+              )}
             </Box>
+
+            {/* Over the list's bottom edge while more of it is below. It takes
+                no room and lets clicks through, so nothing moves when it goes.
+                Screen readers already get the whole list and its count. */}
+            {!isNewFlow && moreBelow && (
+              <Box sx={{ position: "relative", height: 0, flexShrink: 0 }}>
+                <Box
+                  data-testid="mcp-consent-more"
+                  aria-hidden="true"
+                  sx={{
+                    position: "absolute",
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    zIndex: 1,
+                    height: 56,
+                    display: "flex",
+                    alignItems: "flex-end",
+                    justifyContent: "center",
+                    pb: 1,
+                    pointerEvents: "none",
+                    background: `linear-gradient(to bottom, ${alpha(
+                      theme.palette.background.paper,
+                      0,
+                    )}, ${theme.palette.background.paper} 65%)`,
+                  }}
+                >
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    fontWeight={600}
+                    sx={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 0.5,
+                    }}
+                  >
+                    More permissions below
+                    <Iconify icon="solar:alt-arrow-down-linear" width={14} />
+                  </Typography>
+                </Box>
+              </Box>
+            )}
 
             {/* Fixed footer */}
             <Divider />
-            <Box sx={{ px: 4, py: 2.5, flexShrink: 0 }}>
-              <Alert
-                severity="info"
-                variant="outlined"
-                sx={{ mb: 2, py: 0, "& .MuiAlert-message": { py: 0.75 } }}
-              >
-                <Typography variant="caption">
-                  You can revoke access anytime in Settings.
-                </Typography>
-              </Alert>
+            <Box
+              data-testid="mcp-consent-actions"
+              sx={{ px: 4, py: 2.5, flexShrink: 0 }}
+            >
               <Stack direction="row" spacing={2} justifyContent="flex-end">
                 <Button
                   variant="outlined"
@@ -360,16 +479,7 @@ export default function OAuthConsent() {
                   variant="contained"
                   onClick={() => handleConsent(true)}
                   disabled={submitting || selectedCount === 0}
-                  sx={{
-                    bgcolor: "#7C3AED",
-                    color: "#fff",
-                    fontWeight: 600,
-                    px: 3,
-                    "&:hover": { bgcolor: "#6D28D9" },
-                    "&.Mui-disabled": {
-                      bgcolor: "action.disabledBackground",
-                    },
-                  }}
+                  sx={{ px: 3 }}
                 >
                   {submitting ? (
                     <CircularProgress size={20} color="inherit" />
@@ -381,7 +491,7 @@ export default function OAuthConsent() {
             </Box>
           </>
         )}
-      </Card>
+      </Section>
     </Box>
   );
 }

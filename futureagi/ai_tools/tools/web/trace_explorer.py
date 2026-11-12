@@ -14,7 +14,6 @@ The agent can:
 """
 
 import json
-from typing import Optional
 
 import structlog
 from pydantic import BaseModel as PydanticBaseModel
@@ -86,7 +85,7 @@ class TraceExploreInput(PydanticBaseModel):
             "'list_trace_spans' (query=trace_id, fetches spans for a trace)."
         )
     )
-    query: Optional[str] = Field(
+    query: str | None = Field(
         default=None,
         description=(
             "For 'get': a dot/bracket path like `transcript[0].content` or "
@@ -163,9 +162,12 @@ class TraceExplorerTool(BaseTool):
         # spans by id when no spans are pre-loaded in the in-memory context.
         if params.action == "span_detail" and not spans:
             if not params.query:
-                return ToolResult.error("Provide a span ID in `query` to fetch span detail.")
+                return ToolResult.error(
+                    "Provide a span ID in `query` to fetch span detail."
+                )
             try:
                 from tfc.middleware.workspace_context import get_current_organization
+
                 org = get_current_organization()
                 if not org:
                     logger.warning(
@@ -189,10 +191,13 @@ class TraceExplorerTool(BaseTool):
                     )
                     if len(val_str) > 1000:
                         val_str = (
-                            val_str[:1000] + f"\n... [truncated, {len(val_str)} chars total]"
+                            val_str[:1000]
+                            + f"\n... [truncated, {len(val_str)} chars total]"
                         )
                     lines.append(f"**{key}:** {val_str}")
-                return ToolResult(content="\n".join(lines), data={"span_id": full_span.get("id")})
+                return ToolResult(
+                    content="\n".join(lines), data={"span_id": full_span.get("id")}
+                )
             except Exception as e:
                 logger.warning(f"Failed to fetch span detail for {params.query}: {e}")
                 return ToolResult.error(f"Failed to fetch span detail: {e}")
@@ -259,7 +264,7 @@ class TraceExplorerTool(BaseTool):
             content=f"Top-level value: {type(data).__name__} = {str(data)[:500]}"
         )
 
-    def _get_path(self, data, path: Optional[str]):
+    def _get_path(self, data, path: str | None):
         """Walk a dot / bracket path into the payload and return that value.
 
         Supports: `a.b.c`, `a[0].b`, `[0]`, `a.b[2].c`.
@@ -423,7 +428,7 @@ class TraceExplorerTool(BaseTool):
 
         _status = "error" if error_count > 0 else "ok"
         lines = [
-            f"## Trace Summary",
+            "## Trace Summary",
             f"**Name:** {data.get('trace_name', data.get('name', 'unnamed'))}",
             f"**Status:** {_status}",
             f"**Total spans:** {total_spans}",
@@ -441,7 +446,7 @@ class TraceExplorerTool(BaseTool):
             model_str = f" model={s['model']}" if s.get("model") else ""
             tokens_str = f" {s['total_tokens']}tok" if s.get("total_tokens") else ""
             lines.append(
-                f"  {i+1}. {status_icon} [{s.get('observation_type','?')}] {s.get('name','?')} "
+                f"  {i + 1}. {status_icon} [{s.get('observation_type', '?')}] {s.get('name', '?')} "
                 f"({s.get('latency_ms') or 0}ms{model_str}{tokens_str}) "
                 f"id=`{s.get('id', '?')}`"
             )
@@ -551,7 +556,9 @@ class TraceExplorerTool(BaseTool):
 
     def _slow_spans(self, spans, limit):
         """Find the slowest spans."""
-        sorted_spans = sorted(spans, key=lambda s: s.get("latency_ms") or 0, reverse=True)
+        sorted_spans = sorted(
+            spans, key=lambda s: s.get("latency_ms") or 0, reverse=True
+        )
 
         lines = [f"## Slowest Spans (top {limit})\n"]
         for s in sorted_spans[:limit]:
@@ -580,7 +587,7 @@ class TraceExplorerTool(BaseTool):
             indent = "  " * depth
             status = "❌" if span.get("status") == "ERROR" else "✓"
             lines.append(
-                f"{indent}{status} [{span.get('observation_type','?')}] {span.get('name','?')} "
+                f"{indent}{status} [{span.get('observation_type', '?')}] {span.get('name', '?')} "
                 f"({span.get('latency_ms') or 0}ms) id=`{span.get('id', '?')}`"
             )
             for child in children.get(span.get("id"), []):
@@ -615,16 +622,11 @@ class TraceExplorerTool(BaseTool):
         field = field.strip()
         value = value.strip().lower()
 
-        matches = [
-            s for s in spans
-            if str(s.get(field, "")).lower() == value
-        ]
+        matches = [s for s in spans if str(s.get(field, "")).lower() == value]
 
         if not matches:
             # Show available values for that field to help the agent
-            available = sorted(set(
-                str(s.get(field, "")) for s in spans if s.get(field)
-            ))
+            available = sorted({str(s.get(field, "")) for s in spans if s.get(field)})
             return ToolResult(
                 content=f"No spans match `{field}={value}`. "
                 f"Available values for `{field}`: {', '.join(available[:15])}",
@@ -638,11 +640,13 @@ class TraceExplorerTool(BaseTool):
                 lines.append(f"  → {s['status_message'][:100]}")
 
         if len(matches) > limit:
-            lines.append(f"\n... and {len(matches) - limit} more. Increase `limit` to see more.")
+            lines.append(
+                f"\n... and {len(matches) - limit} more. Increase `limit` to see more."
+            )
 
         lines.append(
-            f"\nUse action='span_detail' query='<span_id>' to see "
-            f"full input/output of a specific span."
+            "\nUse action='span_detail' query='<span_id>' to see "
+            "full input/output of a specific span."
         )
 
         return ToolResult(
@@ -659,13 +663,12 @@ class TraceExplorerTool(BaseTool):
         Data isolation: scoped by project → organization via request context.
         """
         if not trace_id:
-            return ToolResult.error(
-                "Provide a trace_id in `query` to list its spans."
-            )
+            return ToolResult.error("Provide a trace_id in `query` to list its spans.")
         try:
+            from model_hub.utils.workspace_scope import request_workspace_filter
+            from tfc.middleware.workspace_context import get_current_organization
             from tracer.models.project import Project
             from tracer.services.clickhouse.v2 import get_reader
-            from tfc.middleware.workspace_context import get_current_organization
 
             # Org scoping is the only authorization check between an
             # agent-supplied trace_id and the DB. If we don't have an org
@@ -679,28 +682,23 @@ class TraceExplorerTool(BaseTool):
                     "Cannot list spans without an authenticated organization context."
                 )
 
-            # Read from CH 25.3 (was ObservationSpan.objects.filter(
-            # trace_id=, deleted=False, project__organization=)
-            # .order_by("start_time").values(...)[: limit*10]).
-            # CHSpanReader.list_by_trace already filters is_deleted=0 and
-            # orders by start_time, id; we hydrate to dicts in the same
-            # shape Django's .values() produced so the tree-building
-            # downstream is unchanged. Org-tenant scope: each span carries
-            # project_id, so verify against Project at the project level
-            # (one query) rather than per-span.
+            # Resolve one live copy inside the caller's project scope before
+            # loading payloads. Use CH discovery: traces may no longer be in PG.
+            project_ids = [
+                str(pid)
+                for pid in Project.objects.filter(
+                    request_workspace_filter(), organization=org
+                ).values_list("id", flat=True)
+            ]
+            if not project_ids:
+                return ToolResult.not_found("Trace", str(trace_id))
             with get_reader() as reader:
-                ch_spans_raw = reader.list_by_trace(str(trace_id))
-            if ch_spans_raw:
-                project_ids = {s.project_id for s in ch_spans_raw if s.project_id}
-                if project_ids:
-                    org_project_ids = set(
-                        str(p) for p in Project.objects.filter(
-                            id__in=list(project_ids), organization=org
-                        ).values_list("id", flat=True)
-                    )
-                    ch_spans_raw = [
-                        s for s in ch_spans_raw if s.project_id in org_project_ids
-                    ]
+                project_id = reader.newest_trace_project(str(trace_id), project_ids)
+                if not project_id:
+                    return ToolResult.not_found("Trace", str(trace_id))
+                ch_spans_raw = reader.list_by_trace(
+                    str(trace_id), project_id=project_id
+                )
             spans = [
                 {
                     "id": s.id,
@@ -757,8 +755,8 @@ class TraceExplorerTool(BaseTool):
                 _render(root)
 
             lines.append(
-                f"\nUse action='span_detail' query='<span_id>' to see "
-                f"full input/output of a specific span."
+                "\nUse action='span_detail' query='<span_id>' to see "
+                "full input/output of a specific span."
             )
 
             return ToolResult(
@@ -771,7 +769,7 @@ class TraceExplorerTool(BaseTool):
 
     def _format_span_summary(self, s):
         """Format a single span as a summary line with ID for drill-down."""
-        parts = [f"- **{s.get('name','?')}** [{s.get('observation_type','?')}]"]
+        parts = [f"- **{s.get('name', '?')}** [{s.get('observation_type', '?')}]"]
         if s.get("model"):
             parts.append(f"model={s['model']}")
         parts.append(f"{s.get('latency_ms') or 0}ms")
@@ -902,9 +900,7 @@ def _fetch_full_span(span_id: str) -> dict | None:
             span = reader.get(str(span_id))
         if not span:
             return None
-        if not Project.objects.filter(
-            id=span.project_id, organization=org
-        ).exists():
+        if not Project.objects.filter(id=span.project_id, organization=org).exists():
             return None
 
         # Build the same shape this function used to emit. The dict the

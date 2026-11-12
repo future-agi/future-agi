@@ -92,10 +92,13 @@ class PostHogMiddleware:
         if not user or not getattr(user, "is_authenticated", False):
             return
 
-        # Build properties
+        # Build properties. A checkout session in the path is redacted with the
+        # logging rule; every other path is exported unchanged.
+        from tfc.logging.checkout import scrub_checkout_payload
+
         properties = {
             "method": request.method,
-            "path": request.path,
+            "path": scrub_checkout_payload(request.path),
             "status_code": response.status_code,
             "duration_ms": duration_ms,
             "content_type": response.get("Content-Type", ""),

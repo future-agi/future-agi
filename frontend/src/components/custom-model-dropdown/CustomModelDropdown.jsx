@@ -1,5 +1,5 @@
 import { Box } from "@mui/material";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import React, { useMemo, useRef, useState } from "react";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
@@ -11,6 +11,11 @@ import { ShowComponent } from "../show";
 import ModelButtonField from "./ModelButtonField";
 import AddCustomModal from "src/pages/dashboard/settings/AddCustomModal";
 import { normalizeModelOption } from "./common";
+import {
+  isManagedEligible,
+  pickContractFields,
+} from "src/sections/develop-detail/Common/modelAccess";
+import { noModelUsable, useFutureAgiCreditsRoute } from "./noUsableModel";
 
 const CustomModelDropdown = ({
   isModalContainer = false,
@@ -41,6 +46,7 @@ const CustomModelDropdown = ({
 }) => {
   const btnRef = useRef(null);
   const inputRef = useRef(null);
+  const queryClient = useQueryClient();
   const [isFocus, setIsFocus] = useState(false);
   const [openDropdown, setOpenDropdown] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -53,6 +59,9 @@ const CustomModelDropdown = ({
   });
 
   const onConfigOpen = (model) => {
+    // A model funded by Future AGI credits never goes to provider-key setup,
+    // whether the caller handles it (onModelConfigOpen) or KeysDrawer does.
+    if (isManagedEligible(model)) return;
     if (onModelConfigOpen) {
       onModelConfigOpen(model);
       return;
@@ -117,6 +126,12 @@ const CustomModelDropdown = ({
         : [{ label: "No model provided", value: "no", disabled: true }];
   }, [modelList?.pages, search]);
 
+  // Read whether Future AGI credits are on (and which gateway path serves
+  // them) only while the open menu shows that no model can run.
+  const creditsRoute = useFutureAgiCreditsRoute({
+    enabled: openDropdown && !isLoadingModelList && noModelUsable(options),
+  });
+
   const handleOnChange = (e, clear) => {
     if (rest?.multiple) {
       if (clear) {
@@ -146,6 +161,9 @@ const CustomModelDropdown = ({
         logoUrl,
         id,
         type,
+        // Keep the server's access verdict (credential mode and payer) with
+        // the picked model; rows without it add nothing.
+        ...pickContractFields(e.target.option),
       };
     }
 
@@ -191,6 +209,7 @@ const CustomModelDropdown = ({
               size="small"
               sx={inputSx}
               logoUrl={modelDetail?.logoUrl}
+              provider={modelDetail?.providers ?? modelDetail?.provider}
               InputLabelProps={{
                 shrink: true,
                 style: {
@@ -264,6 +283,7 @@ const CustomModelDropdown = ({
           showButtons={showButtons}
           onModelTypeChange={onModelTypeChange}
           modelType={modelType}
+          creditsRoute={creditsRoute}
           {...rest}
         />
       </Box>
@@ -297,6 +317,11 @@ const CustomModelDropdown = ({
         }}
         data={null}
         edit={false}
+        // options-truth L3 G8 P4: a stored custom model shows up in the
+        // model list right away (models_list returns it with its prices).
+        onRefresh={() =>
+          queryClient.invalidateQueries({ queryKey: ["model-list"] })
+        }
       />
     </>
   );
@@ -312,8 +337,10 @@ CustomModelDropdown.propTypes = {
   disabledClick: PropTypes.bool,
   disabledHover: PropTypes.bool,
   onChange: PropTypes.func,
-  value: PropTypes.string,
-  modelDetail: PropTypes.object,
+  // A model name, or the selected models when `multiple` is set.
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.array]),
+  // Multi-select fields (TTS / STT / image models) pass one detail per model.
+  modelDetail: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),
   hoverPlacement: PropTypes.string,
   openSelectModel: PropTypes.bool,
   setOpenSelectModel: PropTypes.func,

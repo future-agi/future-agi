@@ -67,8 +67,15 @@ func New(cfg map[string]interface{}) *ValidationGuardrail {
 	return g
 }
 
-func (g *ValidationGuardrail) Name() string           { return "input-validation" }
+func (g *ValidationGuardrail) Name() string            { return "input-validation" }
 func (g *ValidationGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
+
+// JudgesShape marks the check as one that judges the answer's shape: its
+// length limits and the patterns the whole text must match are structural
+// rules (guardrails.ShapeCheck), so they do not apply to a model's refusal.
+// Its deny patterns judge what the text says and read the refusal
+// (guardrails.CheckInput.Refusals).
+func (g *ValidationGuardrail) JudgesShape() bool { return true }
 
 // Check validates messages against configured rules.
 func (g *ValidationGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
@@ -76,8 +83,14 @@ func (g *ValidationGuardrail) Check(ctx context.Context, input *guardrails.Check
 		return &guardrails.CheckResult{Pass: true}
 	}
 
+	// The length rules count each message's content, as they always did;
+	// the patterns read the arguments of the request's tool calls too
+	// (patternText), where a value a deny pattern names is as much the
+	// request's text as a message is.
 	texts := extractAllTexts(input)
-	if len(texts) == 0 {
+	combined := patternText(ctx, input, texts)
+	noText := len(texts) == 0 && combined == ""
+	if noText && len(input.Refusals) == 0 {
 		return &guardrails.CheckResult{Pass: true}
 	}
 
@@ -112,18 +125,23 @@ func (g *ValidationGuardrail) Check(ctx context.Context, input *guardrails.Check
 		}
 	}
 
-	combined := strings.Join(texts, "\n")
-
-	// Check deny patterns.
+	// Check deny patterns. They judge what the text says, so they also read
+	// a model's refusal, which the shape rules (lengths, require patterns)
+	// do not (guardrails.CheckInput.Refusals).
+	denyText := combined
+	if len(input.Refusals) > 0 {
+		denyText = strings.Join(append([]string{combined}, input.Refusals...), "\n")
+	}
 	for _, re := range g.denyPatterns {
-		if re.MatchString(combined) {
+		if re.MatchString(denyText) {
 			violations = append(violations, fmt.Sprintf("matched deny pattern: %s", re.String()))
 		}
 	}
 
-	// Check require patterns.
+	// Check require patterns (not on a refusal alone: they judge the
+	// answer's shape).
 	for _, re := range g.requirePatterns {
-		if !re.MatchString(combined) {
+		if !noText && !re.MatchString(combined) {
 			violations = append(violations, fmt.Sprintf("failed require pattern: %s", re.String()))
 		}
 	}
@@ -141,6 +159,26 @@ func (g *ValidationGuardrail) Check(ctx context.Context, input *guardrails.Check
 			"violation_count": len(violations),
 		},
 	}
+}
+
+// patternText is the text the deny and require patterns read: texts (each
+// message's content, extractAllTexts), then the arguments of each tool call
+// the request's messages make (guardrails.ArgumentsText), one per line.
+func patternText(ctx context.Context, input *guardrails.CheckInput, texts []string) string {
+	lines := texts
+	if input.Request != nil {
+		for i := range input.Request.Messages {
+			for _, tc := range input.Request.Messages[i].ToolCalls {
+				if args := guardrails.ArgumentsText(ctx, tc.Function.Arguments); args != "" {
+					if len(lines) == len(texts) {
+						lines = append([]string(nil), texts...)
+					}
+					lines = append(lines, args)
+				}
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func extractAllTexts(input *guardrails.CheckInput) []string {

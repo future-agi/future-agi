@@ -32,6 +32,73 @@ describe("FilterChips", () => {
     expect(screen.getByText("7")).toBeInTheDocument();
   });
 
+  it.each([
+    ["greater_than", 2, "number", ">"],
+    ["greater_than_or_equal", 2, "number", "≥"],
+    ["less_than", 2, "number", "<"],
+    ["less_than_or_equal", 2, "number", "≤"],
+    ["equals", "ERROR", "text", "="],
+    ["not_equals", "ERROR", "text", "≠"],
+    ["in", ["ERROR"], "text", "="],
+    ["not_in", ["ERROR"], "text", "≠"],
+    ["in", ["ERROR", "UNSET"], "text", "is one of"],
+    ["not_between", [1, 5], "number", "not between"],
+    ["is_null", "", "text", "is null"],
+    ["greater_than", "2026-10-01", "datetime", "after"],
+  ])(
+    "labels %s on a %s value as the panel reads it",
+    (op, value, type, label) => {
+      render(
+        <FilterChips
+          extraFilters={[
+            {
+              column_id: "num_sessions",
+              display_name: "No. of Sessions",
+              filter_config: {
+                filter_type: type,
+                filter_op: op,
+                filter_value: value,
+              },
+            },
+          ]}
+          onRemoveFilter={vi.fn()}
+          onClearAll={vi.fn()}
+        />,
+      );
+      expect(screen.getByText(label)).toBeInTheDocument();
+    },
+  );
+
+  // TraceFilterPanel says "is null" / "is not null" except on array and map
+  // fields, where it says "is empty" / "is not empty".
+  it.each([
+    ["is_not_null", "text", "is not null"],
+    ["is_null", "number", "is null"],
+    ["is_null", "array", "is empty"],
+    ["is_not_null", "map", "is not empty"],
+    // Pinned on the dataset chip by w4-a-datetime-null-filter.test.js.
+    ["is_null", "datetime", "is empty"],
+  ])("labels %s on %s filters as the panel reads it", (op, type, label) => {
+    render(
+      <FilterChips
+        extraFilters={[
+          {
+            column_id: "num_sessions",
+            display_name: "No. of Sessions",
+            filter_config: {
+              filter_type: type,
+              filter_op: op,
+              filter_value: "",
+            },
+          },
+        ]}
+        onRemoveFilter={vi.fn()}
+        onClearAll={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(label)).toBeInTheDocument();
+  });
+
   it("renders multiple chips for multiple filters", () => {
     render(
       <FilterChips

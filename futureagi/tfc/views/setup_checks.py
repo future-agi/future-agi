@@ -179,17 +179,31 @@ def _redis_up() -> bool:
 
 
 def _websocket_relay_up() -> bool:
-    """Temporal workers push live updates by POSTing to WEBSOCKET_ENDPOINT
-    (model_hub.utils.call_websocket), whichever channel layer is configured.
-    One that does not reach this install's backend drops them silently. A
-    futureagi.com endpoint is refused without being contacted, as the relay
-    itself refuses it."""
+    """Memory mode must reach the signed relay; brokers need no HTTP relay."""
+    if settings.CHANNEL_LAYER_BACKEND in {"redis", "rabbitmq"}:
+        return True
+    from tfc.websocket_relay import sign_relay
+
     url = settings.WEBSOCKET_ENDPOINT
     if is_forbidden_vendor_endpoint(url):
         return False
-    parsed = urlparse(url)
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    return _tcp_up(parsed.hostname or url, port)
+    # The zero UUID has no subscribers. Prove authentication and dispatch, not
+    # merely a TCP listener; no customer key or organization row is needed.
+    body, headers = sign_relay(
+        {
+            "organization_id": "00000000-0000-0000-0000-000000000000",
+            "message": {"type": "setup_probe"},
+        },
+        url,
+    )
+    response = requests.post(
+        url,
+        data=body,
+        headers=headers,
+        timeout=PROBE_TIMEOUT_SECONDS,
+        allow_redirects=False,
+    )
+    return response.status_code == 200
 
 
 def _channel_layer_up() -> bool:

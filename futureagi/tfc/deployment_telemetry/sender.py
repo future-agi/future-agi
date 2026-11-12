@@ -19,16 +19,17 @@ from tfc.deployment_telemetry.buffer import (
 from tfc.deployment_telemetry.collectors import collect_counts
 from tfc.deployment_telemetry.config import (
     REGISTRATION_CLAIM_TIMEOUT_SECONDS,
+    REGISTRATION_RETRY_SECONDS,
     get_telemetry_interval_hours,
     get_telemetry_url,
     is_self_hosted_deployment,
     telemetry_is_disabled,
+    telemetry_shares_admin_emails,
 )
 from tfc.deployment_telemetry.models import DeploymentTelemetryState
 from tfc.deployment_telemetry.payloads import (
     build_full_registration_payload,
     build_heartbeat_payload,
-    build_minimal_registration_payload,
 )
 from tfc.deployment_telemetry.state import get_or_create_telemetry_state
 from tfc.deployment_telemetry.transport import TelemetryClient
@@ -36,19 +37,52 @@ from tfc.deployment_telemetry.transport import TelemetryClient
 logger = structlog.get_logger(__name__)
 
 
+def _stored_registration_has_users(state: DeploymentTelemetryState) -> bool:
+    metadata = state.registration_metadata
+    return isinstance(metadata, dict) and bool(metadata.get("users"))
+
+
 def _claim_registration() -> tuple[DeploymentTelemetryState, bool, bool]:
+    """Returns (state, claimed, holds_full).
+
+    ``holds_full`` is True when the instance already holds a FULL registration
+    and its signing secret, so heartbeats can flow whatever happens to a
+    re-registration (in flight elsewhere, held back, or failing).
+    """
     state = get_or_create_telemetry_state()
     current_disabled = telemetry_is_disabled()
-    desired_kind = (
-        DeploymentTelemetryState.RegistrationKind.MINIMAL_DISABLED
-        if current_disabled
-        else DeploymentTelemetryState.RegistrationKind.FULL
-    )
+    desired_kind = DeploymentTelemetryState.RegistrationKind.FULL
     now = django_timezone.now()
     stale_before = now - timedelta(seconds=REGISTRATION_CLAIM_TIMEOUT_SECONDS)
+    retry_after = now - timedelta(seconds=REGISTRATION_RETRY_SECONDS)
 
     with transaction.atomic():
         state = DeploymentTelemetryState.objects.select_for_update().get(pk=state.pk)
+        if current_disabled:
+            # Opt-out is local, not a new registration kind to send. Cancel any
+            # old claim once, preserving registration history and signing secret
+            # so opting back in does not unnecessarily re-register the instance.
+            if (
+                not state.telemetry_disabled
+                or state.registration_status
+                != DeploymentTelemetryState.RegistrationStatus.IDLE
+                or state.registration_claimed_at is not None
+            ):
+                state.telemetry_disabled = True
+                state.registration_status = (
+                    DeploymentTelemetryState.RegistrationStatus.IDLE
+                )
+                state.registration_claimed_at = None
+                state.save(
+                    update_fields=[
+                        "telemetry_disabled",
+                        "registration_status",
+                        "registration_claimed_at",
+                        "updated_at",
+                    ]
+                )
+            return state, False, False
+
         state.telemetry_disabled = current_disabled
         # A FULL deployment with no stored signing secret can't sign its
         # heartbeats, so force a re-registration to (re)obtain one rather
@@ -57,18 +91,23 @@ def _claim_registration() -> tuple[DeploymentTelemetryState, bool, bool]:
             desired_kind == DeploymentTelemetryState.RegistrationKind.FULL
             and not state.instance_secret
         )
-        needs_registration = (
+        holds_full = not (
             state.registered_at is None
             or state.registration_kind != desired_kind
             or missing_secret_for_full
         )
+        # Re-register once when the stored registration and the admin-email
+        # opt-in disagree: an install upgraded from the release that sent
+        # emails by default (or whose operator turned the opt-in off) sends a
+        # registration without users, which replaces the stored emails on the
+        # receiver; turning the opt-in on sends one with them.
+        users_setting_changed = (
+            _stored_registration_has_users(state) != telemetry_shares_admin_emails()
+        )
+        needs_registration = not holds_full or users_setting_changed
         if not needs_registration:
             state.save(update_fields=["telemetry_disabled", "updated_at"])
-            return (
-                state,
-                False,
-                desired_kind == DeploymentTelemetryState.RegistrationKind.FULL,
-            )
+            return state, False, True
 
         has_fresh_claim = (
             state.registration_status
@@ -76,9 +115,17 @@ def _claim_registration() -> tuple[DeploymentTelemetryState, bool, bool]:
             and state.registration_claimed_at
             and state.registration_claimed_at > stale_before
         )
-        if has_fresh_claim:
+        # After a failed attempt, wait out the retry floor: a rejecting or
+        # unreachable receiver gets one registration an hour at most, however
+        # often the schedule or sign-ups ask.
+        backing_off = bool(
+            state.last_registration_error
+            and state.last_registration_attempt_at
+            and state.last_registration_attempt_at > retry_after
+        )
+        if has_fresh_claim or backing_off:
             state.save(update_fields=["telemetry_disabled", "updated_at"])
-            return state, False, False
+            return state, False, holds_full
 
         state.registration_status = (
             DeploymentTelemetryState.RegistrationStatus.IN_PROGRESS
@@ -96,7 +143,7 @@ def _claim_registration() -> tuple[DeploymentTelemetryState, bool, bool]:
                 "updated_at",
             ]
         )
-        return state, True, False
+        return state, True, holds_full
 
 
 def _release_registration_claim(instance_id: UUID, error: str = "") -> None:
@@ -158,55 +205,65 @@ def _complete_registration(
 
 
 def ensure_registration() -> tuple[bool, UUID | None]:
-    """Returns (is_full_registered, instance_id)."""
+    """Returns (is_full_registered, instance_id).
+
+    An instance that already holds a FULL registration and its secret stays
+    full while it re-registers: a re-registration that cannot be built or
+    sent leaves the stored registration as it was, to be retried later.
+    """
     if not is_self_hosted_deployment():
         return False, None
 
-    state, claimed, already_full = _claim_registration()
+    state, claimed, holds_full = _claim_registration()
+    if state.telemetry_disabled:
+        return False, state.instance_id
     if not claimed:
-        return already_full, state.instance_id
+        return holds_full, state.instance_id
 
-    current_disabled = state.telemetry_disabled
-    registration_kind = (
-        DeploymentTelemetryState.RegistrationKind.MINIMAL_DISABLED
-        if current_disabled
-        else DeploymentTelemetryState.RegistrationKind.FULL
-    )
+    registration_kind = DeploymentTelemetryState.RegistrationKind.FULL
     try:
-        if current_disabled:
-            payload = build_minimal_registration_payload(state.instance_id)
-        else:
-            payload = build_full_registration_payload(state.instance_id)
-            if payload is None:
-                # No admin/owner users on this instance yet (or every candidate
-                # has an unusable email). Releasing the claim with no other
-                # signal would re-fire forever with no log trail — emit a one-
-                # line warning so operators see why registration keeps deferring.
-                logger.warning(
-                    "deployment_telemetry_skipped_no_admin_users",
-                    instance_id=str(state.instance_id),
-                )
-                _release_registration_claim(state.instance_id)
-                return False, state.instance_id
+        payload = build_full_registration_payload(state.instance_id)
+        if payload is None:
+            # No admin/owner users on this instance yet (or, opted in to
+            # admin emails, every candidate has an unusable email).
+            # Releasing the claim with no other signal would re-fire forever
+            # with no log trail — emit a one-line warning so operators see
+            # why registration keeps deferring. A first registration defers
+            # freely (it happens when the first account is created); a
+            # re-registration of a FULL instance counts as a failed attempt,
+            # so it waits out the retry floor.
+            logger.warning(
+                "deployment_telemetry_skipped_no_admin_users",
+                instance_id=str(state.instance_id),
+            )
+            _release_registration_claim(
+                state.instance_id, "no_admin_users" if holds_full else ""
+            )
+            return holds_full, state.instance_id
 
         # Registration is unsigned: it's the TOFU first contact that
         # establishes the secret. The response carries the minted secret.
         response = TelemetryClient().post("/telemetry/register/", payload)
         if not response.ok:
             _release_registration_claim(state.instance_id, "request_failed")
-            return False, state.instance_id
+            return holds_full, state.instance_id
 
         issued_secret = (response.data or {}).get("instance_secret")
         # A FULL registration must come away with a signing secret or every
         # heartbeat it sends will be rejected (the receiver requires a valid
         # HMAC). If the response carried none and we don't already have one
-        # stored, treat the registration as incomplete and retry next cycle
-        # rather than marking ourselves registered and emitting unsigned
-        # heartbeats forever.
+        # stored, treat the registration as incomplete and retry it once the
+        # retry floor has passed, rather than marking ourselves registered and
+        # emitting unsigned heartbeats forever.
+        # With a secret already stored, a 2xx response without one is a
+        # success: re-registrations don't re-issue it, so the stored secret
+        # is kept and the new metadata recorded below, with no retry. Only
+        # with no secret stored (a first registration, or a FULL one that
+        # never got a secret) is a missing secret a failure.
         is_full = registration_kind == DeploymentTelemetryState.RegistrationKind.FULL
         if is_full and not issued_secret and not state.instance_secret:
             _release_registration_claim(state.instance_id, "missing_secret")
-            return False, state.instance_id
+            return holds_full, state.instance_id
 
         _complete_registration(
             state.instance_id,
@@ -214,6 +271,10 @@ def ensure_registration() -> tuple[bool, UUID | None]:
             payload,
             instance_secret=issued_secret,
         )
+        if holds_full:
+            # A re-registration of a FULL instance (the admin-email setting
+            # changed) is not a new install: no lifecycle events.
+            return is_full, state.instance_id
         # Queue a lifecycle event after registration succeeds.  The event is
         # written locally and flushed by the normal event sender, so this
         # registration path never recursively calls ensure_registration().
@@ -223,8 +284,7 @@ def ensure_registration() -> tuple[bool, UUID | None]:
                 record_event_for_instance,
             )
 
-            if not current_disabled:
-                _queue_boot_event_for_instance(state.instance_id)
+            _queue_boot_event_for_instance(state.instance_id)
             record_event_for_instance(
                 state.instance_id,
                 "telemetry_registered",
@@ -240,7 +300,7 @@ def ensure_registration() -> tuple[bool, UUID | None]:
     except Exception:
         logger.warning("deployment_telemetry_registration_failed", exc_info=True)
         _release_registration_claim(state.instance_id, "internal_error")
-        return False, state.instance_id
+        return holds_full, state.instance_id
 
 
 _disclosure_lock = threading.Lock()
@@ -259,17 +319,35 @@ def _log_disclosure() -> None:
         logger.info(
             "deployment_telemetry_disclosure",
             mode="opt_out",
-            sends="one minimal registration ping (instance id, version, "
-            "deployment type, timestamp); no emails, no heartbeats",
+            sends="nothing to Future AGI",
             opt_out_env="FUTURE_AGI_TELEMETRY_DISABLED=true (already set)",
         )
     else:
+        share_admin_emails = telemetry_shares_admin_emails()
+        fields = (
+            "instance id, version and deployment type: schema_version, "
+            "instance_id, version, deployment_type, timestamp, "
+            "telemetry_disabled=false"
+        )
+        if share_admin_emails:
+            registration = (
+                f"registration once an owner/admin account exists ({fields}; "
+                "plus active admin user emails + domains, opted in via "
+                "FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS)"
+            )
+        else:
+            registration = (
+                f"registration once an owner/admin account exists ({fields}; "
+                "no user emails)"
+            )
         logger.info(
             "deployment_telemetry_disclosure",
             mode="enabled",
-            sends="registration (active admin user emails + domains), periodic "
-            "usage-count heartbeats, and content-free actor journey events; "
-            "never prompts, completions, traces, request bodies, or secrets",
+            sends=f"{registration}, periodic usage-count heartbeats, and "
+            "content-free actor journey events; never prompts, completions, "
+            "traces, request bodies, or secrets",
+            share_admin_emails=share_admin_emails,
+            purpose="count installs and plan release testing",
             url=get_telemetry_url(),
             opt_out_env="FUTURE_AGI_TELEMETRY_DISABLED=true",
         )
@@ -329,6 +407,8 @@ def _record_heartbeat_success(payload: dict) -> None:
 
 
 def _flush_buffer() -> tuple[int, bool]:
+    if telemetry_is_disabled():
+        return 0, False
     sent_count = 0
     # The signing secret is per-instance (single singleton state row), so
     # load it once and reuse the signed client for every buffered window.
@@ -373,6 +453,8 @@ def _flush_buffer() -> tuple[int, bool]:
             delete_window(path)
             continue
 
+        if telemetry_is_disabled():
+            return sent_count, False
         _record_heartbeat_attempt(payload_instance_id)
         if not client.post("/telemetry/heartbeat/", payload).ok:
             return sent_count, False

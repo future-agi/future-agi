@@ -11,6 +11,7 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
+  DialogContentText,
   DialogTitle,
   FormControlLabel,
   IconButton,
@@ -22,13 +23,8 @@ import {
   Tabs,
   ToggleButton,
   Typography,
-  useTheme,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import {
-  getAnnotationTabSx,
-  getAnnotationTabIndicatorProps,
-} from "../../view/annotation-tab-styles";
 import {
   annotateKeys,
   annotationQueueKeys,
@@ -46,6 +42,8 @@ import {
 import StatusBadge from "../components/status-badge";
 import QueueItemsTable from "../items/queue-items-table";
 import QueueItemsEmpty from "../items/queue-items-empty";
+import QueueItemsDenied from "../items/queue-items-denied";
+import { viewDenialOf } from "src/sections/common/Access/accessModel";
 import AddItemsDialog from "../items/add-items-dialog";
 import QueueSettingsTab from "./queue-settings-tab";
 import QueueAnalyticsTab from "./queue-analytics-tab";
@@ -75,11 +73,23 @@ const REVIEW_STATUS_OPTIONS = [
   { value: "rejected", label: "Rejected" },
 ];
 
+// Opening an item in a draft or paused queue: say what state the queue is in
+// and point at the control this viewer actually has.
+function inactiveQueueMessage(status, canActivate) {
+  const state =
+    {
+      draft: "This queue is a draft.",
+      paused: "This queue is paused.",
+    }[status] || "This queue isn't active.";
+  return canActivate
+    ? `${state} Select Activate at the top of the page to start annotating.`
+    : `${state} Ask a queue manager to activate it.`;
+}
+
 export default function QueueDetailView() {
   const { queueId } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const theme = useTheme();
   const { user } = useAuthContext();
   const [filters, setFilters] = useState({
     status: ALL_STATUS_VALUES,
@@ -93,6 +103,8 @@ export default function QueueDetailView() {
   const [exportMenuAnchor, setExportMenuAnchor] = useState(null);
   const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
   const [bulkAssignUserIds, setBulkAssignUserIds] = useState(new Set());
+  const [bulkRemoveOpen, setBulkRemoveOpen] = useState(false);
+  const [bulkRemoveIds, setBulkRemoveIds] = useState([]);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [itemOrdering, setItemOrdering] = useState("-created_at");
   const gridRef = useRef(null);
@@ -104,6 +116,7 @@ export default function QueueDetailView() {
   );
   const {
     data: itemsData,
+    error: itemsError,
     isLoading,
     fetchNextPage,
     hasNextPage,
@@ -146,6 +159,8 @@ export default function QueueDetailView() {
   }, [queue, user, currentUserId]);
 
   const isManager = hasQueueRole(myQueueMembership, QUEUE_ROLES.MANAGER);
+  const canActivateQueue =
+    isManager && Boolean(queue?.status) && queue.status !== "active";
   const canAnnotateQueue =
     hasQueueRole(myQueueMembership, QUEUE_ROLES.ANNOTATOR) || isManager;
   const canViewSubmissions =
@@ -242,13 +257,31 @@ export default function QueueDetailView() {
     setSelectedIds(new Set());
   }, []);
 
-  const handleBulkRemove = useCallback(() => {
+  const handleOpenBulkRemove = useCallback(() => {
     if (selectedIds.size === 0 || isBulkRemoving) return;
+    setBulkRemoveIds(Array.from(selectedIds));
+    setBulkRemoveOpen(true);
+  }, [selectedIds, isBulkRemoving]);
+
+  const handleBulkRemove = useCallback(() => {
+    if (bulkRemoveIds.length === 0 || isBulkRemoving) return;
     bulkRemove(
-      { queueId, itemIds: Array.from(selectedIds) },
-      { onSuccess: clearSelectedItems },
+      { queueId, itemIds: bulkRemoveIds },
+      {
+        onSuccess: () => {
+          setBulkRemoveOpen(false);
+          clearSelectedItems();
+        },
+      },
     );
-  }, [queueId, selectedIds, bulkRemove, clearSelectedItems, isBulkRemoving]);
+  }, [queueId, bulkRemoveIds, bulkRemove, clearSelectedItems, isBulkRemoving]);
+
+  const bulkRemoveLabel = `${bulkRemoveIds.length} item${
+    bulkRemoveIds.length === 1 ? "" : "s"
+  }`;
+  const bulkRemoveCost = `${
+    bulkRemoveIds.length === 1 ? "Its" : "Their"
+  } annotations, notes and review comments are deleted too. This can't be undone.`;
 
   const handleBulkApprove = useCallback(() => {
     if (selectedReviewableItems.length === 0 || isBulkReviewing) return;
@@ -387,18 +420,18 @@ export default function QueueDetailView() {
           onClick={handleBack}
           size="small"
         >
-          <Iconify icon="eva:arrow-back-fill" />
+          <Iconify icon="solar:arrow-left-linear" />
         </IconButton>
-        <Typography variant="h4" sx={{ minWidth: 0 }} noWrap>
+        <Typography variant="h2" sx={{ minWidth: 0 }} noWrap>
           {queue?.name || "Queue"}
         </Typography>
         {queue?.status && <StatusBadge status={queue.status} />}
         <Box sx={{ flex: "1 1 auto", minWidth: 0 }} />
-        {isManager && queue?.status && queue.status !== "active" && (
+        {canActivateQueue && (
           <Button
             variant="outlined"
             disabled={isUpdatingStatus}
-            startIcon={<Iconify icon="eva:play-circle-fill" />}
+            startIcon={<Iconify icon="solar:play-circle-linear" />}
             onClick={() => updateStatus({ id: queueId, status: "active" })}
           >
             Activate
@@ -407,8 +440,8 @@ export default function QueueDetailView() {
         <Button
           variant="outlined"
           disabled={totalCount === 0 || isDownloadingExport}
-          startIcon={<Iconify icon="eva:download-fill" />}
-          endIcon={<Iconify icon="eva:arrow-ios-downward-fill" />}
+          startIcon={<Iconify icon="solar:download-minimalistic-linear" />}
+          endIcon={<Iconify icon="solar:alt-arrow-down-linear" />}
           onClick={(event) => setExportMenuAnchor(event.currentTarget)}
         >
           Export
@@ -419,11 +452,11 @@ export default function QueueDetailView() {
           onClose={() => setExportMenuAnchor(null)}
         >
           <MenuItem onClick={handleDownloadExport}>
-            <Iconify icon="eva:download-outline" sx={{ mr: 1 }} />
+            <Iconify icon="solar:download-minimalistic-linear" sx={{ mr: 1 }} />
             Download
           </MenuItem>
           <MenuItem onClick={handleOpenDatasetExport}>
-            <Iconify icon="eva:archive-outline" sx={{ mr: 1 }} />
+            <Iconify icon="solar:archive-linear" sx={{ mr: 1 }} />
             Export to Dataset
           </MenuItem>
         </Menu>
@@ -441,7 +474,7 @@ export default function QueueDetailView() {
           <Button
             variant="contained"
             color="primary"
-            startIcon={<Iconify icon="eva:edit-2-fill" />}
+            startIcon={<Iconify icon="solar:pen-linear" />}
             onClick={() => handleOpenAnnotationWorkspace("annotate")}
           >
             {queue?.status === "completed"
@@ -512,21 +545,20 @@ export default function QueueDetailView() {
       )}
 
       {/* Tabs */}
-      <Tabs
-        value={activeTab}
-        onChange={(_, v) => setActiveTab(v)}
-        TabIndicatorProps={getAnnotationTabIndicatorProps(theme)}
-        sx={{
-          ...getAnnotationTabSx(theme),
-          px: 3,
-        }}
-      >
-        <Tab label="Items" />
-        {isManager && <Tab label="Settings" />}
-        <Tab label="Analytics" />
-        <Tab label="Agreement" />
-        {isManager && <Tab label="Rules" />}
-      </Tabs>
+      {/* Design system tab rail: full-width hairline under the tabs, 12px to the toolbar. */}
+      <Box sx={{ mb: 1.5, px: 3 }}>
+        <Tabs
+          value={activeTab}
+          onChange={(_, v) => setActiveTab(v)}
+          sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
+        >
+          <Tab label="Items" />
+          {isManager && <Tab label="Settings" />}
+          <Tab label="Analytics" />
+          <Tab label="Agreement" />
+          {isManager && <Tab label="Rules" />}
+        </Tabs>
+      </Box>
 
       {currentTab === "settings" && (
         <Box sx={{ px: 3, overflow: "auto", flex: 1 }}>
@@ -645,12 +677,7 @@ export default function QueueDetailView() {
                     )
                   }
                   size="small"
-                  sx={{
-                    textTransform: "none",
-                    px: 2,
-                    flexShrink: 0,
-                    whiteSpace: "nowrap",
-                  }}
+                  sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
                 >
                   My Items
                 </ToggleButton>
@@ -690,7 +717,7 @@ export default function QueueDetailView() {
                       color="error"
                       variant="outlined"
                       size="medium"
-                      onClick={handleBulkRemove}
+                      onClick={handleOpenBulkRemove}
                       loading={isBulkRemoving}
                       disabled={isAssigningItems}
                     >
@@ -714,7 +741,7 @@ export default function QueueDetailView() {
                   <Button
                     variant="contained"
                     color="primary"
-                    startIcon={<Iconify icon="mingcute:add-line" />}
+                    startIcon={<Iconify icon="solar:add-linear" />}
                     onClick={() => setAddDialogOpen(true)}
                   >
                     Add Items
@@ -725,7 +752,10 @@ export default function QueueDetailView() {
           )}
 
           {/* Content */}
-          {isEmpty ? (
+          {/* W4 §9 (M6): a refused read says so instead of "No items". */}
+          {viewDenialOf(itemsError) ? (
+            <QueueItemsDenied error={itemsError} />
+          ) : isEmpty ? (
             <Box
               sx={{
                 display: "flex",
@@ -779,7 +809,7 @@ export default function QueueDetailView() {
                   );
                 } else {
                   enqueueSnackbar(
-                    "You can only annotate when the queue is in active state. Manage status in settings tab",
+                    inactiveQueueMessage(queue?.status, canActivateQueue),
                     { variant: "info" },
                   );
                 }
@@ -816,7 +846,8 @@ export default function QueueDetailView() {
         onClose={() => {
           if (!isAssigningItems) setBulkAssignOpen(false);
         }}
-        maxWidth="xs"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
         fullWidth
       >
         <DialogTitle>Assign Selected Items</DialogTitle>
@@ -866,6 +897,37 @@ export default function QueueDetailView() {
             disabled={queueAnnotators.length === 0 || selectedIds.size === 0}
           >
             Assign
+          </LoadingButton>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={bulkRemoveOpen}
+        onClose={() => {
+          if (!isBulkRemoving) setBulkRemoveOpen(false);
+        }}
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
+        fullWidth
+      >
+        <DialogTitle>Remove {bulkRemoveLabel} from this queue?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>{bulkRemoveCost}</DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setBulkRemoveOpen(false)}
+            disabled={isBulkRemoving}
+          >
+            Cancel
+          </Button>
+          <LoadingButton
+            color="error"
+            variant="contained"
+            onClick={handleBulkRemove}
+            loading={isBulkRemoving}
+          >
+            Remove {bulkRemoveLabel}
           </LoadingButton>
         </DialogActions>
       </Dialog>

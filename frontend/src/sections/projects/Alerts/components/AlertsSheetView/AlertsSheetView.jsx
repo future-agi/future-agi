@@ -22,6 +22,8 @@ import BackButton from "src/sections/develop-detail/Common/BackButton";
 import SvgColor from "src/components/svg-color";
 import TracingControls from "src/sections/projects/LLMTracing/TracingControls";
 import {
+  alertThresholdBand,
+  getAlertChartXAxisRange,
   getCompareChartConfig,
   getDefaultDateRange,
   getSimpleLineChartConfig,
@@ -55,6 +57,7 @@ export default function AlertsSheetView() {
     handleCloseSheetView,
     handleProjectChange,
     handleStartCreatingAlerts,
+    handleChangeAlertType,
     setCurrentTab,
     setOpenCreateAlerts,
     mainPage,
@@ -83,13 +86,23 @@ export default function AlertsSheetView() {
   const canViewTrace =
     hasLoadedAlertDetails && Boolean(alertRuleDetails?.project);
 
+  // The edit/duplicate drawer names its preview chart (legend and y-axis unit)
+  // from the store's alertType, so start it on this alert's own metric.
+  const syncAlertTypeWithRule = () => {
+    if (alertRuleDetails?.metricType) {
+      handleChangeAlertType(alertRuleDetails.metricType);
+    }
+  };
+
   const handleDuplicateAlert = () => {
     setDuplicateModal(false);
+    syncAlertTypeWithRule();
     handleStartCreatingAlerts();
   };
 
   const {
     data: latestGraphData,
+    dataUpdatedAt: graphReadAt,
     isError: isGraphError,
     isFetching: isGraphFetching,
     refetch: refetchGraph,
@@ -120,6 +133,20 @@ export default function AlertsSheetView() {
     isError: isGraphError,
   });
   const data = graphState.data;
+
+  // The time axis runs to the last graph read (within the selected range) and
+  // the last firing, not only to the newest bucket with data. The read time
+  // is rounded up to the whole minute, so a poll that brings the same buckets
+  // within that minute leaves the axis end, and the chart, unchanged.
+  const xAxisRange = useMemo(
+    () =>
+      getAlertChartXAxisRange(data, {
+        dateRange: dateFilter?.dateFilter,
+        lastTriggered: alertRuleDetails?.lastTriggered,
+        readAt: graphReadAt || Date.now(),
+      }),
+    [data, dateFilter, alertRuleDetails?.lastTriggered, graphReadAt],
+  );
 
   const [chartKey] = useState(0);
 
@@ -155,40 +182,34 @@ export default function AlertsSheetView() {
               {
                 value: max,
                 y2: alertRuleDetails?.warningThresholdValue,
-                fillColor: "#00A25108",
-                borderColor: "#00A251",
+                ...alertThresholdBand(theme, "success", 0.03),
               },
               {
                 value: alertRuleDetails?.warningThresholdValue,
                 y2: alertRuleDetails?.criticalThresholdValue,
-                fillColor: "#E9690C08",
-                borderColor: "#F49A54",
+                ...alertThresholdBand(theme, "warning", 0.03),
               },
               {
                 value: alertRuleDetails?.criticalThresholdValue,
                 y2: min,
-                fillColor: "#D92D200D",
-                borderColor: "#D92D20",
+                ...alertThresholdBand(theme, "danger", 0.05),
               },
             ]
           : [
               {
                 value: max,
                 y2: alertRuleDetails?.criticalThresholdValue,
-                fillColor: "#D92D200D",
-                borderColor: "#D92D20",
+                ...alertThresholdBand(theme, "danger", 0.05),
               },
               {
                 value: alertRuleDetails?.criticalThresholdValue,
                 y2: alertRuleDetails?.warningThresholdValue,
-                fillColor: "#E9690C08",
-                borderColor: "#F49A54",
+                ...alertThresholdBand(theme, "warning", 0.03),
               },
               {
                 value: alertRuleDetails?.warningThresholdValue,
                 y2: min,
-                fillColor: "#00A25108",
-                borderColor: "#00A251",
+                ...alertThresholdBand(theme, "success", 0.03),
               },
             ];
 
@@ -198,13 +219,13 @@ export default function AlertsSheetView() {
             seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)),
             thresholds,
           },
-          { isDark },
+          { isDark, theme },
         );
       } else if (selectedThresHoldType === "percentage_change") {
         chartConfig = getCompareChartConfig(
           data,
           { seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)) },
-          { isDark },
+          { isDark, theme },
         );
       }
 
@@ -239,8 +260,9 @@ export default function AlertsSheetView() {
           xaxis: {
             type: "datetime",
             convertedCatToNumeric: false, // include this explicitly
+            ...xAxisRange,
             labels: {
-              style: { fontSize: "12px", colors: isDark ? "#a1a1aa" : "#666" },
+              style: { fontSize: "12px", colors: theme.palette.text.tertiary },
             },
           },
         }}
@@ -265,6 +287,7 @@ export default function AlertsSheetView() {
     trackEvent(Events.alertEditClicked, {
       [PropertyName.id]: alertRuleDetails.id,
     });
+    syncAlertTypeWithRule();
     setCurrentTab(1);
     setOpenCreateAlerts(true);
   };

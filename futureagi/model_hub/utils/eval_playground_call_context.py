@@ -2,7 +2,8 @@ import ast
 
 import structlog
 
-from model_hub.models.develop_dataset import Cell, Column, Row
+from model_hub.models.develop_dataset import Row
+from simulate.utils.scenario_rows import org_cells, org_columns, org_rows
 
 logger = structlog.get_logger(__name__)
 
@@ -19,9 +20,21 @@ def _coerce_persona_value(value):
     return value if isinstance(value, dict) else {}
 
 
+def _call_organization_id(call_execution):
+    """The organization of the call's own run test; None when it has none."""
+    test_execution = getattr(call_execution, "test_execution", None)
+    run_test = getattr(test_execution, "run_test", None)
+    return getattr(run_test, "organization_id", None)
+
+
 def get_eval_playground_scenario_columns(call_execution, context=None) -> dict:
     call_metadata = getattr(call_execution, "call_metadata", None) or {}
-    row_id = call_metadata.get("row_id") if isinstance(call_metadata, dict) else None
+    if not isinstance(call_metadata, dict):
+        call_metadata = {}
+    # The call's own row_id column wins over call_metadata, as in the detail
+    # views: call_metadata is caller-written and a pre-fix result PATCH could
+    # overwrite its row_id (T6 #7d).
+    row_id = getattr(call_execution, "row_id", None) or call_metadata.get("row_id")
     if not row_id:
         return {}
 
@@ -37,8 +50,17 @@ def get_eval_playground_scenario_columns(call_execution, context=None) -> dict:
         dataset_columns = columns_by_dataset.get(ds_id, []) if ds_id else []
         row_cells = cells_by_row.get(row_id_str, {})
     else:
-        row = Row.all_objects.get(id=row_id)
-        dataset_columns = Column.all_objects.filter(id__in=row.dataset.column_order)
+        # Only live rows, columns and cells of the call's own organization:
+        # another organization's row, or a soft-deleted one, reads exactly like
+        # a row id that names nothing (T6 #7d).
+        organization_id = _call_organization_id(call_execution)
+        try:
+            row = org_rows(organization_id).get(id=row_id)
+        except Row.DoesNotExist:
+            return {}
+        dataset_columns = org_columns(organization_id).filter(
+            id__in=row.dataset.column_order
+        )
         row_cells = None
 
     scenario_data = {}
@@ -47,9 +69,11 @@ def get_eval_playground_scenario_columns(call_execution, context=None) -> dict:
             if row_cells is not None:
                 cell = row_cells.get(str(dataset_column.id))
             else:
-                cell = Cell.all_objects.filter(
-                    column=dataset_column, row_id=row.id
-                ).first()
+                cell = (
+                    org_cells(organization_id)
+                    .filter(column=dataset_column, row_id=row.id)
+                    .first()
+                )
             cell_value = cell.value or "" if cell else ""
         except Exception:
             cell_value = ""

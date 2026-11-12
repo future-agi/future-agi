@@ -44,12 +44,18 @@ _COMPOSITE_FIELDS = (
 )
 
 
-def resolved_config_hash(config: CustomEvalConfig) -> str:
+def resolved_config_hash(config: CustomEvalConfig, *, using=None) -> str:
     payload: dict[str, Any] = {
         field: getattr(config, field) for field in _CONFIG_FIELDS
     }
     payload["kb"] = str(config.kb_id_id) if config.kb_id_id else None
-    payload["template"] = _template_component(config.eval_template)
+    if using is None:
+        template = config.eval_template
+    else:
+        from model_hub.models.evals_metric import EvalTemplate
+
+        template = EvalTemplate._base_manager.using(using).get(pk=config.eval_template_id)
+    payload["template"] = _template_component(template, using=using)
     return _sha256_canonical(payload)
 
 
@@ -59,7 +65,7 @@ def _sha256_canonical(obj: Any) -> str:
 
 
 def _template_component(
-    template: EvalTemplate, stack: tuple[UUID, ...] = ()
+    template: EvalTemplate, stack: tuple[UUID, ...] = (), *, using=None
 ) -> dict[str, Any]:
     if template.id in stack:
         return {"cycle": str(template.id)}
@@ -69,15 +75,17 @@ def _template_component(
     if template.template_type == "composite":
         for field in _COMPOSITE_FIELDS:
             component[field] = getattr(template, field)
-        component["children"] = _children_component(template, (*stack, template.id))
+        component["children"] = _children_component(
+            template, (*stack, template.id), using=using
+        )
     return component
 
 
 def _children_component(
-    template: EvalTemplate, stack: tuple[UUID, ...]
+    template: EvalTemplate, stack: tuple[UUID, ...], *, using=None
 ) -> list[dict[str, Any]]:
     links = (
-        CompositeEvalChild.objects.filter(parent=template, deleted=False)
+        CompositeEvalChild.objects.using(using).filter(parent=template, deleted=False)
         .select_related("child")
         .order_by("order")
     )
@@ -86,14 +94,16 @@ def _children_component(
             "order": link.order,
             "weight": link.weight,
             "config": link.config,
-            "child": _child_content(link, stack),
+            "child": _child_content(link, stack, using=using),
         }
         for link in links
     ]
 
 
-def _child_content(link: CompositeEvalChild, stack: tuple[UUID, ...]) -> dict[str, Any]:
+def _child_content(
+    link: CompositeEvalChild, stack: tuple[UUID, ...], *, using=None
+) -> dict[str, Any]:
     if link.pinned_version_id:
         # Versions are immutable, so the id is a complete fingerprint of the pin.
         return {"pinned_version": str(link.pinned_version_id)}
-    return _template_component(link.child, stack)
+    return _template_component(link.child, stack, using=using)

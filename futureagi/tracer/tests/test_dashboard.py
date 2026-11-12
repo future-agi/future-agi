@@ -11768,8 +11768,25 @@ class TestDashboardWorkspaceIsolation:
     ):
         other = self._other_ws_dashboard(organization, user)
         response = auth_client.get(f"/tracer/dashboard/{other.id}/")
-        assert response.status_code == 400
+        assert response.status_code == 404
+        assert response.json()["code"] == "not_found"
         assert "Other WS Dashboard" not in response.content.decode()
+
+    @pytest.mark.django_db
+    def test_retrieve_missing_dashboard_returns_not_found(self, auth_client):
+        response = auth_client.get(f"/tracer/dashboard/{uuid.uuid4()}/")
+        assert response.status_code == 404
+        body = response.json()
+        assert body["code"] == "not_found"
+        assert body["message"] == "Dashboard not found."
+
+    @pytest.mark.django_db
+    def test_retrieve_deleted_dashboard_returns_not_found(self, auth_client, dashboard):
+        dashboard.deleted = True
+        dashboard.save(update_fields=["deleted"])
+        response = auth_client.get(f"/tracer/dashboard/{dashboard.id}/")
+        assert response.status_code == 404
+        assert response.json()["code"] == "not_found"
 
     @pytest.mark.django_db
     def test_update_other_workspace_dashboard_is_blocked(

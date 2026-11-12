@@ -174,6 +174,7 @@ from tfc.temporal.drop_in import temporal_activity
 
 # Note: run_eval_summary_task imported lazily to avoid circular imports
 from tfc.utils.error_codes import get_specific_error_message
+from tfc.utils.tenant_scope import workspace_scope_q
 
 try:
     from ee.usage.models.usage import APICallType
@@ -578,6 +579,30 @@ class TestExecutor:
                     "run_test_id": run_test_id,
                 }
 
+            # Resolve the saved selection before creating an execution. Rows are
+            # checked against all attached scenarios so executing a scenario
+            # subset still intersects, rather than rejects, the selection. Saved
+            # rows that are no longer available are skipped; the run is refused
+            # only when none of them is left.
+            selected_row_ids, skipped_row_count = self._saved_row_selection(run_test)
+            if skipped_row_count:
+                logger.warning(
+                    "saved_dataset_rows_skipped",
+                    run_test_id=str(run_test.id),
+                    skipped_row_count=skipped_row_count,
+                    remaining_row_count=len(selected_row_ids),
+                )
+                if not selected_row_ids:
+                    return {
+                        "success": False,
+                        "error": (
+                            "None of the dataset rows saved for this test are "
+                            "available any more. Clear the row selection or "
+                            "pick rows again."
+                        ),
+                        "run_test_id": run_test_id,
+                    }
+
             # Create TestExecution record in a separate transaction
             try:
                 # Get simulator agent and agent definition
@@ -596,6 +621,10 @@ class TestExecutor:
                 else:
                     simulator_agent = run_test.simulator_agent
 
+                execution_metadata = {}
+                if selected_row_ids:
+                    execution_metadata["skipped_dataset_row_count"] = skipped_row_count
+
                 test_execution_record = TestExecution.objects.create(
                     run_test=run_test,
                     status=TestExecution.ExecutionStatus.PENDING,
@@ -606,6 +635,7 @@ class TestExecutor:
                     simulator_agent=simulator_agent,
                     agent_definition=agent_definition,
                     agent_version=agent_version,
+                    execution_metadata=execution_metadata,
                 )
             except Exception as e:
                 logger.error(f"Error creating TestExecution record: {str(e)}")
@@ -641,6 +671,10 @@ class TestExecutor:
                     scenario_objects[scenario_id] = scenario
 
                     row_ids = self._parse_dataset_scenario(scenario)
+                    if selected_row_ids:
+                        row_ids = [
+                            row_id for row_id in row_ids if row_id in selected_row_ids
+                        ]
                     # Convert row IDs to call data format
                     calls_to_make = [
                         {"row_id": row_id, "metadata": {}} for row_id in row_ids
@@ -752,6 +786,7 @@ class TestExecutor:
                 "status": "started",
                 "total_scenarios": len(scenario_ids),
                 "total_calls": total_calls,
+                "skipped_dataset_row_count": skipped_row_count,
             }
 
         except ObjectDoesNotExist:
@@ -888,12 +923,48 @@ class TestExecutor:
             logger.error(f"Error parsing dataset scenario {scenario.id}: {str(e)}")
             return []
 
+    def _saved_row_selection(self, run_test: RunTest) -> tuple[set[str], int]:
+        """The saved dataset rows a run can still run, and how many it skips.
+
+        A saved row runs while it is a live row of a live dataset that a
+        scenario attached to the run test uses, with that scenario and dataset
+        in the run test's organization and, by the shared workspace rule, its
+        workspace: a default workspace also covers rows with no workspace. A
+        saved id that is not a UUID, or names no such row, is skipped. With no
+        rows saved this returns an empty set and 0, and every row runs.
+        """
+        saved_row_ids = {
+            str(UUID(str(row_id))) if _is_uuid(row_id) else str(row_id)
+            for row_id in run_test.dataset_row_ids or []
+        }
+        row_ids = {row_id for row_id in saved_row_ids if _is_uuid(row_id)}
+        if not row_ids:
+            return set(), len(saved_row_ids)
+        workspace = run_test.workspace
+        attached_dataset_ids = run_test.scenarios.filter(
+            workspace_scope_q(workspace),
+            organization=run_test.organization,
+        ).values_list("dataset_id", flat=True)
+        available_row_ids = {
+            str(row_id)
+            for row_id in Row.objects.filter(
+                workspace_scope_q(workspace, "dataset__workspace"),
+                id__in=row_ids,
+                dataset_id__in=attached_dataset_ids,
+                dataset__organization=run_test.organization,
+                dataset__deleted=False,
+            ).values_list("id", flat=True)
+        }
+        return available_row_ids, len(saved_row_ids) - len(available_row_ids)
+
     def _get_row_data_and_generate_prompt(
         self,
         row_id: str,
         base_prompt: str,
         agent_version: AgentVersion | None,
         call_type: str | None = None,
+        *,
+        organization_id=None,
     ) -> dict[str, Any]:
         """
         Get row data from dataset and generate dynamic prompt
@@ -901,13 +972,21 @@ class TestExecutor:
         Args:
             row_id: ID of the Row from dataset
             base_prompt: The base prompt template from simulator agent
+            organization_id: When given, read the row only from a dataset of
+                this organization (the execution's). Callers that run with no
+                workspace bound, such as the runner's /batch ingest, pass it:
+                Row has no workspace of its own, so no manager filters it
+                (T6 #7e). A row of another organization reads as missing.
 
         Returns:
             Dict containing row data and dynamic prompt
         """
         try:
             # Get the row
-            row = Row.objects.get(id=row_id)
+            rows = Row.objects.filter(id=row_id)
+            if organization_id is not None:
+                rows = rows.filter(dataset__organization_id=organization_id)
+            row = rows.get()
 
             # Get all cells for this row
             cells = Cell.objects.filter(row=row)
@@ -5152,8 +5231,19 @@ class TestExecutor:
             #     else []
             # )
             scenario_ids = call_execution.test_execution.scenario_ids
+            # Grading runs with no workspace bound, so the manager adds no tenant
+            # filter. Every scenario, column and dataset read here is limited to
+            # the execution's own organization. An id of another organization's
+            # scenario, stored before execute checked scenario_ids (T6 #7e), then
+            # adds none of its columns to the cell-read gate below and no name
+            # to the mismatch message.
+            organization_id = call_execution.test_execution.run_test.organization_id
             scenario_column_order_qs = (
-                Scenarios.objects.filter(id__in=scenario_ids, deleted=False)
+                Scenarios.objects.filter(
+                    id__in=scenario_ids,
+                    organization_id=organization_id,
+                    deleted=False,
+                )
                 .select_related("dataset")
                 .values_list("dataset__column_order", flat=True)
             )
@@ -5265,14 +5355,17 @@ class TestExecutor:
                         column_scenario_name = None
                         try:
                             column = Column.objects.select_related("dataset").get(
-                                id=value, deleted=False
+                                id=value,
+                                dataset__organization_id=organization_id,
+                                deleted=False,
                             )
                             column_name = column.name
                             if column.dataset:
                                 column_dataset_name = column.dataset.name
                                 # Find which scenario uses this dataset
                                 column_scenario = Scenarios.objects.get(
-                                    dataset=column.dataset
+                                    dataset=column.dataset,
+                                    organization_id=organization_id,
                                 )
                                 if column_scenario:
                                     column_scenario_name = column_scenario.name
@@ -5282,7 +5375,9 @@ class TestExecutor:
                         # Get test scenario names for context
                         test_scenarios = list(
                             Scenarios.objects.filter(
-                                id__in=scenario_ids, deleted=False
+                                id__in=scenario_ids,
+                                organization_id=organization_id,
+                                deleted=False,
                             ).values_list("name", flat=True)
                         )
                         test_scenarios_str = (
@@ -5400,7 +5495,7 @@ class TestExecutor:
                 template=eval_template,
                 org=organization,
                 model=eval_config.model,
-                kb_id=eval_config.kb_id,
+                kb_id=eval_config.kb_id_id,
                 error_localizer=eval_config.error_localizer,
                 workspace=call_execution.test_execution.run_test.workspace,
                 source=eval_source(call_execution.test_execution_id),

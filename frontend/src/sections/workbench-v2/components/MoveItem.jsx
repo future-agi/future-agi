@@ -85,14 +85,15 @@ const MoveItem = ({ id, open, onClose, name, folderId }) => {
       >
         <Typography
           typography={"s2"}
-          color={"text.disabled"}
+          color={"text.tertiary"}
           fontWeight={"fontWeightRegular"}
         >
           Current location
         </Typography>
         <Typography
           color="text.primary"
-          typography={"m3"}
+          fontSize={13}
+          lineHeight="20px"
           fontWeight={"fontWeightMedium"}
         >
           {currentFolder?.label}

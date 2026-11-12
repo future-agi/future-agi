@@ -10,6 +10,7 @@ from ..types import OptimizationResult, IterationHistory, EvaluationResult
 from ..datamappers import BasicDataMapper
 from ..generators.litellm_generator import LiteLLMGenerator
 from ..base.evaluator import Evaluator
+from model_hub.utils.prompt_rendering import render_fstring_template
 from simulate.utils.agent_prompt_optimiser import update_agent_optimiser_run_step
 from .stepper import BayesianStepper
 
@@ -561,7 +562,7 @@ class BayesianSearchOptimizer(BaseOptimizer):
         if template and not force_raw:
             try:
                 # Use processed_example for substituted values
-                return template.format(**processed_example)
+                return render_fstring_template(template, processed_example)
             except Exception:
                 pass
 

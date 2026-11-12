@@ -147,7 +147,7 @@ SYSTEM_METRICS: dict[str, tuple[str, str]] = {
     ),
     "time_to_first_token": (
         "spans",
-        "span_attr_num['gen_ai.server.time_to_first_token']",
+        "span_attr_num['gen_ai.server.time_to_first_token'] * 1000",
     ),
     "cost": ("spans", "cost"),
     "session_count": (
@@ -696,6 +696,10 @@ class DashboardQueryBuilder:
         "user_id_type": "user_id_type",
     }
 
+    # Live trace reads request both resolutions in one statement. Keep the
+    # bucket-only contract for legacy callers and other dashboard sources.
+    include_period_aggregate: bool = False
+
     def __init__(self, query_config: dict) -> None:
         self.config = query_config
         self.project_ids = query_config.get("project_ids", [])
@@ -835,6 +839,21 @@ class DashboardQueryBuilder:
     # ------------------------------------------------------------------
     # Single-metric query
     # ------------------------------------------------------------------
+
+    def _time_bucket_select(self, bucket_fn: str, column: str) -> str:
+        expression = f"{bucket_fn}({column}) AS time_bucket"
+        if self.include_period_aggregate:
+            expression += ", GROUPING(time_bucket) AS is_period_aggregate"
+        return expression
+
+    def _group_by(self, columns: list[str]) -> str:
+        bucket_group = ", ".join(columns)
+        if not self.include_period_aggregate:
+            return f"GROUP BY {bucket_group}"
+        period_group = ", ".join(c for c in columns if c != "time_bucket")
+        # Both grouping sets aggregate the same filtered/latest rows. In
+        # particular, uniqExact/quantileExact never aggregate bucket values.
+        return f"GROUP BY GROUPING SETS (({bucket_group}), ({period_group}))"
 
     def build_metric_query(self, metric: dict) -> tuple[str, dict]:
         """Build ClickHouse SQL for a single metric.
@@ -1673,7 +1692,7 @@ class DashboardQueryBuilder:
         if metric_name in _RATE_INDICATOR_METRICS:
             agg_expr = rescale_rate_to_percent(agg_expr, aggregation)
 
-        select_parts = [f"{bucket_fn}(start_time) AS time_bucket"]
+        select_parts = [self._time_bucket_select(bucket_fn, "start_time")]
         group_parts = ["time_bucket"]
         order_parts = ["time_bucket"]
 
@@ -1688,6 +1707,13 @@ class DashboardQueryBuilder:
             # count() ignores its operand: restrict this metric's population
             # to finite canonical conversation-root values, including zero.
             where_clauses.append(f"isNotNull({col_expr})")
+        elif metric_name == "time_to_first_token":
+            # A Map read of an absent key is 0, not NULL. Spans that never
+            # reported TTFT (roots, tools, non-streamed calls) are not
+            # observations; a measured 0 still counts.
+            where_clauses.append(
+                "mapContains(span_attr_num, 'gen_ai.server.time_to_first_token')"
+            )
 
         spans_flat = self._spans_source(
             metric_name, per_metric_filters, "spans", params=params
@@ -1762,19 +1788,19 @@ class DashboardQueryBuilder:
                 )
                 join_str = "\n".join(join_clauses)
                 query = (
-                    f"SELECT {bucket_fn}(s.start_time) AS time_bucket,\n"
+                    f"SELECT {self._time_bucket_select(bucket_fn, 's.start_time')},\n"
                     f"       {bd_select},\n"
                     f"       {agg_with_alias} AS value\n"
                     f"FROM {spans_joined}\n"
                     f"{join_str}\n"
                     f"WHERE {where_str}\n"
-                    f"GROUP BY time_bucket, breakdown_value\n"
+                    f"{self._group_by(['time_bucket', 'breakdown_value'])}\n"
                     f"ORDER BY time_bucket, breakdown_value"
                 )
             else:
                 flat_where = [*all_where, *flat_presence_predicates]
                 select_parts_with_bd = [
-                    f"{bucket_fn}(start_time) AS time_bucket",
+                    self._time_bucket_select(bucket_fn, "start_time"),
                     bd_select,
                     f"{agg_expr} AS value",
                 ]
@@ -1782,7 +1808,7 @@ class DashboardQueryBuilder:
                     f"SELECT {', '.join(select_parts_with_bd)}\n"
                     f"FROM {spans_flat}\n"
                     f"WHERE {' AND '.join(flat_where)}\n"
-                    f"GROUP BY time_bucket, breakdown_value\n"
+                    f"{self._group_by(['time_bucket', 'breakdown_value'])}\n"
                     f"ORDER BY time_bucket, breakdown_value"
                 )
         else:
@@ -1791,7 +1817,7 @@ class DashboardQueryBuilder:
                 f"SELECT {', '.join(select_parts)}\n"
                 f"FROM {spans_flat}\n"
                 f"WHERE {' AND '.join(flat_where)}\n"
-                f"GROUP BY {', '.join(group_parts)}\n"
+                f"{self._group_by(group_parts)}\n"
                 f"ORDER BY {', '.join(order_parts)}"
             )
         return query, params
@@ -1868,7 +1894,7 @@ class DashboardQueryBuilder:
                 )
             agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
-        select_parts = [f"{bucket_fn}(e.created_at) AS time_bucket"]
+        select_parts = [self._time_bucket_select(bucket_fn, "e.created_at")]
         group_parts = ["time_bucket"]
         order_parts = ["time_bucket"]
         select_parts.append(f"{agg_expr} AS value")
@@ -2324,7 +2350,7 @@ class DashboardQueryBuilder:
             f"FROM {eval_source}\n"
             f"{join_str}\n"
             f"WHERE {' AND '.join(where_parts)}\n"
-            f"GROUP BY {', '.join(group_parts)}\n"
+            f"{self._group_by(group_parts)}\n"
             f"ORDER BY {', '.join(order_parts)}"
         )
         return query, params
@@ -2410,7 +2436,7 @@ class DashboardQueryBuilder:
             col_expr = annotation_numeric_value_expr(alias="a", nullable=True)
             agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
-        select_parts = [f"{bucket_fn}(a.created_at) AS time_bucket"]
+        select_parts = [self._time_bucket_select(bucket_fn, "a.created_at")]
         group_parts = ["time_bucket"]
         order_parts = ["time_bucket"]
         select_parts.append(f"{agg_expr} AS value")
@@ -2789,7 +2815,7 @@ class DashboardQueryBuilder:
             f"FROM model_hub_score AS a FINAL\n"
             f"{' '.join(join for join in joins if join)}\n"
             f"WHERE {' AND '.join(where_parts)}\n"
-            f"GROUP BY {', '.join(group_parts)}\n"
+            f"{self._group_by(group_parts)}\n"
             f"ORDER BY {', '.join(order_parts)}"
         )
         return query, params
@@ -2839,7 +2865,7 @@ class DashboardQueryBuilder:
 
         agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
-        select_parts = [f"{bucket_fn}(start_time) AS time_bucket"]
+        select_parts = [self._time_bucket_select(bucket_fn, "start_time")]
         group_parts = ["time_bucket"]
         order_parts = ["time_bucket"]
 
@@ -2906,7 +2932,7 @@ class DashboardQueryBuilder:
             f"SELECT {', '.join(select_parts)}\n"
             f"FROM {spans_flat}\n"
             f"WHERE {' AND '.join(all_where)}\n"
-            f"GROUP BY {', '.join(group_parts)}\n"
+            f"{self._group_by(group_parts)}\n"
             f"ORDER BY {', '.join(order_parts)}"
         )
         return query, params
@@ -2978,6 +3004,11 @@ class DashboardQueryBuilder:
         has_project_breakdown = any(
             bd.get("name") == "project" for bd in self.breakdowns
         )
+        project_labels = (
+            _distinct_project_labels(project_name_map)
+            if has_project_breakdown and project_name_map
+            else {}
+        )
 
         for metric_info, rows in metric_results:
             metric_name = metric_info.get("name", "")
@@ -2987,21 +3018,29 @@ class DashboardQueryBuilder:
             # Group rows by breakdown value if present
             # Use a dict of {iso_timestamp: value} for easy merging
             series_data: dict[str, dict[str, Any]] = {}
+            period_values = {}
+            has_period_aggregate = self.include_period_aggregate or any(
+                "is_period_aggregate" in row for row in rows
+            )
             for row in rows:
                 breakdown_key = str(row.get("breakdown_value", "total"))
                 # Resolve project UUID to name if breaking down by project
-                if has_project_breakdown and project_name_map:
+                if project_labels:
                     if " / " in breakdown_key:
                         # Multi-breakdown: resolve each segment independently
                         parts = breakdown_key.split(" / ")
-                        parts = [project_name_map.get(p, p) for p in parts]
+                        parts = [project_labels.get(p, p) for p in parts]
                         breakdown_key = " / ".join(parts)
                     else:
-                        breakdown_key = project_name_map.get(
-                            breakdown_key, breakdown_key
-                        )
+                        breakdown_key = project_labels.get(breakdown_key, breakdown_key)
                 if breakdown_key not in series_data:
                     series_data[breakdown_key] = {}
+                if row.get("is_period_aggregate"):
+                    value = row.get("value")
+                    if isinstance(value, float):
+                        value = round(value, 6) if math.isfinite(value) else None
+                    period_values[breakdown_key] = value
+                    continue
                 ts = row.get("time_bucket", "")
                 if hasattr(ts, "isoformat"):
                     # CH may return date or naive datetime; convert to
@@ -3019,7 +3058,10 @@ class DashboardQueryBuilder:
             if not series_data:
                 series_data["total"] = {}
 
-            series_data, series_total = rank_and_cap_series(series_data)
+            series_data, series_total = rank_and_cap_series(
+                series_data,
+                period_values=period_values if has_period_aggregate else None,
+            )
 
             # Preserve the ranked order from ``series_data``.
             series = []
@@ -3034,7 +3076,10 @@ class DashboardQueryBuilder:
                             else None,
                         }
                     )
-                series.append({"name": name, "data": filled})
+                formatted_series = {"name": name, "data": filled}
+                if has_period_aggregate:
+                    formatted_series["aggregate_value"] = period_values.get(name)
+                series.append(formatted_series)
 
             formatted_metric = {
                 "id": metric_info.get("id", ""),
@@ -4063,15 +4108,55 @@ def _generate_time_buckets(
     return buckets
 
 
+def _distinct_project_labels(project_name_map: dict[str, str]) -> dict[str, str]:
+    """Map each project UUID to a display label no other project shares.
+
+    Project names are unique only within a workspace and trace type, so two
+    projects on one dashboard can carry the same name. Keyed by the bare name,
+    their buckets and period totals overwrote each other in one series. A
+    shared name gets a short id suffix; a name used once is left as it is.
+    """
+    ids_by_name: dict[str, list[str]] = {}
+    for project_id, name in project_name_map.items():
+        ids_by_name.setdefault(name, []).append(project_id)
+    labels: dict[str, str] = {}
+    for name, project_ids in ids_by_name.items():
+        if len(project_ids) == 1:
+            labels[project_ids[0]] = name
+            continue
+        shared = {pid: f"{name} ({pid[:8]})" for pid in project_ids}
+        if len(set(shared.values())) < len(project_ids):
+            shared = {pid: f"{name} ({pid})" for pid in project_ids}
+        labels.update(shared)
+    return labels
+
+
+def _finite_rank_value(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def rank_and_cap_series(
     series_data: dict[str, dict[str, Any]],
+    period_values: dict[str, Any] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], int]:
-    """Order breakdown series by summed value, largest first, and cap the count.
+    """Order breakdown series largest first, and cap the count.
 
     A breakdown groups by an attribute whose distinct-value count the request
     does not bound, and every returned series carries every time bucket, so the
     response grows as ``series x buckets`` with nothing to stop it. Bound the
     published series count here.
+
+    A series ranks by its exact full-period aggregate when the read returned
+    one: summing bucket averages or percentiles ranks a series by how many
+    buckets it spans, which can cut the series with the highest period value.
+    A series without a finite period value ranks by its summed buckets. Ties
+    keep their read order.
 
     Returns the ordered mapping together with the number of distinct series
     before the cap, so the response can say that it was truncated.
@@ -4084,11 +4169,16 @@ def rank_and_cap_series(
     # of that name) is a sentinel collision, and must still be capped.
     if set(series_data) == {"total"}:
         return series_data, total
-    ranked = sorted(
-        series_data.items(),
-        key=lambda kv: sum(v for v in kv[1].values() if v is not None),
-        reverse=True,
-    )
+
+    def rank(item: tuple[str, dict[str, Any]]) -> Any:
+        name, values = item
+        if period_values is not None:
+            period_value = _finite_rank_value(period_values.get(name))
+            if period_value is not None:
+                return period_value
+        return sum(v for v in values.values() if v is not None)
+
+    ranked = sorted(series_data.items(), key=rank, reverse=True)
     return dict(ranked[: settings.DASHBOARD_BREAKDOWN_MAX_SERIES]), total
 
 

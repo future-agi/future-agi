@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import React from "react";
 import PropTypes from "prop-types";
 import {
@@ -20,9 +21,9 @@ const InfoWorkbenchModal = ({ open, onClose }) => {
       open={open}
       onClose={onClose}
       fullWidth
-      maxWidth="sm"
+      maxWidth={false}
       PaperProps={{
-        width: "660px",
+        width: "720px",
         maxWidth: "none",
       }}
     >
@@ -38,7 +39,7 @@ const InfoWorkbenchModal = ({ open, onClose }) => {
               Steps to use Workbench
             </Typography>
             <IconButton onClick={onClose}>
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
         </DialogTitle>
@@ -66,7 +67,7 @@ const InfoWorkbenchModal = ({ open, onClose }) => {
                 width: "100%",
               }}
             >
-              <iframe
+              <ExternalContentFrame
                 src="https://demo.arcade.software/mKO2mi1golHycxjTbofy?embed&embed_mobile=inline&embed_desktop=inline&show_copy_link=true"
                 title="Prompt Workbench Demo"
                 frameBorder="0"
@@ -150,8 +151,6 @@ const InfoWorkbenchModal = ({ open, onClose }) => {
                 color="primary"
                 sx={{
                   width: "max-content",
-                  px: "24px",
-                  py: "8px",
                   minWidth: "90px",
                 }}
                 onClick={onClose}
@@ -167,7 +166,7 @@ const InfoWorkbenchModal = ({ open, onClose }) => {
                 fontWeight={"fontWeightMedium"}
                 color="text.secondary"
               >
-                For more instructions, checkout our{" "}
+                For more instructions, check out our{" "}
                 <Link
                   // @ts-ignore
                   target="_blank"

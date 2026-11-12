@@ -1,0 +1,85 @@
+# Close's MCP server with OAuth 2.0 from Close's authorization server: an
+# OAuth application the customer creates, or dynamic registration. The
+# scopes are read, write and write with delete, plus offline_access.
+schema: "connector-manifest/v1#provider"
+app: close
+id: mcp
+version: 1.0.1
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.close.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://app.close.com/oauth2/authorize/
+    tokenUrl: https://api.close.com/oauth2/token/
+    scopes: [mcp.read, mcp.write_safe, mcp.write_destructive, offline_access]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://api.close.com/oauth2/revoke/
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [preregistered, dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developer.close.com/mcp
+    fetchedAt: 2026-10-20
+  - fact: transport.variant
+    url: https://developer.close.com/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://developer.close.com/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.authorizeUrl
+    url: https://api.close.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.tokenUrl
+    url: https://api.close.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.scopes
+    url: https://mcp.close.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.scopes
+    url: https://developer.close.com/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.pkce
+    url: https://api.close.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.revocation.url
+    url: https://api.close.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.registration
+    url: https://api.close.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.registration
+    url: https://developer.close.com/mcp
+    fetchedAt: 2026-10-20
+x-omega:
+  publicClient:
+    supported: false
+    evidence:
+      - url: https://developer.close.com/integrations/create-an-oauth-app
+        fetchedAt: 2026-10-22
+        sha256: 07e5f9fb8fa38b6d293d9785e220bee8c0e256c04311b4f9af3edabfb73ceeaa
+        quote: "Click Create, then copy your Client ID and Client Secret — you’ll need these to implement the OAuth 2.0 flow."
+      - url: https://developer.close.com/integrations/create-an-oauth-app
+        fetchedAt: 2026-10-22
+        sha256: 07e5f9fb8fa38b6d293d9785e220bee8c0e256c04311b4f9af3edabfb73ceeaa
+        quote: "Must use TLS/SSL — plain http:// URLs are not accepted."
+    notes: "Close's authorization server also lists none for token auth, which serves dynamically registered clients; an OAuth app a person creates gets a client secret and an https-only redirect, and omega mcp login redirects to http on loopback."

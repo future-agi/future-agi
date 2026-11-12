@@ -165,8 +165,8 @@ func TestIntegration_NonStreamingRoundtrip(t *testing.T) {
 			FinishReason: "COMPLETE",
 			Usage: &cohereUsage{
 				Tokens: &cohereTokens{
-					InputTokens:  12,
-					OutputTokens: 5,
+					InputTokens:  usageCount(12),
+					OutputTokens: usageCount(5),
 				},
 			},
 		}

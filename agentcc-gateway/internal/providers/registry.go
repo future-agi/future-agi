@@ -7,12 +7,16 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/admission"
 	"github.com/futureagi/agentcc-gateway/internal/providers/anthropic"
 	"github.com/futureagi/agentcc-gateway/internal/providers/azure"
 	"github.com/futureagi/agentcc-gateway/internal/providers/bedrock"
@@ -20,6 +24,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/providers/gemini"
 	"github.com/futureagi/agentcc-gateway/internal/providers/openai"
 	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
+	"github.com/futureagi/agentcc-gateway/internal/providers/systemone"
 	"github.com/futureagi/agentcc-gateway/internal/routing"
 )
 
@@ -30,22 +35,62 @@ type Registry struct {
 	modelMap       map[string]string   // model name → provider ID
 	modelProviders map[string][]string // model name → all provider IDs that serve it
 	router         *routing.Router     // nil if no routing configured
+	managed        map[string]ManagedProvider
+
+	// configs holds each config.yaml provider's config as its instance was
+	// built from it (presets, local defaults and discovered models applied),
+	// so key rotation can rebuild the instance with a new key.
+	configs map[string]config.ProviderConfig
+
+	// retired maps each instance a key rotation replaced to its provider id,
+	// so CurrentInstance can hand work that captured it the instance serving
+	// now. One entry per promote; an operator action, so it stays small.
+	retired map[Provider]string
+}
+
+// ManagedProvider is a global provider FutureAGI supplies the credentials
+// for. Orgs that opt in to managed models may use it.
+type ManagedProvider struct {
+	ID   string
+	Type string // the config.yaml type, e.g. "openrouter"; selects the catalog format
+	// CatalogURL is where the provider lists its models.
+	CatalogURL string
 }
 
 // NewRegistry creates a registry from config.
 func NewRegistry(cfg *config.Config) (*Registry, error) {
+	if err := verifyHostedOneKeyTLS(cfg); err != nil {
+		return nil, err
+	}
 	r := &Registry{
 		providers:      make(map[string]Provider),
 		modelMap:       make(map[string]string),
 		modelProviders: make(map[string][]string),
+		managed:        make(map[string]ManagedProvider),
+		configs:        make(map[string]config.ProviderConfig),
+		retired:        make(map[Provider]string),
 	}
 
-	for name, pcfg := range cfg.Providers {
+	// Providers are registered in sorted id order, so what depends on the
+	// order is the same on every start: a model several providers list maps
+	// to the one with the smallest id (the direct lookup ResolveWithRouting
+	// falls back to when no routing target is healthy), as an org's own
+	// providers are chosen (server orgRouteFor), and its routing targets are
+	// in id order.
+	names := make([]string, 0, len(cfg.Providers))
+	for name := range cfg.Providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		pcfg := cfg.Providers[name]
 		// Apply provider presets (auto-fill base_url, api_format from type).
 		applyProviderPreset(&pcfg)
 
-		// Apply optimized defaults for local/self-hosted providers.
+		// Apply optimized defaults for local/self-hosted providers, then the
+		// concurrency defaults and the gateway-wide queue wait.
 		applyLocalDefaults(&pcfg)
+		applyConcurrencyDefaults(&pcfg, cfg.ProviderDefaults.QueueTimeout)
 
 		// Auto-discover models if list is empty and discovery is enabled.
 		if discovered := autoDiscoverModels(name, &pcfg); len(discovered) > 0 {
@@ -57,16 +102,30 @@ func NewRegistry(cfg *config.Config) (*Registry, error) {
 			return nil, fmt.Errorf("creating provider %q: %w", name, err)
 		}
 		r.providers[name] = p
+		r.configs[name] = pcfg
+		if pcfg.Managed {
+			r.managed[name] = ManagedProvider{
+				ID:         name,
+				Type:       pcfg.Type,
+				CatalogURL: config.JoinEndpoint(strings.TrimRight(pcfg.BaseURL, "/"), pcfg.EffectiveAPIPathPrefix(), "/v1/models"),
+			}
+		}
 
 		attrs := []any{"name", name, "format", pcfg.APIFormat, "base_url", pcfg.BaseURL}
+		if pcfg.Managed {
+			attrs = append(attrs, "managed", true)
+		}
 		if IsLocalProvider(pcfg) {
 			attrs = append(attrs, "local", true)
 		}
 		slog.Info("provider registered", attrs...)
 
-		// Register models from provider config.
+		// Register models from provider config: a model a provider with a
+		// smaller id already lists stays with that provider.
 		for _, model := range pcfg.Models {
-			r.modelMap[model] = name
+			if _, listed := r.modelMap[model]; !listed {
+				r.modelMap[model] = name
+			}
 			r.modelProviders[model] = append(r.modelProviders[model], name)
 		}
 
@@ -116,6 +175,9 @@ func (r *Registry) hasMultiProviderModels() bool {
 func createProvider(name string, cfg config.ProviderConfig) (Provider, error) {
 	switch cfg.APIFormat {
 	case "openai":
+		if cfg.DecisionProxy == nil && cfg.DecisionDialContext == nil && cfg.Proxy == nil && cfg.DialContext == nil {
+			cfg.DecisionProxy = decisionProxy
+		}
 		return openai.New(name, cfg)
 	case "anthropic":
 		return anthropic.New(name, cfg)
@@ -127,11 +189,31 @@ func createProvider(name string, cfg config.ProviderConfig) (Provider, error) {
 		return cohere.New(name, cfg)
 	case "azure":
 		return azure.New(name, cfg)
+	case APIFormatSystemOne, apiFormatTypeSafe:
+		// A decision provider takes the operator's proxy. One that comes with
+		// its own dialer (an org's base_url, checked) comes with the proxy
+		// that matches it, or connects directly.
+		if cfg.Proxy == nil && cfg.DialContext == nil {
+			cfg.Proxy = decisionProxy
+		}
+		return systemone.New(name, cfg)
 	case "deepgram", "cartesia":
 		return speech.New(name, cfg)
 	default:
-		return nil, fmt.Errorf("unsupported api_format %q (supported: openai, anthropic, gemini, bedrock, cohere, azure, deepgram, cartesia)", cfg.APIFormat)
+		return nil, fmt.Errorf("unsupported api_format %q (supported: openai, anthropic, gemini, bedrock, cohere, azure, systemone, deepgram, cartesia)", cfg.APIFormat)
 	}
+}
+
+// APIFormatSystemOne is the api_format of a structured-decision provider.
+// "typesafe" is accepted as its alias: TypeSafe defined the format.
+const (
+	APIFormatSystemOne = "systemone"
+	apiFormatTypeSafe  = "typesafe"
+)
+
+// IsSystemOneFormat reports whether an api_format names System One.
+func IsSystemOneFormat(apiFormat string) bool {
+	return apiFormat == APIFormatSystemOne || apiFormat == apiFormatTypeSafe
 }
 
 // RegisterProvider adds a provider at runtime (e.g., a2a provider for agent delegation).
@@ -163,6 +245,86 @@ func (r *Registry) ProviderIDs() []string {
 	for id := range r.providers {
 		ids = append(ids, id)
 	}
+	return ids
+}
+
+// IsManaged reports whether id is a managed provider.
+func (r *Registry) IsManaged(id string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.managed[id]
+	return ok
+}
+
+// ManagedProviders returns the managed providers, sorted by ID.
+func (r *Registry) ManagedProviders() []ManagedProvider {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]ManagedProvider, 0, len(r.managed))
+	for _, mp := range r.managed {
+		out = append(out, mp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// ResolveManaged finds the managed provider that serves model and the model
+// ID to send it. In order: a model the config maps to a managed provider; a
+// model in a managed provider's catalog (inCatalog); "<managed id>/<model>",
+// sent upstream as <model>. ok is false when no managed provider serves it.
+func (r *Registry) ResolveManaged(model string, inCatalog func(providerID, model string) bool) (p Provider, upstreamModel string, ok bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.managed) == 0 {
+		return nil, "", false
+	}
+	if id, found := r.modelMap[model]; found {
+		if _, managed := r.managed[id]; managed {
+			return r.providers[id], model, true
+		}
+	}
+	if inCatalog != nil {
+		for _, id := range r.sortedManagedIDs() {
+			if inCatalog(id, model) {
+				return r.providers[id], model, true
+			}
+		}
+	}
+	if idx := strings.Index(model, "/"); idx > 0 && idx < len(model)-1 {
+		if _, managed := r.managed[model[:idx]]; managed {
+			return r.providers[model[:idx]], model[idx+1:], true
+		}
+	}
+	return nil, "", false
+}
+
+// ServesByName reports whether one of the gateway's own providers takes
+// model by its name: a provider's config lists it, or it is
+// "<provider>/<model>" with the ID of a provider that is not managed (a
+// managed provider serves what its catalogue lists). Unlike
+// ResolveWithRouting it never falls back to a lone provider, so a name no
+// provider lists is not served.
+func (r *Registry) ServesByName(model string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if _, ok := r.modelMap[model]; ok {
+		return true
+	}
+	if idx := strings.Index(model, "/"); idx > 0 {
+		id := model[:idx]
+		_, exists := r.providers[id]
+		_, managed := r.managed[id]
+		return exists && !managed
+	}
+	return false
+}
+
+func (r *Registry) sortedManagedIDs() []string {
+	ids := make([]string, 0, len(r.managed))
+	for id := range r.managed {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
 	return ids
 }
 
@@ -229,7 +391,7 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 	if idx := strings.Index(model, "/"); idx > 0 {
 		providerID := model[:idx]
 		if p, ok := r.providers[providerID]; ok {
-			return &ResolveResult{Provider: p}, nil
+			return &ResolveResult{Provider: p, ModelOverride: r.prefixUpstreamModel(providerID, p, model)}, nil
 		}
 	}
 
@@ -242,6 +404,47 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 
 	return nil, models.ErrNotFound("model_not_found",
 		fmt.Sprintf("model %q not found in any configured provider. Configure model_map or use 'provider/model' format.", model))
+}
+
+// prefixUpstreamModel is the model a "<provider>/<model>" match is routed
+// with, "" when the request keeps the model as it named it. An adapter that
+// drops the "<provider>/" segment itself (UpstreamModelNamer) is routed with
+// the id it sends, so what the request carries is what reaches the host:
+// eligibility and catalogue lookups judge that id, and a native pass-through
+// body, which no adapter cuts, names it. An adapter that sends its model as
+// it is (the OpenAI adapter) and a managed provider, whose model id is cut by
+// ResolveManaged, keep the id as named. An id that still holds a "/" after the
+// cut (a Bedrock inference-profile ARN) also keeps it: the adapter cuts its
+// first segment on every call, so the id must reach it with that segment
+// still on, and the host gets it cut exactly once (orgModelFor in the server
+// package keeps the same rule). The caller holds r.mu.
+func (r *Registry) prefixUpstreamModel(providerID string, p Provider, model string) string {
+	if _, managed := r.managed[providerID]; managed {
+		return ""
+	}
+	namer, ok := p.(UpstreamModelNamer)
+	if !ok {
+		return ""
+	}
+	bare := namer.UpstreamModelName(model)
+	if bare == model || namer.UpstreamModelName(bare) != bare {
+		return ""
+	}
+	return bare
+}
+
+// ProvidersFor returns, in ID order, the providers that list model exactly or
+// that config.yaml's model_map maps it to. Nothing is inferred: no routing
+// targets, no "provider/model" guess, no only-provider default.
+func (r *Registry) ProvidersFor(model string) []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := append([]string(nil), r.modelProviders[model]...)
+	if id, ok := r.modelMap[model]; ok && !slices.Contains(ids, id) {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return slices.Compact(ids)
 }
 
 // ResolveModelName extracts the actual model name (strips provider prefix if present).
@@ -337,16 +540,44 @@ func applyLocalDefaults(cfg *config.ProviderConfig) {
 		cfg.DefaultTimeout = 120 * time.Second
 	}
 	if cfg.MaxConcurrent == 0 {
-		cfg.MaxConcurrent = 10
+		cfg.MaxConcurrent = admission.LocalMaxConcurrent
 	}
 	if cfg.ConnPoolSize == 0 {
-		cfg.ConnPoolSize = 10
+		cfg.ConnPoolSize = admission.LocalConnPoolSize
+	}
+}
+
+// applyConcurrencyDefaults fills what cfg leaves unset (zero) of an instance's
+// upstream concurrency: max_concurrent and conn_pool_size, 10 for a local or
+// self-hosted provider and 1024 for a remote one, and queue_timeout, the
+// gateway-wide queueTimeout (provider_defaults.queue_timeout; when that is
+// unset too, admission applies its 5s). A value the config states always
+// wins. Every instance is built through it: config.yaml providers, their key
+// rotations (built from the resolved config) and org instances.
+func applyConcurrencyDefaults(cfg *config.ProviderConfig, queueTimeout time.Duration) {
+	maxConcurrent, poolSize := admission.DefaultMaxConcurrent, admission.DefaultConnPoolSize
+	if IsLocalProvider(*cfg) {
+		maxConcurrent, poolSize = admission.LocalMaxConcurrent, admission.LocalConnPoolSize
+	}
+	if cfg.MaxConcurrent == 0 {
+		cfg.MaxConcurrent = maxConcurrent
+	}
+	if cfg.ConnPoolSize == 0 {
+		cfg.ConnPoolSize = poolSize
+	}
+	if cfg.QueueTimeout == 0 {
+		cfg.QueueTimeout = queueTimeout
 	}
 }
 
 // autoDiscoverModels calls GET /v1/models to discover available models from a provider.
 // Returns discovered model IDs, or nil if discovery is disabled or fails.
 func autoDiscoverModels(name string, cfg *config.ProviderConfig) []string {
+	// Decision vendors serve no model listing; their models are configured.
+	if IsSystemOneFormat(cfg.APIFormat) {
+		return nil
+	}
+
 	// Determine if auto-discover is enabled.
 	if cfg.AutoDiscover != nil {
 		if !*cfg.AutoDiscover {
@@ -440,4 +671,84 @@ func (r *Registry) ReloadRouter(routingCfg config.RoutingConfig) error {
 	r.router = newRouter
 	r.mu.Unlock()
 	return nil
+}
+
+// RotationCandidate builds, without registering it, an instance of the
+// config.yaml provider id that authenticates with key instead of its
+// configured one, for a key rotation to validate the key on before it is
+// applied. It also returns the provider's api_format and models. The caller
+// closes the instance.
+func (r *Registry) RotationCandidate(id, key string) (p Provider, apiFormat string, models []string, err error) {
+	r.mu.RLock()
+	pcfg, ok := r.configs[id]
+	r.mu.RUnlock()
+	if !ok {
+		return nil, "", nil, fmt.Errorf("provider %q is not a config.yaml provider", id)
+	}
+	pcfg.APIKey = key
+	p, err = createProvider(id, pcfg)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return p, pcfg.APIFormat, append([]string(nil), pcfg.Models...), nil
+}
+
+// RotateProviderKey rebuilds the config.yaml provider id from its config with
+// key and swaps it in, under the registry lock: every lookup from then on
+// returns the new instance, so every new upstream call (a retry included,
+// since each attempt looks the provider up) sends key. A call already in
+// flight finishes on the instance it holds. It returns that previous
+// instance, which the caller closes once its drain period has passed.
+func (r *Registry) RotateProviderKey(id, key string) (Provider, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	pcfg, ok := r.configs[id]
+	if !ok {
+		return nil, fmt.Errorf("provider %q is not a config.yaml provider", id)
+	}
+	old, ok := r.providers[id]
+	if !ok {
+		return nil, fmt.Errorf("provider %q is not registered", id)
+	}
+	pcfg.APIKey = key
+	p, err := createProvider(id, pcfg)
+	if err != nil {
+		return nil, err
+	}
+	r.providers[id] = p
+	r.configs[id] = pcfg
+	if usableAsKey(old) {
+		r.retired[old] = id
+	}
+	return old, nil
+}
+
+// CurrentInstance returns the instance that serves p's provider now when p is
+// one a key rotation replaced (through any number of later rotations), and p
+// unchanged otherwise: the current instance, an org's own provider (built
+// apart from the registry with the org's key), a rotation candidate, nil.
+// Work that captured an instance and runs later, such as an async job queued
+// before a promote, calls it when it starts, so it sends the key in force
+// then and never a rotated-out one, while an org's key stays the org's.
+func (r *Registry) CurrentInstance(p Provider) Provider {
+	if !usableAsKey(p) {
+		return p
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	id, ok := r.retired[p]
+	if !ok {
+		return p
+	}
+	if cur, ok := r.providers[id]; ok {
+		return cur
+	}
+	return p
+}
+
+// usableAsKey reports whether p can be a map key: every provider this
+// registry builds is a pointer, but RegisterProvider takes any Provider, and
+// a map lookup with an uncomparable dynamic type panics.
+func usableAsKey(p Provider) bool {
+	return p != nil && reflect.TypeOf(p).Comparable()
 }

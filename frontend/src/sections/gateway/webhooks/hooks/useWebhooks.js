@@ -75,10 +75,26 @@ export function useDeleteWebhook() {
 }
 
 export function useTestWebhook() {
+  const qc = useQueryClient();
   return useMutation({
+    // A test sends a real request. Retry only after another explicit click,
+    // even when the surrounding client has a default mutation retry policy.
+    retry: false,
     mutationFn: async (id) => {
       const { data } = await axios.post(endpoints.gateway.webhooks.test(id));
       return data.result;
+    },
+    onSuccess: (_result, id) => {
+      // The API accepts both receiver success and rejection. Both may record
+      // an attempt: refresh the overview and invalidate this endpoint's lists.
+      // Do not delay the inline receiver result while those reads complete.
+      void qc.invalidateQueries({
+        queryKey: [WH_EVENT_KEY],
+        predicate: ({ queryKey }) => {
+          const webhookId = queryKey[1]?.webhook_id;
+          return !webhookId || String(webhookId) === String(id);
+        },
+      });
     },
   });
 }

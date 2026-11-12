@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import PageHeader from "src/components/page-header";
 import { Helmet } from "react-helmet-async";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 
@@ -19,6 +20,7 @@ import {
   getFilterOptions,
   filterAndSortProviders,
   normalizeProviderStatus,
+  providerMatchesSearch,
   emptyStateContent,
 } from "src/components/custom-model-dropdown/KeysHelper";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
@@ -121,7 +123,7 @@ const ConfigureProviders = () => {
   );
 
   const filteredData = data?.filter((d) =>
-    (d.display_name ?? "").toLowerCase().includes(searchQuery.toLowerCase()),
+    providerMatchesSearch(d, searchQuery),
   );
 
   const containerStyles = useMemo(
@@ -178,7 +180,13 @@ const ConfigureProviders = () => {
   const keyCardsGridStyles = useMemo(
     () => ({
       display: "grid",
-      gridTemplateColumns: "repeat(3, minmax(250px, 1fr))",
+      // Three columns in the desktop shell; fewer in the compact Settings
+      // shell below md, so the cards never scroll sideways on a phone.
+      gridTemplateColumns: {
+        xs: "minmax(0, 1fr)",
+        sm: "repeat(2, minmax(250px, 1fr))",
+        md: "repeat(3, minmax(250px, 1fr))",
+      },
       gap:
         filteredData?.length === 1
           ? theme.spacing(6)
@@ -195,7 +203,7 @@ const ConfigureProviders = () => {
         width: "8px", // required
       },
       "&::-webkit-scrollbar-thumb": {
-        backgroundColor: "rgba(0, 0, 0, 0.3)",
+        backgroundColor: "var(--text-disabled)",
         borderRadius: "4px",
       },
       "&::-webkit-scrollbar-track": {
@@ -278,7 +286,8 @@ const ConfigureProviders = () => {
                 disabled={!RolePermission.API_KEYS[PERMISSIONS.CREATE][role]}
                 startIcon={
                   <SvgColor
-                    sx={{ color: "text.primary", height: 16, width: 16 }}
+                    width={16}
+                    sx={{ color: "text.primary" }}
                     src={"/assets/icons/ic_add.svg"}
                   />
                 }
@@ -415,8 +424,9 @@ const ConfigureProviders = () => {
             sx={{ color: "common.white" }}
             startIcon={
               <SvgColor
+                width={2}
                 // @ts-ignore
-                sx={{ height: 2, width: 2, mt: -0.5 }}
+                sx={{ mt: -0.5 }}
                 src={"/assets/icons/ic_delete.svg"}
               />
             }
@@ -446,27 +456,11 @@ const AIProviders = () => {
           height: "100vh",
         }}
       >
-        <Box>
-          <Typography
-            sx={{
-              typography: "m2",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.primary",
-            }}
-          >
-            AI Providers
-          </Typography>
-          <Typography
-            sx={{
-              typography: "s1",
-              fontWeight: "fontWeightRegular",
-              color: "text.primary",
-              marginTop: (theme) => theme.spacing(0.5),
-            }}
-          >
-            Manage your AI providers
-          </Typography>
-        </Box>
+        <PageHeader
+          title="AI Providers"
+          description="Manage your AI providers"
+          sx={{ mb: 0 }}
+        />
 
         <ConfigureProviders />
       </Box>

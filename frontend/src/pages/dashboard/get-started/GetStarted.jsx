@@ -6,7 +6,7 @@ const GetStarted = () => {
   return (
     <>
       <Helmet>
-        <title>Get started with FutureAGI</title>
+        <title>Get started · Future AGI</title>
       </Helmet>
       <GetStartedView />
     </>

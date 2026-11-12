@@ -14,6 +14,7 @@ from unittest.mock import patch
 import pytest
 from django.db import connection, transaction
 from django.db.models import QuerySet
+from django.utils import timezone
 from rest_framework.exceptions import ErrorDetail
 from structlog.testing import capture_logs
 
@@ -688,9 +689,7 @@ def test_link_made_during_the_prerequisite_check_is_switched_not_replaced(
     _delete_project(agent)
     stale = _stored_agent(agent)
     newer = _row(organization, workspace, {})
-    ObservabilityProvider.no_workspace_objects.filter(pk=newer.pk).update(
-        enabled=False
-    )
+    ObservabilityProvider.no_workspace_objects.filter(pk=newer.pk).update(enabled=False)
     created = _created()
 
     def read(agent_id):
@@ -1761,3 +1760,128 @@ def test_create_view_puts_the_project_in_the_request_workspace(
     agent = AgentDefinition.no_workspace_objects.get(pk=response.json()["agent"]["id"])
     assert str(agent.workspace_id) == str(other.id)
     assert _project_workspace(agent.observability_provider) == str(other.id)
+
+
+# ---------------------------------------------------------------------------
+# A kept row follows the agent's provider (OBS-SW-159)
+# ---------------------------------------------------------------------------
+
+FETCHED_POLL_STATE = {
+    "last_fetch_error": {"status_code": 401, "at": "2026-11-09T12:00:00+00:00"},
+    "retell": {"bootstrapped": True},
+}
+
+
+def _fetched_agent_with_row(organization, workspace, *, enabled):
+    """A vapi agent whose row was fetched: it holds a watermark and poll state."""
+    agent = _agent_with_row(
+        organization, workspace, enabled=enabled, metadata={"assistant_id": "a1"}
+    )
+    ObservabilityProvider.no_workspace_objects.filter(
+        pk=agent.observability_provider_id
+    ).update(last_fetched_at=timezone.now(), poll_state=FETCHED_POLL_STATE)
+    return _stored_agent(agent)
+
+
+def _move_agent(agent, provider):
+    # What the version and edit views write before they call the switch.
+    agent.provider = provider
+    agent.assistant_id = "agent-moved-1"
+    agent.save(update_fields=["provider", "assistant_id", "updated_at"])
+
+
+def _fetch_columns(row):
+    """The row's (provider, enabled, last_fetched_at, poll_state, metadata)."""
+    return ObservabilityProvider._base_manager.values_list(
+        "provider", "enabled", "last_fetched_at", "poll_state", "metadata"
+    ).get(pk=row.pk)
+
+
+def test_live_row_follows_the_agent_to_a_new_provider(organization, workspace, user):
+    agent = _fetched_agent_with_row(organization, workspace, enabled=True)
+    kept = agent.observability_provider
+    _move_agent(agent, "retell")
+    created = _created()
+
+    with capture_logs() as logs:
+        row = _turn(agent, True, user, organization, workspace)
+
+    # The same row and project, now fetched from the new provider from the start.
+    assert (row.pk, row.project_id) == (kept.pk, kept.project_id)
+    assert _fetch_columns(row) == ("retell", True, None, {}, {"assistant_id": "a1"})
+    assert _created() == created
+    assert _stored_agent(agent).observability_provider_id == kept.pk
+    assert _events(logs) == [
+        {
+            "event": "observability_switch_provider_moved",
+            "log_level": "info",
+            "agent_definition_id": str(agent.id),
+            "provider_from": "vapi",
+            "provider_to": "retell",
+        }
+    ]
+
+
+def test_turn_on_of_a_moved_off_row_is_checked_and_reads_the_agent_once(
+    organization, workspace, user
+):
+    agent = _fetched_agent_with_row(organization, workspace, enabled=False)
+    before = _fetch_columns(agent.observability_provider)
+    _move_agent(agent, "retell")
+
+    refusing = make_summary(
+        agent_definition_id=agent.id, provider="retell", missing=("credential",)
+    )
+    with seams(refusing):
+        with pytest.raises(switch.ObservabilityRefused):
+            _turn(agent, True, user, organization, workspace)
+    # Refused: the row keeps its provider and what it fetched.
+    assert _fetch_columns(agent.observability_provider) == before
+
+    summary = make_summary(agent_definition_id=agent.id, provider="retell")
+    with seams(summary) as (read_summary, _):
+        row = _turn(agent, True, user, organization, workspace)
+
+    assert _fetch_columns(row) == ("retell", True, None, {}, {"assistant_id": "a1"})
+    read_summary.assert_called_once_with(agent.id)
+
+
+def test_toggle_on_the_same_provider_keeps_what_the_row_fetched(
+    organization, workspace, user
+):
+    agent = _fetched_agent_with_row(organization, workspace, enabled=True)
+    before = _fetch_columns(agent.observability_provider)
+
+    with seams(make_summary(agent_definition_id=agent.id)):
+        _turn(agent, False, user, organization, workspace)
+        row = _turn(agent, True, user, organization, workspace)
+
+    assert _fetch_columns(row) == before
+
+
+@pytest.mark.parametrize("word", ["", "phone x"])
+def test_row_keeps_its_provider_for_a_word_no_row_could_hold(
+    organization, workspace, user, word
+):
+    agent = _fetched_agent_with_row(organization, workspace, enabled=True)
+    before = _fetch_columns(agent.observability_provider)
+    _move_agent(agent, word)
+
+    with capture_logs() as logs:
+        row = _turn(agent, True, user, organization, workspace)
+
+    assert _fetch_columns(row) == before
+    assert _events(logs) == []
+
+
+def test_code_agent_row_stays_others_across_a_toggle(organization, workspace, user):
+    agent = _stored_code_agent(organization, workspace)
+    row = _turn(agent, True, user, organization, workspace)
+    assert row.provider == "others"
+
+    agent = _stored_agent(agent)
+    _turn(agent, False, user, organization, workspace)
+    again = _turn(agent, True, user, organization, workspace)
+
+    assert (again.pk, again.enabled) == (row.pk, True)
+    assert _fetch_columns(again)[0] == "others"

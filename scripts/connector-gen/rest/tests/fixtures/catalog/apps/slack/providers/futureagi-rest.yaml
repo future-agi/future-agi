@@ -1,0 +1,63 @@
+# Fixture for the REST generator's tests, not catalog data (see ../../gmail/app.yaml).
+schema: "connector-manifest/v1#provider"
+app: slack
+id: futureagi-rest
+version: 1.0.0
+kind: rest
+publisher: futureagi
+vendorStatus:
+  label: ga
+  source: https://docs.slack.dev/apis/web-api/
+transport:
+  kind: http
+  url: "https://{connectorsHost}/slack/mcp"
+  variant: streamable
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://slack.com/oauth/v2_user/authorize
+    tokenUrl: https://slack.com/api/oauth.v2.user.access
+    scopes:
+      [
+        channels:read,
+        channels:history,
+        users:read,
+        users:read.email,
+        search:read,
+        reactions:write,
+        chat:write,
+      ]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    refresh: { supported: true, rotates: true }
+    registration: [preregistered]
+  verify: { tool: list_users }
+tools:
+  source: operations
+  defaultPosture: ask
+  generated: tools.generated.json
+retry: { "on": [429], honorRetryAfter: true }
+pricing: { model: vendor_plan }
+upstream:
+  spec:
+    url: https://raw.githubusercontent.com/slackapi/slack-api-specs/bc08db49625630e3585bf2f1322128ea04f2a7f3/web-api/slack_web_openapi_v2_without_examples.json
+    format: swagger-2
+    sha256: 8b92da26a3c5b11d20042a9f36d81f1fa6fc9382c5ddc471babb68b91936bc3a
+    licence: MIT (slackapi/slack-api-specs)
+quality: { tier: listed }
+lifecycle: { status: active }
+sources:
+  - fact: auth.oauth2.authorizeUrl
+    url: https://docs.slack.dev/authentication/installing-with-oauth/
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://docs.slack.dev/authentication/installing-with-oauth/
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://docs.slack.dev/reference/scopes/
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

@@ -1,0 +1,13 @@
+{
+  "requestId": "{{id}}",
+  "results": [
+    {
+      "id": "https://example.com/capmock",
+      "url": "https://example.com/capmock",
+      "title": "Capmock page",
+      "text": "Example page text."
+    }
+  ],
+  "statuses": [{ "id": "https://example.com/capmock", "status": "success" }],
+  "costDollars": { "total": 0.001, "contents": { "text": 0.001 } }
+}

@@ -19,6 +19,8 @@ from tracer.models.trace import Trace
 from tracer.serializers.observability_provider import ObservabilityProviderSerializer
 from tracer.services.observability_providers import (
     RETELL_LIST_PAGE_LIMIT,
+    VAPI_MAX_PAGES,
+    VAPI_PAGE_LIMIT,
     ObservabilityService,
     RetellConfigurationError,
     RetellCursorRejected,
@@ -61,6 +63,21 @@ RETELL_RUN_BUDGET = timedelta(minutes=20)
 # and is a follow-up. Only the first two terms are enforced; they cost ~5 min,
 # so the 3h time_limit leaves that unbounded one most of an hour to finish in.
 RETELL_ACTIVITY_BUDGET = timedelta(hours=2)
+# poll_state key for the provider's last 401/403: {"status_code", "at"}. Set
+# when the provider rejects the key, cleared by the next good fetch.
+LAST_FETCH_ERROR_KEY = "last_fetch_error"
+# Non-Retell polls: how many polls in a row keep the watermark where it is
+# because the collector did not take some calls (re-stores upsert in place).
+# After that the window is given up loudly, so a lasting export fault cannot
+# re-fetch the same window for ever.
+EXPORT_HELD_POLLS_KEY = "export_held_polls"
+EXPORT_MAX_HELD_POLLS = 3
+# ElevenLabs conversations stored before they ended: {conversation_id:
+# first-seen ISO time}. Each poll re-reads them until they are done or failed.
+ELEVEN_LABS_PENDING_KEY = "eleven_labs_pending"
+ELEVEN_LABS_TERMINAL_STATUSES = frozenset({"done", "failed"})
+ELEVEN_LABS_PENDING_MAX = 200
+ELEVEN_LABS_PENDING_MAX_AGE = timedelta(hours=6)
 
 
 @temporal_activity(
@@ -193,16 +210,19 @@ def fetch_logs_for_provider(
         return None
     try:
         if provider.provider == ProviderChoices.RETELL:
-            return (
+            outcome = (
                 _poll_retell_provider(provider, deadline=deadline)
                 if scheduled
                 else _manual_retell_run(
                     provider, start_time=start_time, end_time=end_time
                 )
             )
-        # F1: the activity deadline only bounds Retell's own page loop; other
-        # providers' single-request polls ignore it.
-        return _poll_other_provider(provider, start_time=start_time, end_time=end_time)
+        else:
+            # F1: the activity deadline only bounds Retell's own page loop;
+            # other providers' single-request polls ignore it.
+            outcome = _poll_other_provider(
+                provider, start_time=start_time, end_time=end_time
+            )
     except requests.HTTPError as exc:
         status = getattr(getattr(exc, "response", None), "status_code", None)
         if provider.provider == ProviderChoices.RETELL and status in (401, 403):
@@ -223,6 +243,13 @@ def fetch_logs_for_provider(
                 status_code=status,
                 error_type=type(exc).__name__,
             )
+        if status in (401, 403):
+            # OBS-SW-110: the empty call list shows this, so a rejected key
+            # is visible in the product and not only in the logs.
+            _write_last_fetch_error(
+                provider.id,
+                {"status_code": status, "at": timezone.now().isoformat()},
+            )
         return None
     except RetellConfigurationError as exc:
         logger.error(
@@ -239,6 +266,66 @@ def fetch_logs_for_provider(
             error_type=type(exc).__name__,
         )
         return None
+    if outcome is not None and _has_last_fetch_error(provider):
+        _write_last_fetch_error(provider.id, None)  # the provider took the key
+    return outcome
+
+
+def _has_last_fetch_error(provider) -> bool:
+    state = getattr(provider, "poll_state", None)
+    return isinstance(state, dict) and LAST_FETCH_ERROR_KEY in state
+
+
+def _write_last_fetch_error(provider_id, error: dict | None) -> bool:
+    """Set, or clear with None, ``poll_state["last_fetch_error"]``.
+
+    Like ``_write_retell_state`` it re-reads the row and replaces only its own
+    key, so Retell state saved earlier in the same run is kept.
+    """
+    row = (
+        ObservabilityProvider.all_objects.filter(id=provider_id)
+        .values_list("poll_state", flat=True)
+        .first()
+    )
+    merged = dict(row) if isinstance(row, dict) else {}
+    if error is None:
+        merged.pop(LAST_FETCH_ERROR_KEY, None)
+    else:
+        merged[LAST_FETCH_ERROR_KEY] = error
+    n = ObservabilityProvider.all_objects.filter(id=provider_id).update(
+        poll_state=merged
+    )
+    if n == 0:
+        logger.error("provider_poll_state_write_skipped", provider_id=str(provider_id))
+    return n == 1
+
+
+def _poll_state_value(provider, key):
+    state = getattr(provider, "poll_state", None)
+    return state.get(key) if isinstance(state, dict) else None
+
+
+def _write_poll_state_key(provider_id, key: str, value) -> bool:
+    """Set, or remove with None, one top-level ``poll_state`` key.
+
+    Re-reads the row and replaces only that key, like ``_write_last_fetch_error``.
+    """
+    row = (
+        ObservabilityProvider.all_objects.filter(id=provider_id)
+        .values_list("poll_state", flat=True)
+        .first()
+    )
+    merged = dict(row) if isinstance(row, dict) else {}
+    if value is None:
+        merged.pop(key, None)
+    else:
+        merged[key] = value
+    n = ObservabilityProvider.all_objects.filter(id=provider_id).update(
+        poll_state=merged
+    )
+    if n == 0:
+        logger.error("provider_poll_state_write_skipped", provider_id=str(provider_id))
+    return n == 1
 
 
 def _read_retell_state(provider) -> dict:
@@ -995,6 +1082,16 @@ def _poll_other_provider(
     logs = ObservabilityService.get_call_logs(
         provider=provider, start_time=start, end_time=end
     )  # HTTPError propagates to fetch_logs_for_provider
+    eleven_labs = provider.provider == ProviderChoices.ELEVEN_LABS
+    pending = _eleven_labs_pending(provider) if eleven_labs else {}
+    if pending:
+        listed = {log.get("conversation_id") for log in logs if isinstance(log, dict)}
+        logs = [
+            *logs,
+            *ObservabilityService.fetch_eleven_labs_conversations(
+                provider, [cid for cid in pending if cid not in listed]
+            ),
+        ]
     try:
         outcome = process_and_store_logs(logs, provider)
     except Exception as exc:
@@ -1005,9 +1102,30 @@ def _poll_other_provider(
             error_type=type(exc).__name__,
         )
         raise  # CHANGED from today: no advance and the run counts as failed (today it advanced before storing and reported success)
-    _advance_watermark(
-        provider_id, end
-    )  # after the store (today it is before); not gated on the outcome counts
+    if eleven_labs:
+        _write_eleven_labs_pending(provider, logs, pending, outcome)
+    if not _hold_for_export_failures(provider, outcome):
+        advance_to = end
+        if (
+            provider.provider == ProviderChoices.VAPI
+            and start is not None
+            and len(logs) >= VAPI_PAGE_LIMIT * VAPI_MAX_PAGES
+        ):
+            # The fetch stopped at its page cap, so calls later in the window
+            # were not fetched: resume from the last update it reached. A first
+            # sync (no start) still ends at `end`, so it does not crawl through
+            # the account's whole history before showing new calls.
+            reached = _latest_vapi_update(logs)
+            logger.warning(
+                "provider_fetch_capped",
+                provider_id=str(provider_id),
+                provider_type=provider.provider,
+                logs_count=len(logs),
+                resume_from=reached.isoformat() if reached else None,
+            )
+            if reached is not None:
+                advance_to = min(reached, end)
+        _advance_watermark(provider_id, advance_to)  # after the store
     logger.info(
         "Successfully fetched and stored logs for provider",
         provider_id=str(provider_id),
@@ -1015,6 +1133,102 @@ def _poll_other_provider(
         logs_count=len(logs) if logs else 0,
     )
     return outcome
+
+
+def _hold_for_export_failures(provider, outcome: StoreOutcome) -> bool:
+    """True when this poll must leave the watermark where it is.
+
+    A call the collector did not take is in no store, and a poll that moved
+    past it would never fetch it again; re-polling the window re-stores the
+    rest in place. After EXPORT_MAX_HELD_POLLS held polls in a row the window
+    is given up with an error, so a lasting fault cannot re-fetch it for ever.
+    """
+    held = _poll_state_value(provider, EXPORT_HELD_POLLS_KEY)
+    held = held if isinstance(held, int) else 0
+    if outcome.export_failed == 0:
+        if held:
+            _write_poll_state_key(provider.id, EXPORT_HELD_POLLS_KEY, None)
+        return False
+    if held < EXPORT_MAX_HELD_POLLS:
+        _write_poll_state_key(provider.id, EXPORT_HELD_POLLS_KEY, held + 1)
+        logger.warning(
+            "provider_watermark_held",
+            provider_id=str(provider.id),
+            provider_type=provider.provider,
+            export_failed=outcome.export_failed,
+            held_polls=held + 1,
+        )
+        return True
+    logger.error(
+        "provider_export_failures_abandoned",
+        provider_id=str(provider.id),
+        provider_type=provider.provider,
+        export_failed=outcome.export_failed,
+        held_polls=held,
+    )
+    _write_poll_state_key(provider.id, EXPORT_HELD_POLLS_KEY, None)
+    return False
+
+
+def _latest_vapi_update(logs) -> datetime | None:
+    """The latest ``updatedAt`` among fetched Vapi calls (the fetch's own cursor)."""
+    latest = None
+    for log in logs:
+        raw = log.get("updatedAt") if isinstance(log, dict) else None
+        if not isinstance(raw, str):
+            continue
+        try:
+            value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        if latest is None or value > latest:
+            latest = value
+    return latest
+
+
+def _eleven_labs_pending(provider) -> dict:
+    pending = _poll_state_value(provider, ELEVEN_LABS_PENDING_KEY)
+    if not isinstance(pending, dict):
+        return {}
+    return {
+        cid: seen
+        for cid, seen in pending.items()
+        if isinstance(cid, str) and isinstance(seen, str)
+    }
+
+
+def _write_eleven_labs_pending(provider, logs, pending: dict, outcome) -> None:
+    """Remember the conversations stored before they ended, so the next poll
+    re-reads them. One leaves the set once a poll with no export failures has
+    stored it done/failed, or once it is ELEVEN_LABS_PENDING_MAX_AGE old (a
+    conversation that can no longer be read is retried until then)."""
+    now = timezone.now()
+    keep = dict(pending)
+    for log in logs:
+        cid = log.get("conversation_id") if isinstance(log, dict) else None
+        if not isinstance(cid, str) or not cid:
+            continue
+        if log.get("status") not in ELEVEN_LABS_TERMINAL_STATUSES:
+            keep.setdefault(cid, now.isoformat())
+        elif outcome.export_failed == 0:
+            keep.pop(cid, None)
+    fresh = {}
+    for cid, seen in keep.items():
+        try:
+            first_seen = _parse(seen)
+        except ValueError:
+            continue
+        if first_seen.tzinfo is not None and now - first_seen <= (
+            ELEVEN_LABS_PENDING_MAX_AGE
+        ):
+            fresh[cid] = seen
+    if len(fresh) > ELEVEN_LABS_PENDING_MAX:
+        newest = sorted(fresh.items(), key=lambda item: item[1], reverse=True)
+        fresh = dict(newest[:ELEVEN_LABS_PENDING_MAX])
+    if fresh != pending:
+        _write_poll_state_key(provider.id, ELEVEN_LABS_PENDING_KEY, fresh or None)
 
 
 def _create_observation_span(

@@ -12,6 +12,8 @@ from model_hub.models.develop_dataset import (
     Row,
 )
 from model_hub.models.evals_metric import Feedback
+from model_hub.serializers.pagination import PageSizeField
+from tfc.utils.pagination import MAX_PAGE_SIZE
 
 
 class DatasetSerializer(serializers.ModelSerializer):
@@ -77,7 +79,19 @@ class SyntheticDatasetCreationSerializer(serializers.Serializer):
 
 
 class SyntheticDataSerializer(SyntheticDatasetCreationSerializer):
+    generation_mode = serializers.ChoiceField(choices=["append"], required=False)
+    model = serializers.CharField(required=False, max_length=255)
+    reference_row_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, allow_empty=False, max_length=50
+    )
     fill_existing_rows = serializers.BooleanField(default=False)
+
+    def validate(self, data):
+        if "reference_row_ids" in data and data.get("generation_mode") != "append":
+            raise serializers.ValidationError(
+                "Selected rows require append generation."
+            )
+        return data
 
     def validate_dataset(self, value):
         return value
@@ -86,11 +100,29 @@ class SyntheticDataSerializer(SyntheticDatasetCreationSerializer):
 class SyntheticDatasetConfigSerializer(serializers.Serializer):
     """Serializer for getting and updating synthetic dataset configuration"""
 
+    generation_mode = serializers.ChoiceField(
+        choices=["append", "append_synthetic"], required=False
+    )
+    model = serializers.CharField(required=False, max_length=255)
+    reference_row_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, allow_empty=False, max_length=50
+    )
     num_rows = serializers.IntegerField()
     columns = SyntheticDatasetColumnSerializer(many=True)
     dataset = SyntheticDatasetPayloadSerializer()
     kb_id = serializers.UUIDField(required=False, allow_null=True)
     regenerate = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, data):
+        if data.get("generation_mode") == "append_synthetic" and data.get("regenerate"):
+            raise serializers.ValidationError(
+                "Choose either append or replace, not both."
+            )
+        if "reference_row_ids" in data and data.get("generation_mode") != "append":
+            raise serializers.ValidationError(
+                "Selected rows require append generation."
+            )
+        return data
 
     def validate_dataset(self, value):
         if not value.get("name"):
@@ -173,7 +205,9 @@ class SecretSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_at", "updated_at"]
         extra_kwargs = {
-            "key": {"write_only": True}  # Key will not be included in responses
+            # Key will not be included in responses. The column is text (it
+            # holds ciphertext); the API still takes at most 2500 characters.
+            "key": {"write_only": True, "max_length": 2500}
         }
 
     def create(self, validated_data):
@@ -189,21 +223,16 @@ class SecretSerializer(serializers.ModelSerializer):
         """Customize the output representation"""
         data = super().to_representation(instance)
         # Add a masked version of the key for display purposes
-        actual_key = instance.actual_key
-        if actual_key:
-            if len(actual_key) <= 8:
-                data["masked_key"] = actual_key[:2] + "•" * max(len(actual_key) - 2, 4)
-            else:
-                data["masked_key"] = (
-                    actual_key[:4] + "•" * (len(actual_key) - 8) + actual_key[-4:]
-                )
+        masked_key = instance.masked_key
+        if masked_key:
+            data["masked_key"] = masked_key
         return data
 
 
 class CompareDatasetSerializer(serializers.Serializer):
     compare_id = serializers.UUIDField(allow_null=True, required=False, default=None)
-    page_size = serializers.IntegerField(
-        required=False, default=10
+    page_size = PageSizeField(
+        required=False, default=10, max_value=MAX_PAGE_SIZE
     )  # Default value set to 10
     current_page_index = serializers.IntegerField(
         required=False, default=0

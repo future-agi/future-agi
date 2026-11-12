@@ -1,11 +1,13 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from agentcc.models.provider_credential import AgentccProviderCredential
+from agentcc.tests.provider_discovery_test_support import (
+    discovery_enabled as discovery_enabled,
+)
 from agentcc.views.provider_credential import _join_api_endpoint
 from conftest import WorkspaceAwareAPIClient
 from integrations.services.credentials import CredentialManager
@@ -419,9 +421,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             f"/agentcc/provider-credentials/{credential.id}/"
         )
         assert read_response.status_code == 200, read_response.json()
-        assert read_response.json()["result"]["extra_config"] == {
-            "api_path_prefix": ""
-        }
+        assert read_response.json()["result"]["extra_config"] == {"api_path_prefix": ""}
 
         with patch(
             "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway",
@@ -551,6 +551,7 @@ class TestFetchModelsHonoursThePathPrefix:
         self._credential(org_b, {"api_path_prefix": "/openai/v1"})
 
         session = MagicMock()
+        session.get.return_value.status_code = 200
         session.get.return_value.json.return_value = {"data": [{"id": "sonar"}]}
 
         with (
@@ -602,6 +603,7 @@ class TestFetchModelsPrivateProviderURLs:
     ):
         monkeypatch.setenv("AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS", "true")
         session = MagicMock()
+        session.get.return_value.status_code = 200
         session.get.return_value.json.return_value = {"data": [{"id": "mock-custom"}]}
 
         with patch(
@@ -689,6 +691,7 @@ class TestFetchModelsKeepsTheSavedKeyOnItsBaseURL:
             base_url="https://api.openai.com/v1",
         )
         session = MagicMock()
+        session.get.return_value.status_code = 200
         session.get.return_value.json.return_value = {"data": [{"id": "gpt-4o"}]}
 
         with (
@@ -710,6 +713,7 @@ class TestFetchModelsKeepsTheSavedKeyOnItsBaseURL:
             "https://api.openai.com/v1/models",
             headers={"Authorization": "Bearer sk-saved"},
             timeout=15,
+            allow_redirects=False,
         )
 
     def test_a_callers_own_key_still_takes_the_requested_api_format(
@@ -1047,3 +1051,65 @@ class TestProviderBaseURLIsCheckedOnSave:
         cred.refresh_from_db()
         assert cred.base_url == "https://api.openai.com/v1"
         assert cred.display_name == "Local vLLM"
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestGWCOPYProviderSyncWarning:
+    @pytest.mark.parametrize(
+        "operation", ["create", "update", "destroy", "toggle active"]
+    )
+    def test_provider_write_failed_sync_warning_is_exact_without_restart_promise(
+        self, auth_client, organization, operation
+    ):
+        credential = None
+        if operation != "create":
+            credential = AgentccProviderCredential.no_workspace_objects.create(
+                organization=organization,
+                provider_name="openai",
+                display_name="GWCOPY fixture",
+                encrypted_credentials=CredentialManager.encrypt(
+                    {"api_key": "fixture-only"}
+                ),
+                api_format="openai",
+            )
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway",
+            return_value=False,
+        ) as push_mock:
+            if operation == "create":
+                response = auth_client.post(
+                    "/agentcc/provider-credentials/",
+                    {
+                        "provider_name": "openai",
+                        "display_name": "GWCOPY fixture",
+                        "credentials": {"api_key": "fixture-only"},
+                        "api_format": "openai",
+                    },
+                    format="json",
+                )
+            elif operation == "destroy":
+                response = auth_client.delete(
+                    f"/agentcc/provider-credentials/{credential.id}/"
+                )
+            else:
+                data = (
+                    {"is_active": False}
+                    if operation == "toggle active"
+                    else {"display_name": "Changed"}
+                )
+                response = auth_client.patch(
+                    f"/agentcc/provider-credentials/{credential.id}/",
+                    data,
+                    format="json",
+                )
+        assert response.status_code == (201 if operation == "create" else 200)
+        assert response.json()["result"]["gateway_synced"] is False
+        assert (
+            response.json()["result"]["gateway_warning"]
+            == "Config saved but gateway sync failed. A gateway connected to this app retries fetching saved configs during its periodic sync."
+        )
+        push_mock.assert_called_once_with(organization)
+        if operation == "toggle active":
+            credential.refresh_from_db()
+            assert credential.is_active is False

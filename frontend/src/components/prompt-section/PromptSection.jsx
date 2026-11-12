@@ -84,10 +84,11 @@ export const PromptSection = ({
         });
       }
 
-      // Add indexed options for images-type columns (maxImagesCount comes from jsonSchemas)
+      // Add indexed options for images-type columns (json-schema sends
+      // max_images_count)
       const imagesSchema = jsonSchemas?.[col?.field];
-      if (col?.dataType === "images" && imagesSchema?.maxImagesCount) {
-        for (let idx = 0; idx < imagesSchema.maxImagesCount; idx++) {
+      if (col?.dataType === "images" && imagesSchema?.max_images_count) {
+        for (let idx = 0; idx < imagesSchema.max_images_count; idx++) {
           expandedOptions.push({
             ...col,
             headerName: `${col.headerName}[${idx}]`,
@@ -498,7 +499,7 @@ export const PromptSection = ({
           <Tooltip title="Copy" arrow>
             <IconButton onClick={copyPromptSection} disabled={!field?.value}>
               <Iconify
-                icon="basil:copy-outline"
+                icon="solar:copy-linear"
                 sx={{ color: "text.disabled" }}
               />
             </IconButton>
@@ -528,7 +529,7 @@ export const PromptSection = ({
             verticalAlign: "top",
             overflowY: "auto", // Ensure only vertical scroll
             lineHeight: "1.5",
-            fontSize: "14px",
+            fontSize: "13px",
             transition: "height 0.1s ease-out",
             "&::placeholder": {
               color: theme.palette.text.secondary,
@@ -564,14 +565,13 @@ export const PromptSection = ({
             left: `${dropdownPosition.left}px`,
             backgroundColor: "var(--bg-paper)",
             borderRadius: "4px",
-            boxShadow: "0 2px 5px rgba(0,0,0,0.1)",
             zIndex: 1,
             maxHeight: "120px",
             overflowY: "auto",
             scrollBehavior: "smooth",
           }}
         >
-          <Paper elevation={1}>
+          <Paper elevation={0}>
             <Box sx={{ p: 0.5 }}>
               {filteredVariables.map((variable, index) => (
                 <MenuItem

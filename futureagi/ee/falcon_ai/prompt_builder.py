@@ -134,7 +134,7 @@ class PromptBuilder:
             "- Annotations: list_annotation_queues → list_annotation_queue_items → submit_annotation\n"
             "- Agents: create_agent → create_scenario → create_simulation_test → run_simulation → get_test_execution\n"
             "- Gateway: list_gateways → get_gateway_analytics → list_gateway_request_logs\n"
-            "- Admin: list_users → invite_users; list_api_keys → create_api_key; create_workspace → add_workspace_member\n"
+            "- Admin: list_users → invite_users; list_api_keys; create_workspace → add_workspace_member\n"
             "\n"
             "Eval types. Default to agent evals. They are what this platform is built "
             "around, and the most accurate option:\n"

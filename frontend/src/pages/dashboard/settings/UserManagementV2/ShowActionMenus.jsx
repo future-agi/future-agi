@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useId, useRef } from "react";
 import PropTypes from "prop-types";
 import { Box, Popover, Portal, Typography } from "@mui/material";
 import SvgColor from "src/components/svg-color";
@@ -13,10 +13,14 @@ const ShowActionMenus = ({
   data,
   setOpenActionForm,
   canEdit = true,
+  canRemove = canEdit,
   canResend = true,
+  canCancel = canEdit,
+  disabledReasons,
   menusByStatus,
 }) => {
   const popperRef = useRef(null);
+  const reasonIdPrefix = useId();
   const { isOSS, isSuccess: modeConfirmed } = useDeploymentMode();
   const hidesInviteEmail = modeConfirmed && isOSS;
 
@@ -36,19 +40,27 @@ const ShowActionMenus = ({
     "edit-role",
     "edit-ws-role",
     "remove-member",
-    "remove-ws-member",
     "cancel-invite",
   ];
   const resendActions = ["resend-invite", "reactivate-member"];
 
   const activeMenus = menusByStatus || actionMenusByStatus;
   const menuItems = (activeMenus[data.status] || []).filter((item) => {
-    // Self-hosted sends no mail, so resending delivers nothing.
-    if (item.action === "resend-invite" && hidesInviteEmail) return false;
+    // Shown disabled, with its reason, rather than left out.
+    if (disabledReasons?.[item.action]) return true;
+    if (item.action === "remove-ws-member") return canRemove;
+    if (item.action === "cancel-invite") return canCancel;
     if (editActions.includes(item.action)) return canEdit;
     if (resendActions.includes(item.action)) return canResend;
     return true;
   });
+  const reasons = [
+    ...new Set(
+      menuItems.map((item) => disabledReasons?.[item.action]).filter(Boolean),
+    ),
+  ];
+  const reasonId = (reason) =>
+    `${reasonIdPrefix}-reason-${reasons.indexOf(reason)}`;
 
   return (
     <Portal>
@@ -76,7 +88,6 @@ const ShowActionMenus = ({
             border: "1px solid",
             borderColor: "action.hover",
             p: "12px",
-            boxShadow: "0px 4px 8px rgba(0, 0, 0, 0.1)",
             maxHeight: `280px`,
             overflow: "hidden",
             display: "flex",
@@ -86,40 +97,66 @@ const ShowActionMenus = ({
       >
         <Box display="flex" flexDirection={"column"} gap={1}>
           {menuItems.map((item, ind) => {
+            const disabledReason = disabledReasons?.[item.action];
             return (
               <Box
                 key={ind}
                 display="flex"
                 gap={1}
                 alignItems={"center"}
+                role={disabledReason ? "button" : undefined}
+                tabIndex={disabledReason ? 0 : undefined}
+                aria-disabled={disabledReason ? "true" : undefined}
+                aria-describedby={
+                  disabledReason ? reasonId(disabledReason) : undefined
+                }
                 onClick={() => {
+                  if (disabledReason) return;
                   onClose();
                   setOpenActionForm(item);
                 }}
                 sx={{
-                  cursor: "pointer",
-                  borderRadius: 0.75,
+                  cursor: disabledReason ? "not-allowed" : "pointer",
+                  borderRadius: "4px",
                   padding: 0.5,
                   "&:hover": {
-                    backgroundColor: "action.hover",
+                    backgroundColor: disabledReason
+                      ? "transparent"
+                      : "action.hover",
                   },
                 }}
               >
                 <SvgColor
                   // @ts-ignore
                   src={item.image}
-                  sx={{ color: item.color, width: "16px", height: "16px" }}
+                  sx={{
+                    color: disabledReason ? "text.disabled" : item.color,
+                    width: "16px",
+                    height: "16px",
+                  }}
                 />
                 <Typography
                   typography={"s3"}
                   fontWeight="fontWeightRegular"
-                  color={item.color}
+                  color={disabledReason ? "text.disabled" : item.color}
                 >
-                  {item.title}
+                  {item.action === "resend-invite" && hidesInviteEmail ? "Renew invitation" : item.title}
                 </Typography>
               </Box>
             );
           })}
+          {reasons.map((reason, ind) => (
+            <Typography
+              key={reason}
+              id={`${reasonIdPrefix}-reason-${ind}`}
+              typography={"s3"}
+              fontWeight="fontWeightRegular"
+              color="text.secondary"
+              sx={{ maxWidth: "240px", px: 0.5 }}
+            >
+              {reason}
+            </Typography>
+          ))}
         </Box>
       </Popover>
     </Portal>
@@ -136,6 +173,9 @@ ShowActionMenus.propTypes = {
   data: PropTypes.object,
   setOpenActionForm: PropTypes.func,
   canEdit: PropTypes.bool,
+  canRemove: PropTypes.bool,
   canResend: PropTypes.bool,
+  canCancel: PropTypes.bool,
+  disabledReasons: PropTypes.object,
   menusByStatus: PropTypes.object,
 };

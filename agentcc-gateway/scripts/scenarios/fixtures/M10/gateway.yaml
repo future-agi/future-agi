@@ -1,0 +1,48 @@
+# 66_m10_vservers.sh's gateway config. The script fills in the two MCP mock
+# ports, lib_mcp.sh's scn_mcp_gateway_template renders @@MCP_<NAME>_URL@@ and
+# adds the fixed test state key under `mcp:`, then lib.sh fills base.yaml's
+# placeholders. Every key and token below is a fake value for the local mocks.
+#
+# The YAML servers git_hub (tool search) and git (tool hub_search) are bug
+# 13's pair: under the "_" separator both are git_hub_search. They serve the
+# YAML key's org, org-acme (mcp.static.org_id), which has no org config: the
+# legacy view. The second YAML key names no org: with static.org_id set, such
+# a principal gets an empty pool (step 9). The
+# virtual-server steps push org-m10's config with the same two mocks as org
+# servers, reachable through the egress allowlist.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  keys:
+    - name: "acme-app"
+      key: "scn-test-key-acme"
+      owner: "acme"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+    - name: "orgless-app"
+      key: "scn-test-key-m10-orgless"
+      owner: "orgless"
+      key_type: "byok"
+logging:
+  level: "info"
+mcp:
+  enabled: true
+  static:
+    org_id: "org-acme"
+  egress:
+    private_allow:
+      - "127.0.0.1:@@M10_GIT_HUB_PORT@@"
+      - "127.0.0.1:@@M10_GIT_PORT@@"
+  # The upstream client posts to the configured URL exactly: the mocks' path is /mcp.
+  servers:
+    git_hub:
+      url: "@@MCP_GIT_HUB_URL@@/mcp"
+      transport: "http"
+    git:
+      url: "@@MCP_GIT_URL@@/mcp"
+      transport: "http"

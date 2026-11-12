@@ -1,8 +1,8 @@
 """Managed AI activation client for self-hosted EE instances.
 
-Handles the activation exchange: sends instance_id + optional license
-proof to the FutureAGI activation service, receives a short-lived
-service token for managed AI calls (Turing, Falcon, Protect).
+Handles the activation exchange only when a license key is configured:
+sends instance_id + license proof to the FutureAGI activation service and
+receives a short-lived service token for managed AI (Turing, Falcon, Protect).
 
 Token lifecycle:
 - On first managed-service request: activate and cache token
@@ -60,6 +60,8 @@ def get_activation_url() -> str:
 def get_service_token() -> ServiceToken | None:
     global _cached_token
 
+    # Check before the cache: removing a key must also stop gateway access.
+    require_configured_license_key()
     if _cached_token and not _cached_token.is_expired:
         return _cached_token
 
@@ -80,25 +82,29 @@ def invalidate_token() -> None:
 
 
 def _activate() -> ServiceToken | None:
+    # Outside the broad transport exception handler so this typed denial is
+    # not converted to ACTIVATION_FAILED, and before any DB/instance lookup.
+    require_configured_license_key()
     try:
         from tfc.deployment_telemetry.config import get_version
         from tfc.deployment_telemetry.state import get_or_create_telemetry_state
 
         state = get_or_create_telemetry_state()
+        version = get_version()
 
+        # The instance lookup can wait on a row lock; check again right before
+        # the POST so a key removed meanwhile sends nothing.
+        license_key = require_configured_license_key()
         payload = {
             "instance_id": str(state.instance_id),
-            "version": get_version(),
+            "version": version,
+            "license_key_hash": hash_key(license_key),
         }
 
-        license_key = _get_configured_license_key()
-        if license_key:
-            payload["license_key_hash"] = hash_key(license_key)
-
-        import httpx
-
         url = get_activation_url()
-        response = httpx.post(url, json=payload, timeout=10.0)
+        from tracer.services.background_transport import httpx_post
+
+        response = httpx_post(url, json=payload, timeout=10.0)
 
         if response.status_code != 200:
             logger.warning(
@@ -122,6 +128,9 @@ def _activate() -> ServiceToken | None:
             allowed_models=data.get("allowed_models", []),
             scope=data.get("scope", "oss"),
         )
+    except ManagedServiceError:
+        # The pre-send key check: keep NO_ENTERPRISE_LICENSE typed.
+        raise
     except Exception:
         logger.debug("activation_error", exc_info=True)
         return None
@@ -167,8 +176,10 @@ def dispatch_managed_request(
     """
     import httpx
 
+    from tracer.services.background_transport import httpx_post
+
     try:
-        response = httpx.post(
+        response = httpx_post(
             url,
             json=json_body,
             timeout=timeout,
@@ -177,12 +188,14 @@ def dispatch_managed_request(
                 "Content-Type": "application/json",
             },
         )
-    except httpx.TimeoutException:
-        raise ManagedServiceError("GATEWAY_TIMEOUT", "Managed AI gateway timed out")
-    except httpx.ConnectError:
+    except httpx.TimeoutException as exc:
+        raise ManagedServiceError(
+            "GATEWAY_TIMEOUT", "Managed AI gateway timed out"
+        ) from exc
+    except httpx.ConnectError as exc:
         raise ManagedServiceError(
             "GATEWAY_UNREACHABLE", "Cannot reach managed AI gateway"
-        )
+        ) from exc
 
     _raise_for_managed_status(response.status_code, on_unauthorized)
     return response.json()
@@ -204,7 +217,11 @@ async def dispatch_managed_stream(
         "x-agentcc-include-metadata": "true",
     }
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        from tracer.services.background_transport import async_client_options
+
+        async with httpx.AsyncClient(
+            timeout=timeout, **async_client_options()
+        ) as client:
             async with client.stream(
                 "POST",
                 url,
@@ -259,6 +276,9 @@ def call_managed_service(
             "TOKEN_EXPIRED", "Service token rejected — will refresh on next call"
         )
 
+    # Activation can take seconds; re-check right before the send so a key
+    # removed meanwhile stops the prompt, not just the next call.
+    require_configured_license_key()
     return dispatch_managed_request(
         url=token.gateway_url.rstrip("/") + path,
         api_key=token.access_token,
@@ -289,6 +309,7 @@ async def stream_managed_service(
             "TOKEN_EXPIRED", "Service token rejected — will refresh on next call"
         )
 
+    require_configured_license_key()  # As in call_managed_service.
     async for chunk in dispatch_managed_stream(
         url=token.gateway_url.rstrip("/") + path,
         api_key=token.access_token,
@@ -304,6 +325,29 @@ class ManagedServiceError(Exception):
         self.code = code
         self.detail = detail
         super().__init__(f"{code}: {detail}")
+
+
+def require_configured_license_key() -> str:
+    """Return the configured license key or raise NO_ENTERPRISE_LICENSE.
+
+    Self-hosted activation and managed-gateway paths call this before every
+    request, including after activation, for callers holding a previously
+    acquired token or gateway client, and (via an httpx request hook) before
+    each redirect hop of a self-hosted gateway client. Activation checks
+    again after its instance lookup, right before its POST. (The heartbeat
+    sender has its own keyless skip, also repeated right before its POST.)
+    """
+    license_key = _get_configured_license_key()
+    if not license_key or not license_key.strip():
+        # Debug, not info: a keyless install with managed features configured
+        # reaches this on every call.
+        logger.debug("managed_ai_skipped_no_license_key")
+        raise ManagedServiceError(
+            "NO_ENTERPRISE_LICENSE", "Managed AI requires an Enterprise license"
+        )
+    # Do not normalize a configured key: licensed activation hashes its exact
+    # bytes, and the heartbeat uses the same hash for authentication.
+    return license_key
 
 
 def _get_configured_license_key() -> str:

@@ -1,0 +1,1776 @@
+{
+  "schema": "connector-gateway-servers/v1",
+  "bundle": {
+    "version": "2026.11.11.0",
+    "sha256": "5ff81205ab0459a4c2af32839904ba27ee9967d57e5ebcb0a2307177c3158efb"
+  },
+  "servers": [
+    {
+      "catalogRef": "airtable/mcp@1.1.0",
+      "app": "airtable",
+      "provider": "mcp",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.airtable.com/mcp",
+        "transport": "http",
+        "catalog_ref": "airtable/mcp@1.1.0"
+      }
+    },
+    {
+      "catalogRef": "airtable/pat@1.0.0",
+      "app": "airtable",
+      "provider": "pat",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.airtable.com/mcp",
+        "transport": "http",
+        "catalog_ref": "airtable/pat@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "amplitude/mcp@1.0.0",
+      "app": "amplitude",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.amplitude.com/mcp",
+        "transport": "http",
+        "catalog_ref": "amplitude/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "apollo/api-key@1.0.0",
+      "app": "apollo",
+      "provider": "api-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "X-Api-Key",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.apollo.io/mcp",
+        "transport": "http",
+        "catalog_ref": "apollo/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "asana/mcp@1.0.1",
+      "app": "asana",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.asana.com/v2/mcp",
+        "transport": "http",
+        "catalog_ref": "asana/mcp@1.0.1"
+      }
+    },
+    {
+      "catalogRef": "atlassian/rovo-mcp@1.0.0",
+      "app": "atlassian",
+      "provider": "rovo-mcp",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.atlassian.com/v2/mcp?tools=all",
+        "transport": "http",
+        "catalog_ref": "atlassian/rovo-mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "atlassian/service-account-key@1.0.0",
+      "app": "atlassian",
+      "provider": "service-account-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.atlassian.com/v2/mcp?tools=all",
+        "transport": "http",
+        "catalog_ref": "atlassian/service-account-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "attio/mcp@1.0.0",
+      "app": "attio",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.attio.com/mcp",
+        "transport": "http",
+        "catalog_ref": "attio/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "browserbase/api-key@1.0.0",
+      "app": "browserbase",
+      "provider": "api-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "query",
+          "name": "browserbaseApiKey",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.browserbase.com/mcp",
+        "transport": "http",
+        "catalog_ref": "browserbase/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "calendly/mcp@1.0.0",
+      "app": "calendly",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "mcp_oauth",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.calendly.com",
+        "transport": "http",
+        "catalog_ref": "calendly/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "clickhouse/mcp@1.0.0",
+      "app": "clickhouse",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.clickhouse.cloud/mcp",
+        "transport": "http",
+        "catalog_ref": "clickhouse/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "clickup/mcp@1.0.0",
+      "app": "clickup",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.clickup.com/mcp",
+        "transport": "http",
+        "catalog_ref": "clickup/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "close/api-key@1.0.0",
+      "app": "close",
+      "provider": "api-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Close-API-Key",
+          "secret": true,
+          "from": "customer"
+        },
+        {
+          "in": "header",
+          "name": "Close-Scope",
+          "secret": false,
+          "from": "catalog"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.close.com/mcp",
+        "transport": "http",
+        "catalog_ref": "close/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "close/mcp@1.0.1",
+      "app": "close",
+      "provider": "mcp",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.close.com/mcp",
+        "transport": "http",
+        "catalog_ref": "close/mcp@1.0.1"
+      }
+    },
+    {
+      "catalogRef": "cloudflare/api-token@1.0.0",
+      "app": "cloudflare",
+      "provider": "api-token",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.cloudflare.com/mcp",
+        "transport": "http",
+        "catalog_ref": "cloudflare/api-token@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "databricks/genie-one-pat@1.0.0",
+      "app": "databricks",
+      "provider": "genie-one-pat",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "urlVariables": {
+        "workspaceHost": {
+          "description": "Your Databricks workspace's host name: <deployment>.cloud.databricks.com (AWS), <workspace-id>.<n>.gcp.databricks.com (GCP) or adb-<workspace-id>.<n>.azuredatabricks.net (Azure).",
+          "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.cloud\\.databricks\\.com|[0-9]{1,20}\\.[0-9]{1,4}\\.gcp\\.databricks\\.com|adb-[0-9]{1,20}\\.[0-9]{1,4}\\.azuredatabricks\\.net)$",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://{workspaceHost}/ai-gateway/mcp-services/system.ai.genie_one_mcp",
+        "transport": "http",
+        "catalog_ref": "databricks/genie-one-pat@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "datadog/access-token@1.0.0",
+      "app": "datadog",
+      "provider": "access-token",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "urlVariables": {
+        "site": {
+          "description": "Your Datadog site: datadoghq.com (US1), us3.datadoghq.com, us5.datadoghq.com, datadoghq.eu, ap1.datadoghq.com or ap2.datadoghq.com.",
+          "pattern": "^(datadoghq\\.com|us3\\.datadoghq\\.com|us5\\.datadoghq\\.com|datadoghq\\.eu|ap1\\.datadoghq\\.com|ap2\\.datadoghq\\.com)$",
+          "default": "datadoghq.com",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://mcp.{site}/v1/mcp",
+        "transport": "http",
+        "catalog_ref": "datadog/access-token@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "datadog/api-and-app-key@1.0.0",
+      "app": "datadog",
+      "provider": "api-and-app-key",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "DD_API_KEY",
+          "secret": true,
+          "from": "customer"
+        },
+        {
+          "in": "header",
+          "name": "DD_APPLICATION_KEY",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "urlVariables": {
+        "site": {
+          "description": "Your Datadog site: datadoghq.com (US1), us3.datadoghq.com, us5.datadoghq.com, datadoghq.eu, ap1.datadoghq.com, ap2.datadoghq.com or uk1.datadoghq.com.",
+          "pattern": "^(datadoghq\\.com|us3\\.datadoghq\\.com|us5\\.datadoghq\\.com|datadoghq\\.eu|ap1\\.datadoghq\\.com|ap2\\.datadoghq\\.com|uk1\\.datadoghq\\.com)$",
+          "default": "datadoghq.com",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://mcp.{site}/v1/mcp",
+        "transport": "http",
+        "catalog_ref": "datadog/api-and-app-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "datadog/mcp@1.0.0",
+      "app": "datadog",
+      "provider": "mcp",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "mcp_oauth",
+      "credentialModes": ["shared", "per_user"],
+      "urlVariables": {
+        "site": {
+          "description": "Your Datadog site: datadoghq.com (US1), us3.datadoghq.com, us5.datadoghq.com, datadoghq.eu, ap1.datadoghq.com, ap2.datadoghq.com or uk1.datadoghq.com.",
+          "pattern": "^(datadoghq\\.com|us3\\.datadoghq\\.com|us5\\.datadoghq\\.com|datadoghq\\.eu|ap1\\.datadoghq\\.com|ap2\\.datadoghq\\.com|uk1\\.datadoghq\\.com)$",
+          "default": "datadoghq.com",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://mcp.{site}/v1/mcp",
+        "transport": "http",
+        "catalog_ref": "datadog/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "docusign/mcp@1.0.0",
+      "app": "docusign",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.docusign.com/mcp",
+        "transport": "http",
+        "catalog_ref": "docusign/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "exa/api-key@1.0.0",
+      "app": "exa",
+      "provider": "api-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "x-api-key",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.exa.ai/mcp",
+        "transport": "http",
+        "catalog_ref": "exa/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "figma/mcp@1.0.0",
+      "app": "figma",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.figma.com/mcp",
+        "transport": "http",
+        "catalog_ref": "figma/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "firecrawl/api-key@1.0.0",
+      "app": "firecrawl",
+      "provider": "api-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.firecrawl.dev/v2/mcp",
+        "transport": "http",
+        "catalog_ref": "firecrawl/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "fireflies/api-key@1.0.0",
+      "app": "fireflies",
+      "provider": "api-key",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://api.fireflies.ai/mcp",
+        "transport": "http",
+        "catalog_ref": "fireflies/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "fireflies/mcp@1.0.0",
+      "app": "fireflies",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://api.fireflies.ai/mcp",
+        "transport": "http",
+        "catalog_ref": "fireflies/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "github/remote@1.0.1",
+      "app": "github",
+      "provider": "remote",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://api.githubcopilot.com/mcp/",
+        "transport": "http",
+        "catalog_ref": "github/remote@1.0.1"
+      }
+    },
+    {
+      "catalogRef": "github/remote-pat@1.0.0",
+      "app": "github",
+      "provider": "remote-pat",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://api.githubcopilot.com/mcp/",
+        "transport": "http",
+        "catalog_ref": "github/remote-pat@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "gitlab/mcp@1.0.0",
+      "app": "gitlab",
+      "provider": "mcp",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "mcp_oauth",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://gitlab.com/api/v4/mcp",
+        "transport": "http",
+        "catalog_ref": "gitlab/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "gitlab/pat@1.0.0",
+      "app": "gitlab",
+      "provider": "pat",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "PRIVATE-TOKEN",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://gitlab.com/api/v4/mcp",
+        "transport": "http",
+        "catalog_ref": "gitlab/pat@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "gmail/futureagi-rest@1.0.0",
+      "app": "gmail",
+      "provider": "futureagi-rest",
+      "default": true,
+      "kind": "rest",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://{connectorsHost}/gmail/mcp",
+        "transport": "http",
+        "catalog_ref": "gmail/futureagi-rest@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "gmail/google-mcp@1.0.0",
+      "app": "gmail",
+      "provider": "google-mcp",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://gmailmcp.googleapis.com/mcp/v1",
+        "transport": "http",
+        "catalog_ref": "gmail/google-mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "google-bigquery/mcp@1.0.2",
+      "app": "google-bigquery",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://bigquery.googleapis.com/mcp",
+        "transport": "http",
+        "catalog_ref": "google-bigquery/mcp@1.0.2"
+      }
+    },
+    {
+      "catalogRef": "google-calendar/futureagi-rest@1.0.0",
+      "app": "google-calendar",
+      "provider": "futureagi-rest",
+      "default": true,
+      "kind": "rest",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://{connectorsHost}/google-calendar/mcp",
+        "transport": "http",
+        "catalog_ref": "google-calendar/futureagi-rest@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "google-calendar/google-mcp@1.0.0",
+      "app": "google-calendar",
+      "provider": "google-mcp",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://calendarmcp.googleapis.com/mcp/v1",
+        "transport": "http",
+        "catalog_ref": "google-calendar/google-mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "google-docs/futureagi-rest@1.0.0",
+      "app": "google-docs",
+      "provider": "futureagi-rest",
+      "default": true,
+      "kind": "rest",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://{connectorsHost}/google-docs/mcp",
+        "transport": "http",
+        "catalog_ref": "google-docs/futureagi-rest@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "google-drive/futureagi-rest@1.0.0",
+      "app": "google-drive",
+      "provider": "futureagi-rest",
+      "default": true,
+      "kind": "rest",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://{connectorsHost}/google-drive/mcp",
+        "transport": "http",
+        "catalog_ref": "google-drive/futureagi-rest@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "google-maps/grounding-lite@1.0.0",
+      "app": "google-maps",
+      "provider": "grounding-lite",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "X-Goog-Api-Key",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mapstools.googleapis.com/mcp",
+        "transport": "http",
+        "catalog_ref": "google-maps/grounding-lite@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "google-meet/futureagi-rest@1.0.0",
+      "app": "google-meet",
+      "provider": "futureagi-rest",
+      "default": true,
+      "kind": "rest",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://{connectorsHost}/google-meet/mcp",
+        "transport": "http",
+        "catalog_ref": "google-meet/futureagi-rest@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "google-sheets/futureagi-rest@1.0.0",
+      "app": "google-sheets",
+      "provider": "futureagi-rest",
+      "default": true,
+      "kind": "rest",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://{connectorsHost}/google-sheets/mcp",
+        "transport": "http",
+        "catalog_ref": "google-sheets/futureagi-rest@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "google-slides/futureagi-rest@1.0.0",
+      "app": "google-slides",
+      "provider": "futureagi-rest",
+      "default": true,
+      "kind": "rest",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://{connectorsHost}/google-slides/mcp",
+        "transport": "http",
+        "catalog_ref": "google-slides/futureagi-rest@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "grafana/cloud-mcp@1.0.0",
+      "app": "grafana",
+      "provider": "cloud-mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "mcp_oauth",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.grafana.com/mcp",
+        "transport": "http",
+        "catalog_ref": "grafana/cloud-mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "hex/mcp@1.0.0",
+      "app": "hex",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "mcp_oauth",
+      "credentialModes": ["shared", "per_user"],
+      "urlVariables": {
+        "hexHost": {
+          "description": "Your Hex host: app.hex.tech, or your workspace's own host such as eu.hex.tech, hc.hex.tech or your-company.hex.tech.",
+          "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.hex\\.tech$",
+          "default": "app.hex.tech",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://{hexHost}/mcp",
+        "transport": "http",
+        "catalog_ref": "hex/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "hubspot/mcp@1.0.1",
+      "app": "hubspot",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.hubspot.com",
+        "transport": "http",
+        "catalog_ref": "hubspot/mcp@1.0.1"
+      }
+    },
+    {
+      "catalogRef": "incident-io/api-key@1.0.0",
+      "app": "incident-io",
+      "provider": "api-key",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.incident.io/mcp",
+        "transport": "http",
+        "catalog_ref": "incident-io/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "incident-io/mcp@1.0.0",
+      "app": "incident-io",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.incident.io/mcp",
+        "transport": "http",
+        "catalog_ref": "incident-io/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "intercom/api-key@1.0.0",
+      "app": "intercom",
+      "provider": "api-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "urlVariables": {
+        "mcpHost": {
+          "description": "Your workspace's hosted region: mcp.intercom.com (US, app.intercom.com) or mcp.eu.intercom.com (EU, app.eu.intercom.com).",
+          "pattern": "^mcp(\\.eu)?\\.intercom\\.com$",
+          "default": "mcp.intercom.com",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://{mcpHost}/mcp",
+        "transport": "http",
+        "catalog_ref": "intercom/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "intercom/mcp@1.0.0",
+      "app": "intercom",
+      "provider": "mcp",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.intercom.com/mcp",
+        "transport": "http",
+        "catalog_ref": "intercom/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "langsmith/api-key@1.0.0",
+      "app": "langsmith",
+      "provider": "api-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "X-Api-Key",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "urlVariables": {
+        "apiHost": {
+          "description": "Your LangSmith Cloud region's API host: api (GCP US), eu.api (GCP EU), apac.api (GCP APAC) or aws.api (AWS US), then .smith.langchain.com.",
+          "pattern": "^(api|eu\\.api|apac\\.api|aws\\.api)\\.smith\\.langchain\\.com$",
+          "default": "api.smith.langchain.com",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://{apiHost}/mcp",
+        "transport": "http",
+        "catalog_ref": "langsmith/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "linear/api-key@1.0.0",
+      "app": "linear",
+      "provider": "api-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.linear.app/mcp",
+        "transport": "http",
+        "catalog_ref": "linear/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "linear/mcp@1.0.0",
+      "app": "linear",
+      "provider": "mcp",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.linear.app/mcp",
+        "transport": "http",
+        "catalog_ref": "linear/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "linear/oauth-app@1.0.0",
+      "app": "linear",
+      "provider": "oauth-app",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.linear.app/mcp",
+        "transport": "http",
+        "catalog_ref": "linear/oauth-app@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "microsoft-excel/futureagi-rest@1.0.0",
+      "app": "microsoft-excel",
+      "provider": "futureagi-rest",
+      "default": true,
+      "kind": "rest",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://{connectorsHost}/microsoft-excel/mcp",
+        "transport": "http",
+        "catalog_ref": "microsoft-excel/futureagi-rest@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "microsoft-onedrive/futureagi-rest@1.0.0",
+      "app": "microsoft-onedrive",
+      "provider": "futureagi-rest",
+      "default": true,
+      "kind": "rest",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://{connectorsHost}/microsoft-onedrive/mcp",
+        "transport": "http",
+        "catalog_ref": "microsoft-onedrive/futureagi-rest@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "microsoft-outlook/futureagi-rest@1.0.0",
+      "app": "microsoft-outlook",
+      "provider": "futureagi-rest",
+      "default": true,
+      "kind": "rest",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://{connectorsHost}/microsoft-outlook/mcp",
+        "transport": "http",
+        "catalog_ref": "microsoft-outlook/futureagi-rest@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "microsoft-outlook/workiq@1.0.0",
+      "app": "microsoft-outlook",
+      "provider": "workiq",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://workiq.svc.cloud.microsoft/mcp",
+        "transport": "http",
+        "catalog_ref": "microsoft-outlook/workiq@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "microsoft-sharepoint/futureagi-rest@1.0.0",
+      "app": "microsoft-sharepoint",
+      "provider": "futureagi-rest",
+      "default": true,
+      "kind": "rest",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://{connectorsHost}/microsoft-sharepoint/mcp",
+        "transport": "http",
+        "catalog_ref": "microsoft-sharepoint/futureagi-rest@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "microsoft-teams/futureagi-rest@1.0.0",
+      "app": "microsoft-teams",
+      "provider": "futureagi-rest",
+      "default": true,
+      "kind": "rest",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://{connectorsHost}/microsoft-teams/mcp",
+        "transport": "http",
+        "catalog_ref": "microsoft-teams/futureagi-rest@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "microsoft-teams/workiq@1.0.0",
+      "app": "microsoft-teams",
+      "provider": "workiq",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://workiq.svc.cloud.microsoft/mcp",
+        "transport": "http",
+        "catalog_ref": "microsoft-teams/workiq@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "monday-com/api-token@1.0.0",
+      "app": "monday-com",
+      "provider": "api-token",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.monday.com/mcp",
+        "transport": "http",
+        "catalog_ref": "monday-com/api-token@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "monday-com/mcp@1.0.0",
+      "app": "monday-com",
+      "provider": "mcp",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "mcp_oauth",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.monday.com/mcp",
+        "transport": "http",
+        "catalog_ref": "monday-com/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "mongodb-atlas/mcp@1.0.0",
+      "app": "mongodb-atlas",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "mcp_oauth",
+      "credentialModes": ["per_user"],
+      "server": {
+        "url": "https://mcp.mongodb.com",
+        "transport": "http",
+        "catalog_ref": "mongodb-atlas/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "neon/api-key@1.0.0",
+      "app": "neon",
+      "provider": "api-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.neon.tech/mcp",
+        "transport": "http",
+        "catalog_ref": "neon/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "neon/mcp@1.0.0",
+      "app": "neon",
+      "provider": "mcp",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "mcp_oauth",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.neon.tech/mcp",
+        "transport": "http",
+        "catalog_ref": "neon/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "netlify/mcp@1.0.0",
+      "app": "netlify",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://netlify-mcp.netlify.app/mcp",
+        "transport": "http",
+        "catalog_ref": "netlify/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "new-relic/api-key@1.0.0",
+      "app": "new-relic",
+      "provider": "api-key",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "api-key",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "urlVariables": {
+        "mcpHost": {
+          "description": "Your New Relic account's region: mcp.newrelic.com (US), mcp.eu.newrelic.com (EU) or mcp.jp.newrelic.com (JP).",
+          "pattern": "^mcp(\\.eu|\\.jp)?\\.newrelic\\.com$",
+          "default": "mcp.newrelic.com",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://{mcpHost}/mcp/",
+        "transport": "http",
+        "catalog_ref": "new-relic/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "new-relic/mcp@1.0.0",
+      "app": "new-relic",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.newrelic.com/mcp/",
+        "transport": "http",
+        "catalog_ref": "new-relic/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "notion/mcp@1.0.0",
+      "app": "notion",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.notion.com/mcp",
+        "transport": "http",
+        "catalog_ref": "notion/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "notion/mcp-token@1.0.0",
+      "app": "notion",
+      "provider": "mcp-token",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.notion.com/mcp",
+        "transport": "http",
+        "catalog_ref": "notion/mcp-token@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "parallel-search/api-key@1.0.0",
+      "app": "parallel-search",
+      "provider": "api-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://search.parallel.ai/mcp-oauth",
+        "transport": "http",
+        "catalog_ref": "parallel-search/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "parallel-task/api-key@1.0.0",
+      "app": "parallel-task",
+      "provider": "api-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://task-mcp.parallel.ai/mcp",
+        "transport": "http",
+        "catalog_ref": "parallel-task/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "perplexity/api-key@1.0.0",
+      "app": "perplexity",
+      "provider": "api-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://api.perplexity.ai/mcp",
+        "transport": "http",
+        "catalog_ref": "perplexity/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "postman/api-key@1.0.0",
+      "app": "postman",
+      "provider": "api-key",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "urlVariables": {
+        "mcpHost": {
+          "description": "Your Postman region: mcp.postman.com (US) or mcp.eu.postman.com (EU).",
+          "pattern": "^mcp(\\.eu)?\\.postman\\.com$",
+          "default": "mcp.postman.com",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://{mcpHost}/minimal",
+        "transport": "http",
+        "catalog_ref": "postman/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "postman/mcp@1.0.0",
+      "app": "postman",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.postman.com/minimal",
+        "transport": "http",
+        "catalog_ref": "postman/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "prisma/mcp@1.0.0",
+      "app": "prisma",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.prisma.io/mcp",
+        "transport": "http",
+        "catalog_ref": "prisma/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "pylon/mcp@1.0.0",
+      "app": "pylon",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "mcp_oauth",
+      "credentialModes": ["shared", "per_user"],
+      "urlVariables": {
+        "mcpHost": {
+          "description": "Your Pylon workspace's region: mcp.usepylon.com (US) or mcp.eu.usepylon.com (EU), as shown under Settings > AI Controls > MCP Server.",
+          "pattern": "^mcp(\\.eu)?\\.usepylon\\.com$",
+          "default": "mcp.usepylon.com",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://{mcpHost}",
+        "transport": "http",
+        "catalog_ref": "pylon/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "salesforce/hosted-mcp@1.0.0",
+      "app": "salesforce",
+      "provider": "hosted-mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "urlVariables": {
+        "server": {
+          "description": "The SObject server your admin enabled: sobject-reads (read only), sobject-mutations (create and update), sobject-deletes or sobject-all.",
+          "pattern": "^sobject-(reads|mutations|deletes|all)$",
+          "default": "sobject-reads",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://api.salesforce.com/platform/mcp/v1/platform/{server}",
+        "transport": "http",
+        "catalog_ref": "salesforce/hosted-mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "salesforce/hosted-mcp-sandbox@1.0.0",
+      "app": "salesforce",
+      "provider": "hosted-mcp-sandbox",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "urlVariables": {
+        "server": {
+          "description": "The SObject server your admin enabled: sobject-reads (read only), sobject-mutations (create and update), sobject-deletes or sobject-all.",
+          "pattern": "^sobject-(reads|mutations|deletes|all)$",
+          "default": "sobject-reads",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://api.salesforce.com/platform/mcp/v1/sandbox/platform/{server}",
+        "transport": "http",
+        "catalog_ref": "salesforce/hosted-mcp-sandbox@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "semgrep/api-key@1.0.0",
+      "app": "semgrep",
+      "provider": "api-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://semgrep.dev/api/mcp",
+        "transport": "http",
+        "catalog_ref": "semgrep/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "sentry/mcp@1.0.0",
+      "app": "sentry",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.sentry.dev/mcp",
+        "transport": "http",
+        "catalog_ref": "sentry/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "slack/mcp@1.0.1",
+      "app": "slack",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.slack.com/mcp",
+        "transport": "http",
+        "catalog_ref": "slack/mcp@1.0.1"
+      }
+    },
+    {
+      "catalogRef": "snowflake/oauth@1.0.0",
+      "app": "snowflake",
+      "provider": "oauth",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "urlVariables": {
+        "accountUrl": {
+          "description": "Your account URL's host in lowercase, orgname-account_name with hyphens for underscores, such as myorg-myaccount.snowflakecomputing.com.",
+          "pattern": "^[a-z][a-z0-9]*-[a-z][a-z0-9-]*\\.snowflakecomputing\\.com$",
+          "scope": "org"
+        },
+        "database": {
+          "description": "The database that holds the MCP SERVER object.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,252}$",
+          "scope": "org"
+        },
+        "schema": {
+          "description": "The schema that holds the MCP SERVER object.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,252}$",
+          "scope": "org"
+        },
+        "serverName": {
+          "description": "The MCP SERVER object's name.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,252}$",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://{accountUrl}/api/v2/databases/{database}/schemas/{schema}/mcp-servers/{serverName}",
+        "transport": "http",
+        "catalog_ref": "snowflake/oauth@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "snowflake/pat@1.0.0",
+      "app": "snowflake",
+      "provider": "pat",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "urlVariables": {
+        "accountUrl": {
+          "description": "Your account URL's host in lowercase, orgname-account_name with hyphens for underscores, such as myorg-myaccount.snowflakecomputing.com.",
+          "pattern": "^[a-z][a-z0-9]*-[a-z][a-z0-9-]*\\.snowflakecomputing\\.com$",
+          "scope": "org"
+        },
+        "database": {
+          "description": "The database that holds the MCP SERVER object.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,252}$",
+          "scope": "org"
+        },
+        "schema": {
+          "description": "The schema that holds the MCP SERVER object.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,252}$",
+          "scope": "org"
+        },
+        "serverName": {
+          "description": "The MCP SERVER object's name.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,252}$",
+          "scope": "org"
+        }
+      },
+      "server": {
+        "url": "https://{accountUrl}/api/v2/databases/{database}/schemas/{schema}/mcp-servers/{serverName}",
+        "transport": "http",
+        "catalog_ref": "snowflake/pat@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "square/mcp@1.0.0",
+      "app": "square",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.squareup.com/mcp",
+        "transport": "http",
+        "catalog_ref": "square/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "stripe/agent-key@1.0.0",
+      "app": "stripe",
+      "provider": "agent-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.stripe.com",
+        "transport": "http",
+        "catalog_ref": "stripe/agent-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "stripe/oauth@1.0.0",
+      "app": "stripe",
+      "provider": "oauth",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.stripe.com",
+        "transport": "http",
+        "catalog_ref": "stripe/oauth@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "supabase/mcp@1.0.1",
+      "app": "supabase",
+      "provider": "mcp",
+      "default": false,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.supabase.com/mcp",
+        "transport": "http",
+        "catalog_ref": "supabase/mcp@1.0.1"
+      }
+    },
+    {
+      "catalogRef": "supabase/pat@1.0.0",
+      "app": "supabase",
+      "provider": "pat",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.supabase.com/mcp",
+        "transport": "http",
+        "catalog_ref": "supabase/pat@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "tavily/api-key@1.0.0",
+      "app": "tavily",
+      "provider": "api-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "query",
+          "name": "tavilyApiKey",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.tavily.com/mcp/",
+        "transport": "http",
+        "catalog_ref": "tavily/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "thoughtspot/mcp@1.0.1",
+      "app": "thoughtspot",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "mcp_oauth",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://agent.thoughtspot.app/mcp?api-version=2026-05-01",
+        "transport": "http",
+        "catalog_ref": "thoughtspot/mcp@1.0.1"
+      }
+    },
+    {
+      "catalogRef": "trello/mcp@1.0.0",
+      "app": "trello",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.trello.com/v1",
+        "transport": "http",
+        "catalog_ref": "trello/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "vanta/mcp@1.0.0",
+      "app": "vanta",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.vanta.com/mcp",
+        "transport": "http",
+        "catalog_ref": "vanta/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "vercel/mcp@1.0.0",
+      "app": "vercel",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.vercel.com",
+        "transport": "http",
+        "catalog_ref": "vercel/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "wix/mcp@1.0.0",
+      "app": "wix",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "mcp_oauth",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.wix.com/mcp",
+        "transport": "http",
+        "catalog_ref": "wix/mcp@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "x-twitter/app-bearer@1.0.0",
+      "app": "x-twitter",
+      "provider": "app-bearer",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://api.x.com/mcp",
+        "transport": "http",
+        "catalog_ref": "x-twitter/app-bearer@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "zapier/api-key@1.0.0",
+      "app": "zapier",
+      "provider": "api-key",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "api_key",
+      "credentialModes": ["shared"],
+      "credentialParts": [
+        {
+          "in": "header",
+          "name": "Authorization",
+          "secret": true,
+          "from": "customer"
+        }
+      ],
+      "server": {
+        "url": "https://mcp.zapier.com/api/v1/connect",
+        "transport": "http",
+        "catalog_ref": "zapier/api-key@1.0.0"
+      }
+    },
+    {
+      "catalogRef": "zoom/mcp@1.0.0",
+      "app": "zoom",
+      "provider": "mcp",
+      "default": true,
+      "kind": "vendor_mcp",
+      "auth": "oauth2",
+      "credentialModes": ["shared", "per_user"],
+      "server": {
+        "url": "https://mcp.zoom.us/mcp/zoom/streamable",
+        "transport": "http",
+        "catalog_ref": "zoom/mcp@1.0.0"
+      }
+    }
+  ]
+}

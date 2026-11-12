@@ -9,7 +9,8 @@
  * - Live cost calculator
  */
 
-import React, { useState, useCallback, useEffect } from "react";
+import PageHeader from "src/components/page-header";
+import React, { useState, useCallback, useEffect, useId } from "react";
 import PropTypes from "prop-types";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -17,11 +18,11 @@ import {
   PLANS_QUERY_KEY,
 } from "src/hooks/use-plans-and-addons";
 import {
-  Alert,
   Box,
   Typography,
   Stack,
   Paper,
+  Alert,
   Button,
   Chip,
   Divider,
@@ -42,18 +43,23 @@ import {
   ListItemText,
   Tooltip,
 } from "@mui/material";
+import Section from "src/components/section";
+import { NOT_IN_RELEASE } from "src/components/NotInRelease/notInRelease";
 import Iconify from "src/components/iconify";
+import LoadFailedState from "src/components/load-failed-state";
 import CustomDialog from "src/sections/develop-detail/Common/CustomDialog/CustomDialog";
 import ConfirmDowngrade from "src/pages/dashboard/settings/ConfirmDowngrade";
 
 import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
-import { fCurrency } from "src/utils/format-number";
+import { formatExactMoney } from "src/sections/common/format/money";
 import { canonicalEntries } from "src/utils/utils";
+import { isNotBuiltPlanFeature } from "src/utils/planFormatters";
 import {
   FEATURE_LABELS,
   ADDON_ICONS,
-  ADDON_DESCRIPTIONS,
+  ADDON_BASE_PLAN,
+  getAddonBullets,
   getFeatureGroups,
   SKIP_FEATURE_PREFIXES,
 } from "./constants";
@@ -66,23 +72,52 @@ function formatCompact(n) {
   return n.toLocaleString();
 }
 
+// Plans quotes every price with cents ($250.00, $1.50 per GB), as the credits
+// card does; the exact digits are kept (a sub-cent rate stays as sent). The
+// shared fCurrency keeps its own minimum for its other screens.
+function fPlanPrice(value) {
+  return formatExactMoney(value, {
+    grouping: true,
+    minimumFractionDigits: 2,
+    missing: value == null ? "" : "—",
+  });
+}
+
+const PAGE_TITLE = "Plans & pricing";
+const PAGE_DESCRIPTION =
+  "Start free or pay as you go. Add Boost, Scale, or Enterprise for advanced features and higher limits.";
+
+// The plans this page has a card for. A stored plan outside them (an unknown
+// or older code, or Custom without custom pricing) is named as it is, and is
+// changed through support rather than from this page.
+const LISTED_PLANS = ["free", "payg", "boost", "scale", "enterprise"];
+// Names of stored plans this page has no card for, as the backend names them.
+const UNLISTED_PLAN_NAMES = { custom: "Custom" };
+const PLAN_NOT_LISTED =
+  "This plan isn't listed here. Contact support to change it.";
+
 // Constants imported from ./constants.js
 
 // ── Tier Card (Free / PAYG) ────────────────────────────────────────────────
 
-function TierCard({ tier, isCurrent, onUpgrade }) {
+function TierCard({
+  tier,
+  isCurrent,
+  onUpgrade,
+  requiresAddonRemoval,
+  pendingCancel,
+  notListedId,
+}) {
   const isFree = tier.key === "free";
 
   return (
-    <Paper
-      variant="outlined"
+    <Section
+      variant="panel"
       sx={{
         p: 3,
         flex: 1,
-        borderRadius: 2,
-        borderColor: isCurrent ? "primary.main" : "divider",
-        borderWidth: isCurrent ? 2 : 1,
         position: "relative",
+        borderColor: isCurrent ? "text.primary" : "divider",
       }}
     >
       {isCurrent && (
@@ -94,7 +129,7 @@ function TierCard({ tier, isCurrent, onUpgrade }) {
         />
       )}
 
-      <Typography variant="h6" fontWeight={700} mb={0.5}>
+      <Typography variant="h6" fontWeight={600} mb={0.5}>
         {tier.display_name}
       </Typography>
 
@@ -104,13 +139,23 @@ function TierCard({ tier, isCurrent, onUpgrade }) {
           : "Everything in Free, with no usage caps. Pay only for what you use beyond the free allowance."}
       </Typography>
 
+      {/* For a stored plan the page has no card for, moving to this tier
+          would replace that plan, so the button is off and says why. */}
       {!isCurrent && (
         <Button
           variant={isFree ? "outlined" : "contained"}
           fullWidth
           onClick={() => onUpgrade(tier.key)}
+          disabled={pendingCancel || Boolean(notListedId)}
+          aria-describedby={notListedId}
         >
-          {isFree ? "Switch to Free" : "Upgrade to PAYG"}
+          {isFree
+            ? requiresAddonRemoval
+              ? pendingCancel
+                ? "Add-on removal pending"
+                : "Remove add-on first"
+              : "Switch to Free"
+            : "Upgrade to PAYG"}
         </Button>
       )}
       {isCurrent && (
@@ -118,7 +163,7 @@ function TierCard({ tier, isCurrent, onUpgrade }) {
           Current plan
         </Button>
       )}
-    </Paper>
+    </Section>
   );
 }
 
@@ -129,6 +174,9 @@ TierCard.propTypes = {
   }).isRequired,
   isCurrent: PropTypes.bool,
   onUpgrade: PropTypes.func.isRequired,
+  requiresAddonRemoval: PropTypes.bool,
+  pendingCancel: PropTypes.bool,
+  notListedId: PropTypes.string,
 };
 
 // ── Add-on Card (Boost / Scale / Enterprise) ───────────────────────────────
@@ -137,39 +185,47 @@ const ADDON_ELIGIBLE_PLANS = ["payg", "boost", "scale", "enterprise"];
 
 function AddonCard({
   addon,
+  baseFeatures,
   isCurrent,
   isIncluded,
-  isAnnual,
   currentPlan,
   pendingCancel,
   cancelAt,
   onAdd,
   onRemove,
   onReinstate,
+  notListedId,
 }) {
-  const iconName = ADDON_ICONS[addon.key] || "mdi:star";
+  const iconName = ADDON_ICONS[addon.key] || "solar:star-bold";
   const monthlyFee = addon.platform_fee_monthly;
-  const annualFee = monthlyFee * 12 * 0.8; // 20% discount for annual
-  const displayFee = isAnnual ? annualFee / 12 : monthlyFee;
+  const bullets = getAddonBullets(addon.key, addon.features, baseFeatures);
   const canPurchase = ADDON_ELIGIBLE_PLANS.includes(currentPlan);
-  const disabledReason =
-    currentPlan === "custom"
-      ? "Custom plans manage add-ons separately — contact support."
-      : "Upgrade to Pay-as-you-go to enable add-ons.";
+  // Buying an add-on would replace a stored plan the page has no card for
+  // (Custom without custom pricing included), so the button says why it is
+  // off with the page's line.
+  const disabledReason = notListedId
+    ? PLAN_NOT_LISTED
+    : "Upgrade to Pay-as-you-go to enable add-ons.";
 
   return (
-    <Paper
-      variant="outlined"
+    <Section
+      variant="panel"
       sx={{
         p: 2.5,
         flex: 1,
         minHeight: 280,
-        borderRadius: 2,
-        borderColor: isCurrent ? "primary.main" : "divider",
-        borderWidth: isCurrent ? 2 : 1,
         position: "relative",
         display: "flex",
         flexDirection: "column",
+        borderColor: isCurrent ? "text.primary" : "divider",
+        // Section wraps the children in a body box (its last child). Make it
+        // a full-height column so the list grows and the button row's
+        // mt: "auto" puts every Add button on the card's bottom edge.
+        "& > :last-child": {
+          flexGrow: 1,
+          display: "flex",
+          flexDirection: "column",
+        },
       }}
     >
       {isCurrent && (
@@ -197,24 +253,24 @@ function AddonCard({
             bgcolor: "action.hover",
           }}
         >
-          <Iconify icon={iconName} width={22} sx={{ color: "primary.main" }} />
+          <Iconify icon={iconName} width={20} sx={{ color: "primary.main" }} />
         </Box>
         <Box>
-          <Typography variant="subtitle1" fontWeight={700}>
+          <Typography variant="subtitle1" fontWeight={600}>
             {addon.display_name}
           </Typography>
           <Stack direction="row" alignItems="baseline" spacing={0.5}>
-            <Typography variant="h5" fontWeight={800}>
-              {fCurrency(displayFee)}
+            <Typography variant="h5" fontWeight={600}>
+              {fPlanPrice(monthlyFee)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              /mo {isAnnual && "(billed annually)"}
+              /mo
             </Typography>
           </Stack>
         </Box>
       </Stack>
 
-      {ADDON_DESCRIPTIONS[addon.key] && (
+      {bullets.length > 0 && (
         <Box
           component="ul"
           sx={{
@@ -227,7 +283,7 @@ function AddonCard({
             "& li::marker": { fontSize: "1.2em" },
           }}
         >
-          {ADDON_DESCRIPTIONS[addon.key].map((item) => (
+          {bullets.map((item) => (
             <Typography
               key={item}
               component="li"
@@ -279,11 +335,12 @@ function AddonCard({
           <Tooltip title={disabledReason}>
             <span>
               <Button
-                variant="contained"
+                variant="outlined"
                 color="primary"
                 size="small"
                 fullWidth
                 disabled
+                aria-describedby={notListedId}
               >
                 Add {addon.display_name}
               </Button>
@@ -291,7 +348,7 @@ function AddonCard({
           </Tooltip>
         ) : (
           <Button
-            variant="contained"
+            variant="outlined"
             color="primary"
             size="small"
             fullWidth
@@ -301,7 +358,7 @@ function AddonCard({
           </Button>
         )}
       </Box>
-    </Paper>
+    </Section>
   );
 }
 
@@ -310,16 +367,18 @@ AddonCard.propTypes = {
     key: PropTypes.string,
     display_name: PropTypes.string,
     platform_fee_monthly: PropTypes.number,
+    features: PropTypes.object,
   }).isRequired,
+  baseFeatures: PropTypes.object,
   isCurrent: PropTypes.bool,
   isIncluded: PropTypes.bool,
-  isAnnual: PropTypes.bool,
   currentPlan: PropTypes.string,
   pendingCancel: PropTypes.bool,
   cancelAt: PropTypes.string,
   onAdd: PropTypes.func.isRequired,
   onRemove: PropTypes.func.isRequired,
   onReinstate: PropTypes.func.isRequired,
+  notListedId: PropTypes.string,
 };
 
 // ── Boolean Feature List (shared by add/remove dialogs) ───────────────────
@@ -332,6 +391,7 @@ function BooleanFeatureList({ features, isRemove }) {
   const displayFeatures = canonicalEntries(features)
     .filter(([key, v]) => {
       if (SKIP_FEATURE_PREFIXES.some((p) => key.startsWith(p))) return false;
+      if (isNotBuiltPlanFeature(key)) return false;
       if (typeof v === "boolean") return v === true;
       if (typeof v === "number") return v > 0 && FEATURE_LABELS[key];
       return false;
@@ -364,8 +424,8 @@ function BooleanFeatureList({ features, isRemove }) {
         <ListItem key={key} disableGutters sx={{ py: 0.25 }}>
           <ListItemIcon sx={{ minWidth: 28 }}>
             <Iconify
-              icon={isRemove ? "mdi:close" : "mdi:check"}
-              width={18}
+              icon={isRemove ? "solar:close-linear" : "solar:check-linear"}
+              width={16}
               sx={{ color: isRemove ? "error.main" : "success.main" }}
             />
           </ListItemIcon>
@@ -428,18 +488,10 @@ function FeatureMatrix({ plansData }) {
     >
       <Table size="small">
         <TableHead>
-          <TableRow sx={{ bgcolor: "background.neutral" }}>
-            <TableCell
-              sx={{ fontWeight: 700, minWidth: 200, py: 2, fontSize: "1rem" }}
-            >
-              Feature
-            </TableCell>
+          <TableRow>
+            <TableCell sx={{ minWidth: 200 }}>Feature</TableCell>
             {plans.map((p) => (
-              <TableCell
-                key={p}
-                align="center"
-                sx={{ fontWeight: 700, minWidth: 100, py: 2, fontSize: "1rem" }}
-              >
+              <TableCell key={p} align="center" sx={{ minWidth: 100 }}>
                 {planLabels[p]}
               </TableCell>
             ))}
@@ -453,9 +505,9 @@ function FeatureMatrix({ plansData }) {
                   colSpan={6}
                   sx={{
                     bgcolor: "action.hover",
-                    fontWeight: 700,
+                    fontWeight: 600,
                     fontSize: "0.75rem",
-                    textTransform: "uppercase",
+                    textTransform: "none",
                     letterSpacing: 0.5,
                     py: 1,
                   }}
@@ -476,7 +528,7 @@ function FeatureMatrix({ plansData }) {
                       return (
                         <TableCell key={p} align="center">
                           <Iconify
-                            icon="mdi:check"
+                            icon="solar:check-linear"
                             width={20}
                             sx={{ color: "success.main" }}
                           />
@@ -489,13 +541,13 @@ function FeatureMatrix({ plansData }) {
                         <TableCell key={p} align="center">
                           {val ? (
                             <Iconify
-                              icon="mdi:check"
+                              icon="solar:check-linear"
                               width={20}
                               sx={{ color: "success.main" }}
                             />
                           ) : (
                             <Iconify
-                              icon="mdi:close"
+                              icon="solar:close-linear"
                               width={16}
                               sx={{ color: "error.main", opacity: 0.7 }}
                             />
@@ -547,7 +599,6 @@ FeatureMatrix.propTypes = {
 // ── Main Page ──────────────────────────────────────────────────────────────
 
 export default function PricingPage() {
-  const [isAnnual, setIsAnnual] = useState(false);
   const [addonDialog, setAddonDialog] = useState({
     open: false,
     plan: null,
@@ -555,6 +606,7 @@ export default function PricingPage() {
   });
   const [downgradeOpen, setDowngradeOpen] = useState(false);
   const queryClient = useQueryClient();
+  const notListedId = useId();
 
   // Handle Stripe Checkout redirect (upgrade=success&session_id=...)
   useEffect(() => {
@@ -585,10 +637,16 @@ export default function PricingPage() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data, isLoading } = usePlansAndAddons();
+  // The page shows a failed read itself (Plans couldn't be loaded), so the
+  // app adds no toast on top of it.
+  const { data, isLoading, isError, refetch, isRefetching } = usePlansAndAddons(
+    true,
+    { errorHandled: true },
+  );
 
-  const closeDialog = () =>
-    setAddonDialog({ open: false, plan: null, action: null });
+  // Close only: the plan and action stay until the next open, so the dialog
+  // keeps its own title and button while it fades out (never "Remove ?").
+  const closeDialog = () => setAddonDialog((d) => ({ ...d, open: false }));
 
   const upgradeMutation = useMutation({
     mutationFn: async () => {
@@ -668,14 +726,16 @@ export default function PricingPage() {
     if (plan === "payg") {
       upgradeMutation.mutate();
     } else if (plan === "free") {
-      setDowngradeOpen(true);
+      if (currentPlan === "payg") {
+        setDowngradeOpen(true);
+      } else if (hasAddon && !data?.pending_cancel) {
+        setAddonDialog({ open: true, plan: currentPlan, action: "remove" });
+      }
     }
   };
 
   const handleDowngradeConfirm = () => {
-    if (currentPlan !== "free" && currentPlan !== "payg") {
-      removeMutation.mutate(currentPlan);
-    } else if (currentPlan === "payg") {
+    if (currentPlan === "payg") {
       downgradeMutation.mutate();
     }
     setDowngradeOpen(false);
@@ -702,11 +762,23 @@ export default function PricingPage() {
     }
   }, [addonDialog.plan, addonDialog.action]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Every view opens with the same title, so it doesn't pop in when the plans
+  // arrive.
+  const header = (
+    <PageHeader
+      title={PAGE_TITLE}
+      description={PAGE_DESCRIPTION}
+      sx={{ mb: 3 }}
+    />
+  );
+
+  // The loading and failed views sit on the loaded page's edges (no padding of
+  // their own), so nothing moves when the plans arrive.
   if (isLoading) {
     return (
-      <Box p={3}>
-        <Skeleton variant="text" width={300} height={40} />
-        <Stack direction="row" spacing={2} mt={3}>
+      <Box>
+        {header}
+        <Stack direction="row" spacing={2}>
           <Skeleton variant="rounded" height={250} sx={{ flex: 1 }} />
           <Skeleton variant="rounded" height={250} sx={{ flex: 1 }} />
         </Stack>
@@ -714,7 +786,24 @@ export default function PricingPage() {
     );
   }
 
+  // Never draw an empty tier picker or a feature table of dashes from a
+  // failed request.
+  if (isError && !data) {
+    return (
+      <Box>
+        {header}
+        <LoadFailedState
+          title="Plans couldn't be loaded"
+          detail="Your current plan and the plans you can move to are not shown until they load."
+          onRetry={refetch}
+          retrying={isRefetching}
+        />
+      </Box>
+    );
+  }
+
   const currentPlan = data?.current_plan || "free";
+  const hasAddon = ["boost", "scale", "enterprise"].includes(currentPlan);
   const isCustomPricing =
     data?.isCustomPricing ?? data?.is_custom_pricing ?? false;
   const planChangeLocked =
@@ -734,15 +823,20 @@ export default function PricingPage() {
     plansData[p.key] = p;
   });
 
+  // A stored plan this page has no card for is named as it is (its known
+  // name, else its code), never as another plan, and no tier is marked
+  // Current for it.
+  const planNotListed = !isCustomPricing && !LISTED_PLANS.includes(currentPlan);
+  const currentPlanName = planNotListed
+    ? plansData[currentPlan]?.display_name ||
+      UNLISTED_PLAN_NAMES[currentPlan] ||
+      currentPlan
+    : currentAddon?.display_name || "Pay-as-you-go";
+  const notListedDescription = planNotListed ? notListedId : undefined;
+
   return (
     <Box>
-      <Typography variant="h5" fontWeight={700} mb={0.5}>
-        Plans & Pricing
-      </Typography>
-      <Typography variant="body2" color="text.secondary" mb={3}>
-        Start free or pay as you go. Add Boost, Scale, or Enterprise for
-        advanced features and higher limits.
-      </Typography>
+      {header}
 
       {planChangeLocked && (
         <Alert severity="info" sx={{ mb: 3 }}>
@@ -753,20 +847,10 @@ export default function PricingPage() {
       {/* Custom pricing banner + details */}
       {isCustomPricing && (
         <>
-          <Paper
-            variant="outlined"
-            sx={(theme) => ({
-              p: 3,
-              mb: 3,
-              borderRadius: 2,
-              border: "1px solid",
-              ...(theme.palette.mode === "light"
-                ? { bgcolor: "info.lighter", borderColor: "info.light" }
-                : {
-                    bgcolor: alpha(theme.palette.info.main, 0.08),
-                    borderColor: alpha(theme.palette.info.main, 0.2),
-                  }),
-            })}
+          <Alert
+            severity="info"
+            icon={false}
+            sx={{ mb: 3, "& .MuiAlert-message": { width: 1 } }}
           >
             <Stack direction="row" alignItems="center" spacing={2}>
               <Iconify
@@ -775,11 +859,11 @@ export default function PricingPage() {
                 sx={{ color: "info.main" }}
               />
               <Box>
-                <Typography variant="subtitle1" fontWeight={700}>
+                <Typography variant="subtitle1" fontWeight={600}>
                   Custom Pricing
                   {customDetails?.platform_fee > 0 && (
                     <Chip
-                      label={`${fCurrency(customDetails.per_charge_amount)}/${
+                      label={`${fPlanPrice(customDetails.per_charge_amount)}/${
                         { 1: "mo", 3: "qtr", 6: "half", 12: "yr" }[
                           customDetails.platform_fee_billing_cycle
                         ] || "mo"
@@ -795,7 +879,7 @@ export default function PricingPage() {
                 </Typography>
               </Box>
             </Stack>
-          </Paper>
+          </Alert>
 
           {/* Custom plan features */}
           {customDetails?.features && (
@@ -803,10 +887,7 @@ export default function PricingPage() {
               <Typography variant="subtitle1" fontWeight={600} mb={2}>
                 Your plan features
               </Typography>
-              <Paper
-                variant="outlined"
-                sx={{ borderRadius: 2, mb: 3, overflow: "hidden" }}
-              >
+              <Section variant="panel" sx={{ p: 0, mb: 3, overflow: "hidden" }}>
                 <Table size="small">
                   <TableBody>
                     {canonicalEntries(customDetails.features)
@@ -827,11 +908,18 @@ export default function PricingPage() {
                               {FEATURE_LABELS[key] || key}
                             </Typography>
                           </TableCell>
-                          <TableCell align="right" sx={{ py: 1 }}>
+                          <TableCell
+                            align="right"
+                            sx={{ fontVariantNumeric: "tabular-nums", py: 1 }}
+                          >
                             {typeof v === "boolean" ? (
                               <Iconify
-                                icon={v ? "mdi:check" : "mdi:close"}
-                                width={18}
+                                icon={
+                                  v
+                                    ? "solar:check-linear"
+                                    : "solar:close-linear"
+                                }
+                                width={20}
                                 sx={{
                                   color: v ? "success.main" : "error.main",
                                 }}
@@ -846,7 +934,7 @@ export default function PricingPage() {
                       ))}
                   </TableBody>
                 </Table>
-              </Paper>
+              </Section>
             </>
           )}
 
@@ -867,13 +955,10 @@ export default function PricingPage() {
                 >
                   <Table size="small">
                     <TableHead>
-                      <TableRow sx={{ "& th": { py: 2 } }}>
-                        <TableCell sx={{ fontWeight: 700 }}>
-                          Dimension
-                        </TableCell>
+                      <TableRow>
+                        <TableCell>Dimension</TableCell>
                         <TableCell
                           sx={{
-                            fontWeight: 700,
                             borderLeft: "1px solid",
                             borderLeftColor: "divider",
                           }}
@@ -882,7 +967,6 @@ export default function PricingPage() {
                         </TableCell>
                         <TableCell
                           sx={{
-                            fontWeight: 700,
                             borderLeft: "1px solid",
                             borderLeftColor: "divider",
                           }}
@@ -906,6 +990,7 @@ export default function PricingPage() {
                               )}
                               <TableCell
                                 sx={{
+                                  fontVariantNumeric: "tabular-nums",
                                   borderLeft: "1px solid",
                                   borderLeftColor: "divider",
                                 }}
@@ -920,8 +1005,7 @@ export default function PricingPage() {
                                   borderLeftColor: "divider",
                                 }}
                               >
-                                {fCurrency(tier.rate, true)} per{" "}
-                                {dim.display_unit}
+                                {fPlanPrice(tier.rate)} per {dim.display_unit}
                               </TableCell>
                             </TableRow>
                           )),
@@ -936,38 +1020,37 @@ export default function PricingPage() {
 
       {/* Current plan status */}
       {currentPlan !== "free" && !isCustomPricing && !planChangeLocked && (
-        <Paper
-          variant="outlined"
-          sx={(theme) => ({
-            p: 2,
-            mb: 3,
-            borderRadius: 2,
-            border: "1px solid",
-            ...(theme.palette.mode === "light"
-              ? { bgcolor: "success.lighter", borderColor: "success.light" }
-              : {
-                  bgcolor: alpha(theme.palette.success.main, 0.08),
-                  borderColor: alpha(theme.palette.success.main, 0.2),
-                }),
-          })}
+        <Alert
+          severity="success"
+          icon={false}
+          sx={{ mb: 3, "& .MuiAlert-message": { width: 1 } }}
         >
           <Stack direction="row" alignItems="center" spacing={2}>
             <Iconify
-              icon="mdi:check-circle"
+              icon="solar:check-circle-bold"
               width={24}
               sx={{ color: "success.main" }}
             />
             <Box>
               <Typography variant="subtitle2" fontWeight={600}>
-                Current: {currentAddon?.display_name || "Pay-as-you-go"}
+                Current: {currentPlanName}
                 {currentAddon && (
                   <Chip
-                    label={`${fCurrency(currentAddon.platform_fee_monthly)}/mo`}
+                    label={`${fPlanPrice(currentAddon.platform_fee_monthly)}/mo`}
                     size="small"
                     sx={{ ml: 1 }}
                   />
                 )}
               </Typography>
+              {planNotListed && (
+                <Typography
+                  id={notListedId}
+                  variant="body2"
+                  color="text.secondary"
+                >
+                  {PLAN_NOT_LISTED}
+                </Typography>
+              )}
               {data?.billing_interval && (
                 <Typography variant="caption" color="text.secondary">
                   Billed {data.billing_interval}
@@ -977,7 +1060,7 @@ export default function PricingPage() {
               )}
             </Box>
           </Stack>
-        </Paper>
+        </Alert>
       )}
 
       {/* Tiers: Free / PAYG (hidden for custom pricing) */}
@@ -986,19 +1069,38 @@ export default function PricingPage() {
           <Typography variant="subtitle1" fontWeight={600} mb={1.5}>
             Choose your tier
           </Typography>
+          {hasAddon && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              To switch to Free, first remove your add-on.{" "}
+              {data?.pending_cancel
+                ? data?.cancel_at
+                  ? `Removal is scheduled for ${new Date(data.cancel_at).toLocaleDateString()}. `
+                  : "Removal is scheduled for the end of your billing period. "
+                : "Your add-on stays active until the end of your billing period. "}
+              Once removal takes effect, return here and choose Switch to Free.
+              Removing an add-on does not switch you to Free; usage remains on
+              Pay-as-you-go until you confirm that change.
+            </Alert>
+          )}
           <Stack direction="row" spacing={2} mb={4}>
             {tiers.map((tier) => {
-              // PAYG shows as current for any paid plan (payg, boost, scale, enterprise)
+              // PAYG shows as current for any paid plan (payg, boost, scale,
+              // enterprise); no tier is current for an unlisted plan.
               const isActiveTier =
                 tier.key === "free"
                   ? currentPlan === "free"
-                  : currentPlan !== "free";
+                  : currentPlan !== "free" && !planNotListed;
               return (
                 <TierCard
                   key={tier.key}
                   tier={tier}
                   isCurrent={isActiveTier}
                   onUpgrade={handleUpgrade}
+                  requiresAddonRemoval={tier.key === "free" && hasAddon}
+                  pendingCancel={
+                    tier.key === "free" && hasAddon && !!data?.pending_cancel
+                  }
+                  notListedId={notListedDescription}
                 />
               );
             })}
@@ -1018,29 +1120,20 @@ export default function PricingPage() {
             <Typography variant="subtitle1" fontWeight={600}>
               Add-ons
             </Typography>
+            {/* Annual billing is not built in this release: the selector stays
+                visible, off and disabled, so cards and purchase keep the
+                monthly fee. */}
             <FormControlLabel
-              control={
-                <Switch
-                  checked={isAnnual}
-                  onChange={(e) => setIsAnnual(e.target.checked)}
-                />
-              }
+              disabled
+              control={<Switch checked={false} disabled />}
               label={
                 <Stack direction="row" spacing={1} alignItems="center">
                   <Typography variant="body2" fontWeight={500}>
                     Annual billing
                   </Typography>
-                  <Chip
-                    label="Save 20%"
-                    size="small"
-                    sx={{
-                      bgcolor: "success.lighter",
-                      color: "success.dark",
-                      fontWeight: 600,
-                      fontSize: "0.75rem",
-                      borderRadius: 1,
-                    }}
-                  />
+                  <Typography variant="caption" color="text.secondary">
+                    {NOT_IN_RELEASE}
+                  </Typography>
                 </Stack>
               }
             />
@@ -1060,9 +1153,9 @@ export default function PricingPage() {
                 <AddonCard
                   key={addon.key}
                   addon={addon}
+                  baseFeatures={plansData[ADDON_BASE_PLAN[addon.key]]?.features}
                   isCurrent={currentPlan === addon.key}
                   isIncluded={addonRank < currentRank}
-                  isAnnual={isAnnual}
                   currentPlan={currentPlan}
                   pendingCancel={
                     currentPlan === addon.key && !!data?.pending_cancel
@@ -1071,6 +1164,7 @@ export default function PricingPage() {
                   onAdd={handleAddAddon}
                   onRemove={handleRemoveAddon}
                   onReinstate={handleReinstateAddon}
+                  notListedId={notListedDescription}
                 />
               );
             })}
@@ -1108,16 +1202,10 @@ export default function PricingPage() {
             >
               <Table size="small">
                 <TableHead>
-                  <TableRow sx={{ "& th": { py: 2 } }}>
-                    <TableCell
-                      sx={{ fontWeight: 700, width: 200, fontSize: "1rem" }}
-                    >
-                      Dimension
-                    </TableCell>
+                  <TableRow>
+                    <TableCell sx={{ width: 200 }}>Dimension</TableCell>
                     <TableCell
                       sx={{
-                        fontWeight: 700,
-                        fontSize: "1rem",
                         borderLeft: "1px solid",
                         borderLeftColor: "divider",
                       }}
@@ -1126,8 +1214,6 @@ export default function PricingPage() {
                     </TableCell>
                     <TableCell
                       sx={{
-                        fontWeight: 700,
-                        fontSize: "1rem",
                         borderLeft: "1px solid",
                         borderLeftColor: "divider",
                       }}
@@ -1174,30 +1260,32 @@ export default function PricingPage() {
                             borderLeftColor: "divider",
                           }}
                         >
-                          <Stack
-                            direction="row"
-                            justifyContent="space-between"
-                            alignItems="center"
-                          >
-                            {tier.price_per_unit === 0 ? (
-                              <Chip
-                                label="Free"
-                                size="small"
-                                color="success"
-                                variant="outlined"
-                              />
-                            ) : (
-                              <Typography variant="body2" fontWeight={500}>
-                                {fCurrency(tier.price_per_unit, true)}
-                              </Typography>
-                            )}
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
+                          {/* The unit follows the price ("$2.00 per GB");
+                              a free tier has no rate to qualify. */}
+                          {tier.price_per_unit === 0 ? (
+                            <Chip
+                              label="Free"
+                              size="small"
+                              color="success"
+                              variant="outlined"
+                            />
+                          ) : (
+                            <Stack
+                              direction="row"
+                              alignItems="baseline"
+                              spacing={0.5}
                             >
-                              per {pricing.display_unit}
-                            </Typography>
-                          </Stack>
+                              <Typography variant="body2" fontWeight={500}>
+                                {fPlanPrice(tier.price_per_unit)}
+                              </Typography>
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                              >
+                                per {pricing.display_unit}
+                              </Typography>
+                            </Stack>
+                          )}
                         </TableCell>
                       </TableRow>
                     ));
@@ -1220,7 +1308,7 @@ export default function PricingPage() {
         }
         actionButton={
           addonDialog.action === "add"
-            ? `Add for ${fCurrency(dialogAddon?.platform_fee_monthly || 0)}/mo`
+            ? `Add for ${fPlanPrice(dialogAddon?.platform_fee_monthly) || "—"}/mo`
             : "Remove"
         }
         color={addonDialog.action === "remove" ? "error" : "primary"}
@@ -1229,15 +1317,15 @@ export default function PricingPage() {
         preTitleIcon={
           ADDON_ICONS[addonDialog.plan] ||
           (addonDialog.action === "add"
-            ? "mdi:plus-circle"
-            : "mdi:alert-circle")
+            ? "solar:add-circle-linear"
+            : "solar:danger-circle-linear")
         }
       >
         <DialogContent sx={{ px: 0 }}>
           {addonDialog.action === "add" && (
             <Box
               sx={{
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 bgcolor: (theme) => alpha(theme.palette.info.main, 0.06),
                 border: (theme) =>
                   `1px solid ${alpha(theme.palette.info.main, 0.12)}`,
@@ -1257,7 +1345,7 @@ export default function PricingPage() {
           {addonDialog.action === "remove" && (
             <Box
               sx={{
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 bgcolor: (theme) => alpha(theme.palette.warning.main, 0.06),
                 border: (theme) =>
                   `1px solid ${alpha(theme.palette.warning.main, 0.12)}`,
@@ -1271,7 +1359,9 @@ export default function PricingPage() {
                 fontWeight={"500"}
               >
                 Your add-on will remain active until the end of the current
-                billing period
+                billing period. This only removes the add-on; you will remain on
+                Pay-as-you-go. To switch to Free, return here after removal
+                takes effect and choose Switch to Free.
               </Typography>
             </Box>
           )}
@@ -1288,7 +1378,7 @@ export default function PricingPage() {
         open={downgradeOpen}
         onClose={() => setDowngradeOpen(false)}
         onConfirm={handleDowngradeConfirm}
-        isLoading={removeMutation.isPending || downgradeMutation.isPending}
+        isLoading={downgradeMutation.isPending}
       />
     </Box>
   );

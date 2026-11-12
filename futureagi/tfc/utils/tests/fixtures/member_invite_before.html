@@ -1,0 +1,49 @@
+{% extends "billing/base_billing.html" %}
+{% block title %}You're invited to {{ workspace_name }} on Future AGI{% endblock %}
+{% block preheader %}{{ invited_by }} invited you to {{ workspace_name }} ({{ org_name }}). Temporary password inside.{% endblock %}
+{% block txid %}◦ WORKSPACE / INVITE{% endblock %}
+{% block content %}
+  <span class="eyebrow" style="display:inline-block; font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace; font-size:10px; font-weight:500; letter-spacing:0.14em; text-transform:uppercase; color:#c7c7cc; background:rgba(255,255,255,0.03); border:1px solid #3f3f46; padding:5px 10px; border-radius:999px; margin-bottom:20px;">
+    <span style="display:inline-block; width:5px; height:5px; border-radius:50%; background:#fafafa; margin-right:8px; vertical-align:middle; box-shadow:0 0 8px rgba(255,255,255,0.7);"></span>New Crew Invite
+  </span>
+
+  <h1 class="hx" style="font-family:'Inter',sans-serif; font-size:28px; line-height:1.22; font-weight:600; color:#fafafa; letter-spacing:-0.015em; margin:16px 0 14px 0;">
+    Welcome aboard {{ workspace_name }}
+  </h1>
+
+  <p class="px" style="font-family:'Inter',sans-serif; font-size:16px; line-height:1.65; color:#d4d4d8; margin:0 0 24px 0;">
+    <strong style="color:#fafafa;">{{ invited_by }}</strong> invited you to <strong style="color:#fafafa;">{{ workspace_name }}</strong> in <strong style="color:#fafafa;">{{ org_name }}</strong>. Here are your temporary credentials.
+  </p>
+
+  <!-- Credentials panel -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 24px 0 12px 0;">
+    <tr>
+      <td style="background-color:#0a0a0a; border:1px solid #27272a; border-radius:12px; padding: 20px 22px;">
+        <p style="margin:0 0 14px 0; font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace; font-size:10px; font-weight:500; letter-spacing:0.14em; text-transform:uppercase; color:#a1a1aa;">
+          <span style="display:inline-block; width:5px; height:5px; background:#fafafa; border-radius:50%; margin-right:8px; vertical-align:middle;"></span>Sign-in Credentials
+        </p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td style="padding:4px 0; font-family:'JetBrains Mono',monospace; font-size:11px; color:#71717a; letter-spacing:0.08em; text-transform:uppercase; width:80px;">Email</td>
+            <td style="padding:4px 0; font-family:'JetBrains Mono',monospace; font-size:13px; color:#fafafa;">{{ email }}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0 4px 0; font-family:'JetBrains Mono',monospace; font-size:11px; color:#71717a; letter-spacing:0.08em; text-transform:uppercase;">Password</td>
+            <td style="padding:8px 0 4px 0;"><span style="display:inline-block; font-family:'JetBrains Mono',monospace; font-size:13px; background:#000000; border:1px solid #3f3f46; color:#fafafa; padding:7px 12px; border-radius:6px; letter-spacing:0.03em;">{{ password }}</span></td>
+          </tr>
+        </table>
+        <p style="margin:14px 0 0 0; font-family:'Inter',sans-serif; font-size:13px; line-height:1.55; color:#a1a1aa;">
+          Rotate this password from account settings after signing in.
+        </p>
+      </td>
+    </tr>
+  </table>
+
+  <div style="margin: 28px 0 12px 0;">
+    {% include "billing/_button.html" with url=base_url|add:"/auth/jwt/invitation/set-password/"|add:uid|add:"/"|add:token text="Accept &amp; sign in →" variant="primary" %}
+  </div>
+
+  <p style="font-family:'Inter',sans-serif; font-size:12px; line-height:1.6; color:#71717a; margin:28px 0 0 0;">
+    Not expecting this invitation? Ignore it and no access will be granted.
+  </p>
+{% endblock %}

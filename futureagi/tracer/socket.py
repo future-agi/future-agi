@@ -6,6 +6,7 @@ from decimal import Decimal
 import numpy as np
 from channels.db import database_sync_to_async
 from dateutil.relativedelta import relativedelta
+from django.core.exceptions import ValidationError
 from django.db import connection
 
 from sockets.consumer import DataConsumer
@@ -38,8 +39,59 @@ class GraphDataConsumer(DataConsumer):
         if self.scope.get("auth_scope") is not None:
             if not await self._authorize_saml_frame():
                 return
+        elif not await self._authorize_frame():
+            return
 
         await self.send_metrics_data()
+
+    async def _authorize_frame(self):
+        """Send data when the project, and the evaluation if one is given,
+        belong to an organization the caller acts in (acts_in_organization):
+        one with an active membership, or the organization of an account older
+        than memberships. A member of several organizations gets data for each
+        of them. Otherwise, unknown ids included, close the socket with 4003
+        before a query runs."""
+        project = await self._callers_project(self.project_id)
+        if project is None or (
+            self.eval_id and not await self._project_eval(self.eval_id, project.id)
+        ):
+            await self.close(code=4003)
+            return False
+        self.project_id = str(project.id)
+        return True
+
+    @database_sync_to_async
+    def _callers_project(self, project_id):
+        from tfc.utils.tenant_scope import acts_in_organization, has_membership_rows
+
+        try:
+            project = (
+                Project.no_workspace_objects.filter(id=project_id, deleted=False)
+                .select_related("workspace")
+                .first()
+            )
+        except (ValueError, TypeError, ValidationError):
+            return None
+        if project is None or not acts_in_organization(
+            self.user, project.organization_id
+        ):
+            return None
+        if (
+            project.workspace_id is not None
+            and has_membership_rows(self.user)
+            and not self.user.can_access_workspace(project.workspace)
+        ):
+            return None
+        return project
+
+    @database_sync_to_async
+    def _project_eval(self, eval_id, project_id):
+        try:
+            return CustomEvalConfig.no_workspace_objects.filter(
+                id=eval_id, project_id=project_id, deleted=False
+            ).exists()
+        except (ValueError, TypeError, ValidationError):
+            return False
 
     async def _authorize_saml_frame(self):
         bound_org = self.scope["auth_scope"].org_id
@@ -369,16 +421,20 @@ class GraphDataConsumer(DataConsumer):
         WHERE os.project_id = %s
         """
 
+        # Frame filter values go into params, never into the SQL text.
+        params = [self.project_id for _ in range(5)]
         query = FilterEngine.get_sql_filter_conditions_for_system_metrics(
-            self.filters, query
+            self.filters, query, params
         )
-        query, having = FilterEngine.get_sql_filter_conditions_for_eval_metrics(
-            self.filters, query
+        query, having, having_params = (
+            FilterEngine.get_sql_filter_conditions_for_eval_metrics(
+                self.filters, query, params
+            )
         )
         query += f"""
         GROUP BY timestamp, config_id, tcec.name{", id_trace" if self.graph == "trace" else ""}{", id_span" if self.graph == "span" else ""}{";" if not having else " " + having}"""
+        params.extend(having_params)
 
-        params = [self.project_id for _ in range(5)]
         rows = await self.fetch_raw_data(query, params)
 
         if self.eval_id:

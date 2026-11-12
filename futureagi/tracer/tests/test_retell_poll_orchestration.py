@@ -22,6 +22,8 @@ from structlog.testing import capture_logs
 
 from tracer.models.observability_provider import ProviderChoices
 from tracer.services.observability_providers import (
+    VAPI_MAX_PAGES,
+    VAPI_PAGE_LIMIT,
     RetellConfigurationError,
     RetellCursorRejected,
     RetellPage,
@@ -4200,6 +4202,205 @@ def test_other_provider_future_watermark_repaired_and_clamped(fake_table, monkey
     assert outcome == op.StoreOutcome(0, 0, 0)
     assert seen["kw"]["end_time"] == now  # clamped to now, never beyond
     assert seen["kw"]["start_time"] == now - op.RETELL_FUTURE_WATERMARK_LOOKBACK
+
+
+def _other_provider(row: _FakeRow):
+    """A non-Retell provider as the poll reads it: the row's current state."""
+    return SimpleNamespace(
+        id=row.id,
+        provider=row.provider,
+        last_fetched_at=row.last_fetched_at,
+        poll_state=dict(row.poll_state),
+    )
+
+
+def test_other_provider_export_failure_holds_watermark_until_a_clean_poll(
+    fake_table, monkeypatch
+):
+    # OBS-SW-134: a call the collector did not take is in no store, so the
+    # poll must not move past it; the next poll re-fetches the window.
+    pid = uuid.uuid4()
+    now = _dt(2026, 1, 1, 12, 0, 0)
+    wm = now - timedelta(hours=1)
+    row = _FakeRow(id=pid, last_fetched_at=wm, provider=ProviderChoices.VAPI)
+    fake_table[pid] = row
+    monkeypatch.setattr(op.timezone, "now", lambda: now)
+    monkeypatch.setattr(
+        op.ObservabilityService,
+        "get_call_logs",
+        lambda **k: [{"id": "c1"}, {"id": "c2"}],
+    )
+    outcomes = iter([op.StoreOutcome(1, 0, 1), op.StoreOutcome(2, 0, 0)])
+    monkeypatch.setattr(op, "process_and_store_logs", lambda *a, **k: next(outcomes))
+
+    with capture_logs() as cap:
+        outcome = op._poll_other_provider(
+            _other_provider(row), start_time=None, end_time=None
+        )
+    assert outcome == op.StoreOutcome(1, 0, 1)
+    assert row.last_fetched_at == wm
+    assert row.poll_state == {"export_held_polls": 1}
+    assert [e["event"] for e in cap if e["event"] == "provider_watermark_held"] == [
+        "provider_watermark_held"
+    ]
+
+    op._poll_other_provider(_other_provider(row), start_time=None, end_time=None)
+    assert row.last_fetched_at == now
+    assert row.poll_state == {}
+
+
+def test_other_provider_gives_up_a_window_after_max_held_polls(fake_table, monkeypatch):
+    pid = uuid.uuid4()
+    now = _dt(2026, 1, 1, 12, 0, 0)
+    wm = now - timedelta(hours=1)
+    row = _FakeRow(
+        id=pid,
+        last_fetched_at=wm,
+        provider=ProviderChoices.BLAND,
+        poll_state={"export_held_polls": op.EXPORT_MAX_HELD_POLLS},
+    )
+    fake_table[pid] = row
+    monkeypatch.setattr(op.timezone, "now", lambda: now)
+    monkeypatch.setattr(op.ObservabilityService, "get_call_logs", lambda **k: [{}])
+    monkeypatch.setattr(
+        op, "process_and_store_logs", lambda *a, **k: op.StoreOutcome(0, 0, 1)
+    )
+
+    with capture_logs() as cap:
+        op._poll_other_provider(_other_provider(row), start_time=None, end_time=None)
+    assert row.last_fetched_at == now
+    assert row.poll_state == {}
+    assert [e["event"] for e in cap if e["log_level"] == "error"] == [
+        "provider_export_failures_abandoned"
+    ]
+
+
+def _vapi_calls(first_update: datetime, n: int) -> list[dict]:
+    return [
+        {
+            "id": f"call-{i}",
+            "updatedAt": (first_update + timedelta(seconds=i))
+            .isoformat()
+            .replace("+00:00", "Z"),
+        }
+        for i in range(n)
+    ]
+
+
+def test_vapi_fetch_at_page_cap_resumes_from_last_update_reached(
+    fake_table, monkeypatch
+):
+    # OBS-SW-134: after a gap (observability turned back on days later) the
+    # fetch stops at VAPI_MAX_PAGES full pages; the calls after them must be
+    # fetched by the next poll, not skipped by a jump to now.
+    pid = uuid.uuid4()
+    now = _dt(2026, 1, 1, 12, 0, 0)
+    wm = now - timedelta(days=3)
+    row = _FakeRow(id=pid, last_fetched_at=wm, provider=ProviderChoices.VAPI)
+    fake_table[pid] = row
+    n = VAPI_PAGE_LIMIT * VAPI_MAX_PAGES
+    calls = _vapi_calls(wm + timedelta(seconds=1), n)
+    monkeypatch.setattr(op.timezone, "now", lambda: now)
+    monkeypatch.setattr(op.ObservabilityService, "get_call_logs", lambda **k: calls)
+    monkeypatch.setattr(
+        op, "process_and_store_logs", lambda *a, **k: op.StoreOutcome(n, 0, 0)
+    )
+
+    op._poll_other_provider(_other_provider(row), start_time=None, end_time=None)
+    assert row.last_fetched_at == wm + timedelta(seconds=n)
+
+
+def test_vapi_first_sync_at_page_cap_still_ends_at_now(fake_table, monkeypatch):
+    # No watermark yet: a first sync is not turned into a crawl through the
+    # account's whole history.
+    pid = uuid.uuid4()
+    now = _dt(2026, 1, 1, 12, 0, 0)
+    row = _FakeRow(id=pid, last_fetched_at=None, provider=ProviderChoices.VAPI)
+    fake_table[pid] = row
+    n = VAPI_PAGE_LIMIT * VAPI_MAX_PAGES
+    calls = _vapi_calls(now - timedelta(days=30), n)
+    monkeypatch.setattr(op.timezone, "now", lambda: now)
+    monkeypatch.setattr(op.ObservabilityService, "get_call_logs", lambda **k: calls)
+    monkeypatch.setattr(
+        op, "process_and_store_logs", lambda *a, **k: op.StoreOutcome(n, 0, 0)
+    )
+
+    op._poll_other_provider(_other_provider(row), start_time=None, end_time=None)
+    assert row.last_fetched_at == now
+
+
+def test_eleven_labs_conversation_stored_mid_call_is_refreshed_until_it_ends(
+    fake_table, monkeypatch
+):
+    # OBS-SW-160: the listing only returns conversations that started in the
+    # poll window, so one stored "in-progress" is re-read by id until done.
+    pid = uuid.uuid4()
+    now = _dt(2026, 1, 1, 12, 0, 0)
+    row = _FakeRow(
+        id=pid,
+        last_fetched_at=now - timedelta(minutes=10),
+        provider=ProviderChoices.ELEVEN_LABS,
+    )
+    fake_table[pid] = row
+    clock = {"now": now}
+    monkeypatch.setattr(op.timezone, "now", lambda: clock["now"])
+    listings = iter([[{"conversation_id": "conv-1", "status": "in-progress"}], []])
+    monkeypatch.setattr(
+        op.ObservabilityService, "get_call_logs", lambda **k: next(listings)
+    )
+    refreshed = []
+
+    def refresh(provider, conversation_ids):
+        refreshed.append(list(conversation_ids))
+        return [{"conversation_id": cid, "status": "done"} for cid in conversation_ids]
+
+    monkeypatch.setattr(
+        op.ObservabilityService, "fetch_eleven_labs_conversations", refresh
+    )
+    stored = []
+
+    def store(logs, *args, **kwargs):
+        stored.append([(log["conversation_id"], log["status"]) for log in logs])
+        return op.StoreOutcome(len(logs), 0, 0)
+
+    monkeypatch.setattr(op, "process_and_store_logs", store)
+
+    op._poll_other_provider(_other_provider(row), start_time=None, end_time=None)
+    assert row.poll_state == {"eleven_labs_pending": {"conv-1": now.isoformat()}}
+
+    clock["now"] = now + timedelta(minutes=10)
+    op._poll_other_provider(_other_provider(row), start_time=None, end_time=None)
+    assert refreshed == [["conv-1"]]
+    assert stored == [[("conv-1", "in-progress")], [("conv-1", "done")]]
+    assert row.poll_state == {}
+
+
+def test_eleven_labs_pending_conversation_expires_after_max_age(
+    fake_table, monkeypatch
+):
+    pid = uuid.uuid4()
+    now = _dt(2026, 1, 1, 12, 0, 0)
+    first_seen = now - op.ELEVEN_LABS_PENDING_MAX_AGE - timedelta(minutes=1)
+    row = _FakeRow(
+        id=pid,
+        last_fetched_at=now - timedelta(minutes=10),
+        provider=ProviderChoices.ELEVEN_LABS,
+        poll_state={"eleven_labs_pending": {"conv-1": first_seen.isoformat()}},
+    )
+    fake_table[pid] = row
+    monkeypatch.setattr(op.timezone, "now", lambda: now)
+    monkeypatch.setattr(op.ObservabilityService, "get_call_logs", lambda **k: [])
+    monkeypatch.setattr(
+        op.ObservabilityService,
+        "fetch_eleven_labs_conversations",
+        lambda provider, ids: [],  # no longer readable
+    )
+    monkeypatch.setattr(
+        op, "process_and_store_logs", lambda *a, **k: op.StoreOutcome(0, 0, 0)
+    )
+
+    op._poll_other_provider(_other_provider(row), start_time=None, end_time=None)
+    assert row.poll_state == {}
 
 
 # --------------------------------------------------------------------------

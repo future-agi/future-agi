@@ -6,9 +6,7 @@ import {
   Button,
   Checkbox,
   Chip,
-  Dialog,
   FormControlLabel,
-  IconButton,
   InputBase,
   MenuItem,
   Select,
@@ -17,11 +15,15 @@ import {
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 
+import { ClosableDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 import {
+  FIX_LIVE_STATES,
   fixErrorOf,
+  useEnvironmentFixRuns,
   useFixLaunchOptions,
   useLaunchFix,
 } from "src/api/simulate-environments/fixRuns";
@@ -29,6 +31,7 @@ import {
 import ScenarioPicker from "./ScenarioPicker";
 import { formatCredits, formatMinutes } from "./fixRunView";
 import {
+  blockedNote,
   budgetSteps,
   countsLine,
   launchError,
@@ -133,6 +136,69 @@ LockedFiles.propTypes = {
   onChange: PropTypes.func.isRequired,
 };
 
+// Why Start is off, and the way on from there.
+function NoteLine({ note, onLeave }) {
+  return (
+    <>
+      <Typography sx={{ typography: "s3", color: "text.primary", flex: 1 }}>
+        {note.message}
+      </Typography>
+      {note.action && (
+        <Button
+          size="small"
+          variant="outlined"
+          component={RouterLink}
+          href={note.action.href}
+          onClick={onLeave}
+          sx={{ flexShrink: 0 }}
+        >
+          {note.action.label}
+        </Button>
+      )}
+    </>
+  );
+}
+NoteLine.propTypes = {
+  note: PropTypes.shape({
+    message: PropTypes.string,
+    action: PropTypes.shape({
+      label: PropTypes.string.isRequired,
+      href: PropTypes.string.isRequired,
+    }),
+  }).isRequired,
+  onLeave: PropTypes.func.isRequired,
+};
+
+// An environment runs one fix at a time, and launch refuses while one is live,
+// so the live fix is the newest one. Only this refusal reads the fix list.
+function RunningFixNote({ blocked, envId, onLeave }) {
+  const { fixes } = useEnvironmentFixRuns(envId);
+  const liveFix = fixes.find((f) => FIX_LIVE_STATES.has(f.state));
+  return (
+    <NoteLine
+      note={blockedNote(blocked, { envId, liveFix })}
+      onLeave={onLeave}
+    />
+  );
+}
+
+function BlockedNote({ blocked, envId, onLeave }) {
+  if (blocked.code === "fix_run_active") {
+    return <RunningFixNote blocked={blocked} envId={envId} onLeave={onLeave} />;
+  }
+  return <NoteLine note={blockedNote(blocked, { envId })} onLeave={onLeave} />;
+}
+const blockedShape = PropTypes.shape({
+  code: PropTypes.string,
+  message: PropTypes.string,
+}).isRequired;
+RunningFixNote.propTypes = {
+  blocked: blockedShape,
+  envId: PropTypes.string.isRequired,
+  onLeave: PropTypes.func.isRequired,
+};
+BlockedNote.propTypes = RunningFixNote.propTypes;
+
 // Screen 1 of Fix my agent v0: one read (launch-options) prefills it, one
 // write (launch) starts it. The user decides the cases to fix and protect, the
 // parts that may change and the limit; everything else is shown, not asked.
@@ -162,7 +228,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
 
   if (!options) {
     return (
-      <Dialog
+      <ClosableDialog
         open={open}
         onClose={onClose}
         maxWidth={false}
@@ -170,28 +236,30 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
         PaperProps={{ sx: { maxWidth: 720 } }}
       >
         {optionsError ? (
-          <Stack direction="row" alignItems="center" spacing={2} sx={{ p: 3 }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={2}
+            sx={{ p: 3, pr: 6 }}
+          >
             <Typography sx={{ typography: "s2", flex: 1 }}>
               {fixErrorOf(optionsError).message ||
                 "Could not load this run to improve it."}
             </Typography>
-            <Button size="small" variant="outlined" onClick={onClose}>
-              Close
-            </Button>
           </Stack>
         ) : (
           <Typography sx={{ p: 3, typography: "s2", color: "text.subtitle" }}>
             Loading the run…
           </Typography>
         )}
-      </Dialog>
+      </ClosableDialog>
     );
   }
 
   const { agent, environment, limits } = options;
   const error = launchError({ targets, protectedKeys, surfaces, limits });
-  const blockedReason = options.blocked?.message;
-  const startDisabled = !!blockedReason || !!error || launch.isPending;
+  const { blocked } = options;
+  const startDisabled = !!blocked || !!error || launch.isPending;
   const agentLine = [
     `${agent.name} · agent v${agent.version_number}`,
     agent.ref,
@@ -227,7 +295,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
   };
 
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
       maxWidth={false}
@@ -246,7 +314,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
           borderColor: "divider",
         }}
       >
-        <Box flex={1} minWidth={0}>
+        <Box flex={1} minWidth={0} sx={{ pr: 4 }}>
           <Typography
             sx={{ typography: "s1", fontWeight: 600 }}
           >{`Improve ${agent.name}`}</Typography>
@@ -254,9 +322,6 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
             {`Searches for a better ${agent.name}, scored by this environment`}
           </Typography>
         </Box>
-        <IconButton size="small" onClick={onClose} aria-label="Close">
-          <Iconify icon="mingcute:close-line" width={18} />
-        </IconButton>
       </Stack>
 
       <Box sx={{ px: 2.5, py: 2, overflowY: "auto" }}>
@@ -385,17 +450,20 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
         spacing={1.5}
         sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider" }}
       >
-        <Typography
-          sx={{
-            typography: "s3",
-            color: blockedReason || error ? "text.primary" : "text.tertiary",
-            flex: 1,
-          }}
-        >
-          {blockedReason ||
-            error ||
-            "A winner comes back for you to review. Nothing changes until you ship it."}
-        </Typography>
+        {blocked ? (
+          <BlockedNote blocked={blocked} envId={envId} onLeave={onClose} />
+        ) : (
+          <Typography
+            sx={{
+              typography: "s3",
+              color: error ? "text.primary" : "text.tertiary",
+              flex: 1,
+            }}
+          >
+            {error ||
+              "A winner comes back for you to review. Nothing changes until you ship it."}
+          </Typography>
+        )}
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
           Cancel
         </Button>
@@ -410,7 +478,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
           Start improvement
         </Button>
       </Stack>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 

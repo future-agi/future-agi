@@ -1,0 +1,15 @@
+{
+  "http": {
+    "status": 503,
+    "headers": {"content-type": "application/json"}
+  },
+  "body": {
+    "status": false,
+    "type": "service_unavailable",
+    "code": "feature_unavailable",
+    "detail": "Enterprise credential provisioning is unavailable.",
+    "message": "Enterprise credential provisioning is unavailable.",
+    "error": "Enterprise credential provisioning is unavailable.",
+    "result": "Enterprise credential provisioning is unavailable."
+  }
+}

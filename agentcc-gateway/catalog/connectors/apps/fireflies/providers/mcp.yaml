@@ -1,0 +1,76 @@
+# Fireflies' MCP server with OAuth from its own authorization server, which
+# registers clients dynamically or by a client ID metadata document. The
+# server speaks Streamable HTTP only (the older HTTP+SSE transport is
+# retired). The scopes are the ones the server advertises; meetings.upload
+# is the one Fireflies' upload tools need. EE reads a pre-registered client
+# from its environment and cannot register one, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: fireflies
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.fireflies.ai/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://api.fireflies.ai/authorize
+    tokenUrl: https://api.fireflies.ai/token
+    scopes: [profile, email, meetings.upload]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://api.fireflies.ai/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [cimd, dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.fireflies.ai/getting-started/mcp-configuration
+    fetchedAt: 2026-11-11
+  - fact: transport.url
+    url: https://api.fireflies.ai/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: transport.variant
+    url: https://docs.fireflies.ai/getting-started/mcp-configuration
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://docs.fireflies.ai/getting-started/mcp-configuration
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.authorizeUrl
+    url: https://api.fireflies.ai/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.tokenUrl
+    url: https://api.fireflies.ai/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.scopes
+    url: https://api.fireflies.ai/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.scopes
+    url: https://docs.fireflies.ai/mcp-tools/overview
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.pkce
+    url: https://api.fireflies.ai/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.revocation.url
+    url: https://api.fireflies.ai/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.registration
+    url: https://api.fireflies.ai/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+x-omega: { ee: exclude }

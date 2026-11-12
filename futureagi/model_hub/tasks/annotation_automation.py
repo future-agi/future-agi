@@ -2,7 +2,12 @@ import structlog
 
 from model_hub.models.annotation_queues import AutomationRule
 from model_hub.utils.annotation_queue_helpers import (
+    AUTOMATION_RULE_ACTOR_ERROR,
+    AUTOMATION_RULE_ENTITLEMENT_CODE,
     AUTOMATION_RULE_MATCH_LIMIT,
+    _automation_actor_refusal,
+    _automation_rule_actor,
+    automation_rule_entitlement_check,
     evaluate_rule,
     is_automation_rule_due,
 )
@@ -11,32 +16,10 @@ from tfc.temporal import temporal_activity
 logger = structlog.get_logger(__name__)
 
 
-# Filter fields that are scoped to the requesting user. Recurring rules
-# could supply rule.created_by (we do, below) but if that user is later
-# deleted or removed from the workspace, the filter would fail. We skip
-# them on the scheduled path so the issue is loud, not silent. Source of
-# truth is bulk_selection._USER_SCOPED_COLUMN_IDS — keep these in sync.
-USER_SCOPED_FIELDS = frozenset({"my_annotations", "annotator"})
-
-
-def _has_user_scoped_filter(rule):
-    conditions = rule.conditions or {}
-    rules = conditions.get("rules") or []
-    for cond in rules:
-        if cond.get("field") in USER_SCOPED_FIELDS:
-            return True
-    filters = conditions.get("filter") or conditions.get("filters") or []
-    for entry in filters:
-        col = entry.get("column_id")
-        if col in USER_SCOPED_FIELDS:
-            return True
-    return False
-
-
 def run_due_automation_rules():
     """Evaluate enabled annotation automation rules whose cadence is due."""
     rules = (
-        AutomationRule.objects.select_related(
+        AutomationRule.no_workspace_objects.select_related(
             "queue",
             "queue__workspace",
             "organization",
@@ -52,26 +35,37 @@ def run_due_automation_rules():
     errors = 0
     added = 0
     duplicates = 0
+    entitlement_cache = {}
 
     for rule in rules.iterator(chunk_size=100):
         checked += 1
         if not is_automation_rule_due(rule):
             continue
-        if _has_user_scoped_filter(rule):
-            errors += 1
-            logger.warning(
-                "automation_rule_scheduled_skipped_user_scoped_filter",
-                rule_id=str(rule.pk),
-            )
-            continue
         try:
-            # Run as the rule's creator so any non-user-scoped filter that
-            # still uses request-time context (workspace fallback, etc.)
-            # has a sensible identity to fall back on.
+            actor = _automation_rule_actor(rule.queue, rule.created_by)
+            if actor is None:
+                errors += 1
+                _automation_actor_refusal(rule)
+                continue
+            check = automation_rule_entitlement_check(rule, cache=entitlement_cache)
+            if check is not None and not check.allowed:
+                errors += 1
+                logger.warning(
+                    "automation_rule_scheduled_skipped_entitlement",
+                    rule_id=str(rule.pk),
+                    reason=AUTOMATION_RULE_ENTITLEMENT_CODE,
+                )
+                continue
+            # evaluate_rule requires a live, active creator with current workspace
+            # access and queue-manager rights, independently of source ownership.
+            # A deleted or revoked creator fails closed, never running actor-free.
+            # User-scoped filters use this revalidated creator, just as manual
+            # runs use their revalidated triggering actor.
             result = evaluate_rule(
                 rule,
-                user=rule.created_by,
+                user=actor,
                 cap=AUTOMATION_RULE_MATCH_LIMIT,
+                entitlement_cache=entitlement_cache,
             )
         except Exception as exc:
             errors += 1
@@ -137,25 +131,33 @@ def evaluate_rule_manual_async(rule_id, triggered_by_user_id=None):
     return 202 immediately while the (potentially long) filter resolution +
     bulk_create + auto-assign run on a worker.
 
-    Always sends a completion email to creator + queue managers, regardless of
-    run size, so users have a consistent "your run is ready" signal.
+    Authorized attempts send a completion email to creator + queue managers,
+    regardless of run size. An unavailable actor gets only the fixed refusal,
+    never queue metadata through a completion notification.
     """
     from django.contrib.auth import get_user_model
+    from django.core.exceptions import ValidationError
 
-    rule = AutomationRule.objects.select_related(
+    rule = AutomationRule.no_workspace_objects.select_related(
         "queue", "queue__workspace", "organization", "created_by"
     ).get(pk=rule_id)
 
     triggered_by = None
     if triggered_by_user_id:
         try:
-            triggered_by = get_user_model().objects.get(pk=triggered_by_user_id)
-        except Exception:
-            logger.warning(
-                "automation_rule_manual_async_user_missing",
-                rule_id=str(rule_id),
-                user_id=str(triggered_by_user_id),
+            triggered_by = (
+                get_user_model()
+                .objects.filter(pk=triggered_by_user_id, is_active=True)
+                .first()
             )
+        except (ValidationError, ValueError, TypeError):
+            pass
+    # Refuse before entitlement/scope errors or completion notification could
+    # mask the missing run authority. Never substitute creator/request context.
+    # Database failures propagate rather than masquerading as missing accounts.
+    triggered_by = _automation_rule_actor(rule.queue, triggered_by)
+    if triggered_by is None:
+        return _automation_actor_refusal(rule)
 
     result = None
     error_message = None
@@ -177,6 +179,11 @@ def evaluate_rule_manual_async(rule_id, triggered_by_user_id=None):
         )
         error_message = str(exc) or exc.__class__.__name__
         result = {"matched": 0, "added": 0, "duplicates": 0}
+
+    if result.get("error") == AUTOMATION_RULE_ACTOR_ERROR:
+        # The notification helper resolves recipients and renders queue metadata.
+        # An unauthorized/missing actor must not reach that secondary read path.
+        return result
 
     try:
         from model_hub.utils.annotation_queue_helpers import (

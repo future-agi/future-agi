@@ -25,24 +25,24 @@ const ExperimentHeader = (props) => {
 
   const renderIcon = () => {
     switch (props?.column?.colId) {
-      case "experimentDatasetName":
+      case "experiment_dataset_name":
         return (
           <Iconify
-            icon="mdi:text"
+            icon="solar:notes-linear"
             sx={{ width: "20px", height: "20px", color: "text.primary" }}
           />
         );
 
-      case "averageResponseTime":
+      case "average_response_time":
         return (
           <Iconify
-            icon="ic:baseline-schedule"
+            icon="solar:clock-circle-linear"
             sx={{ width: "20px", height: "20px", color: "text.primary" }}
           />
         );
-      case "promptToken":
-      case "completionToken":
-      case "totalToken":
+      case "prompt_token":
+      case "completion_token":
+      case "total_token":
         return (
           <SvgColor
             src={`/assets/icons/ic_tokens_experiment.svg`}
@@ -52,15 +52,15 @@ const ExperimentHeader = (props) => {
       case "rank":
         // return (
         //   <Iconify
-        //     icon="eva:star-outline"
-        //     sx={{ width: "20px", height: "20px", color: "black.1000" }}
+        //     icon="solar:star-linear"
+        //     sx={{ width: "20px", height: "20px", color: "text.primary" }}
         //   />
         // );
         return null;
       default:
         return (
           <Iconify
-            icon="material-symbols:check-circle-outline"
+            icon="solar:check-circle-linear"
             sx={{ width: "20px", height: "20px", color: "info.success" }}
           />
         );
@@ -71,7 +71,7 @@ const ExperimentHeader = (props) => {
     if (sortState === "asc") {
       return (
         <Iconify
-          icon="mdi:arrow-up"
+          icon="solar:arrow-up-linear"
           width={20}
           sx={{ color: "text.secondary" }}
         />
@@ -80,7 +80,7 @@ const ExperimentHeader = (props) => {
     if (sortState === "desc") {
       return (
         <Iconify
-          icon="mdi:arrow-down"
+          icon="solar:arrow-down-linear"
           width={20}
           sx={{ color: "text.secondary" }}
         />

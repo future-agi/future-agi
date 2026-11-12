@@ -7,8 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
+	"github.com/futureagi/agentcc-gateway/internal/providers"
 )
 
 type failedStartProvider struct{ attempts int }
@@ -33,13 +35,17 @@ func (p *failedStartProvider) Close() error { return nil }
 
 func TestAnthropicStreamStartFailureReturnsRetryableHTTPError(t *testing.T) {
 	provider := &failedStartProvider{}
-	h := &Handlers{engine: pipeline.NewEngine()}
+	registry, err := providers.NewRegistry(config.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Handlers{engine: pipeline.NewEngine(), registry: registry}
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
 	w := httptest.NewRecorder()
-	h.handleAnthropicStreamViaCanonical(context.Background(), w, rc, provider, nil, &models.ChatCompletionRequest{Model: "test"})
-	if provider.attempts != 2 {
-		t.Fatalf("expected one retry before emitting a response, got %d attempts", provider.attempts)
+	h.handleAnthropicStreamViaCanonical(context.Background(), w, rc, provider, nil, &models.ChatCompletionRequest{Model: "test", Stream: true}, nil)
+	if provider.attempts != 1 {
+		t.Fatalf("retries are unconfigured, as on chat; got %d attempts, want 1", provider.attempts)
 	}
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("expected HTTP 502 rather than a broken 200 stream, got %d: %s", w.Code, w.Body.String())

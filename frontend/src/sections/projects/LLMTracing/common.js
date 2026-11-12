@@ -551,7 +551,7 @@ export const TRACE_DEFAULT_COLUMNS = [
     headerComponent: LoadingHeader,
     field: "start_time",
     flex: 1,
-    minWidth: 170,
+    minWidth: 250,
   },
   { headerComponent: LoadingHeader, field: "status", flex: 0, minWidth: 100 },
   { headerComponent: LoadingHeader, field: "latency", flex: 0, minWidth: 120 },
@@ -607,7 +607,8 @@ const COLUMN_SIZE_MAP = {
   total_cost: { minWidth: 130, flex: 0 },
   cost: { minWidth: 130, flex: 0 },
   model: { minWidth: 120, flex: 1 },
-  start_time: { minWidth: 170, flex: 1 },
+  // Room for the zone TimestampCell appends ("... 05:49:38 GMT+5:30").
+  start_time: { minWidth: 250, flex: 1 },
   input: { minWidth: 200, flex: 2 },
   output: { minWidth: 200, flex: 2 },
   tags: { minWidth: 150, flex: 1 },
@@ -730,6 +731,14 @@ export const getTraceListColumnDefs = (col) => {
       const column = params?.colDef?.context?.sourceColumn;
       const colId = column?.id;
 
+      // A qualified null cost means unknown pricing, not an empty cell. Keep
+      // its observed-only explanation reachable through the actual grid path.
+      if (
+        params.data?._captureCoverage?.coverage_unknown &&
+        RENDERER_CONFIG.costColumns.includes(colId)
+      ) {
+        return { component: CustomTraceRenderer };
+      }
       // The tags column stays interactive even when empty so a first tag can
       // be added via its "+ Tag" affordance. Other columns render nothing when
       // empty (valueFormatter shows "-").
@@ -778,9 +787,35 @@ export const getTraceListColumnDefs = (col) => {
       : {}),
   };
 };
+
+// A trace-list cell is an aggregate object ({score}, {thumbs_up, thumbs_down}
+// or {choice: count}) next to an `annotators` map. A span-list cell is the
+// bare value of one score: a number, a thumbs boolean, a text string or the
+// list of chosen options. Read either into what NewAnnotationCellRenderer
+// draws; 0 and false are real scores, not empty cells.
+const annotationCellValue = (metricData) => {
+  if (metricData === null || metricData === undefined || metricData === "") {
+    return null;
+  }
+  if (typeof metricData === "boolean") return metricData ? "up" : "down";
+  if (Array.isArray(metricData)) {
+    return metricData.length > 0
+      ? Object.fromEntries(metricData.map((choice) => [choice, 1]))
+      : null;
+  }
+  if (typeof metricData !== "object") return metricData;
+  if (metricData.score !== undefined) return metricData.score;
+  const { annotators: _, ...aggregates } = metricData;
+  return Object.keys(aggregates).length > 0 ? aggregates : null;
+};
+
+// `perAnnotator: false` is for rows that hold one value per label with no
+// per-annotator breakdown (the span list): each label gets a single column
+// that reads that value, since per-annotator sub-columns could only be empty.
 export const generateAnnotationColumnsForTracing = (
   items = [],
   expandedMetrics = [],
+  { perAnnotator = true } = {},
 ) => {
   if (!items.length) {
     return [];
@@ -817,13 +852,8 @@ export const generateAnnotationColumnsForTracing = (
             isTextType: outputType === "text",
             showActions: true,
           },
-          valueGetter: (params) => {
-            const metricData = params?.data?.[metricId];
-            if (!metricData) return null;
-            if (metricData.score !== undefined) return metricData.score;
-            const { annotators: _, ...aggregates } = metricData;
-            return Object.keys(aggregates)?.length > 0 ? aggregates : null;
-          },
+          valueGetter: (params) =>
+            annotationCellValue(params?.data?.[metricId]),
           cellRenderer: NewAnnotationCellRenderer,
           cellRendererParams: {
             annotationType: outputType,
@@ -836,7 +866,9 @@ export const generateAnnotationColumnsForTracing = (
 
       // Expanded columns stay flat so AG Grid does not create a tall global
       // grouped-header row that makes unrelated columns look oversized.
-      const metricAnnotators = Object.values(metric?.annotators || {});
+      const metricAnnotators = perAnnotator
+        ? Object.values(metric?.annotators || {})
+        : [];
 
       const avgColumn = {
         headerName: "Avg",
@@ -852,13 +884,7 @@ export const generateAnnotationColumnsForTracing = (
           subLabelType: "average",
           showActions: true,
         },
-        valueGetter: (params) => {
-          const metricData = params?.data?.[metricId];
-          if (!metricData) return null;
-          if (metricData?.score !== undefined) return metricData?.score;
-          const { annotators: _, ...aggregates } = metricData;
-          return Object.keys(aggregates)?.length > 0 ? aggregates : null;
-        },
+        valueGetter: (params) => annotationCellValue(params?.data?.[metricId]),
         cellRenderer: NewAnnotationCellRenderer,
         cellRendererParams: {
           annotationType: outputType,
@@ -916,7 +942,8 @@ export const generateAnnotationColumnsForTracing = (
               isTextType: true,
               showActions: false,
             },
-            valueGetter: () => null,
+            valueGetter: (params) =>
+              annotationCellValue(params?.data?.[metricId]),
             cellRenderer: NewAnnotationCellRenderer,
             cellRendererParams: {
               annotationType: outputType,

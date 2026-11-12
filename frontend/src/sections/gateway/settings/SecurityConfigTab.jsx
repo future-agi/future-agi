@@ -16,17 +16,26 @@ import {
   Button,
 } from "@mui/material";
 import { Icon } from "@iconify/react";
+import { GATEWAY_MONO } from "../utils/fonts";
+import { useConfirmRemoval } from "../hooks/useConfirmRemoval";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
+
+const CAPTURE_DISCLOSURE =
+  "Full-content capture exports tool inputs and outputs to your organization's collector. It masks secret-named fields and recognized Bearer, sk-, AIza, AKIA/ASIA and JWT formats. Prefix-less Future AGI keys can remain in other text. Other sensitive content may still be exported. Off by default; only an organization Owner or Admin can enable it. Enabling and disabling are audited.";
 
 const SecurityConfigTab = ({
-  ipAcl,
-  privacy,
-  toolPolicy,
+  ipAcl = undefined,
+  privacy = undefined,
+  toolPolicy = undefined,
   onIpAclChange,
   onPrivacyChange,
   onToolPolicyChange,
+  ipAclOff = null,
 }) => {
+  const [requestRemoval, confirmation] = useConfirmRemoval();
   const aclConfig = ipAcl || {};
   const privacyConfig = privacy || {};
+  const { canEdit, disabledReason } = useGatewayAdmin();
   const toolConfig = toolPolicy || {};
 
   // IP ACL state
@@ -57,9 +66,11 @@ const SecurityConfigTab = ({
   };
 
   const removeIP = (listKey, idx) => {
-    const current = [...(aclConfig[listKey] || [])];
-    current.splice(idx, 1);
-    updateAcl(listKey, current);
+    requestRemoval(`IP ${aclConfig[listKey]?.[idx]} from ${listKey}`, () => {
+      const current = [...(aclConfig[listKey] || [])];
+      current.splice(idx, 1);
+      updateAcl(listKey, current);
+    });
   };
 
   // Privacy handlers
@@ -80,9 +91,14 @@ const SecurityConfigTab = ({
   };
 
   const removePattern = (idx) => {
-    const updated = [...patterns];
-    updated.splice(idx, 1);
-    updatePrivacy("redact_patterns", updated);
+    requestRemoval(
+      `Redaction pattern ${patterns[idx]?.name || idx + 1}`,
+      () => {
+        const updated = [...patterns];
+        updated.splice(idx, 1);
+        updatePrivacy("redact_patterns", updated);
+      },
+    );
   };
 
   // Tool policy handlers
@@ -101,141 +117,203 @@ const SecurityConfigTab = ({
   };
 
   const removeTool = (listKey, idx) => {
-    const current = [...(toolConfig[listKey] || [])];
-    current.splice(idx, 1);
-    updateTool(listKey, current);
+    requestRemoval(`Tool ${toolConfig[listKey]?.[idx]} from ${listKey}`, () => {
+      const current = [...(toolConfig[listKey] || [])];
+      current.splice(idx, 1);
+      updateTool(listKey, current);
+    });
   };
 
   return (
     <Box>
+      {confirmation}
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-        <Icon icon="mdi:shield-lock-outline" width={24} />
+        <Icon icon="solar:shield-keyhole-linear" width={24} />
         <Typography variant="h6">Security</Typography>
       </Stack>
 
       {/* ===== IP ACL ===== */}
-      <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
-        <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-          <Icon icon="mdi:ip-network-outline" width={20} />
-          <Typography variant="subtitle1" fontWeight="bold">
-            IP Access Control
-          </Typography>
-        </Stack>
-
-        <Alert severity="info" sx={{ mb: 2 }}>
-          Restrict API access by client IP address. Deny list takes precedence
-          over allow list. Supports CIDR notation (e.g. 10.0.0.0/8).
-        </Alert>
-
-        <FormControlLabel
-          control={
-            <Switch
-              checked={aclConfig.enabled || false}
-              onChange={(e) => updateAcl("enabled", e.target.checked)}
-            />
-          }
-          label="Enable IP ACL"
-          sx={{ mb: 2 }}
-        />
-
-        {aclConfig.enabled && (
-          <Stack spacing={2}>
-            <Typography variant="body2" fontWeight={500}>
-              Allow List
+      {/* Shown only where the gateway applies an organization's IP ACL;
+          `ipAclOff` is its reason (or true) when it does not. A stored list
+          is kept unchanged on save. */}
+      {ipAclOff ? (
+        <Typography
+          typography="s2"
+          color="text.secondary"
+          sx={{ mb: 3 }}
+          data-testid="ip-acl-off"
+        >
+          {typeof ipAclOff === "string"
+            ? `IP access control is off on this gateway: ${ipAclOff}.`
+            : "IP access control is off on this gateway."}
+        </Typography>
+      ) : (
+        <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
+          <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+            <Icon icon="solar:global-linear" width={20} />
+            <Typography variant="subtitle1" fontWeight="600">
+              IP Access Control
             </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Only IPs/CIDRs in this list are allowed. Leave empty to allow all.
-            </Typography>
-            <Stack direction="row" spacing={0.5} flexWrap="wrap">
-              {allowList.map((ip, i) => (
-                <Chip
-                  key={i}
-                  label={ip}
-                  size="small"
-                  color="success"
-                  variant="outlined"
-                  onDelete={() => removeIP("allow", i)}
-                />
-              ))}
-            </Stack>
-            <Stack direction="row" spacing={1}>
-              <TextField
-                size="small"
-                placeholder="IP or CIDR"
-                value={newAllowIP}
-                onChange={(e) => setNewAllowIP(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    addIP("allow", newAllowIP, setNewAllowIP);
-                  }
-                }}
-                sx={{ width: 220 }}
-              />
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() => addIP("allow", newAllowIP, setNewAllowIP)}
-              >
-                Add
-              </Button>
-            </Stack>
-
-            <Divider />
-
-            <Typography variant="body2" fontWeight={500}>
-              Deny List
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              IPs/CIDRs in this list are always blocked, even if in the allow
-              list.
-            </Typography>
-            <Stack direction="row" spacing={0.5} flexWrap="wrap">
-              {denyList.map((ip, i) => (
-                <Chip
-                  key={i}
-                  label={ip}
-                  size="small"
-                  color="error"
-                  variant="outlined"
-                  onDelete={() => removeIP("deny", i)}
-                />
-              ))}
-            </Stack>
-            <Stack direction="row" spacing={1}>
-              <TextField
-                size="small"
-                placeholder="IP or CIDR"
-                value={newDenyIP}
-                onChange={(e) => setNewDenyIP(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    addIP("deny", newDenyIP, setNewDenyIP);
-                  }
-                }}
-                sx={{ width: 220 }}
-              />
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() => addIP("deny", newDenyIP, setNewDenyIP)}
-              >
-                Add
-              </Button>
-            </Stack>
           </Stack>
-        )}
-      </Paper>
+
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Restrict API access by client IP address. Deny list takes precedence
+            over allow list. Supports CIDR notation (e.g. 10.0.0.0/8).
+          </Alert>
+
+          <FormControlLabel
+            control={
+              <Switch
+                checked={aclConfig.enabled || false}
+                onChange={(e) => updateAcl("enabled", e.target.checked)}
+              />
+            }
+            label="Enable IP ACL"
+            sx={{ mb: 2 }}
+          />
+
+          {aclConfig.enabled && (
+            <Stack spacing={2}>
+              <Typography variant="body2" fontWeight={500}>
+                Allow List
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Only IPs/CIDRs in this list are allowed. Leave empty to allow
+                all.
+              </Typography>
+              <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                {allowList.map((ip, i) => (
+                  <Chip
+                    key={i}
+                    label={ip}
+                    size="small"
+                    color="success"
+                    variant="outlined"
+                    onDelete={() => removeIP("allow", i)}
+                  />
+                ))}
+              </Stack>
+              <Stack direction="row" spacing={1}>
+                <TextField
+                  size="small"
+                  placeholder="IP or CIDR"
+                  value={newAllowIP}
+                  onChange={(e) => setNewAllowIP(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addIP("allow", newAllowIP, setNewAllowIP);
+                    }
+                  }}
+                  sx={{ width: 220 }}
+                />
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => addIP("allow", newAllowIP, setNewAllowIP)}
+                >
+                  Add
+                </Button>
+              </Stack>
+
+              <Divider />
+
+              <Typography variant="body2" fontWeight={500}>
+                Deny List
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                IPs/CIDRs in this list are always blocked, even if in the allow
+                list.
+              </Typography>
+              <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                {denyList.map((ip, i) => (
+                  <Chip
+                    key={i}
+                    label={ip}
+                    size="small"
+                    color="error"
+                    variant="outlined"
+                    onDelete={() => removeIP("deny", i)}
+                  />
+                ))}
+              </Stack>
+              <Stack direction="row" spacing={1}>
+                <TextField
+                  size="small"
+                  placeholder="IP or CIDR"
+                  value={newDenyIP}
+                  onChange={(e) => setNewDenyIP(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addIP("deny", newDenyIP, setNewDenyIP);
+                    }
+                  }}
+                  sx={{ width: 220 }}
+                />
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => addIP("deny", newDenyIP, setNewDenyIP)}
+                >
+                  Add
+                </Button>
+              </Stack>
+            </Stack>
+          )}
+        </Paper>
+      )}
 
       {/* ===== PRIVACY ===== */}
       <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-          <Icon icon="mdi:eye-off-outline" width={20} />
-          <Typography variant="subtitle1" fontWeight="bold">
+          <Icon icon="solar:eye-closed-linear" width={20} />
+          <Typography variant="subtitle1" fontWeight="600">
             Privacy & PII Redaction
           </Typography>
         </Stack>
+
+        <FormControlLabel
+          control={
+            <Switch
+              checked={
+                (privacyConfig.trace_content ?? privacyConfig.traceContent) ===
+                true
+              }
+              disabled={!canEdit}
+              inputProps={{
+                "aria-describedby": "tool-span-capture-disclosure",
+              }}
+              onChange={(event) => {
+                if (canEdit) {
+                  const next = {
+                    ...privacyConfig,
+                    trace_content: event.target.checked,
+                  };
+                  delete next.traceContent;
+                  onPrivacyChange(next);
+                }
+              }}
+            />
+          }
+          label="Export full tool span content"
+        />
+        <Typography
+          id="tool-span-capture-disclosure"
+          variant="body2"
+          color="text.secondary"
+          sx={{ mb: 1 }}
+        >
+          {CAPTURE_DISCLOSURE}
+        </Typography>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: "block", mb: 2 }}
+        >
+          {disabledReason ||
+            "Save to apply. Export also requires the operator's body-capture setting, full content mode and retention that permits bodies."}
+        </Typography>
 
         <Alert severity="info" sx={{ mb: 2 }}>
           Control PII redaction in request/response logging. Define custom regex
@@ -268,7 +346,7 @@ const SecurityConfigTab = ({
               <MenuItem value="none">None (logging only)</MenuItem>
             </TextField>
 
-            <Typography variant="body2" fontWeight={500}>
+            <Typography variant="body2" fontWeight={400}>
               Redact Patterns
             </Typography>
 
@@ -286,11 +364,16 @@ const SecurityConfigTab = ({
                   color="secondary"
                   variant="outlined"
                 />
-                <Typography variant="caption" sx={{ fontFamily: "monospace" }}>
+                <Typography variant="caption" sx={{ fontFamily: GATEWAY_MONO }}>
                   {p.pattern}
                 </Typography>
-                <IconButton size="small" onClick={() => removePattern(idx)}>
-                  <Icon icon="mdi:delete-outline" width={16} color="#d32f2f" />
+                <IconButton
+                  sx={{ color: "status.danger.fg" }}
+                  size="small"
+                  aria-label={`Remove PII pattern ${p.name || idx + 1}`}
+                  onClick={() => removePattern(idx)}
+                >
+                  <Icon icon="solar:trash-bin-trash-linear" width={16} />
                 </IconButton>
               </Stack>
             ))}
@@ -327,8 +410,8 @@ const SecurityConfigTab = ({
       {/* ===== TOOL POLICY ===== */}
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-          <Icon icon="mdi:tools" width={20} />
-          <Typography variant="subtitle1" fontWeight="bold">
+          <Icon icon="solar:toolbox-linear" width={20} />
+          <Typography variant="subtitle1" fontWeight="600">
             Tool / Function Calling Policy
           </Typography>
         </Stack>

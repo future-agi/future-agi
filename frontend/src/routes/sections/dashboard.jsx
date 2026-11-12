@@ -1,23 +1,46 @@
 /* eslint-disable react-refresh/only-export-components */
 import React from "react";
 import { Suspense } from "react";
+import PropTypes from "prop-types";
 import { Navigate, Outlet, useLocation, useParams } from "react-router-dom";
+import {
+  PROTOTYPE_ABSENT_FALLBACK,
+  isAbsentInPrototype,
+} from "./prototypeAbsentRoutes";
+import { launchRedirect } from "src/launch/launchRoutes";
 import { CONNECTED_AGENTS_PATH } from "src/sections/agent-playground/agentsTabs";
 
 import { AuthGuard } from "src/auth/guard";
-import DashboardLayout from "src/layouts/dashboard";
+import { SplashScreen } from "src/components/loading-screen";
 
-import { LoadingScreen } from "src/components/loading-screen";
+import RouteSkeleton from "src/layouts/dashboard/RouteSkeleton";
 import { Events, getPageViewEvent, trackEvent } from "src/utils/Mixpanel";
 import HarnessToEnvironment from "../components/harness-to-environment";
 import RoleProtection from "../components/role-protection";
+// Shown on the Billing URL to a role that cannot open Billing.
+import BillingNoAccess from "src/sections/settings/BillingV2/BillingNoAccess";
 import WorkspaceRoleProtection from "../components/workspace-role-protection";
 import { GatewayProvider } from "src/sections/gateway/context/GatewayContext";
 import GatewayGuard from "src/sections/gateway/components/GatewayGuard";
+import GatewayRedirect from "src/sections/gateway/shell/GatewayRedirect";
+import CapabilitiesRedirect from "src/sections/gateway/shell/CapabilitiesRedirect";
+import {
+  hiddenPageRedirect,
+  isGatewayControlHidden,
+  isGatewayPageHidden,
+} from "src/sections/gateway/shell/page-status";
 import lazyWithRetry from "src/utils/lazyWithRetry";
 import CapabilityGate from "src/components/capability-gate";
 import { CAPABILITY } from "src/hooks/useCapabilities";
+import { omegaDashboardRoutes, omegaSettingsRoutes } from "./omega";
 import { paths } from "src/routes/paths";
+import { useDatasetRuns, useExperimentDetail } from "src/api/develop/runs";
+import { defaultRunsTab } from "src/sections/common/Runs/runKind";
+import DatasetTabGate from "./DatasetTabGate";
+import DatasetListPageGate from "./DatasetListPageGate";
+// The dashboard shell (nav, palette, run tray, rerun host) is its own chunk:
+// sign-in and other public pages never download it (perf #1).
+const DashboardLayout = lazyWithRetry(() => import("src/layouts/dashboard"));
 // Lazy load all route components (with retry for chunk errors after deploys)
 const DevKeysPage = lazyWithRetry(
   () => import("src/pages/dashboard/keys/dev-keys"),
@@ -40,6 +63,50 @@ const ExperimentData = lazyWithRetry(
 const ExperimentSummary = lazyWithRetry(
   () => import("src/pages/dashboard/Develop/ExperimentSummary"),
 );
+// Matrix tab of an experiment (R2-SPEC P1).
+const ExperimentMatrix = lazyWithRetry(
+  () => import("src/pages/dashboard/Develop/ExperimentMatrix"),
+);
+// R4 (implementation): the Paths tab and the prototype-only lab.
+const ExperimentPaths = lazyWithRetry(
+  () => import("src/pages/dashboard/Develop/ExperimentPaths"),
+);
+// the interface contract: the Traces tab of an experiment.
+const ExperimentTraces = lazyWithRetry(
+  () => import("src/sections/experiment-detail/traces/ExperimentTraces"),
+);
+// Prototype builds only: the env check is static, so production bundles do
+// not emit the lab chunk or its fixture id generators (tests F7).
+const PROTOTYPE_BUILD =
+  import.meta.env.VITE_ENVIRONMENT === "local" &&
+  import.meta.env.VITE_PROTOTYPE_MODE === "true";
+// L7b absent-sweep (url:dev-pages): the R4 lab is a dev-server page only;
+// preview and walk builds (vite build) do not ship it.
+const R4Lab =
+  PROTOTYPE_BUILD && import.meta.env.DEV
+    ? lazyWithRetry(() => import("src/pages/dashboard/Develop/R4Lab"))
+    : null;
+// The one global host of the Add-data sheet (R2-SPEC P5): every entry point
+// opens it through openAddData(...) (sections/common/AddData/addDataStore).
+const AddDataSheet = lazyWithRetry(
+  () => import("src/sections/common/AddData/AddDataSheet"),
+);
+// Compare runs across experiments and the focused review page
+// (PRODUCT-SPEC §2.1); siblings of :dataset.
+const DatasetCompare = lazyWithRetry(
+  () => import("src/pages/dashboard/Develop/DatasetCompare"),
+);
+const TaskCompare = lazyWithRetry(
+  () => import("src/pages/dashboard/Develop/TaskCompare"),
+);
+const DatasetReview = lazyWithRetry(
+  () => import("src/pages/dashboard/Develop/DatasetReview"),
+);
+// the interface contract: workspace leaderboards across datasets. Its paths are
+// prototype-only, so other builds emit no Leaderboards chunk (HO S2).
+const Leaderboards = PROTOTYPE_BUILD
+  ? lazyWithRetry(() => import("src/pages/dashboard/Develop/Leaderboards"))
+  : null;
 const EditSyntheticDataDrawer = lazyWithRetry(
   () =>
     import(
@@ -73,11 +140,15 @@ const FalconAIConnectorsPage = lazyWithRetry(
 const IntegrationDetailPage = lazyWithRetry(
   () => import("src/sections/settings/integrations/IntegrationDetail"),
 );
+const WebhookEndpointPage = lazyWithRetry(
+  () =>
+    import("src/sections/settings/integrations/webhooks/WebhookEndpointPage"),
+);
+const IntegrationsWorkspaceScope = lazyWithRetry(
+  () => import("src/sections/settings/integrations/IntegrationsWorkspaceScope"),
+);
 const ApiKeys = lazyWithRetry(
   () => import("src/pages/dashboard/settings/ApiKeys"),
-);
-const ComingSoon = lazyWithRetry(
-  () => import("src/pages/dashboard/settings/ComingSoon"),
 );
 const UsageSummary = lazyWithRetry(
   () => import("src/pages/dashboard/settings/UsageSummary/UsageSummary"),
@@ -95,6 +166,9 @@ const UserManagementV2 = lazyWithRetry(
 );
 const BillingPageV2 = lazyWithRetry(
   () => import("src/sections/settings/BillingV2/BillingPage"),
+);
+const HostUpdatesPage = lazyWithRetry(
+  () => import("src/sections/settings/Updates/HostUpdatesPage"),
 );
 const LicensePage = lazyWithRetry(
   () => import("src/sections/settings/License/LicensePage"),
@@ -140,6 +214,12 @@ const GatewayKeys = lazyWithRetry(
 const GatewayProviders = lazyWithRetry(
   () => import("src/pages/dashboard/gateway/GatewayProviders"),
 );
+const GatewayIntegrations = lazyWithRetry(
+  () => import("src/pages/dashboard/gateway/GatewayIntegrations"),
+);
+const GatewayModels = lazyWithRetry(
+  () => import("src/pages/dashboard/gateway/GatewayModels"),
+);
 const GatewayGuardrails = lazyWithRetry(
   () => import("src/pages/dashboard/gateway/GatewayGuardrails"),
 );
@@ -166,6 +246,21 @@ const GatewayFallbacks = lazyWithRetry(
 );
 const GatewayMCP = lazyWithRetry(
   () => import("src/pages/dashboard/gateway/GatewayMCP"),
+);
+const GatewayRuns = lazyWithRetry(
+  () => import("src/pages/dashboard/gateway/GatewayRuns"),
+);
+const GatewayRunDetail = lazyWithRetry(
+  () => import("src/pages/dashboard/gateway/GatewayRunDetail"),
+);
+const GatewayPolicies = lazyWithRetry(
+  () => import("src/pages/dashboard/gateway/GatewayPolicies"),
+);
+const GatewayPlayground = lazyWithRetry(
+  () => import("src/pages/dashboard/gateway/GatewayPlayground"),
+);
+const GatewayCapabilities = lazyWithRetry(
+  () => import("src/pages/dashboard/gateway/GatewayCapabilities"),
 );
 const ObserveList = lazyWithRetry(
   () => import("src/pages/dashboard/projects/ObserveList"),
@@ -237,6 +332,12 @@ const VoiceFullPage = lazyWithRetry(
 const SessionsView = lazyWithRetry(
   () => import("src/sections/projects/SessionsView/Sessions-view"),
 );
+const InsightsView = lazyWithRetry(
+  () => import("src/sections/projects/Insights/InsightsView"),
+);
+const AskPage = lazyWithRetry(
+  () => import("src/sections/projects/LLMTracing/InstantEval/page/AskPage"),
+);
 const LLMTracingView = lazyWithRetry(
   () => import("src/sections/projects/LLMTracing/LLMTracingView"),
 );
@@ -252,9 +353,6 @@ const CrossProjectUserDetailPage = lazyWithRetry(
 
 const GetStarted = lazyWithRetry(
   () => import("src/pages/dashboard/get-started/GetStarted"),
-);
-const ErrorFallbackView = lazyWithRetry(
-  () => import("src/sections/error/ErrorFallbackView"),
 );
 const TasksPage = lazyWithRetry(
   () => import("src/pages/dashboard/tasks/TasksPage"),
@@ -403,6 +501,16 @@ const WorkspaceAIProviders = lazyWithRetry(
       "src/pages/dashboard/settings/WorkspaceSettings/WorkspaceAIProviders"
     ),
 );
+// the interface contract (§9 transfer, M6): Settings › Audit log for the workspace. It reads
+// the prototype-only /model-hub/audit/, so other builds emit no chunk (HO S2).
+const WorkspaceAuditLog = PROTOTYPE_BUILD
+  ? lazyWithRetry(
+      () =>
+        import(
+          "src/pages/dashboard/settings/WorkspaceSettings/WorkspaceAuditLog"
+        ),
+    )
+  : null;
 const WorkspaceGeneral = lazyWithRetry(
   () =>
     import("src/pages/dashboard/settings/WorkspaceSettings/WorkspaceGeneral"),
@@ -433,6 +541,77 @@ function LegacyFeedDetailRedirect() {
 function ModelDetailDefaultRedirect() {
   const { id } = useParams();
   return <Navigate to={`/dashboard/models/${id}/performance`} replace />;
+}
+
+// A tabbed gateway page renders only for one of its known tabs. `tabPaths` is
+// its paths entry: `root` plus one URL per tab, in tab order. A missing or
+// unknown tab goes to the first tab.
+function GatewayTabRoute({ tabPaths, children }) {
+  const { tab } = useParams();
+  const location = useLocation();
+  const { root: _root, ...tabUrls } = tabPaths;
+  if (!Object.prototype.hasOwnProperty.call(tabUrls, tab)) {
+    // Keep the query and hash: a bookmarked filter survives the redirect.
+    return (
+      <Navigate
+        to={{
+          pathname: Object.values(tabUrls)[0],
+          search: location.search,
+          hash: location.hash,
+        }}
+        replace
+      />
+    );
+  }
+  return children;
+}
+GatewayTabRoute.propTypes = {
+  tabPaths: PropTypes.objectOf(PropTypes.string).isRequired,
+  children: PropTypes.node.isRequired,
+};
+const gatewayPoliciesPage = (
+  <GatewayTabRoute tabPaths={paths.dashboard.gateway.policies}>
+    <GatewayPolicies />
+  </GatewayTabRoute>
+);
+// A hidden gateway page (sections/gateway/shell/page-status.js) redirects to
+// the nearest page that works, query and hash kept; the page itself comes
+// back when its entry there is deleted.
+const gatewayPage = (pageId, element) =>
+  isGatewayPageHidden(pageId) ? (
+    <GatewayRedirect to={hiddenPageRedirect(pageId)} />
+  ) : (
+    element
+  );
+// `/compare` -> `/compare/<default tab>`, keeping ?runs=&baseline=. The
+// default tab is `matrix` when the runs are of more than one kind, else
+// `data` (R2-SPEC §0.3); nothing renders until the dataset's runs resolve.
+function CompareIndexRedirect() {
+  const { search } = useLocation();
+  const { dataset } = useParams();
+  const runIds = (new URLSearchParams(search).get("runs") ?? "")
+    .split(",")
+    .filter(Boolean);
+  const { data, isError } = useDatasetRuns(dataset, {
+    enabled: runIds.length > 0,
+  });
+  if (runIds.length && !data && !isError) return null;
+  const runs = (data?.results ?? []).filter((r) => runIds.includes(r.run_id));
+  return <Navigate to={{ pathname: defaultRunsTab(runs), search }} replace />;
+}
+// Experiment index -> `data`, or `matrix` when its runs are of more than one
+// kind (R2-SPEC §0.3).
+function ExperimentIndexRedirect() {
+  const { search } = useLocation();
+  const { experimentId } = useParams();
+  const { data, isError } = useExperimentDetail(experimentId);
+  if (!data && !isError) return null;
+  return (
+    <Navigate
+      to={{ pathname: defaultRunsTab(data?.runs ?? []), search }}
+      replace
+    />
+  );
 }
 const QueueDetailPage = lazyWithRetry(
   () => import("src/pages/dashboard/annotations/queue-detail"),
@@ -520,6 +699,8 @@ const Executions = lazyWithRetry(
 
 const DashboardRoutes = () => {
   const location = useLocation();
+  // L6: null outside a launch build (prototype builds and unit tests).
+  const launchTo = PROTOTYPE_BUILD ? null : launchRedirect(location);
 
   React.useEffect(() => {
     const { eventName, extras = {} } = getPageViewEvent(
@@ -531,26 +712,44 @@ const DashboardRoutes = () => {
 
   return (
     <AuthGuard>
-      <DashboardLayout>
-        <Suspense fallback={<LoadingScreen sx={undefined} />}>
-          <Outlet />
-        </Suspense>
-      </DashboardLayout>
+      {/* The shell chunk loads once, at boot; after that it stays. */}
+      <Suspense fallback={<SplashScreen />}>
+        <DashboardLayout>
+          {/* R3 G0: the shell stays; never the full-screen rocket after boot. */}
+          <Suspense fallback={<RouteSkeleton />}>
+            {/* L7b absent-sweep: a page absent from a prototype build lands
+                on the Datasets list (prototypeAbsentRoutes.js). */}
+            {PROTOTYPE_BUILD && isAbsentInPrototype(location.pathname) ? (
+              <Navigate to={PROTOTYPE_ABSENT_FALLBACK} replace />
+            ) : launchTo ? (
+              // L6 launch switch: a hidden surface's route or deep-link key
+              // lands on its fallback (src/launch/launchRoutes.js).
+              <Navigate to={launchTo.to} replace />
+            ) : (
+              <Outlet />
+            )}
+          </Suspense>
+          <Suspense fallback={null}>
+            <AddDataSheet />
+          </Suspense>
+        </DashboardLayout>
+      </Suspense>
     </AuthGuard>
   );
 };
 
+// `falconAI`: whether the deployment allows Falcon AI, as the router reads
+// it (useFeatureRouteAnswer): "allowed", "denied" or "pending". Left out, it
+// is "denied".
 export const dashboardRoutes = (
   user,
   workspaceRole,
-  { isCloud = false } = {},
+  { isCloud = false, falconAI = "denied" } = {},
 ) => {
   const userOrgRole = user?.organization_role;
   const userDefaultWsRole = user?.default_workspace_role;
   const isOwner = user === null ? true : userOrgRole === "Owner";
   const effectiveWsRole = workspaceRole || userDefaultWsRole;
-  const isAdmin =
-    userOrgRole === "Admin" || effectiveWsRole === "workspace_admin";
   // Orgs created after the cutoff see only Environments in Simulate; the other
   // Simulate pages are not registered for them, so their URLs reach the 404.
   const restrictSimulateToEnvironments = Boolean(
@@ -589,6 +788,9 @@ export const dashboardRoutes = (
       ),
     },
 
+    // The page owns the strict organization/deployment gate, including direct
+    // navigation; workspace-inclusive RoleProtection is not sufficient here.
+    { path: "updates", element: <HostUpdatesPage /> },
     {
       path: "org-settings",
       element: (
@@ -629,14 +831,6 @@ export const dashboardRoutes = (
       element: (
         <RoleProtection allowedRoles={["Owner", "Admin"]}>
           <UserManagementV2 />
-        </RoleProtection>
-      ),
-    },
-    {
-      path: "coming-soon",
-      element: (
-        <RoleProtection allowedRoles={["Owner"]}>
-          <ComingSoon />
         </RoleProtection>
       ),
     },
@@ -722,6 +916,22 @@ export const dashboardRoutes = (
       ),
     },
     {
+      path: "integrations/webhooks/:endpointId",
+      element: (
+        <RoleProtection
+          allowedRoles={[
+            "Owner",
+            "Admin",
+            "Member",
+            "workspace_admin",
+            "workspace_member",
+          ]}
+        >
+          <WebhookEndpointPage />
+        </RoleProtection>
+      ),
+    },
+    {
       path: "mcp-server",
       element: (
         <RoleProtection allowedRoles={["Owner", "Admin"]}>
@@ -729,7 +939,14 @@ export const dashboardRoutes = (
         </RoleProtection>
       ),
     },
-    {
+  ];
+
+  // Falcon AI Connectors, with the same roles as Integrations, where the
+  // deployment allows Falcon AI ("allowed"), and while that answer is still
+  // coming ("pending": the page's capability gate shows loading or retry).
+  // Where it is not allowed the URL is no route, so the app's 404 answers.
+  if (falconAI === "allowed" || falconAI === "pending") {
+    settingsRoute.push({
       path: "falcon-ai-connectors",
       element: (
         <RoleProtection
@@ -744,27 +961,43 @@ export const dashboardRoutes = (
           <FalconAIConnectorsPage />
         </RoleProtection>
       ),
-    },
-  ];
+    });
+  }
 
-  // Conditionally include billing routes:
-  // - Hidden entirely in OSS mode (no billing infrastructure)
-  // - Role-gated in Cloud/EE mode
+  // Billing routes, role-gated:
+  // - Billing is the one central billing page. It registers in every mode and
+  //   for every role: on cloud it holds the platform plan, and wherever the
+  //   gateway's managed credit ledger answers it holds the AI Gateway credits
+  //   (the page sends anyone else to their profile). A role that cannot open
+  //   it is told who can, on the same URL, and the page never loads.
+  // - Plans & Pricing and the cloud license page are cloud only.
   const billingAllowedRoles = ["Owner", "Admin", "workspace_admin"];
-  const hasBillingAccess =
-    isCloud && (isOwner || billingAllowedRoles.includes(effectiveWsRole));
+  const canOpenBilling =
+    isOwner || billingAllowedRoles.includes(effectiveWsRole);
+  const hasBillingAccess = isCloud && canOpenBilling;
+  // Where the old gateway billing URLs go: Settings > Billing on cloud (the
+  // platform plan), or off cloud once gateway credits are shown; else the
+  // gateway overview.
+  const gatewayBillingTarget =
+    isCloud || !isGatewayControlHidden("managedCredits")
+      ? paths.dashboard.settings.billing
+      : paths.dashboard.gateway.overview;
+
+  settingsRoute.push({
+    path: "billing",
+    element: (
+      <RoleProtection
+        allowedRoles={isCloud ? billingAllowedRoles : ["Owner", "Admin"]}
+        fallback={<BillingNoAccess />}
+      >
+        <BillingPageV2 />
+      </RoleProtection>
+    ),
+  });
 
   if (hasBillingAccess) {
     settingsRoute.push(
       ...[
-        {
-          path: "billing",
-          element: (
-            <RoleProtection allowedRoles={billingAllowedRoles}>
-              <BillingPageV2 />
-            </RoleProtection>
-          ),
-        },
         {
           path: "ee-licenses",
           element: (
@@ -787,7 +1020,7 @@ export const dashboardRoutes = (
 
   // License management is available on self-hosted (EE) deployments too. The
   // nav shows Settings → License for org admins off-cloud, so the route must
-  // register there or it 404s. (billing/pricing above stay cloud-only.)
+  // register there or it 404s. (pricing above stays cloud-only.)
   const hasLicenseAccess =
     !isCloud && (isOwner || billingAllowedRoles.includes(effectiveWsRole));
   if (hasLicenseAccess) {
@@ -800,6 +1033,10 @@ export const dashboardRoutes = (
       ),
     });
   }
+
+  // Settings → Sandboxes (Omega): workspace owners and admins narrow the
+  // operator's sandbox policy. Registered only with VITE_OMEGA_CONSOLE=1.
+  settingsRoute.push(...omegaSettingsRoutes());
 
   if (user === null || user?.ws_enabled) {
     settingsRoute.push({
@@ -856,6 +1093,20 @@ export const dashboardRoutes = (
                 </WorkspaceRoleProtection>
               ),
             },
+            ...(WorkspaceAuditLog
+              ? [
+                  {
+                    path: "audit-log",
+                    element: (
+                      <WorkspaceRoleProtection
+                        allowedRoles={["workspace_admin"]}
+                      >
+                        <WorkspaceAuditLog />
+                      </WorkspaceRoleProtection>
+                    ),
+                  },
+                ]
+              : []),
             {
               path: "integrations",
               element: (
@@ -872,7 +1123,19 @@ export const dashboardRoutes = (
                 <WorkspaceRoleProtection
                   allowedRoles={["workspace_admin", "workspace_member"]}
                 >
-                  <IntegrationDetailPage />
+                  <IntegrationsWorkspaceScope>
+                    <IntegrationDetailPage />
+                  </IntegrationsWorkspaceScope>
+                </WorkspaceRoleProtection>
+              ),
+            },
+            {
+              path: "integrations/webhooks/:endpointId",
+              element: (
+                <WorkspaceRoleProtection
+                  allowedRoles={["workspace_admin", "workspace_member"]}
+                >
+                  <WebhookEndpointPage />
                 </WorkspaceRoleProtection>
               ),
             },
@@ -895,6 +1158,12 @@ export const dashboardRoutes = (
   const dashboardChildren = [
     {
       index: true,
+      element: <Navigate to="/dashboard/develop" replace />,
+    },
+    // dataset integration FE-0 removed the Runners page (connect / generated runners);
+    // an old link lands on Datasets, not on a 404 (options-truth L5 G5).
+    {
+      path: "runners/*",
       element: <Navigate to="/dashboard/develop" replace />,
     },
     {
@@ -1162,13 +1431,12 @@ export const dashboardRoutes = (
           path: "llm-tracing",
           element: <LLMTracingView />,
         },
+        // L7b absent-sweep (url:observe-voice): there is no separate voice
+        // page; voice calls are listed on the project's LLM tracing, so the
+        // path (and the call page's close fallback) lands there in every build.
         {
           path: "voice",
-          element: (
-            <div style={{ padding: 32, color: "#888", textAlign: "center" }}>
-              Voice observability coming soon.
-            </div>
-          ),
+          element: <Navigate to="../llm-tracing" replace />,
         },
         {
           path: "sessions",
@@ -1178,6 +1446,25 @@ export const dashboardRoutes = (
           path: "users",
           element: <UsersView />,
         },
+        // Insights and Instant eval are Enterprise: without the capability
+        // (e.g. open source) the route shows the upgrade gate, as Error Feed.
+        {
+          path: "insights",
+          element: (
+            <CapabilityGate feature={CAPABILITY.INSIGHTS}>
+              <InsightsView />
+            </CapabilityGate>
+          ),
+        },
+        // Instant eval: a question answered for every row of a view.
+        {
+          path: "ask",
+          element: (
+            <CapabilityGate feature={CAPABILITY.INSTANT_EVAL}>
+              <AskPage />
+            </CapabilityGate>
+          ),
+        },
       ],
     },
     {
@@ -1185,7 +1472,13 @@ export const dashboardRoutes = (
       children: [
         {
           index: true,
-          element: <Develop />,
+          // L7c g1 (url:owned-elsewhere): ?page= past the end opens the
+          // last page with a notice.
+          element: (
+            <DatasetListPageGate>
+              <Develop />
+            </DatasetListPageGate>
+          ),
         },
         // Synthetic data ships open on self-hosted; cloud plans enforce via
         // the backend capability check. Gate the routes too (not just the
@@ -1193,6 +1486,7 @@ export const dashboardRoutes = (
         // it shows the upgrade screen instead of a page that 402s on generate.
         {
           path: "create-synthetic-dataset",
+          // the interface contract-8a: prototype builds generate from the world's generator.
           element: (
             <CapabilityGate feature={CAPABILITY.SYNTHETIC_DATA}>
               <CreateSyntheticData />
@@ -1208,9 +1502,51 @@ export const dashboardRoutes = (
           ),
         },
 
+        // Declared before :dataset; the static second segment never collides
+        // with its only child, preview/:id. The page renders the Data, Matrix
+        // or Summary body from the last path segment.
+        // R3: side by side, full width (no compare tabs).
+        {
+          path: ":dataset/compare/tasks",
+          element: <TaskCompare />,
+        },
+        {
+          path: ":dataset/compare",
+          element: <DatasetCompare />,
+          children: [
+            { index: true, element: <CompareIndexRedirect /> },
+            { path: "data", element: null },
+            { path: "matrix", element: null },
+            { path: "paths", element: null }, // R4-F frozen line
+            { path: "summary", element: null },
+          ],
+        },
+        // R4 (implementation): prototype-only lab (logos, lenses); not in the nav.
+        ...(R4Lab ? [{ path: "r4-lab", element: <R4Lab /> }] : []),
+        // the interface contract: leaderboards across datasets (static, before :dataset),
+        // prototype builds only.
+        ...(Leaderboards
+          ? [
+              { path: "leaderboards", element: <Leaderboards /> },
+              {
+                path: "leaderboards/:leaderboardId",
+                element: <Leaderboards />,
+              },
+            ]
+          : []),
+        // AnnotateWorkspaceView reads the queue with useParams().queueId.
+        {
+          path: ":dataset/review/:queueId",
+          element: <DatasetReview />,
+        },
         {
           path: ":dataset",
-          element: <DevelopDetail />,
+          // L7c g1 (url:dataset): an unknown ?tab= opens Data with a notice.
+          element: (
+            <DatasetTabGate>
+              <DevelopDetail />
+            </DatasetTabGate>
+          ),
           children: [
             {
               path: "preview/:id",
@@ -1224,16 +1560,22 @@ export const dashboardRoutes = (
           children: [
             {
               index: true,
-              element: <Navigate to="data" replace />,
+              element: <ExperimentIndexRedirect />,
             },
             {
               path: "data",
               element: <ExperimentData />,
             },
             {
+              path: "matrix",
+              element: <ExperimentMatrix />,
+            },
+            { path: "paths", element: <ExperimentPaths /> }, // R4-F frozen line
+            {
               path: "summary",
               element: <ExperimentSummary />,
             },
+            { path: "traces", element: <ExperimentTraces /> },
           ],
         },
         {
@@ -1304,6 +1646,8 @@ export const dashboardRoutes = (
         },
       ],
     },
+    // dataset integration FE-0: the Runners page (machines joined with a live-connection
+    // command that does not exist) is absent until that path is real.
     {
       path: "agents",
       children: [
@@ -1398,11 +1742,8 @@ export const dashboardRoutes = (
     },
     {
       path: "huggingface",
+      // the interface contract: prototype builds import from the world hub (repo@revision).
       element: <HuggingFacePage />,
-    },
-    {
-      path: "loremipsum",
-      element: <ErrorFallbackView />,
     },
     {
       path: "simulate",
@@ -1630,6 +1971,21 @@ export const dashboardRoutes = (
       path: "gateway",
       element: <GatewayProvider />,
       children: [
+        // Billing lives in the central Settings > Billing page; the old
+        // gateway billing URLs land there, query and hash kept, whether or
+        // not the org has a gateway yet. Off cloud that page has nothing to
+        // show while gateway credits are hidden, so they open the gateway
+        // overview instead.
+        {
+          path: "billing",
+          element: <GatewayRedirect to={gatewayBillingTarget} />,
+        },
+        {
+          path: "billing/*",
+          element: <GatewayRedirect to={gatewayBillingTarget} />,
+        },
+        // One playground: this URL opens the Prompts workbench playground.
+        { path: "playground", element: <GatewayPlayground /> },
         {
           element: (
             <GatewayGuard>
@@ -1641,6 +1997,21 @@ export const dashboardRoutes = (
             { path: "keys", element: <GatewayKeys /> },
             { path: "providers", element: <GatewayProviders /> },
             { path: "providers/:tab", element: <GatewayProviders /> },
+            { path: "integrations", element: <GatewayIntegrations /> },
+            { path: "models", element: <GatewayModels /> },
+            { path: "models/:tab", element: <GatewayModels /> },
+            // A model page; futureagi.com/models deep-links here.
+            { path: "models/:provider/:model", element: <GatewayModels /> },
+            // Hidden: the Catalog where managed models are offered, else the
+            // Overview (a deployment with none has no Catalog).
+            {
+              path: "capabilities",
+              element: isGatewayPageHidden("capabilities") ? (
+                <CapabilitiesRedirect />
+              ) : (
+                <GatewayCapabilities />
+              ),
+            },
             { path: "guardrails", element: <GatewayGuardrails /> },
             { path: "guardrails/:tab", element: <GatewayGuardrails /> },
             { path: "budgets", element: <GatewayBudgets /> },
@@ -1653,10 +2024,26 @@ export const dashboardRoutes = (
             { path: "webhooks", element: <GatewayWebhooks /> },
             { path: "webhooks/:tab", element: <GatewayWebhooks /> },
             { path: "sessions", element: <GatewaySessions /> },
+            { path: "runs", element: gatewayPage("runs", <GatewayRuns />) },
+            {
+              path: "runs/:runId",
+              element: gatewayPage("runs", <GatewayRunDetail />),
+            },
             { path: "custom-properties", element: <GatewayCustomProperties /> },
             { path: "fallbacks", element: <GatewayFallbacks /> },
-            { path: "mcp", element: <GatewayMCP /> },
-            { path: "mcp/:tab", element: <GatewayMCP /> },
+            {
+              path: "policies",
+              element: gatewayPage("policies", gatewayPoliciesPage),
+            },
+            {
+              path: "policies/:tab",
+              element: gatewayPage("policies", gatewayPoliciesPage),
+            },
+            { path: "mcp", element: gatewayPage("mcp", <GatewayMCP />) },
+            {
+              path: "mcp/:tab",
+              element: gatewayPage("mcp", <GatewayMCP />),
+            },
             // { path: "experiments", element: <GatewayExperiments /> },
             // {
             //   path: "experiments/:experimentId",
@@ -1682,12 +2069,16 @@ export const dashboardRoutes = (
     },
   ];
 
-  if (isOwner || isAdmin) {
-    dashboardChildren.push({
-      path: "keys",
-      element: <DevKeysPage />,
-    });
-  }
+  // Everyone manages their own personal keys. The API scopes the list and
+  // management of other people's keys to organization Owners and Admins.
+  dashboardChildren.push({
+    path: "keys",
+    element: <DevKeysPage />,
+  });
+
+  // Studio, Deployments, Sandboxes and the /dashboard/squad redirect; empty
+  // unless VITE_OMEGA_CONSOLE=1.
+  dashboardChildren.push(...omegaDashboardRoutes());
 
   return [
     {

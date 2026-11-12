@@ -10,13 +10,11 @@ import {
   useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React from "react";
+import React, { useId } from "react";
 import Iconify from "src/components/iconify";
 
 const actionBtnBaseSx = {
   minWidth: "90px",
-  minHeight: "32px",
-  textTransform: "none",
 };
 
 export default function ModalWrapper({
@@ -34,16 +32,21 @@ export default function ModalWrapper({
   actionBtnSx = {},
   cancelBtnSx = {},
   dialogActionSx = {},
-  modalWidth = "570px",
+  modalWidth = "560px",
   actionBtnProps = {},
   cancelBtnProps = {},
   onCancelBtn,
   paperSx = {},
 }) {
   const theme = useTheme();
+  const headerId = useId();
+  const titleId = useId();
+  const subTitleId = useId();
   return (
     <Dialog
       open={open}
+      aria-labelledby={titleId}
+      aria-describedby={subTitle ? subTitleId : undefined}
       disableEscapeKeyDown={isLoading}
       onClose={() => {
         if (isLoading) return;
@@ -52,7 +55,6 @@ export default function ModalWrapper({
       PaperProps={{
         sx: {
           width: modalWidth,
-          borderRadius: theme.spacing(1),
           padding: theme.spacing(2),
           display: "flex",
           flexDirection: "column",
@@ -61,9 +63,21 @@ export default function ModalWrapper({
         },
       }}
     >
-      <DialogTitle sx={{ padding: 0, lineHeight: 0 }}>
+      {/* The dialog is named by the title text alone and described by the
+          subtitle alone, never by its children (they are forms). The header
+          keeps the dialog title's styles, which the subtitle inherits, but it
+          is a plain container: it is not a heading, and its own id keeps it
+          from taking the dialog's label id. The close button sits beside the
+          title heading, placed against the dialog paper as before. */}
+      <DialogTitle
+        component="div"
+        id={headerId}
+        sx={{ padding: 0, lineHeight: 0 }}
+      >
         <Stack>
           <Typography
+            id={titleId}
+            component={title ? "h2" : undefined}
             typography={"m3"}
             color={"text.primary"}
             fontWeight={"fontWeightSemiBold"}
@@ -71,6 +85,7 @@ export default function ModalWrapper({
             {title}
           </Typography>
           <IconButton
+            aria-label="Close dialog"
             disabled={isLoading}
             onClick={onClose}
             sx={{
@@ -80,11 +95,12 @@ export default function ModalWrapper({
               color: "text.primary",
             }}
           >
-            <Iconify icon="akar-icons:cross" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
         {subTitle && (
           <Typography
+            id={subTitleId}
             variant="s1"
             color={"text.secondary"}
             fontWeight={"fontWeightRegular"}
@@ -99,7 +115,7 @@ export default function ModalWrapper({
           padding: 0,
           display: "flex",
           flexDirection: "row",
-          gap: "16px",
+          gap: "8px",
           mt: 2,
           "& button": {
             margin: 0,
@@ -116,17 +132,11 @@ export default function ModalWrapper({
             type="button"
             sx={{
               ...actionBtnBaseSx,
-              "&:hover": {
-                borderColor: "divider",
-              },
-              color: "text.disabled",
               ...cancelBtnSx,
             }}
             {...cancelBtnProps}
           >
-            <Typography variant="s1" fontWeight="fontWeightMedium">
-              {cancelBtnTitle}
-            </Typography>
+            {cancelBtnTitle}
           </Button>
         )}
         <LoadingButton
@@ -144,9 +154,7 @@ export default function ModalWrapper({
           disabled={!isValid || isLoading}
           {...actionBtnProps}
         >
-          <Typography variant="s1" fontWeight="fontWeightSemiBold">
-            {actionBtnTitle}
-          </Typography>
+          {actionBtnTitle}
         </LoadingButton>
       </DialogActions>
     </Dialog>

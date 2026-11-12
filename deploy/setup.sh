@@ -4,13 +4,19 @@
 # Boot checks previously initialized schema/mirrors; it never initializes them.
 #
 # Usage: ./deploy/setup.sh [--skip-up] [--non-interactive] [--confirm-initialized]
+# Optional status: --host-status-help or --prepare-host-status (alone; never boots).
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." &>/dev/null && pwd)"
+# Deliberately separate from production setup/initialization and before all
+# configuration writes or Docker calls. Existing installs remain untouched.
+if [[ "${1:-}" == --host-status-help || "${1:-}" == --prepare-host-status ]]; then
+  exec bash "${REPO_ROOT}/bin/install" "$@"
+fi
 ENV_FILE="${SCRIPT_DIR}/.env.production"
-SECRET_NAMES=(SECRET_KEY AGENTCC_INTERNAL_API_KEY AGENTCC_ADMIN_TOKEN PG_PASSWORD
+SECRET_NAMES=(SECRET_KEY FI_API_SECRET_PEPPER AGENTCC_INTERNAL_API_KEY AGENTCC_ADMIN_TOKEN OMEGA_HUB_CHECKER_TOKEN PG_PASSWORD
   MINIO_ROOT_PASSWORD PROPERTY_CATALOG_API_PASSWORD
   PROPERTY_CATALOG_CONSUMER_PASSWORD OPENAI_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY
   INTEGRATION_ENCRYPTION_KEY EE_LICENSE_KEY RECAPTCHA_SECRET_KEY MAILGUN_API_KEY
@@ -127,6 +133,22 @@ else
   SIMULATION_RUNNER_VERSION=$(prompt_required SIMULATION_RUNNER_VERSION "Simulation SDK runner release (futureagi/future-agi-simulation-runner)")
 
   say ""
+  say "${BOLD}== Omega Hub checker (deploy/hub-runner/README.md) ==${RESET}"
+  say "Uploads are checked on a dedicated runner host whose Docker runs containers on gVisor."
+  OMEGA_HUB_CHECKER_VERSION=$(prompt_required OMEGA_HUB_CHECKER_VERSION "Checker release (futureagi/omega-hub-checker)")
+  OMEGA_HUB_RUNNER_IMAGE=$(prompt_required OMEGA_HUB_RUNNER_IMAGE "Runner image, pinned by digest (<repository>@sha256:...)")
+  case "$OMEGA_HUB_RUNNER_IMAGE" in
+    *@sha256:*) ;;
+    *) err "OMEGA_HUB_RUNNER_IMAGE must be pinned by digest (<repository>@sha256:<digest>)"; exit 1 ;;
+  esac
+  OMEGA_HUB_RUNNER_DOCKER_HOST=$(prompt_required OMEGA_HUB_RUNNER_DOCKER_HOST "Runner host's Docker (tcp://<host>:2376)")
+  case "$OMEGA_HUB_RUNNER_DOCKER_HOST" in
+    tcp://?*) ;;
+    *) err "OMEGA_HUB_RUNNER_DOCKER_HOST must be the runner host, tcp://<host>:2376, never this host's Docker socket"; exit 1 ;;
+  esac
+  OMEGA_HUB_RUNNER_TLS_DIR=$(prompt_required OMEGA_HUB_RUNNER_TLS_DIR "Directory with the runner host's client certificate (ca.pem, cert.pem, key.pem)")
+
+  say ""
   say "${BOLD}== Catalog credentials ==${RESET}"
   say "Supply the separately provisioned reader/writer credentials; never substitute new passwords for retained indexes."
   PROPERTY_CATALOG_API_PASSWORD=$(prompt_required PROPERTY_CATALOG_API_PASSWORD "Existing/provisioned catalog reader password" 1)
@@ -135,8 +157,14 @@ else
   say ""
   say "${BOLD}== Preparing new application secrets ==${RESET}"
   SECRET_KEY=${SECRET_KEY:-$(openssl rand -hex 32)}
+  FI_API_SECRET_PEPPER=${FI_API_SECRET_PEPPER:-$(openssl rand -hex 32)}
+  # Fernet key (32 random bytes, URL-safe base64): every organization's system
+  # API key and stored integration credentials are encrypted under it.
+  INTEGRATION_ENCRYPTION_KEY=${INTEGRATION_ENCRYPTION_KEY:-$(openssl rand -base64 32 | tr '+/' '-_')}
   AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:-$(openssl rand -hex 32)}
   AGENTCC_ADMIN_TOKEN=${AGENTCC_ADMIN_TOKEN:-$(openssl rand -hex 32)}
+  # Shared by the backend and the Hub checker; both read it on start.
+  OMEGA_HUB_CHECKER_TOKEN=${OMEGA_HUB_CHECKER_TOKEN:-$(openssl rand -hex 32)}
   PG_PASSWORD=${PG_PASSWORD:-$(openssl rand -hex 24)}
   MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-$(openssl rand -hex 24)}
   ok "Prepared application secrets (explicit values preserved; missing values generated)"
@@ -163,9 +191,20 @@ AGENTCC_GATEWAY_VERSION=${AGENTCC_GATEWAY_VERSION}
 SERVING_VERSION=${SERVING_VERSION}
 CODE_EXECUTOR_VERSION=${CODE_EXECUTOR_VERSION}
 SIMULATION_RUNNER_VERSION=${SIMULATION_RUNNER_VERSION}
+OMEGA_HUB_CHECKER_VERSION=${OMEGA_HUB_CHECKER_VERSION}
 
 FRONTEND_URL=${FRONTEND_URL}
 VITE_HOST_API=${VITE_HOST_API}
+OMEGA_HUB_APP_URL=${FRONTEND_URL%/}/dashboard/hub
+OMEGA_HUB_PUBLIC_API_URL=${VITE_HOST_API%/}/omega-hub/v1
+
+EOF
+  for name in OMEGA_HUB_RUNNER_IMAGE OMEGA_HUB_RUNNER_DOCKER_HOST OMEGA_HUB_RUNNER_TLS_DIR; do
+    printf '%s=' "$name"
+    dotenv_literal "${!name}"
+    printf '\n'
+  done
+  cat <<EOF
 
 EOF
   for name in "${SECRET_NAMES[@]}"; do
@@ -184,7 +223,15 @@ cd "$REPO_ROOT"
 unset "${SECRET_NAMES[@]}"
 COMPOSE=(docker compose --env-file "$ENV_FILE" -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml)
 # Do not print rendered environment/secrets, or execute/shell-source the env file.
-if ! "${COMPOSE[@]}" config --quiet >/dev/null 2>&1; then
+# Compose's message for an unset required variable names only the variable; it is
+# the one part of its output repeated here (any other line may quote a value).
+if ! config_errors=$("${COMPOSE[@]}" config --quiet 2>&1 >/dev/null); then
+  missing=$(printf '%s\n' "$config_errors" \
+    | sed -nE 's/.*required variable ([A-Za-z_][A-Za-z0-9_]*) is missing a value.*/\1/p' \
+    | sort -u | paste -sd ' ' -)
+  if [[ -n "$missing" ]]; then
+    err "Required setting missing from $ENV_FILE: $missing (deploy/README.md, 1. Generate secrets)."
+  fi
   err "Invalid production configuration: check required credentials and every production image version. Existing credentials must be reused; see deploy/README.md."
   exit 1
 fi

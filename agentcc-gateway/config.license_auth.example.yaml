@@ -1,7 +1,14 @@
 # Enterprise License Auth Configuration
 #
-# Add this section to your agentcc-gateway config.yaml to enable
+# Add these sections to your agentcc-gateway config.yaml to enable
 # managed AI service token verification.
+
+# license_auth needs Redis: with license_auth enabled the gateway refuses to
+# start unless redis is enabled with an address (here, or
+# AGENTCC_REDIS_ADDRESS in the environment).
+redis:
+  enabled: true
+  address: "redis:6379"
 
 license_auth:
   enabled: true

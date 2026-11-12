@@ -24,7 +24,15 @@ WORKDIR /build
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+# go.mod's toolchain (go1.26.10) compiles the gateway, not the builder image's
+# own Go (go1.26.8 in the pinned base, which sets GOTOOLCHAIN=local): the
+# release binaries (scripts/release/build-reproducible.sh) and the release's
+# tests use go.mod's, so the image ships the toolchain they were tested with.
+# The go command downloads it from the module proxy and checks it against
+# sum.golang.org, as the release workflow's binaries job does, so this step
+# needs both. Move it with go.mod (cmd/agentcc
+# TestImageBuildsTheGatewayWithGoModToolchain fails until it matches).
+RUN CGO_ENABLED=0 GOTOOLCHAIN=go1.26.10 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w" -o agentcc-gateway ./cmd/agentcc/
 
 # HEALTHCHECK probe: scratch has no shell, curl or wget. Standard library

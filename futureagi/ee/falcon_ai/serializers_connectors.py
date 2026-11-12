@@ -60,7 +60,7 @@ class MCPConnectorCreateSerializer(serializers.Serializer):
         max_length=100, required=False, allow_blank=True, default="Authorization"
     )
     auth_header_value = serializers.CharField(
-        required=False, allow_blank=True, default=""
+        required=False, allow_blank=True, default="", write_only=True
     )
 
 

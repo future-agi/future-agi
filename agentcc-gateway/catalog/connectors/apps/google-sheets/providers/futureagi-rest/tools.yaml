@@ -1,0 +1,116 @@
+schema: connector-gen/rest-overlay/v1
+spec: fixtures/spec/sheets-v4.discovery.json.gz
+tools:
+  - name: get_spreadsheet
+    title: Get spreadsheet
+    description: Read an app-authorized spreadsheet and sheet metadata. Set includeGridData=false for a light response.
+    operation:
+      id: sheets.spreadsheets.get
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+    posture: auto
+  - name: create_spreadsheet
+    title: Create spreadsheet
+    description: Create a spreadsheet, for example body.properties.title="Budget".
+    operation:
+      id: sheets.spreadsheets.create
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - properties.title
+      required:
+        - properties
+        - properties.title
+      description: Create a spreadsheet, for example body.properties.title="Budget".
+  - name: get_values
+    title: Get values
+    description: Read an A1 range, for example Sheet1!A1:B2, from the app-authorized spreadsheet.
+    operation:
+      id: sheets.spreadsheets.values.get
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+    posture: auto
+  - name: batch_get_values
+    title: Batch get values
+    description: Read multiple A1 ranges, for example ranges=["Sheet1!A1:B2"].
+    operation:
+      id: sheets.spreadsheets.values.batchGet
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+  - name: update_values
+    title: Update values
+    description: Replace an A1 range with a two-dimensional values array. Use valueInputOption=RAW for literal values.
+    operation:
+      id: sheets.spreadsheets.values.update
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: true
+    posture: deny
+    body:
+      fields:
+        - values
+        - majorDimension
+      required:
+        - values
+      description: Replace an A1 range with a two-dimensional values array. Use valueInputOption=RAW for literal values.
+  - name: append_values
+    title: Append values
+    description: Append rows after the table in an A1 range. Use valueInputOption=RAW and body.values, for example [["Travel",20]].
+    operation:
+      id: sheets.spreadsheets.values.append
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - values
+        - majorDimension
+      required:
+        - values
+      description: Append rows after the table in an A1 range. Use valueInputOption=RAW and body.values, for example [["Travel",20]].
+  - name: clear_values
+    title: Clear values
+    description: Clear values in the A1 range while preserving formatting; for example Sheet1!A1:B2.
+    operation:
+      id: sheets.spreadsheets.values.clear
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: true
+    posture: deny
+  - name: copy_sheet
+    title: Copy sheet
+    description: Copy one sheet to another app-authorized spreadsheet. Use numeric sheetId=0 and destinationSpreadsheetId.
+    operation:
+      id: sheets.spreadsheets.sheets.copyTo
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - destinationSpreadsheetId
+      required:
+        - destinationSpreadsheetId
+      description: Copy one sheet to another app-authorized spreadsheet. Use numeric sheetId=0 and destinationSpreadsheetId.

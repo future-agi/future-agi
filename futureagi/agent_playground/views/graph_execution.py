@@ -1,5 +1,6 @@
 import structlog
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import GenericViewSet
 
@@ -7,6 +8,7 @@ from agent_playground.models.choices import NodeType
 from agent_playground.models.execution_data import ExecutionData
 from agent_playground.models.graph_execution import GraphExecution
 from agent_playground.models.node_execution import NodeExecution
+from agent_playground.serializers.contracts import AGENT_PLAYGROUND_ERROR_RESPONSES
 from agent_playground.serializers.graph_execution import (
     GraphExecutionDetailResponseSerializer,
     GraphExecutionListResponseSerializer,
@@ -15,11 +17,11 @@ from agent_playground.serializers.graph_execution import (
     NodeExecutionBriefSerializer,
     NodeExecutionDetailResponseSerializer,
 )
-from agent_playground.serializers.contracts import AGENT_PLAYGROUND_ERROR_RESPONSES
 from agent_playground.serializers.graph_version import (
     GraphVersionDetailSerializer,
     prefetch_version_detail,
 )
+from common.utils.page_limits import enforce_page_size
 from common.utils.pagination import paginate_queryset
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -73,6 +75,7 @@ class GraphExecutionViewSet(GenericViewSet):
     def list(self, request, graph_id=None):
         """List all executions for a graph, with optional status filter."""
         try:
+            enforce_page_size(request.query_params.get("page_size"))
             queryset = (
                 self.get_queryset()
                 .filter(graph_version__graph_id=graph_id)
@@ -85,6 +88,8 @@ class GraphExecutionViewSet(GenericViewSet):
             return self._gm.success_response(
                 {"executions": serializer.data, "metadata": metadata}
             )
+        except APIException:
+            raise
         except Exception as e:
             logger.exception("Error listing executions", error=str(e))
             return self._gm.internal_server_error_response(

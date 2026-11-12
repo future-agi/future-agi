@@ -109,6 +109,7 @@ const AllActionForm = ({
   const { isOSS, isSuccess: modeConfirmed } = useDeploymentMode();
   const revealInviteLinks = showInviteLinks && modeConfirmed && isOSS;
   const [inviteLinks, setInviteLinks] = useState(null);
+  const [deliveryWarning, setDeliveryWarning] = useState("");
   // The request outlives a close, so the next open would show the old batch.
   const awaitingInviteRef = useRef(false);
   const { user, orgLevel: actorOrgLevel } = useAuthContext();
@@ -167,13 +168,38 @@ const AllActionForm = ({
     resolver: editRoleSchema,
   });
 
-  // Resend invite form (allows role change before resending)
+  // A workspace-member row omits grants; that is not an empty grant list.
+  const resendWorkspaceGrants = useMemo(
+    () =>
+      Array.isArray(userData?.workspaces)
+        ? userData.workspaces.map((ws) => ({
+            workspace_id: String(ws.workspace_id),
+            level: ws.ws_level,
+          }))
+        : null,
+    [userData],
+  );
+  const resendWorkspaceOptions = useMemo(() => {
+    const options = new Map(allWorkspaces.map((ws) => [ws.id, ws]));
+    (userData?.workspaces || []).forEach((ws) => {
+      const id = String(ws.workspace_id);
+      if (!options.has(id))
+        options.set(id, { id, name: ws.workspace_name || id });
+    });
+    return Array.from(options.values());
+  }, [allWorkspaces, userData]);
+
+  // Resend/renew retains grants, and requires an explicit lower-role landing.
   const resendForm = useForm({
     defaultValues: {
       orgLevel: userData?.org_level ?? LEVELS.VIEWER,
+      workspaceLevels: {},
+      workspaceIds: [],
     },
     mode: "onChange",
   });
+  const resendNeedsWorkspaces = resendForm.watch("orgLevel") < LEVELS.ADMIN;
+  const resendWorkspaceIds = resendForm.watch("workspaceIds") || [];
 
   // Workspace role edit form
   const wsEditForm = useForm({
@@ -212,9 +238,18 @@ const AllActionForm = ({
     if (userData && openActionForm?.action === "resend-invite") {
       resendForm.reset({
         orgLevel: userData?.org_level ?? LEVELS.VIEWER,
+        workspaceLevels: Object.fromEntries(
+          (resendWorkspaceGrants || []).map((grant) => [
+            grant.workspace_id,
+            grant.level,
+          ]),
+        ),
+        workspaceIds: (resendWorkspaceGrants || []).map(
+          (grant) => grant.workspace_id,
+        ),
       });
     }
-  }, [userData, openActionForm?.action, resendForm]);
+  }, [userData, openActionForm?.action, resendForm, resendWorkspaceGrants]);
 
   const refetchData = () => {
     queryClient.invalidateQueries({ queryKey: ["user-detail"] });
@@ -227,6 +262,7 @@ const AllActionForm = ({
     wsEditForm.reset();
     resendForm.reset();
     setInviteLinks(null);
+    setDeliveryWarning("");
     awaitingInviteRef.current = false;
     onClose();
   };
@@ -240,6 +276,17 @@ const AllActionForm = ({
     mutationFn: (data) => axios.post(endpoints.rbac.inviteCreate, data),
     onSuccess: (response, variables) => {
       const result = response?.data?.result;
+
+      if (result?.delivery_failed?.length) {
+        const warning = `Invitation saved, but email delivery failed for ${result.delivery_failed.length} recipient(s). Retry delivery from Members or copy an available invite link.`;
+        setDeliveryWarning(warning);
+        enqueueSnackbar(warning, { variant: "warning" });
+        refetchData();
+        if (revealInviteLinks && awaitingInviteRef.current) {
+          setInviteLinks(normalizeInvites(result, variables?.emails));
+        }
+        return;
+      }
 
       // Check if there are errors in the response
       if (result?.errors && result.errors.length > 0) {
@@ -335,6 +382,10 @@ const AllActionForm = ({
 
   // Remove from workspace
   const [showOrgRemoveConfirm, setShowOrgRemoveConfirm] = useState(false);
+  // Removing someone from the organization needs an org Admin or Owner.
+  const canRemoveFromOrganization =
+    isOwner || isAdmin || user?.organization_role === "Admin";
+  const onlyWorkspaceNotice = `This is ${userData?.name || userData?.email || "the member"}'s only workspace, so only an organization Admin or Owner can remove them.`;
   const { mutate: removeWsMemberMutate, isPending: isWsRemovePending } =
     useMutation({
       meta: { errorHandled: true },
@@ -366,8 +417,11 @@ const AllActionForm = ({
     useMutation({
       meta: { errorHandled: true },
       mutationFn: (data) => axios.post(endpoints.rbac.inviteResend, data),
-      onSuccess: () => {
-        enqueueSnackbar("Invite resent successfully", { variant: "success" });
+      onSuccess: (response) => {
+        enqueueSnackbar(
+          response?.data?.result?.message || "Invitation updated",
+          { variant: "success" },
+        );
         refetchData();
         handleOnClose();
       },
@@ -553,6 +607,43 @@ const AllActionForm = ({
       if (formData?.orgLevel != null) {
         payload.org_level = formData.orgLevel;
       }
+      if (formData.orgLevel < LEVELS.ADMIN) {
+        const isDemotion = userData.org_level >= LEVELS.ADMIN;
+        if (resendWorkspaceGrants === null) {
+          // Never replace all grants with the current workspace's projection.
+          if (isDemotion) {
+            resendForm.setError("orgLevel", {
+              message:
+                "Use Organization Members to select workspace access before lowering this role.",
+            });
+            return;
+          }
+        } else {
+          const grants = (formData.workspaceIds || []).map((id) => ({
+            workspace_id: id,
+            level: formData.workspaceLevels?.[id] ?? LEVELS.WORKSPACE_MEMBER,
+          }));
+          const grantsChanged =
+            grants.length !== resendWorkspaceGrants.length ||
+            grants.some(
+              (grant) =>
+                !resendWorkspaceGrants.some(
+                  (original) =>
+                    original.workspace_id === grant.workspace_id &&
+                    original.level === grant.level,
+                ),
+            );
+          if ((isDemotion || grantsChanged) && !grants.length) {
+            resendForm.setError("workspaceIds", {
+              message: "Please select at least one workspace",
+            });
+            return;
+          }
+          // Omission preserves the stored grants exactly, even if the row is stale.
+          if (grantsChanged) payload.workspace_access = grants;
+        }
+      }
+      if (modeConfirmed && isOSS) payload.send_email = false;
       resendInviteMutate(payload);
     } else {
       legacyResendInvite();
@@ -603,6 +694,7 @@ const AllActionForm = ({
           // Clear emails or the next submit re-invites the same batch.
           inviteForm.resetField("emails");
           setInviteLinks(null);
+          setDeliveryWarning("");
         }}
       />
     );
@@ -627,6 +719,11 @@ const AllActionForm = ({
           title="Invite new users"
           formSection={
             <Box display="flex" flexDirection="column" gap={2}>
+              {deliveryWarning && (
+                <Typography role="alert" color="warning.main">
+                  {deliveryWarning}
+                </Typography>
+              )}
               {/* Emails */}
               <Box>
                 <Controller
@@ -659,7 +756,7 @@ const AllActionForm = ({
                 <FormSearchSelectFieldControl
                   control={inviteForm.control}
                   fieldName={"orgLevel"}
-                  label="Organization Role"
+                  label="Organization role"
                   required
                   options={filteredOrgRoleOptions}
                   showClear={false}
@@ -673,7 +770,7 @@ const AllActionForm = ({
                 <FormSearchSelectFieldControl
                   control={inviteForm.control}
                   fieldName={"wsLevel"}
-                  label="Workspace Role"
+                  label="Workspace role"
                   options={wsRoleOptions}
                   showClear={false}
                   size="small"
@@ -770,7 +867,7 @@ const AllActionForm = ({
               <FormSearchSelectFieldControl
                 control={editForm.control}
                 fieldName={"orgLevel"}
-                label="Organization Role"
+                label="Organization role"
                 options={
                   filteredOrgRoleOptions.length > 0
                     ? filteredOrgRoleOptions
@@ -786,7 +883,7 @@ const AllActionForm = ({
                 <FormSearchSelectFieldControl
                   control={editForm.control}
                   fieldName={"wsLevel"}
-                  label="Workspace Role"
+                  label="Workspace role"
                   options={wsRoleOptions}
                   showClear={false}
                   size="small"
@@ -804,7 +901,7 @@ const AllActionForm = ({
                   <FormSearchSelectFieldControl
                     control={editForm.control}
                     fieldName={"wsLevel_edit"}
-                    label="Workspace Role"
+                    label="Workspace role"
                     options={wsRoleOptions}
                     showClear={false}
                     size="small"
@@ -922,13 +1019,17 @@ const AllActionForm = ({
           userData={userData}
           showUserData
           showRoleInfo
-          title="Select role and resend invite"
+          title={
+            modeConfirmed && isOSS
+              ? "Renew invitation"
+              : "Select role and resend invite"
+          }
           formSection={
             <Box display="flex" flexDirection="column" gap={2}>
               <FormSearchSelectFieldControl
                 control={resendForm.control}
                 fieldName={"orgLevel"}
-                label="Organization Role"
+                label="Organization role"
                 options={
                   filteredOrgRoleOptions.length > 0
                     ? filteredOrgRoleOptions
@@ -938,6 +1039,70 @@ const AllActionForm = ({
                 size="small"
                 fullWidth
               />
+              {resendNeedsWorkspaces &&
+                (resendWorkspaceGrants !== null ? (
+                  <>
+                    <Controller
+                      name="workspaceIds"
+                      control={resendForm.control}
+                      render={({ field, fieldState }) => (
+                        <Autocomplete
+                          multiple
+                          size="small"
+                          options={resendWorkspaceOptions}
+                          getOptionLabel={(option) => option.name || ""}
+                          value={resendWorkspaceOptions.filter((ws) =>
+                            (field.value || []).includes(ws.id),
+                          )}
+                          onChange={(_, values) => {
+                            const ids = values.map((ws) => ws.id);
+                            ids.forEach((id) => {
+                              if (
+                                resendForm.getValues(`workspaceLevels.${id}`) ==
+                                null
+                              ) {
+                                resendForm.setValue(
+                                  `workspaceLevels.${id}`,
+                                  LEVELS.WORKSPACE_MEMBER,
+                                );
+                              }
+                            });
+                            field.onChange(ids);
+                          }}
+                          isOptionEqualToValue={(option, value) =>
+                            option.id === value.id
+                          }
+                          renderInput={(params) => (
+                            <TextField
+                              {...params}
+                              label="Workspaces"
+                              required
+                              error={!!fieldState.error}
+                              helperText={fieldState.error?.message}
+                            />
+                          )}
+                        />
+                      )}
+                    />
+                    {resendWorkspaceIds.map((id) => (
+                      <FormSearchSelectFieldControl
+                        key={id}
+                        control={resendForm.control}
+                        fieldName={`workspaceLevels.${id}`}
+                        label={`${resendWorkspaceOptions.find((ws) => ws.id === id)?.name || id} role`}
+                        options={wsRoleOptions}
+                        showClear={false}
+                        size="small"
+                        fullWidth
+                      />
+                    ))}
+                  </>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    Existing workspace access will be kept. To change workspace
+                    access, use Organization Members.
+                  </Typography>
+                ))}
             </Box>
           }
           actionButton={
@@ -951,7 +1116,7 @@ const AllActionForm = ({
                 color="primary"
                 loading={isResendPending || isLegacyResendPending}
               >
-                Send
+                {modeConfirmed && isOSS ? "Renew invitation" : "Send"}
               </LoadingButton>
             </Box>
           }
@@ -977,7 +1142,7 @@ const AllActionForm = ({
           actionButton={
             <Box display="flex" gap={2}>
               <Button variant="outlined" onClick={handleOnClose}>
-                Cancel
+                Keep invite
               </Button>
               <LoadingButton
                 onClick={handleCancelInvite}
@@ -985,7 +1150,7 @@ const AllActionForm = ({
                 color="error"
                 loading={isCancelPending || isLegacyRemovePending}
               >
-                Remove
+                Cancel invite
               </LoadingButton>
             </Box>
           }
@@ -1008,7 +1173,7 @@ const AllActionForm = ({
               <FormSearchSelectFieldControl
                 control={wsEditForm.control}
                 fieldName={"wsLevel"}
-                label="Workspace Role"
+                label="Workspace role"
                 options={wsRoleOptions}
                 showClear={false}
                 size="small"
@@ -1049,7 +1214,37 @@ const AllActionForm = ({
       {/* REMOVE FROM WORKSPACE */}
       {/* ============================================================ */}
       <ShowComponent condition={openActionForm?.action === "remove-ws-member"}>
-        {showOrgRemoveConfirm ? (
+        {showOrgRemoveConfirm && !canRemoveFromOrganization ? (
+          <ActionForm
+            open={Boolean(openActionForm)}
+            onClose={() => {
+              setShowOrgRemoveConfirm(false);
+              handleOnClose();
+            }}
+            userData={userData}
+            showUserData
+            showRole
+            title={onlyWorkspaceNotice}
+            actionButton={
+              <Box display="flex" gap={2}>
+                <Button
+                  variant="contained"
+                  onClick={() => {
+                    setShowOrgRemoveConfirm(false);
+                    handleOnClose();
+                  }}
+                >
+                  Close
+                </Button>
+                {/* The organization removal endpoint needs an org Admin or
+                    Owner (IsOrganizationAdmin); the notice above says so. */}
+                <LoadingButton variant="contained" color="error" disabled>
+                  Remove from organization
+                </LoadingButton>
+              </Box>
+            }
+          />
+        ) : showOrgRemoveConfirm ? (
           <ActionForm
             open={Boolean(openActionForm)}
             onClose={() => {

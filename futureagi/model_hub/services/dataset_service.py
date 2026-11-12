@@ -175,7 +175,7 @@ def add_dataset_rows(*, dataset_id, rows, organization, workspace):
     )
     col_map = {c.name: c for c in columns}
 
-    last_row = Row.all_objects.filter(dataset=dataset).order_by("-created_at").first()
+    last_row = Row.all_objects.filter(dataset=dataset).order_by("-order").first()
     max_order = last_row.order if last_row else -1
 
     from model_hub.services.dataset_validators import validate_and_convert_cell_value
@@ -826,7 +826,7 @@ def duplicate_rows(*, dataset_id, row_ids, num_copies, organization, workspace):
     ):
         return ServiceError("Row limit reached.", "RESOURCE_LIMIT")
 
-    last_row = Row.all_objects.filter(dataset=dataset).order_by("-created_at").first()
+    last_row = Row.all_objects.filter(dataset=dataset).order_by("-order").first()
     max_order = last_row.order if last_row else -1
 
     source_cells = Cell.objects.filter(
@@ -1141,7 +1141,7 @@ def merge_datasets(
 
     # Get max order in target
     last_row = (
-        Row.all_objects.filter(dataset=target_dataset).order_by("-created_at").first()
+        Row.all_objects.filter(dataset=target_dataset).order_by("-order").first()
     )
     current_order = (last_row.order if last_row else -1) + 1
 
@@ -1278,7 +1278,7 @@ def add_rows_from_existing(
 
     # Get max order in target
     last_row = (
-        Row.all_objects.filter(dataset=target_dataset).order_by("-created_at").first()
+        Row.all_objects.filter(dataset=target_dataset).order_by("-order").first()
     )
     current_order = (last_row.order if last_row else -1) + 1
 
@@ -1439,11 +1439,14 @@ def create_dataset_from_file(
     # Create dataset
     import pandas as pd
 
+    # model_type is optional: None keeps the model default (GenerativeLLM);
+    # any explicit value is stored and validated as given.
+    optional_fields = {} if model_type is None else {"model_type": model_type}
     dataset = Dataset.objects.create(
         name=name,
         organization=organization,
         workspace=workspace,
-        model_type=model_type,
+        **optional_fields,
         source=DatasetSourceChoices.BUILD.value,
         dataset_config={
             "dataset_source_local": True,

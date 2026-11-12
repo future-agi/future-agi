@@ -24,6 +24,7 @@ import { usePromptWorkbenchContext } from "./createPrompt/WorkbenchContext";
 import { getRandomId } from "src/utils/utils";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { normalizeModelOption } from "src/components/custom-model-dropdown/common";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 export const SelectedPromptTemplateDrawer = ({
   open,
@@ -194,6 +195,13 @@ export const SelectedPromptTemplateDrawer = ({
     };
   }, []);
 
+  // FA-PROMPTS-02: the template's own description, or nothing; never a
+  // fixed line that belongs to another template.
+  const templateDescription = [data?.desc, data?.promptConfig?.description]
+    .find((text) => typeof text === "string" && text.trim())
+    ?.trim();
+
+  const covered = useDrawerCovered(open);
   return (
     <>
       <Drawer
@@ -215,6 +223,7 @@ export const SelectedPromptTemplateDrawer = ({
           },
         }}
         open={open}
+        sx={coveredDrawerSx(covered)}
       >
         <Stack
           sx={{
@@ -230,7 +239,7 @@ export const SelectedPromptTemplateDrawer = ({
             size="small"
             startIcon={
               <Iconify
-                icon="formkit:left"
+                icon="solar:arrow-left-linear"
                 width={24}
                 height={24}
                 color={"text.primary"}
@@ -239,11 +248,10 @@ export const SelectedPromptTemplateDrawer = ({
             onClick={onClose}
             disabled={isCreatingDraft}
             sx={{
-              color: "text.disabled",
-              padding: "4px 12px",
-              height: "30px",
+              // Readable while enabled; MUI's disabled
+              // colour still applies while the draft is being created.
+              color: "text.secondary",
               typography: "s1",
-              fontWeight: "fontWeightMedium",
               "& .MuiButton-startIcon": {
                 marginRight: "10px",
               },
@@ -252,10 +260,14 @@ export const SelectedPromptTemplateDrawer = ({
             Back
           </Button>
 
-          <IconButton disabled={isCreatingDraft} onClick={onClose}>
+          <IconButton
+            disabled={isCreatingDraft}
+            onClick={onClose}
+            aria-label="Close"
+          >
             <Iconify
               color={isCreatingDraft ? "text.disabled" : "text.primary"}
-              icon="mingcute:close-line"
+              icon="solar:close-linear"
             />
           </IconButton>
         </Stack>
@@ -277,14 +289,15 @@ export const SelectedPromptTemplateDrawer = ({
               >
                 {data?.promptConfig?.name}
               </Typography>
-              <Typography
-                typography="s2"
-                color="text.secondary"
-                fontWeight={"fontWeightRegular"}
-              >
-                Generate engaging blog posts on any topic with SEO optimization
-                and clear structure.
-              </Typography>
+              {templateDescription ? (
+                <Typography
+                  typography="s2"
+                  color="text.secondary"
+                  fontWeight={"fontWeightRegular"}
+                >
+                  {templateDescription}
+                </Typography>
+              ) : null}
             </Box>
 
             <LoadingButton
@@ -292,11 +305,6 @@ export const SelectedPromptTemplateDrawer = ({
               disabled={isCreatingDraft}
               variant="contained"
               color="primary"
-              sx={{
-                px: "24px",
-                borderRadius: "6px",
-                height: "38px",
-              }}
               onClick={handleWritePrompt}
             >
               <Typography typography="s1" fontWeight={"fontWeightMedium"}>

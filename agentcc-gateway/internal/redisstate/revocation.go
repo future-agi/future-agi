@@ -23,18 +23,32 @@ func NewKeyRevocationBroadcaster(client *Client) *KeyRevocationBroadcaster {
 	return &KeyRevocationBroadcaster{client: client}
 }
 
-// Publish broadcasts a key revocation to all replicas.
-// Non-blocking: logs and returns on failure (the periodic sync is the fallback).
+// RevocationPublishError reports a failed broadcast without retaining key,
+// connection, or underlying transport error values.
+type RevocationPublishError struct{}
+
+func (*RevocationPublishError) Error() string { return "revocation not broadcast" }
+
+// Publish preserves the log-only publisher interface. Call PublishWithError
+// when the caller must also report a failed broadcast to its client.
 func (b *KeyRevocationBroadcaster) Publish(ctx context.Context, keyID string) {
-	err := b.client.Do(func(rdb redis.UniversalClient) error {
-		return rdb.Publish(ctx, keyRevocationChannel, keyID).Err()
-	})
-	if err != nil {
-		slog.Warn("failed to publish key revocation, periodic sync will handle it",
-			"key_id", keyID,
-			"error", err,
-		)
+	_ = b.PublishWithError(ctx, keyID)
+}
+
+// PublishWithError preserves legacy ID-only notification and sanitized errors.
+// It never persists an ID: configuration slots can be reused. Production admin
+// revocation uses PublishCredentialWithError for durable credential delivery.
+func (b *KeyRevocationBroadcaster) PublishWithError(ctx context.Context, keyID string) error {
+	if b != nil && b.client != nil {
+		if err := b.client.Do(func(rdb redis.UniversalClient) error {
+			return rdb.Publish(ctx, keyRevocationChannel, keyID).Err()
+		}); err == nil {
+			return nil
+		}
 	}
+	failure := &RevocationPublishError{}
+	slog.Warn("key revocation not broadcast", "key_id", keyID, "error", failure)
+	return failure
 }
 
 // Subscribe starts a blocking loop that listens for key revocation messages

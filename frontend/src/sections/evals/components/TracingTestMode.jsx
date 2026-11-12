@@ -8,13 +8,13 @@ import {
   IconButton,
   InputAdornment,
   Tab,
-  Tabs,
   TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
-import { alpha, styled } from "@mui/material/styles";
+import { styled } from "@mui/material/styles";
 import { createFilterOptions } from "@mui/material/Autocomplete";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -69,6 +69,7 @@ import DateRangePill, {
 } from "src/sections/projects/LLMTracing/DateRangePill";
 import { JsonValueTree } from "./DatasetTestMode";
 import EvalResultDisplay from "./EvalResultDisplay";
+import DecisionCallPanel from "src/sections/common/DecisionJudges/DecisionCallPanel";
 import SpanRowList from "./SpanRowList";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import {
@@ -82,6 +83,7 @@ import {
   sortSpansForMapping,
 } from "../utils/rowPathWalker";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
+import { unsavedDefinitionConfig } from "../utils/unsavedDefinition";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 import {
   getAttributeLookupMessage,
@@ -100,6 +102,7 @@ import {
   parseVoiceCallDetailResponse,
   parseVoiceCallListResponse,
 } from "src/api/project/observe-contracts";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const MappingOption = styled("li")(({ theme }) => ({
   fontSize: "12px",
@@ -441,7 +444,7 @@ const MappingRow = React.memo(function MappingRow({
         }}
       >
         <Iconify
-          icon="mdi:code-braces"
+          icon="solar:code-linear"
           width={14}
           sx={{ color: "text.secondary" }}
         />
@@ -454,7 +457,7 @@ const MappingRow = React.memo(function MappingRow({
         </Typography>
       </Box>
       <Iconify
-        icon="mdi:arrow-right"
+        icon="solar:arrow-right-linear"
         width={14}
         sx={{ color: "text.disabled" }}
       />
@@ -494,6 +497,9 @@ const TracingTestMode = React.forwardRef(
     {
       templateId,
       model = "turing_large",
+      // W1: a decision judge's question and the eval's prompt as edited
+      // ({decision, rule_prompt, threshold}); sent with the Test.
+      decisionTest = null,
       variables = [],
       codeParams = {},
       onTestResult,
@@ -515,6 +521,8 @@ const TracingTestMode = React.forwardRef(
       errorLocalizerEnabled = false,
       isComposite = false,
       compositeAdhocConfig = null,
+      // The eval editor's unsaved definition: Test runs it and saves nothing.
+      unsavedDefinition = null,
       // Optional ad-hoc filters merged into the row-list `filters` param.
       localFilters = [],
       // When true, TracingTestMode owns the filter state internally and
@@ -721,6 +729,8 @@ const TracingTestMode = React.forwardRef(
     // Eval result
     const [isRunning, setIsRunning] = useState(false);
     const [result, setResult] = useState(null);
+    // W1: the decision call behind the last Test (or the refusal).
+    const [decisionCall, setDecisionCall] = useState(null);
     const [error, setError] = useState(null);
     // Async error localization poll — see DatasetTestMode for rationale.
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
@@ -1573,6 +1583,7 @@ const TracingTestMode = React.forwardRef(
       }
       setIsRunning(true);
       setResult(null);
+      setDecisionCall(null);
       setError(null);
 
       if (!variables.length) {
@@ -1644,13 +1655,15 @@ const TracingTestMode = React.forwardRef(
               )
           : await axios.post(endpoints.develop.eval.evalPlayground, {
               template_id: tid,
-              model,
+              ...(model ? { model } : {}),
               error_localizer: errorLocalizerEnabled,
               config: {
                 mapping: evalMapping,
                 ...(Object.keys(codeParams || {}).length > 0
                   ? { params: codeParams }
                   : {}),
+                ...(decisionTest && !isComposite ? decisionTest : {}),
+                ...unsavedDefinitionConfig(unsavedDefinition),
               },
               ...autoCtx,
             });
@@ -1667,6 +1680,7 @@ const TracingTestMode = React.forwardRef(
                 compositeResult: data.result,
               }
             : data.result;
+          setDecisionCall(data.result?.metadata?.decision ?? null);
           setResult(nextResult);
           onTestResult?.(true, nextResult);
           if (!isComposite && errorLocalizerEnabled && data.result?.log_id) {
@@ -1685,6 +1699,8 @@ const TracingTestMode = React.forwardRef(
           err,
           "Failed to run evaluation. Please retry.",
         );
+        // W1: the gateway's refusal of a decision call (status, code).
+        setDecisionCall(err?.response?.data?.decision ?? null);
         setError(errMsg);
         onTestResult?.(false, errMsg);
       } finally {
@@ -1702,9 +1718,11 @@ const TracingTestMode = React.forwardRef(
       errorLocalizerEnabled,
       isComposite,
       compositeAdhocConfig,
+      unsavedDefinition,
       startErrorLocalizerPoll,
       codeParams,
       model,
+      decisionTest,
     ]);
 
     useImperativeHandle(
@@ -1732,7 +1750,7 @@ const TracingTestMode = React.forwardRef(
           <Box>
             <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
               Project
-              <Typography component="span" sx={{ color: "error.main" }}>
+              <Typography component="span" sx={{ color: "status.danger.fg" }}>
                 *
               </Typography>
             </Typography>
@@ -1791,18 +1809,7 @@ const TracingTestMode = React.forwardRef(
             <Typography variant="body2" fontWeight={600}>
               Row Type
             </Typography>
-            <Chip
-              label="Voice Calls"
-              size="small"
-              sx={{
-                height: 20,
-                fontSize: "11px",
-                bgcolor: "background.neutral",
-                color: "text.secondary",
-                "& .MuiChip-label": { px: 0.75 },
-                "& .MuiChip-icon": { ml: 0.5, mr: -0.25 },
-              }}
-            />
+            <Chip label="Voice Calls" size="small" />
           </Box>
         )}
 
@@ -1816,42 +1823,17 @@ const TracingTestMode = React.forwardRef(
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px", display: "block", mb: 0.75 }}
+              sx={{ fontSize: "12px", display: "block", mb: 0.75 }}
             >
               Run evaluations on
             </Typography>
-            <Tabs
+            <SegmentedTabs
               value={rowType}
               onChange={(_, val) => {
                 setRowType(val);
                 setMapping({});
               }}
-              variant="standard"
-              scrollButtons={false}
-              TabIndicatorProps={{ style: { display: "none" } }}
-              sx={{
-                minHeight: 28,
-                "& .MuiTabs-scroller": { overflow: "visible !important" },
-                "& .MuiTab-root": {
-                  minHeight: 28,
-                  px: 1.25,
-                  py: 0,
-                  mr: "0px !important",
-                  textTransform: "none",
-                  fontSize: "12px",
-                  borderRadius: "6px",
-                  minWidth: "auto",
-                },
-                border: "1px solid",
-                borderColor: "divider",
-                p: "2px",
-                borderRadius: "8px",
-                width: "fit-content",
-                bgcolor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.04)"
-                    : "background.neutral",
-              }}
+              sx={{ width: "fit-content" }}
             >
               {ROW_TYPE_OPTIONS.map((t) => (
                 <Tab
@@ -1861,33 +1843,13 @@ const TracingTestMode = React.forwardRef(
                     <Box
                       sx={{ display: "flex", alignItems: "center", gap: 0.5 }}
                     >
-                      <Iconify icon={t.icon} width={13} />
+                      <Iconify icon={t.icon} width={14} />
                       {t.label}
                     </Box>
                   }
-                  sx={{
-                    bgcolor:
-                      rowType === t.value
-                        ? (theme) =>
-                            theme.palette.mode === "dark"
-                              ? "rgba(255,255,255,0.12)"
-                              : "background.paper"
-                        : "transparent",
-                    boxShadow:
-                      rowType === t.value
-                        ? (theme) =>
-                            theme.palette.mode === "dark"
-                              ? "none"
-                              : "0 1px 3px rgba(0,0,0,0.08)"
-                        : "none",
-                    borderRadius: "6px",
-                    fontWeight: rowType === t.value ? 600 : 400,
-                    color:
-                      rowType === t.value ? "text.primary" : "text.disabled",
-                  }}
                 />
               ))}
-            </Tabs>
+            </SegmentedTabs>
           </Box>
         )}
 
@@ -1896,7 +1858,7 @@ const TracingTestMode = React.forwardRef(
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px", display: "block", mb: 0.75 }}
+              sx={{ fontSize: "12px", display: "block", mb: 0.75 }}
             >
               Narrow down which{" "}
               {rowType === "Trace"
@@ -1928,7 +1890,7 @@ const TracingTestMode = React.forwardRef(
         {/* Loading */}
         {(loading || isPendingNewFetch) && (
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
-            <CircularProgress size={20} />
+            <ContentSkeleton variant="panel" />
           </Box>
         )}
 
@@ -1981,7 +1943,7 @@ const TracingTestMode = React.forwardRef(
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ fontSize: "11px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Row {Math.min(currentRowIndex + 1, rows?.length ?? 0)} of{" "}
                 {rows?.length ?? 0}
@@ -1989,7 +1951,7 @@ const TracingTestMode = React.forwardRef(
                   <Typography
                     component="span"
                     sx={{
-                      fontSize: "11px",
+                      fontSize: "12px",
                       color: "text.disabled",
                       ml: 0.5,
                     }}
@@ -2007,12 +1969,12 @@ const TracingTestMode = React.forwardRef(
                   onClick={() => {
                     setCurrentRowIndex((i) => Math.max(0, i - 1));
                     setResult(null);
+                    setDecisionCall(null);
                     setError(null);
                     onClearResult?.();
                   }}
-                  sx={{ width: 24, height: 24 }}
                 >
-                  <Iconify icon="mdi:chevron-left" width={16} />
+                  <Iconify icon="solar:alt-arrow-left-linear" width={16} />
                 </IconButton>
                 <IconButton
                   size="small"
@@ -2023,12 +1985,12 @@ const TracingTestMode = React.forwardRef(
                       Math.min((rows?.length ?? 0) - 1, i + 1),
                     );
                     setResult(null);
+                    setDecisionCall(null);
                     setError(null);
                     onClearResult?.();
                   }}
-                  sx={{ width: 24, height: 24 }}
                 >
-                  <Iconify icon="mdi:chevron-right" width={16} />
+                  <Iconify icon="solar:alt-arrow-right-linear" width={16} />
                 </IconButton>
               </Box>
             </Box>
@@ -2075,7 +2037,7 @@ const TracingTestMode = React.forwardRef(
                   startAdornment: (
                     <InputAdornment position="start">
                       <Iconify
-                        icon="mdi:magnify"
+                        icon="solar:magnifier-linear"
                         width={14}
                         sx={{ color: "text.disabled" }}
                       />
@@ -2092,10 +2054,7 @@ const TracingTestMode = React.forwardRef(
                 display: "flex",
                 px: 1.5,
                 py: 0.5,
-                backgroundColor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.03)"
-                    : "background.default",
+                backgroundColor: "background.neutral",
                 borderBottom: "1px solid",
                 borderColor: "divider",
               }}
@@ -2240,7 +2199,7 @@ const TracingTestMode = React.forwardRef(
                                   whiteSpace: "pre-wrap",
                                   wordBreak: "break-all",
                                   fontFamily: "monospace",
-                                  fontSize: 11,
+                                  fontSize: 12,
                                   maxWidth: 520,
                                 }}
                               >
@@ -2312,15 +2271,15 @@ const TracingTestMode = React.forwardRef(
           getQueryReadMessage(listReadState) && (
             <Box
               role="status"
-              sx={(theme) => ({
+              sx={{
                 px: 1.5,
                 py: 1,
                 mb: rows.length > 0 ? 1 : 0,
                 borderRadius: "6px",
                 border: "1px solid",
-                borderColor: alpha(theme.palette.warning.main, 0.35),
-                backgroundColor: alpha(theme.palette.warning.main, 0.08),
-              })}
+                borderColor: "status.warning.border",
+                backgroundColor: "status.warning.bg",
+              }}
             >
               <Box
                 sx={{
@@ -2330,7 +2289,10 @@ const TracingTestMode = React.forwardRef(
                   gap: 1,
                 }}
               >
-                <Typography variant="caption" color="warning.main">
+                <Typography
+                  variant="caption"
+                  sx={{ color: "status.warning.fg" }}
+                >
                   {getQueryReadMessage(listReadState)}
                 </Typography>
                 {listReadState === "error" && listFailureRetryable && (
@@ -2365,7 +2327,7 @@ const TracingTestMode = React.forwardRef(
               }}
             >
               <Iconify
-                icon="mdi:table-off"
+                icon="solar:table-linear"
                 width={28}
                 sx={{ color: "text.disabled" }}
               />
@@ -2415,17 +2377,20 @@ const TracingTestMode = React.forwardRef(
                 {exactAttributeReadMessage && (
                   <Box
                     role="status"
-                    sx={(theme) => ({
+                    sx={{
                       px: 1,
                       py: 0.5,
                       mb: 0.75,
                       borderRadius: "4px",
                       border: "1px solid",
-                      borderColor: alpha(theme.palette.warning.main, 0.35),
-                      backgroundColor: alpha(theme.palette.warning.main, 0.08),
-                    })}
+                      borderColor: "status.warning.border",
+                      backgroundColor: "status.warning.bg",
+                    }}
                   >
-                    <Typography variant="caption" color="warning.main">
+                    <Typography
+                      variant="caption"
+                      sx={{ color: "status.warning.fg" }}
+                    >
                       {exactAttributeReadMessage}
                     </Typography>
                   </Box>
@@ -2439,7 +2404,7 @@ const TracingTestMode = React.forwardRef(
                       onClick={() =>
                         fetchNextAttributePage?.()?.catch?.(() => undefined)
                       }
-                      sx={{ px: 0, minWidth: 0, fontSize: 11 }}
+                      sx={{ px: 0, minWidth: 0 }}
                     >
                       {isFetchingNextAttributePage
                         ? "Loading more attributes…"
@@ -2501,20 +2466,24 @@ const TracingTestMode = React.forwardRef(
           />
         )}
 
+        {/* W1: a decision judge's own call (or the gateway's refusal) */}
+        {decisionCall && !isRunning && (
+          <Box sx={{ mt: 1 }}>
+            <DecisionCallPanel decision={decisionCall} />
+          </Box>
+        )}
+
         {error && (
           <Box
-            sx={(t) => ({
+            sx={{
               p: 1.5,
               borderRadius: "6px",
               border: "1px solid",
-              borderColor: alpha(t.palette.error.main, 0.4),
-              backgroundColor: alpha(
-                t.palette.error.main,
-                t.palette.mode === "dark" ? 0.16 : 0.08,
-              ),
-            })}
+              borderColor: "status.danger.border",
+              backgroundColor: "status.danger.bg",
+            }}
           >
-            <Typography variant="caption" color="error.main">
+            <Typography variant="caption" sx={{ color: "status.danger.fg" }}>
               {typeof error === "string" ? error : JSON.stringify(error)}
             </Typography>
           </Box>
@@ -2528,6 +2497,7 @@ TracingTestMode.displayName = "TracingTestMode";
 
 TracingTestMode.propTypes = {
   templateId: PropTypes.string,
+  decisionTest: PropTypes.object,
   variables: PropTypes.array,
   codeParams: PropTypes.object,
   onTestResult: PropTypes.func,
@@ -2540,6 +2510,7 @@ TracingTestMode.propTypes = {
   initialMapping: PropTypes.object,
   isComposite: PropTypes.bool,
   compositeAdhocConfig: PropTypes.object,
+  unsavedDefinition: PropTypes.object,
   localFilters: PropTypes.array,
   allowCustomFieldPath: PropTypes.bool,
 };

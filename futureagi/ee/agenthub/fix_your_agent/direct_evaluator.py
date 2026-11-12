@@ -10,19 +10,24 @@ No multi-turn conversation simulation is performed.
 
 import asyncio
 import threading
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import structlog
-import litellm
 
 from ee.agent_opt.types import EvaluationResult
 from ee.agent_opt.utils.template_variables import (
-    validate_template_variables,
     repair_template_variables,
+    validate_jinja_template,
+    validate_template_variables,
 )
+from model_hub.services import credit_ledger_port
 from model_hub.utils.scoring import score_eval_output
 
 logger = structlog.get_logger(__name__)
+
+
+class DirectInferenceError(RuntimeError):
+    """Inference failed; there is no model output to score or persist."""
 
 
 def _run_async(coro):
@@ -67,14 +72,15 @@ class DirectEvaluator:
 
     def __init__(
         self,
-        user_eval_configs: List[Any],  # List of SimulateEvalConfig or similar
+        user_eval_configs: list[Any],  # List of SimulateEvalConfig or similar
         execution_model: str = "gpt-4o",
         initial_agent_prompt: str = "",
-        organization: Optional[Any] = None,
-        workspace: Optional[Any] = None,
+        organization: Any | None = None,
+        workspace: Any | None = None,
         eval_source: str = "dataset_optimization",
-        template_variables: Optional[Set[str]] = None,
+        template_variables: set[str] | None = None,
         max_parallel_evals: int = 5,
+        template_format: str | None = None,
     ):
         self.user_eval_configs = user_eval_configs or []
         self.execution_model = execution_model
@@ -84,6 +90,8 @@ class DirectEvaluator:
         self.eval_source = eval_source
         self.template_variables = template_variables
         self.max_parallel_evals = max_parallel_evals
+        self.template_format = template_format
+        self._billing_scope = credit_ledger_port.current_billing_scope()
 
         logger.info(
             "DirectEvaluator initialized",
@@ -97,7 +105,7 @@ class DirectEvaluator:
             else [],
         )
 
-    def evaluate(self, inputs: List[Dict[str, Any]]) -> List[EvaluationResult]:
+    def evaluate(self, inputs: list[dict[str, Any]]) -> list[EvaluationResult]:
         """
         Evaluate each input using direct LLM call + existing eval system.
         Inputs are processed concurrently using asyncio (acompletion for LLM calls).
@@ -123,8 +131,8 @@ class DirectEvaluator:
         return _run_async(self._evaluate_all_async(inputs))
 
     async def _evaluate_all_async(
-        self, inputs: List[Dict[str, Any]]
-    ) -> List[EvaluationResult]:
+        self, inputs: list[dict[str, Any]]
+    ) -> list[EvaluationResult]:
         semaphore = asyncio.Semaphore(self.max_parallel_evals)
         tasks = [
             self._evaluate_single_input_async(idx, input_data, semaphore)
@@ -133,18 +141,28 @@ class DirectEvaluator:
         return await asyncio.gather(*tasks)
 
     async def _evaluate_single_input_async(
-        self, idx: int, input_data: Dict[str, Any], semaphore: asyncio.Semaphore
+        self, idx: int, input_data: dict[str, Any], semaphore: asyncio.Semaphore
     ) -> EvaluationResult:
         async with semaphore:
             try:
                 return await self._evaluate_single_input_impl(idx, input_data)
+            except DirectInferenceError:
+                raise
             except Exception as e:
+                if credit_ledger_port.is_terminal_refusal(e):
+                    credit_ledger_port.record_refusal(self._billing_scope, e)
+                    raise
                 logger.error(f"Evaluation failed for input {idx}: {e}", exc_info=True)
                 return EvaluationResult(score=0.0, reason=f"Evaluation failed: {e}")
 
     async def _evaluate_single_input_impl(
-        self, idx: int, input_data: Dict[str, Any]
+        self, idx: int, input_data: dict[str, Any]
     ) -> EvaluationResult:
+        await credit_ledger_port.aguard_direct_dispatch(
+            self._billing_scope,
+            purpose=credit_ledger_port.PURPOSE_OPTIMIZER_TRIAL,
+            model_name=self.execution_model,
+        )
         try:
             prompt_template = input_data.get("agent_prompt", "")
             input_vars = input_data.get("input", {})
@@ -156,7 +174,13 @@ class DirectEvaluator:
                     available_keys=list(input_data.keys()),
                 )
 
-            if self.template_variables:
+            if self.template_format in ("jinja", "jinja2"):
+                is_valid, error_msg = validate_jinja_template(
+                    self.initial_agent_prompt, prompt_template
+                )
+                if not is_valid:
+                    raise ValueError(error_msg)
+            elif self.template_variables:
                 is_valid, error_msg = validate_template_variables(
                     self.initial_agent_prompt,
                     prompt_template,
@@ -214,6 +238,9 @@ class DirectEvaluator:
                     )
                     eval_scores.append((score, reason))
                 except Exception as e:
+                    if credit_ledger_port.is_terminal_refusal(e):
+                        credit_ledger_port.record_refusal(self._billing_scope, e)
+                        raise
                     logger.warning(f"Eval failed: {e}", exc_info=True)
                     eval_scores.append((0.0, str(e)))
 
@@ -254,12 +281,31 @@ class DirectEvaluator:
                 },
             )
 
+        except DirectInferenceError:
+            raise
         except Exception as e:
+            if credit_ledger_port.is_terminal_refusal(e):
+                credit_ledger_port.record_refusal(self._billing_scope, e)
+                raise
             logger.error(f"Evaluation failed for input {idx}: {e}", exc_info=True)
             return EvaluationResult(score=0.0, reason=f"Evaluation failed: {e}")
 
-    def _fill_template(self, template: str, variables: Dict[str, Any]) -> str:
-        """Replace {variable} and {{variable}} placeholders with actual values."""
+    def _fill_template(self, template: str, variables: dict[str, Any]) -> str:
+        """Render source-format templates, retaining legacy direct-call behavior."""
+        if self.template_format is not None:
+            from model_hub.utils.prompt_rendering import (
+                add_template_context_value,
+                render_template,
+            )
+
+            context = {}
+            for key, value in variables.items():
+                add_template_context_value(context, key, value, self.template_format)
+            template_format = (
+                "jinja2" if self.template_format == "jinja" else self.template_format
+            )
+            return render_template(template, context, template_format)
+
         import re
 
         result = template
@@ -302,35 +348,62 @@ class DirectEvaluator:
         return result
 
     async def _call_llm_async(self, prompt: str) -> str:
+        await credit_ledger_port.aguard_direct_dispatch(
+            self._billing_scope,
+            purpose=credit_ledger_port.PURPOSE_OPTIMIZER_TRIAL,
+            model_name=self.execution_model,
+        )
         logger.info(
-            f"DirectEvaluator._call_llm_async called",
+            "DirectEvaluator._call_llm_async called",
             model=self.execution_model,
             prompt_len=len(prompt),
         )
         try:
-            response = await litellm.acompletion(
-                temperature=0.1,
-                seed=47,
+            from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
+
+            if self.organization is None:
+                raise ValueError("An organization is required for prompt inference")
+
+            # Resolve the execution model's workspace credentials and endpoint,
+            # independently of the teacher/optimizer model's API key.
+            run_prompt = RunPrompt(
                 model=self.execution_model,
                 messages=[{"role": "user", "content": prompt}],
+                organization_id=self.organization.id,
+                workspace_id=self.workspace.id if self.workspace else None,
+                output_format="string",
+                temperature=0.1,
+                frequency_penalty=None,
+                presence_penalty=None,
+                max_tokens=None,
+                top_p=None,
+                response_format=None,
+                tool_choice=None,
+                tools=None,
+                run_prompt_config={"seed": 47},
             )
-            output = response.choices[0].message.content
+            output, _value_info = await run_prompt.litellm_response_async()
             logger.info(
-                f"LLM call succeeded",
+                "LLM call succeeded",
                 output_len=len(output) if output else 0,
             )
             return output
         except Exception as e:
+            if credit_ledger_port.is_terminal_refusal(e):
+                credit_ledger_port.record_refusal(self._billing_scope, e)
+                raise
             logger.error(f"LLM call failed: {e}", exc_info=True)
-            return f"Error: {e}"
+            raise DirectInferenceError(
+                f"Dataset optimization inference failed: {e}"
+            ) from e
 
     def _run_eval_with_config(
         self,
         eval_config,
-        input_data: Dict[str, Any],
+        input_data: dict[str, Any],
         output: str,
         prompt: str,
-    ) -> Tuple[float, str]:
+    ) -> tuple[float, str]:
         """
         Run evaluation using existing eval system (run_eval_func).
         Pattern borrowed from SimulationEvaluator._run_eval_with_config().
@@ -344,8 +417,11 @@ class DirectEvaluator:
         Returns:
             Tuple of (score, reason)
         """
-        from model_hub.views.utils.evals import run_eval_func
+        scope = getattr(self, "_billing_scope", None)
+        credit_ledger_port.raise_if_refused(scope)
+
         from model_hub.models.evals_metric import EvalTemplate
+        from model_hub.views.utils.evals import run_eval_func
 
         eval_template = eval_config.eval_template
 
@@ -379,7 +455,17 @@ class DirectEvaluator:
         updated_mapping = {}
 
         for key, value in mapping.items():
-            if value in ("output", "response"):
+            # Dataset bindings are tagged so column names cannot be mistaken
+            # for placeholders. Keep the legacy string mappings below for
+            # callers that explicitly use output/input/prompt aliases.
+            if isinstance(value, dict) and value.get("type") == "generated_output":
+                updated_mapping[key] = output
+            elif (
+                isinstance(value, dict)
+                and value.get("type") == "dataset_column"
+            ):
+                updated_mapping[key] = str(input_data.get(value["name"], ""))
+            elif value in ("output", "response"):
                 updated_mapping[key] = output
             elif value in ("input", "query"):
                 # For "input"/"query", try to get a meaningful text representation
@@ -420,6 +506,15 @@ class DirectEvaluator:
 
         # Prepare config
         config = eval_config.config.copy() if eval_config.config else {}
+        # Optimizers do not support Choices score overrides. Keep template-only
+        # scoring without mutating the saved binding or other runtime settings.
+        config.pop("choice_scores", None)
+        if isinstance(config.get("run_config"), dict):
+            config["run_config"] = {
+                key: value
+                for key, value in config["run_config"].items()
+                if key != "choice_scores"
+            }
 
         # Run evaluation using existing infrastructure
         try:
@@ -475,14 +570,18 @@ class DirectEvaluator:
                 return 0.0, f"Unexpected result type: {type(eval_result)}"
 
         except Exception as e:
+            if credit_ledger_port.is_terminal_refusal(e):
+                credit_ledger_port.record_refusal(scope, e)
+                raise
             logger.warning(f"run_eval_func failed: {e}", exc_info=True)
             # Fallback: direct eval class instantiation
             return self._run_eval_direct(eval_template, updated_mapping)
 
     def _run_eval_direct(
-        self, eval_template, mapping: Dict[str, Any]
-    ) -> Tuple[float, str]:
+        self, eval_template, mapping: dict[str, Any]
+    ) -> tuple[float, str]:
         """Fallback: run eval by directly instantiating the eval class."""
+        credit_ledger_port.raise_if_refused(getattr(self, "_billing_scope", None))
         from agentic_eval.core_evals import fi_evals
 
         template_config = eval_template.config or {}
@@ -510,5 +609,8 @@ class DirectEvaluator:
                 return score, reason
             return 0.0, "No eval results"
         except Exception as e:
+            if credit_ledger_port.is_terminal_refusal(e):
+                credit_ledger_port.record_refusal(getattr(self, "_billing_scope", None), e)
+                raise
             logger.error(f"Direct eval failed: {e}", exc_info=True)
             return 0.0, str(e)

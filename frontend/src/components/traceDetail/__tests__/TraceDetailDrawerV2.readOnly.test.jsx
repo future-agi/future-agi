@@ -138,17 +138,19 @@ describe("TraceDetailDrawerV2 read-only", () => {
     expect(mocks.toolbarProps.mock.lastCall[0].hideFilter).toBe(true);
     const display = mocks.displayProps.mock.lastCall[0];
     expect(display.hideSetDefault).toBe(true);
-
-    display.onSetDefaultView();
+    expect(display.onSetDefaultView).toBeUndefined();
     expect(mocks.createView).not.toHaveBeenCalled();
     expect(mocks.updateView).not.toHaveBeenCalled();
   });
 
-  it("offers the filter and the shared default when it can act", () => {
+  it("offers the filter and shows the shared default only disabled when it can act", () => {
     renderDrawer();
 
     expect(mocks.toolbarProps.mock.lastCall[0].hideFilter).toBe(false);
-    expect(mocks.displayProps.mock.lastCall[0].hideSetDefault).toBe(false);
+    const display = mocks.displayProps.mock.lastCall[0];
+    // Shown (disabled, "Not available in this release"), never wired.
+    expect(display.hideSetDefault).toBe(false);
+    expect(display.onSetDefaultView).toBeUndefined();
   });
 
   it("reads the trace through a share token instead of the signed-in read", () => {

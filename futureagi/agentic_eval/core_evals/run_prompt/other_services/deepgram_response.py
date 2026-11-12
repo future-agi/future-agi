@@ -25,19 +25,22 @@ Speech-to-Text (STT):
 - EagerEOT: Optional faster response with eager_eot_threshold (0.3-0.9)
 """
 
+import io
+import json
 import math
-import requests
+import ssl
+import threading
 import time
+from urllib.parse import urlencode
+
+import certifi
+import requests
 import structlog
+import websocket
+
+from tfc.utils.storage import audio_bytes_from_url_or_base64
 
 logger = structlog.get_logger(__name__)
-import json
-import ssl
-import websocket
-import threading
-import io
-from tfc.utils.storage import audio_bytes_from_url_or_base64
-from urllib.parse import urlencode
 
 # Matches the default ``min_duration_seconds`` of
 # ``tfc.utils.storage.audio_bytes_from_url_or_base64`` — Deepgram audio used to
@@ -311,7 +314,7 @@ def _load_and_convert_audio(run_prompt_instance):
 
     except Exception as e:
         logger.error(f"Audio conversion failed: {e}")
-        raise Exception(f"Failed to convert audio for Deepgram Flux: {e}")
+        raise Exception(f"Failed to convert audio for Deepgram Flux: {e}") from e
 
 
 def _build_flux_websocket_url(cfg):
@@ -349,7 +352,11 @@ def _transcribe_via_websocket(deepgram_url, audio_bytes, api_key):
         ws = websocket.create_connection(
             deepgram_url,
             header=[f"Authorization: Token {api_key}"],
-            sslopt={"cert_reqs": ssl.CERT_NONE},
+            sslopt={
+                "cert_reqs": ssl.CERT_REQUIRED,
+                "ca_certs": certifi.where(),
+                "check_hostname": True,
+            },
         )
         logger.info("Connected to Deepgram Flux")
 

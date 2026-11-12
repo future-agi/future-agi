@@ -6,6 +6,8 @@
  *   - Query tab: inline token builder (shared FilterPanel's QueryInput)
  */
 import {
+  Checkbox,
+  Radio,
   Box,
   Button,
   Chip,
@@ -390,6 +392,10 @@ export function mergeTraceFilterProperties({
         ...(field.allowCustomValue !== undefined
           ? { allowCustomValue: field.allowCustomValue }
           : {}),
+        // A supplied field may narrow its operators (see getOperatorsForFilter)
+        // and be found by other words.
+        ...(field.operators ? { operators: field.operators } : {}),
+        ...(field.searchAliases ? { searchAliases: field.searchAliases } : {}),
       };
       return attachPropertyRegistryIdentity(
         property,
@@ -466,11 +472,15 @@ function attachPropertyRegistryIdentity(
 // Category config for dashboard-style property picker
 // ---------------------------------------------------------------------------
 const CATEGORIES = [
-  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
-  { key: "system", label: "System", icon: "mdi:tune-variant" },
-  { key: "eval", label: "Evals", icon: "mdi:check-circle-outline" },
-  { key: "annotation", label: "Annotations", icon: "mdi:comment-text-outline" },
-  { key: "attribute", label: "Attributes", icon: "mdi:code-braces" },
+  { key: "all", label: "All", icon: "solar:widget-4-linear" },
+  { key: "system", label: "System", icon: "solar:tuning-2-linear" },
+  { key: "eval", label: "Evals", icon: "solar:check-circle-linear" },
+  {
+    key: "annotation",
+    label: "Annotations",
+    icon: "solar:chat-round-line-linear",
+  },
+  { key: "attribute", label: "Attributes", icon: "solar:code-linear" },
 ];
 
 function mapCategory(raw) {
@@ -697,7 +707,7 @@ export const isCompleteNumericValue = (v) => {
 
 const NUMERIC_HELPER_TEXT_PROPS = {
   sx: {
-    fontSize: 10,
+    fontSize: 12,
     mx: 0.5,
     mt: 0,
     position: "absolute",
@@ -2574,9 +2584,6 @@ function PropertyPicker({
             maxHeight: 380,
             display: "flex",
             flexDirection: "column",
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 2,
           }}
         >
           <Box sx={{ p: 1.5 }}>
@@ -2591,7 +2598,7 @@ function PropertyPicker({
                 startAdornment: (
                   <InputAdornment position="start">
                     <Iconify
-                      icon="eva:search-fill"
+                      icon="solar:magnifier-linear"
                       width={16}
                       sx={{ color: "text.disabled" }}
                     />
@@ -2602,7 +2609,7 @@ function PropertyPicker({
                     <Typography
                       variant="caption"
                       aria-label="Property search result count"
-                      sx={{ color: "text.disabled", fontSize: 11 }}
+                      sx={{ color: "text.disabled", fontSize: 12 }}
                     >
                       {displayedPropertyCount}
                     </Typography>
@@ -2617,7 +2624,7 @@ function PropertyPicker({
               effectiveAttributeReadState !== "complete" && (
                 <Typography
                   role="status"
-                  sx={{ mt: 0.75, fontSize: 11, color: "warning.main" }}
+                  sx={{ mt: 0.75, fontSize: 12, color: "warning.main" }}
                 >
                   {getAttributeLookupMessage(effectiveAttributeReadState)}
                 </Typography>
@@ -2627,7 +2634,7 @@ function PropertyPicker({
                 role="status"
                 sx={{ mt: 0.75, display: "flex", alignItems: "center", gap: 1 }}
               >
-                <Typography sx={{ fontSize: 11, color: "warning.main" }}>
+                <Typography sx={{ fontSize: 12, color: "warning.main" }}>
                   Exact attribute search could not be completed. Retained
                   matches remain available.
                 </Typography>
@@ -2635,7 +2642,7 @@ function PropertyPicker({
                   size="small"
                   onClick={loadNextExactAttributePage}
                   disabled={isFetchingNextExactPage}
-                  sx={{ p: 0, minWidth: 0, fontSize: 11, whiteSpace: "nowrap" }}
+                  sx={{ p: 0, minWidth: 0, whiteSpace: "nowrap" }}
                 >
                   Retry exact attribute search
                 </Button>
@@ -2648,7 +2655,7 @@ function PropertyPicker({
               !effectiveAttributeLoading && (
                 <Typography
                   role="status"
-                  sx={{ mt: 0.75, fontSize: 11, color: "warning.main" }}
+                  sx={{ mt: 0.75, fontSize: 12, color: "warning.main" }}
                 >
                   {getAttributeLookupMessage(effectiveAttributeReadState)}
                 </Typography>
@@ -2656,7 +2663,7 @@ function PropertyPicker({
             {effectiveCatalogError && (
               <Typography
                 role="status"
-                sx={{ mt: 0.75, fontSize: 11, color: "warning.main" }}
+                sx={{ mt: 0.75, fontSize: 12, color: "warning.main" }}
               >
                 {getQueryReadMessage("error")}
               </Typography>
@@ -2670,7 +2677,7 @@ function PropertyPicker({
                 <Button
                   size="small"
                   onClick={() => effectiveRefetchAttributePages?.()}
-                  sx={{ mt: 0.5, px: 0, minWidth: 0, fontSize: 11 }}
+                  sx={{ mt: 0.5, px: 0, minWidth: 0 }}
                 >
                   Retry attribute suggestions
                 </Button>
@@ -2751,7 +2758,7 @@ function PropertyPicker({
                               : "Exact count unavailable"
                             : undefined
                         }
-                        sx={{ fontSize: 10, color: "text.disabled" }}
+                        sx={{ fontSize: 12, color: "text.disabled" }}
                       >
                         {counts[cat.key] === null
                           ? isCategoryCountLoading(cat.key)
@@ -2819,7 +2826,7 @@ function PropertyPicker({
                     }}
                   >
                     <CircularProgress size={16} />
-                    <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+                    <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
                       {trimmedSearch
                         ? "Searching property catalog…"
                         : "Loading properties…"}
@@ -2842,7 +2849,7 @@ function PropertyPicker({
                     }}
                   >
                     <CircularProgress size={14} />
-                    <Typography sx={{ fontSize: 11 }}>
+                    <Typography sx={{ fontSize: 12 }}>
                       Searching property catalog…
                     </Typography>
                   </Box>
@@ -2886,7 +2893,7 @@ function PropertyPicker({
                             ? "P/F"
                             : prop.outputType
                       }
-                      sx={{ height: 18, fontSize: 10, flexShrink: 0 }}
+                      sx={{ flexShrink: 0 }}
                     />
                   )}
                   {hasCategorySidebar && prop.category && (
@@ -2895,10 +2902,7 @@ function PropertyPicker({
                       variant="outlined"
                       label={prop.category}
                       sx={{
-                        height: 16,
-                        fontSize: 9,
                         flexShrink: 0,
-                        textTransform: "capitalize",
                       }}
                     />
                   )}
@@ -2927,7 +2931,7 @@ function PropertyPicker({
                   }}
                 >
                   <Iconify
-                    icon="mdi:plus-circle-outline"
+                    icon="solar:add-circle-linear"
                     width={16}
                     sx={{ color: "primary.main", flexShrink: 0 }}
                   />
@@ -2939,7 +2943,7 @@ function PropertyPicker({
                     size="small"
                     variant="outlined"
                     label="text"
-                    sx={{ height: 16, fontSize: 9, flexShrink: 0 }}
+                    sx={{ flexShrink: 0 }}
                   />
                 </Box>
               )}
@@ -2949,7 +2953,7 @@ function PropertyPicker({
                   sx={{
                     px: 1.5,
                     pt: 0.75,
-                    fontSize: 11,
+                    fontSize: 12,
                     color: "warning.main",
                   }}
                 >
@@ -3423,10 +3427,8 @@ function ValuePicker({
                       ),
                     );
                   }}
-                  deleteIcon={<Iconify icon="mdi:close" width={10} />}
+                  deleteIcon={<Iconify icon="solar:close-linear" width={12} />}
                   sx={{
-                    height: 20,
-                    fontSize: 10,
                     maxWidth: 70,
                     "& .MuiChip-label": { px: 0.5 },
                   }}
@@ -3436,12 +3438,16 @@ function ValuePicker({
           })
         )}
         {!singleSelect && selectedValues.length > 3 && (
-          <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
+          <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
             +{selectedValues.length - 3}
           </Typography>
         )}
         <Iconify
-          icon={anchorEl ? "mdi:chevron-up" : "mdi:chevron-down"}
+          icon={
+            anchorEl
+              ? "solar:alt-arrow-up-linear"
+              : "solar:alt-arrow-down-linear"
+          }
           width={14}
           sx={{ color: "text.disabled", ml: "auto", flexShrink: 0 }}
         />
@@ -3483,7 +3489,7 @@ function ValuePicker({
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="mdi:magnify"
+                    icon="solar:magnifier-linear"
                     width={14}
                     sx={{ color: "text.disabled" }}
                   />
@@ -3493,7 +3499,7 @@ function ValuePicker({
             }}
           />
           <Typography
-            sx={{ fontSize: 10, color: "text.disabled", mt: 0.5, px: 0.25 }}
+            sx={{ fontSize: 12, color: "text.disabled", mt: 0.5, px: 0.25 }}
           >
             {singleSelect
               ? "Select a single value"
@@ -3509,7 +3515,7 @@ function ValuePicker({
           {customSearchValueTooLong && (
             <Typography
               role="alert"
-              sx={{ px: 1.5, py: 1, fontSize: 11, color: "error.main" }}
+              sx={{ px: 1.5, py: 1, fontSize: 12, color: "error.main" }}
             >
               Exact values are limited to {exactValueMaxUtf8Bytes / 1024} KiB (
               {exactValueMaxUtf8Bytes.toLocaleString("en-US")} UTF-8 bytes).
@@ -3528,7 +3534,7 @@ function ValuePicker({
               }}
             >
               <CircularProgress size={16} />
-              <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+              <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
                 Loading values…
               </Typography>
             </Box>
@@ -3547,7 +3553,7 @@ function ValuePicker({
             >
               <Typography
                 sx={{
-                  fontSize: 11,
+                  fontSize: 12,
                   color:
                     readState === "sampled" ? "text.secondary" : "warning.main",
                 }}
@@ -3561,7 +3567,7 @@ function ValuePicker({
                   onClick={() =>
                     void Promise.resolve(refetchOptions?.()).catch(() => {})
                   }
-                  sx={{ minWidth: "auto", fontSize: 11, flexShrink: 0 }}
+                  sx={{ minWidth: "auto", flexShrink: 0 }}
                 >
                   {isRetryingDashboardOptions ? "Retrying…" : "Retry"}
                 </Button>
@@ -3584,6 +3590,25 @@ function ValuePicker({
                 {hasMoreDashboardValues
                   ? "No values found yet. Continue searching or enter an exact value."
                   : FREE_TEXT_NO_OPTIONS_TEXT}
+              </Typography>
+            )}
+          {/* A fixed list that takes no typed value says the search found
+              nothing, rather than showing an empty list. */}
+          {hasStaticChoices &&
+            customSearchValue &&
+            !customSearchValueTooLong &&
+            !showCustomValueRow &&
+            filtered.length === 0 && (
+              <Typography
+                role="status"
+                sx={{
+                  p: 1.5,
+                  textAlign: "center",
+                  fontSize: 12,
+                  color: "text.disabled",
+                }}
+              >
+                No matching values
               </Typography>
             )}
           {/* Custom-value row is rendered below in the showCustomValueRow
@@ -3615,35 +3640,38 @@ function ValuePicker({
                   "&:hover": { bgcolor: "action.hover" },
                 }}
               >
-                <Iconify
-                  icon={
-                    singleSelect
-                      ? isSelected
-                        ? "mdi:radiobox-marked"
-                        : "mdi:radiobox-blank"
-                      : isSelected
-                        ? "mdi:checkbox-marked"
-                        : "mdi:checkbox-blank-outline"
-                  }
-                  width={18}
-                  sx={{
-                    color: isSelected ? "primary.main" : "text.secondary",
-                    flexShrink: 0,
-                  }}
-                />
+                {singleSelect ? (
+                  <Radio
+                    size="small"
+                    checked={isSelected}
+                    tabIndex={-1}
+                    disableRipple
+                    inputProps={{ "aria-hidden": true }}
+                    sx={{ p: 0, flexShrink: 0 }}
+                  />
+                ) : (
+                  <Checkbox
+                    size="small"
+                    checked={isSelected}
+                    tabIndex={-1}
+                    disableRipple
+                    inputProps={{ "aria-hidden": true }}
+                    sx={{ p: 0, flexShrink: 0 }}
+                  />
+                )}
                 <Box sx={{ flex: 1, minWidth: 0 }}>
                   <OverflowText
                     text={label}
                     sx={{
-                      fontSize: 12,
-                      fontWeight: isSelected ? 600 : 400,
+                      fontSize: 13,
+                      fontWeight: isSelected ? 500 : 400,
                       color: "text.primary",
                     }}
                   />
                   {secondaryLabel && (
                     <OverflowText
                       text={secondaryLabel}
-                      sx={{ fontSize: 10, color: "text.secondary", mt: 0.1 }}
+                      sx={{ fontSize: 12, color: "text.secondary", mt: 0.1 }}
                     />
                   )}
                 </Box>
@@ -3683,8 +3711,8 @@ function ValuePicker({
                 }}
               >
                 <Iconify
-                  icon="mdi:plus-circle-outline"
-                  width={18}
+                  icon="solar:add-circle-linear"
+                  width={20}
                   sx={{
                     color: "primary.main",
                     flexShrink: 0,
@@ -3705,7 +3733,7 @@ function ValuePicker({
                 sx={{
                   px: 1.5,
                   py: 0.75,
-                  fontSize: 11,
+                  fontSize: 12,
                   color: "text.secondary",
                 }}
               >
@@ -3744,15 +3772,13 @@ function ValuePicker({
                 py: 0.75,
               }}
             >
-              <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+              <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
                 {selectedValues.length} selected
               </Typography>
               <Button
                 size="small"
                 onClick={() => onChange([], [])}
                 sx={{
-                  textTransform: "none",
-                  fontSize: 11,
                   p: 0,
                   minWidth: 0,
                   color: "text.secondary",
@@ -3871,14 +3897,38 @@ function FilterRow({
           : normalizeFieldType(prop.type, prop.attributeTypes);
       // Native identifiers default to exact membership; raw keys keep their type.
       // defaultOperatorForType: optional per-flow { type: op } override.
-      const defaultOp = isNativeIdField(
+      const typeDefaultOp = isNativeIdField(
         prop.id,
         prop.apiColType || prop.category,
       )
         ? "in"
         : defaultOperatorForType?.[nt] || DEFAULT_OP_FOR_TYPE[nt] || "equals";
+      // A field that lists its own operators may not allow the type default
+      // (e.g. a latency range with no "equals"); start on the first one it
+      // declares.
+      const propOps = getOperatorsForFilter(
+        {
+          field: prop.id,
+          fieldType: nt,
+          fieldCategory: prop.category,
+          apiColType: prop.apiColType,
+        },
+        prop,
+      );
+      const allowedOps = operatorFilter
+        ? propOps.filter(operatorFilter)
+        : propOps;
+      const findOp = (value) => allowedOps.find((op) => op.value === value);
+      const defaultOpDef =
+        findOp(typeDefaultOp) ||
+        (prop.operators || []).map(findOp).find(Boolean) ||
+        allowedOps[0];
+      const defaultOp = defaultOpDef?.value || typeDefaultOp;
       let defaultValue;
-      if (nt === "number" || nt === "date" || nt === "map") defaultValue = "";
+      if ((nt === "number" || nt === "date") && defaultOpDef?.range)
+        defaultValue = ["", ""];
+      else if (nt === "number" || nt === "date" || nt === "map")
+        defaultValue = "";
       else if (nt === "boolean") defaultValue = "true";
       else if (nt === "text") defaultValue = "";
       else defaultValue = [];
@@ -3896,7 +3946,7 @@ function FilterRow({
         valueTypes: [],
       });
     },
-    [index, filter, onChange, defaultOperatorForType],
+    [index, filter, onChange, defaultOperatorForType, operatorFilter],
   );
 
   const handleOperatorChange = useCallback(
@@ -3974,9 +4024,6 @@ function FilterRow({
           disabled
           sx={{
             flex: 1,
-            textTransform: "none",
-            fontSize: 12,
-            height: 28,
             borderColor: "divider",
           }}
         >
@@ -4003,12 +4050,8 @@ function FilterRow({
             height: 28,
           }}
         >
-          <MenuItem value="true" sx={{ fontSize: 12 }}>
-            true
-          </MenuItem>
-          <MenuItem value="false" sx={{ fontSize: 12 }}>
-            false
-          </MenuItem>
+          <MenuItem value="true">true</MenuItem>
+          <MenuItem value="false">false</MenuItem>
         </Select>
       );
     }
@@ -4040,10 +4083,10 @@ function FilterRow({
               }}
               sx={{ flex: "1 1 120px", minWidth: 0 }}
               inputProps={{
-                style: { fontSize: 11, height: 12, padding: "6px 6px" },
+                style: { fontSize: 12, height: 12, padding: "6px 6px" },
               }}
             />
-            <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+            <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
               and
             </Typography>
             <TextField
@@ -4059,7 +4102,7 @@ function FilterRow({
               }}
               sx={{ flex: "1 1 120px", minWidth: 0 }}
               inputProps={{
-                style: { fontSize: 11, height: 12, padding: "6px 6px" },
+                style: { fontSize: 12, height: 12, padding: "6px 6px" },
               }}
             />
           </Stack>
@@ -4073,7 +4116,7 @@ function FilterRow({
           onChange={(e) => updateRow({ value: e.target.value })}
           sx={{ flex: "1 1 160px", minWidth: 0, maxWidth: "100%" }}
           inputProps={{
-            style: { fontSize: 11, height: 12, padding: "6px 6px" },
+            style: { fontSize: 12, height: 12, padding: "6px 6px" },
           }}
         />
       );
@@ -4118,7 +4161,7 @@ function FilterRow({
               }}
               FormHelperTextProps={NUMERIC_HELPER_TEXT_PROPS}
             />
-            <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+            <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
               and
             </Typography>
             <TextField
@@ -4202,7 +4245,17 @@ function FilterRow({
     }
 
     // Dataset columns provide their own suggestions; do not bypass that picker.
-    if (!ValuePickerOverride && usesFreeTextValue(filter.fieldType, source)) {
+    // A field with fixed choices (a pick-several enum on the shared panel)
+    // lists them in the picker instead of asking for typed text.
+    const hasFixedChoices =
+      selectedProp?.category !== "annotation" &&
+      Array.isArray(selectedProp?.choices) &&
+      selectedProp.choices.length > 0;
+    if (
+      !ValuePickerOverride &&
+      !hasFixedChoices &&
+      usesFreeTextValue(filter.fieldType, source)
+    ) {
       return (
         <TextField
           size="small"
@@ -4239,7 +4292,12 @@ function FilterRow({
           }
         }
         freeSoloValues={rowFreeSoloValues}
-        singleSelect={SINGLE_VALUE_OPS.has(safeOperator) && !isArray}
+        // `singleValue` properties hold exactly one value even on list
+        // operators, for screens whose query takes a scalar.
+        singleSelect={
+          (SINGLE_VALUE_OPS.has(safeOperator) && !isArray) ||
+          Boolean(selectedProp?.singleValue)
+        }
         onChange={(newVal, newValueTypes = []) =>
           updateRow(
             { value: newVal, valueTypes: newValueTypes },
@@ -4271,11 +4329,8 @@ function FilterRow({
         size="small"
         variant="outlined"
         onClick={(e) => setPickerAnchor(e.currentTarget)}
-        endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
         sx={{
-          textTransform: "none",
-          fontSize: 12,
-          height: 28,
           flex: "1 1 150px",
           minWidth: 0,
           maxWidth: { xs: "100%", sm: 180 },
@@ -4330,7 +4385,7 @@ function FilterRow({
           }}
         >
           {FILTER_INPUT_TYPES.map((t) => (
-            <MenuItem key={t.value} value={t.value} sx={{ fontSize: 12 }}>
+            <MenuItem key={t.value} value={t.value}>
               {t.label}
             </MenuItem>
           ))}
@@ -4340,6 +4395,7 @@ function FilterRow({
       <Select
         size="small"
         value={safeOperator}
+        inputProps={{ "aria-label": `Condition ${index + 1} operator` }}
         onChange={handleOperatorChange}
         sx={{
           flex: "0 1 128px",
@@ -4350,7 +4406,7 @@ function FilterRow({
         }}
       >
         {ops.map((op) => (
-          <MenuItem key={op.value} value={op.value} sx={{ fontSize: 12 }}>
+          <MenuItem key={op.value} value={op.value}>
             {op.label}
           </MenuItem>
         ))}
@@ -4361,9 +4417,10 @@ function FilterRow({
       <IconButton
         size="small"
         onClick={() => onRemove(index)}
+        aria-label={`Remove condition ${index + 1}`}
         sx={{ p: 0.25, flexShrink: 0, ml: "auto" }}
       >
-        <Iconify icon="mdi:close" width={14} />
+        <Iconify icon="solar:close-linear" width={14} />
       </IconButton>
     </Stack>
   );
@@ -4396,11 +4453,14 @@ const TraceFilterPanel = ({
   ValuePickerOverride,
   showAi = true,
   showQueryTab = true,
+  aiPlaceholder = "Ask AI — e.g. 'show traces with errors on gpt-4'",
+  closeOnApply = false,
   categories: categoriesOverride,
   propertyFilter,
   operatorFilter,
   defaultOperatorForType,
   panelWidth,
+  placement = "bottom-start",
   defaultRow: defaultRowOverride,
   isSimulator = false,
   freeSoloValues = false,
@@ -5080,6 +5140,7 @@ const TraceFilterPanel = ({
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const queryInputRef = useRef(null);
+  const [queryResetVersion, setQueryResetVersion] = useState(0);
 
   // Pure converter: query-input tokens → FilterRow shape. Extracted so the
   // query-apply path can run it directly against tokens that were just
@@ -5154,6 +5215,11 @@ const TraceFilterPanel = ({
   const onApplyRef = useRef(onApply);
   onApplyRef.current = onApply;
   // Apply only when the resulting filter set differs from the last one sent.
+  // Optional: close the panel once a changed filter set is applied.
+  const closeOnApplyRef = useRef(closeOnApply);
+  closeOnApplyRef.current = closeOnApply;
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const applyIfChanged = useCallback((sourceRows) => {
     // Hold while a typed editor is incomplete so partial values do not
     // auto-fire or drop the last valid, already-applied filter.
@@ -5164,6 +5230,7 @@ const TraceFilterPanel = ({
     if (serialized === lastAppliedRef.current) return;
     lastAppliedRef.current = serialized;
     onApplyRef.current(next);
+    if (closeOnApplyRef.current) onCloseRef.current();
   }, []);
 
   const handleChange = useCallback(
@@ -5229,6 +5296,10 @@ const TraceFilterPanel = ({
   }, [open, rows, applyIfChanged, queryTokensToRows]);
 
   const handleClear = useCallback(() => {
+    // Explicit resets must not commit the pending Query draft on close.
+    bypassNextCloseFlushRef.current = true;
+    // Remount even when initialTokens was already empty to discard partial state.
+    setQueryResetVersion((version) => version + 1);
     setRows([{ ...effectiveDefaultRow }]);
     lastAppliedRef.current = serializeFilterSet(null);
     onApply(null);
@@ -5301,8 +5372,14 @@ const TraceFilterPanel = ({
       open={open}
       anchorEl={anchorEl}
       onClose={onClose}
-      anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
-      transformOrigin={{ vertical: "top", horizontal: "left" }}
+      anchorOrigin={{
+        vertical: "bottom",
+        horizontal: placement === "bottom-end" ? "right" : "left",
+      }}
+      transformOrigin={{
+        vertical: "top",
+        horizontal: placement === "bottom-end" ? "right" : "left",
+      }}
       slotProps={{
         paper: {
           sx: {
@@ -5326,7 +5403,8 @@ const TraceFilterPanel = ({
               placeholder={
                 aiLoading
                   ? "Parsing with AI..."
-                  : "Ask AI — e.g. 'show traces with errors on gpt-4'"
+                  : aiPlaceholder ??
+                    "Ask AI — e.g. 'show traces with errors on gpt-4'"
               }
               value={aiQuery}
               onChange={(e) => {
@@ -5341,7 +5419,11 @@ const TraceFilterPanel = ({
                 startAdornment: (
                   <InputAdornment position="start">
                     <Iconify
-                      icon={aiLoading ? "mdi:loading" : "mdi:creation"}
+                      icon={
+                        aiLoading
+                          ? "mdi:loading"
+                          : "solar:stars-minimalistic-linear"
+                      }
                       width={16}
                       sx={{
                         color: "primary.main",
@@ -5366,7 +5448,7 @@ const TraceFilterPanel = ({
                         onClick={handleAiFilter}
                         sx={{ p: 0.25 }}
                       >
-                        <Iconify icon="mdi:arrow-right" width={16} />
+                        <Iconify icon="solar:arrow-right-linear" width={16} />
                       </IconButton>
                     </InputAdornment>
                   ) : null,
@@ -5376,7 +5458,7 @@ const TraceFilterPanel = ({
             {aiError && (
               <Typography
                 variant="caption"
-                sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
+                sx={{ fontSize: 12, color: "text.secondary", px: 0.5 }}
               >
                 AI unavailable, use filters below
               </Typography>
@@ -5384,7 +5466,7 @@ const TraceFilterPanel = ({
             {aiEmpty && !aiError && !aiLoading && (
               <Typography
                 variant="caption"
-                sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
+                sx={{ fontSize: 12, color: "text.secondary", px: 0.5 }}
               >
                 Could not derive filters from that query. Try rephrasing or add
                 a filter manually below.
@@ -5399,16 +5481,10 @@ const TraceFilterPanel = ({
             value={activeTab}
             onChange={(_, v) => setActiveTab(v)}
             sx={{
-              minHeight: 24,
+              boxShadow: "none",
               borderBottom: "1px solid",
               borderColor: "divider",
               "& .MuiTab-root": {
-                minHeight: 24,
-                py: 0.25,
-                px: 1,
-                textTransform: "none",
-                fontSize: 13,
-                fontWeight: 500,
                 minWidth: 0,
               },
             }}
@@ -5428,7 +5504,7 @@ const TraceFilterPanel = ({
                   sx={{ display: "flex", alignItems: "center", gap: 0.75 }}
                 >
                   <CircularProgress size={14} />
-                  <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+                  <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
                     Loading properties…
                   </Typography>
                 </Box>
@@ -5521,13 +5597,11 @@ const TraceFilterPanel = ({
             >
               <Button
                 size="small"
-                startIcon={<Iconify icon="mdi:plus" width={14} />}
+                startIcon={<Iconify icon="solar:add-linear" width={14} />}
                 onClick={() =>
                   setRows((prev) => [...prev, { ...effectiveDefaultRow }])
                 }
                 sx={{
-                  textTransform: "none",
-                  fontSize: 12,
                   color: "text.secondary",
                 }}
               >
@@ -5538,7 +5612,6 @@ const TraceFilterPanel = ({
                   size="small"
                   data-filter-panel-action="clear"
                   onClick={handleClear}
-                  sx={{ textTransform: "none", fontSize: 12 }}
                 >
                   Clear all
                 </Button>
@@ -5551,7 +5624,7 @@ const TraceFilterPanel = ({
         {showQueryTab && activeTab === "query" && (
           <Box sx={{ px: 0.5, pt: 0.25 }}>
             <QueryInput
-              key={queryScopeKey}
+              key={`${queryScopeKey}:${queryResetVersion}`}
               ref={queryInputRef}
               filterFields={queryFilterFields}
               fieldMap={queryFieldMap}
@@ -5649,7 +5722,7 @@ const TraceFilterPanel = ({
             {shouldFetchQueryValues && queryValuesMessage && (
               <Typography
                 role="status"
-                sx={{ fontSize: 11, color: "warning.main", mt: 0.75, px: 0.5 }}
+                sx={{ fontSize: 12, color: "warning.main", mt: 0.75, px: 0.5 }}
               >
                 {queryValuesMessage}
               </Typography>
@@ -5664,13 +5737,12 @@ const TraceFilterPanel = ({
                 size="small"
                 data-filter-panel-action="clear"
                 onClick={handleClear}
-                sx={{ textTransform: "none", fontSize: 12 }}
               >
                 Clear all
               </Button>
             </Stack>
             <Typography
-              sx={{ fontSize: 11, color: "text.disabled", mt: 1, px: 0.5 }}
+              sx={{ fontSize: 12, color: "text.disabled", mt: 1, px: 0.5 }}
             >
               Type property → pick operator → pick/type value. Backspace to
               undo. Click chip to edit.
@@ -5698,11 +5770,14 @@ TraceFilterPanel.propTypes = {
   ValuePickerOverride: PropTypes.elementType,
   showAi: PropTypes.bool,
   showQueryTab: PropTypes.bool,
+  aiPlaceholder: PropTypes.string,
+  closeOnApply: PropTypes.bool,
   categories: PropTypes.array,
   propertyFilter: PropTypes.func,
   operatorFilter: PropTypes.func,
   defaultOperatorForType: PropTypes.object,
   panelWidth: PropTypes.number,
+  placement: PropTypes.oneOf(["bottom-start", "bottom-end"]),
   defaultRow: PropTypes.object,
   isSimulator: PropTypes.bool,
   freeSoloValues: PropTypes.oneOfType([PropTypes.bool, PropTypes.func]),

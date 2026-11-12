@@ -4,7 +4,7 @@
 {{- $collector := include "futureagi.component" (dict "root" . "component" "fi-collector") -}}
 {{- $otlpHost := $i.otlp.host | default $i.api.host -}}
 {{- /* fi-collector's OTLP/HTTP routes; the API does not serve them. */ -}}
-{{- $otlpPaths := list "/v1/traces" "/tracer/v1/traces" -}}
+{{- $otlpPaths := list "/v1/traces" "/tracer/v1/traces" "/api/public/otel/v1/traces" -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

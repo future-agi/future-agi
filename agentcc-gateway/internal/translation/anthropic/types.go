@@ -124,7 +124,7 @@ type MessagesResponse struct {
 	Content      []ContentBlock `json:"content"`
 	Model        string         `json:"model"`
 	StopReason   string         `json:"stop_reason"`
-	StopSequence *string        `json:"stop_sequence,omitempty"`
+	StopSequence *string        `json:"stop_sequence"`
 	Usage        ResponseUsage  `json:"usage"`
 }
 
@@ -132,6 +132,10 @@ type MessagesResponse struct {
 type ResponseUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	// The cache reads and writes, which input_tokens does not count
+	// (Anthropic's convention; dialectUsage).
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 }
 
 // ─── Stream event types ───────────────────────────────────────────────────────
@@ -150,11 +154,14 @@ type MessageStartEvent struct {
 
 // MessageStartMsg is the partial message in message_start.
 type MessageStartMsg struct {
-	ID    string        `json:"id"`
-	Type  string        `json:"type"` // "message"
-	Role  string        `json:"role"` // "assistant"
-	Model string        `json:"model,omitempty"`
-	Usage ResponseUsage `json:"usage"`
+	ID           string         `json:"id"`
+	Type         string         `json:"type"` // "message"
+	Role         string         `json:"role"` // "assistant"
+	Model        string         `json:"model"`
+	Content      []ContentBlock `json:"content"`
+	StopReason   *string        `json:"stop_reason"`
+	StopSequence *string        `json:"stop_sequence"`
+	Usage        ResponseUsage  `json:"usage"`
 }
 
 // ContentBlockStartEvent announces a new content block.
@@ -195,7 +202,7 @@ type MessageDeltaEvent struct {
 // MessageDelta is the payload inside MessageDeltaEvent.
 type MessageDelta struct {
 	StopReason   string  `json:"stop_reason"`
-	StopSequence *string `json:"stop_sequence,omitempty"`
+	StopSequence *string `json:"stop_sequence"`
 }
 
 // MessageStopEvent terminates the stream.

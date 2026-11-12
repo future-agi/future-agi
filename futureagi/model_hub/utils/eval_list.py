@@ -11,7 +11,29 @@ from copy import deepcopy
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from django.db.models import Count, Q, QuerySet
+from django.db.models import (
+    Case,
+    CharField,
+    Count,
+    F,
+    OuterRef,
+    Q,
+    QuerySet,
+    Subquery,
+    Value,
+    When,
+)
+from django.db.models.functions import Coalesce, NullIf, Trim
+
+from agentic_eval.core_evals.fi_evals.eval_type import (
+    FunctionEvalTypeId,
+    FutureAgiEvalTypeId,
+    GroundedEvalTypeId,
+    LlmEvalTypeId,
+)
+from model_hub.models.choices import EvalOutputType, OwnerChoices
+from model_hub.types import EvalListFilters, ThirtyDayDataPoint
+from tfc.constants.api_calls import APICallStatusChoices
 
 _RUN_CONFIG_DEFAULTS: dict = {
     "agent_mode": "agent",
@@ -68,16 +90,6 @@ def normalize_search_for_name(search: str) -> Q:
         | Q(name__icontains=term.replace(" ", "-"))
     )
 
-
-from agentic_eval.core_evals.fi_evals.eval_type import (
-    FunctionEvalTypeId,
-    FutureAgiEvalTypeId,
-    GroundedEvalTypeId,
-    LlmEvalTypeId,
-)
-from model_hub.models.choices import EvalOutputType, OwnerChoices
-from model_hub.types import EvalListFilters, ThirtyDayDataPoint
-from tfc.constants.api_calls import APICallStatusChoices
 
 if TYPE_CHECKING:
     from model_hub.models.evals_metric import EvalTemplate
@@ -296,14 +308,69 @@ def get_created_by_name(template: "EvalTemplate") -> str:
     return get_organization_display_name(template)
 
 
+def _user_display_name(prefix: str):
+    """A user's name, or their email when the name is blank."""
+    return Coalesce(
+        NullIf(Trim(f"{prefix}name"), Value("")),
+        F(f"{prefix}email"),
+        output_field=CharField(),
+    )
+
+
+def created_by_display_expression():
+    """DB expression for the creator the eval list shows on each template.
+
+    Order: "System" for system evals, then the newest evaluator's user, then
+    the author of the first version, then the organization name ("User" when
+    it has none). The list shows this value and filters and sorts Created By
+    by it, so a picked creator returns exactly the rows that show them.
+
+    Build it per request: the managers apply the current workspace scope.
+    """
+    from model_hub.models.evals_metric import EvalTemplateVersion, Evaluator
+
+    evaluator_user = (
+        Evaluator.objects.filter(eval_template_id=OuterRef("pk"), user__isnull=False)
+        .order_by("-created_at")
+        .annotate(_display=_user_display_name("user__"))
+        .values("_display")[:1]
+    )
+    first_version_author = (
+        EvalTemplateVersion.objects.filter(
+            eval_template_id=OuterRef("pk"), created_by__isnull=False
+        )
+        .order_by("version_number")
+        .annotate(_display=_user_display_name("created_by__"))
+        .values("_display")[:1]
+    )
+    organization_name = Coalesce(
+        NullIf(Trim("organization__display_name"), Value("")),
+        NullIf(Trim("organization__name"), Value("")),
+        Value("User"),
+        output_field=CharField(),
+    )
+    return Case(
+        When(owner=OwnerChoices.SYSTEM.value, then=Value("System")),
+        default=Coalesce(
+            Subquery(evaluator_user, output_field=CharField()),
+            Subquery(first_version_author, output_field=CharField()),
+            organization_name,
+            output_field=CharField(),
+        ),
+        output_field=CharField(),
+    )
+
+
 def build_user_eval_list_items(
     user_evals: Iterable, *, is_experiment_scope: bool = False
 ) -> list[dict]:
     """Build the canonical user-eval item shape used by get_evals_list."""
     from model_hub.models.develop_dataset import Column, SourceChoices
+    from model_hub.services.experiment_defaults import eval_scoring_views
     from model_hub.utils.evals import NOT_UI_EVALS
 
     user_evals = list(user_evals)
+    scoring_views = eval_scoring_views(user_evals)
     column_qs = Column.objects.filter(
         source_id__in=[str(user_eval.id) for user_eval in user_evals],
         deleted=False,
@@ -334,7 +401,9 @@ def build_user_eval_list_items(
             "description": template.description,
             "config": user_eval.config or {},
             "model": run_config_raw.get("model")
-            or (user_eval.config or {}).get("config", {}).get("model", ""),
+            or (user_eval.config or {}).get("config", {}).get("model")
+            or user_eval.model
+            or "",
             "column_id": column_map.get(str(user_eval.id)),
             "updated_at": user_eval.updated_at,
             "eval_group": user_eval.eval_group.name if user_eval.eval_group else None,
@@ -355,6 +424,12 @@ def build_user_eval_list_items(
             "pinned_version_id": str(user_eval.pinned_version_id)
             if user_eval.pinned_version_id
             else None,
+            # "Use in new experiments", and the version and pass
+            # rule a dataset run applies (services/experiment_defaults.py).
+            "is_experiment_default": bool(
+                getattr(user_eval, "is_experiment_default", False)
+            ),
+            **scoring_views.get(user_eval.id, {}),
         }
 
         if template.template_type == "composite":
@@ -421,6 +496,9 @@ def build_eval_list_queryset(
             user_q &= Q(workspace=workspace) | Q(workspace__isnull=True)
         qs = qs.filter(system_q | user_q)
 
+    # The creator each row shows; Created By filters and sorting read it.
+    qs = qs.annotate(created_by_display=created_by_display_expression())
+
     # Search by name (normalize spaces/underscores/hyphens)
     if search:
         qs = qs.filter(normalize_search_for_name(search))
@@ -472,7 +550,6 @@ def build_eval_list_queryset(
         if _f("tags") or _f("tags_not"):
             from django.contrib.postgres.fields import ArrayField as PGArrayField
             from django.db.models import Func, TextField
-            from django.db.models.functions import Cast
 
             class _LowerArray(Func):
                 function = "ARRAY"
@@ -502,37 +579,9 @@ def build_eval_list_queryset(
         if _f("names_not"):
             qs = qs.exclude(name__in=_f("names_not"))
 
-        # Created by filter (user names)
+        # Created by filter: the creator names the list shows
         if _f("created_by"):
-            from model_hub.models.evals_metric import EvalTemplateVersion
-
-            created_by_list = _f("created_by")
-            version_template_ids = EvalTemplateVersion.all_objects.filter(
-                is_default=True,
-                deleted=False,
-                created_by__name__in=created_by_list,
-            ).values_list("eval_template_id", flat=True)
-            version_template_ids_email = EvalTemplateVersion.all_objects.filter(
-                is_default=True,
-                deleted=False,
-                created_by__email__in=created_by_list,
-            ).values_list("eval_template_id", flat=True)
-            org_q = Q(organization__display_name__in=created_by_list) | Q(
-                organization__name__in=created_by_list
-            )
-            if "System" in created_by_list:
-                qs = qs.filter(
-                    Q(id__in=version_template_ids)
-                    | Q(id__in=version_template_ids_email)
-                    | org_q
-                    | Q(owner="system")
-                )
-            else:
-                qs = qs.filter(
-                    Q(id__in=version_template_ids)
-                    | Q(id__in=version_template_ids_email)
-                    | org_q
-                )
+            qs = qs.filter(created_by_display__in=_f("created_by"))
 
         # Output type negation filter
         if _f("output_type_not"):
@@ -566,26 +615,9 @@ def build_eval_list_queryset(
                     combined |= p
                 qs = qs.exclude(combined)
 
-        # Created by exclusion filter
+        # Created by exclusion filter: the creator names the list shows
         if _f("created_by_not"):
-            from model_hub.models.evals_metric import EvalTemplateVersion
-
-            excluded_by_list = _f("created_by_not")
-            exc_ids = (
-                EvalTemplateVersion.all_objects.filter(
-                    is_default=True,
-                    deleted=False,
-                )
-                .filter(
-                    Q(created_by__name__in=excluded_by_list)
-                    | Q(created_by__email__in=excluded_by_list)
-                )
-                .values_list("eval_template_id", flat=True)
-            )
-            org_q = Q(organization__display_name__in=excluded_by_list) | Q(
-                organization__name__in=excluded_by_list
-            )
-            qs = qs.exclude(Q(id__in=exc_ids) | org_q)
+            qs = qs.exclude(created_by_display__in=_f("created_by_not"))
 
         # Note: eval_type filter is applied in-memory after fetching because
         # eval_type is derived from multiple fields (config + tags), not a single

@@ -1,15 +1,8 @@
 import urllib.parse
 
 import structlog
-from django.conf import settings
-from django.http import HttpResponseRedirect
-from django.utils.functional import SimpleLazyObject
-from drf_yasg import openapi
-from drf_yasg.utils import swagger_auto_schema
-from rest_framework.decorators import api_view, parser_classes
-from rest_framework.parsers import FormParser
-
 from accounts.aws_marketplace_utils import (
+    get_onboarding_session,
     onboard_aws_customer,
     process_aws_launch_software,
     process_aws_onboarding,
@@ -18,12 +11,58 @@ from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
     AWSMarketplaceSignupRequestSerializer,
     AWSMarketplaceSignupResponseSerializer,
+    AWSOnboardingExchangeRequestSerializer,
+    AWSOnboardingExchangeResponseSerializer,
 )
 from accounts.services.aws_marketplace import AWSMarketplaceService
-from tfc.utils.api_contracts import validated_api_request
+from accounts.services.aws_onboarding_attempt import (
+    OnboardingAttemptBusy,
+    issue_attempt,
+    use_attempt,
+)
+from accounts.views.handoff_exchange import (
+    HandoffRedeemView,
+    HandoffRefusedResponseSerializer,
+    _app_origin,
+    _refused,
+)
+from django.conf import settings
+from django.http import HttpResponseRedirect
+from django.utils.functional import SimpleLazyObject
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.exceptions import ParseError, UnsupportedMediaType
+from rest_framework.response import Response
+from rest_framework.parsers import FormParser
+from tfc.utils.api_contracts import validated_api_request, validated_request
 from tfc.utils.general_methods import GeneralMethods
 
+from accounts.services.handoff_exchange import (
+    KIND_AWS_MARKETPLACE,
+    KIND_AWS_ONBOARDING,
+    HandoffRefused,
+    issue,
+    redeem,
+    redeem_with_deadline,
+    restore,
+)
+
 logger = structlog.get_logger(__name__)
+
+# Sign-up refusals the register view acts on. Any other failure keeps the
+# categorical "Signup failed" and never exception text.
+SIGNUP_EMAIL_TAKEN = "An account with this email already exists"
+SIGNUP_EMAIL_TAKEN_MESSAGE = (
+    "An account with this email already exists. "
+    "Sign in instead, or use a different email."
+)
+SIGNUP_TERMINAL_REASONS = frozenset(
+    {
+        "Invalid or expired onboarding token",
+        "This AWS Marketplace customer already has an account",
+    }
+)
 
 _gm = GeneralMethods()
 # Lazy: building boto3 clients at import costs ~8 MB RSS in every process
@@ -34,6 +73,42 @@ APP_URL = (
     if settings.APP_URL
     else settings.BASE_URL.replace("http://", "https://")
 )
+
+
+class AWSOnboardingExchangeView(HandoffRedeemView):
+    """Exchange on arrival, not after the buyer has filled in the form."""
+
+    def handle_exception(self, exc):
+        # Contract validation parses before post(); keep parser failures categorical.
+        if isinstance(exc, (ParseError, UnsupportedMediaType)):
+            return _refused()
+        return super().handle_exception(exc)
+
+    @validated_request(
+        request_serializer=AWSOnboardingExchangeRequestSerializer,
+        responses={
+            200: AWSOnboardingExchangeResponseSerializer,
+            400: HandoffRefusedResponseSerializer,
+        },
+        reject_unknown_fields=True,
+        validation_error_response=lambda _errors: _refused(),
+        security=[],
+    )
+    def post(self, request):
+        origin = _app_origin()
+        if origin is None or request.headers.get("Origin") != origin:
+            return _refused()
+        try:
+            data = request.data
+            if not isinstance(data, dict) or set(data) != {"code"}:
+                return _refused()
+            token = redeem(data["code"], KIND_AWS_ONBOARDING)["onboarding_token"]
+            get_onboarding_session(token)
+            attempt = issue_attempt(token)
+        except (HandoffRefused, ValueError, ParseError, UnsupportedMediaType):
+            return _refused()
+        return Response({"onboarding_attempt": attempt})
+
 
 AWS_MARKETPLACE_TOKEN_FORM_PARAMS = [
     openapi.Parameter(
@@ -90,15 +165,13 @@ def aws_marketplace_verify_token(request):
             product_id = parsed_data.get("x-amzn-marketplace-product-id", [None])[0]
             agreement_id = parsed_data.get("x-amzn-marketplace-agreement-id", [None])[0]
 
-        except Exception as parse_error:
-            return _gm.bad_request(f"Invalid form data: {str(parse_error)}")
+        except Exception:
+            return _gm.bad_request("Invalid form data")
 
         if not registration_token:
             return _gm.bad_request("Missing AWS Marketplace registration token")
 
-        logger.info(
-            f"AWS Marketplace token verification - Token: {registration_token[:20]}..., Product ID: {product_id}, Agreement ID: {agreement_id}"
-        )
+        logger.info("AWS Marketplace token verification requested")
 
         try:
             customer_identifier, customer_aws_account_id, product_code = (
@@ -122,16 +195,20 @@ def aws_marketplace_verify_token(request):
         )
 
         if action == "signup":
-            redirect_url = (
-                f"{APP_URL}/auth/jwt/register?onboarding_token={onboarding_token}"
-            )
+            code = issue(KIND_AWS_ONBOARDING, {"onboarding_token": onboarding_token})
+            # Keep the signup reader's parameter name, but its value is now an
+            # atomic, <=60-second exchange code, not the reusable capability.
+            redirect_url = f"{APP_URL}/auth/jwt/register?onboarding_token={code}"
         else:
             redirect_url = f"{APP_URL}/auth/jwt/login?returnTo=%2Fdashboard%2Fdevelop"
 
-        return HttpResponseRedirect(redirect_url)
+        response = HttpResponseRedirect(redirect_url)
+        response["Cache-Control"] = "no-store"
+        response["Referrer-Policy"] = "no-referrer"
+        return response
 
-    except Exception as e:
-        return _gm.bad_request(f"Token verification failed: {str(e)}")
+    except Exception:
+        return _gm.bad_request("Token verification failed")
 
 
 @swagger_auto_schema(
@@ -157,11 +234,45 @@ def aws_marketplace_signup(request):
     """
     try:
         data = request.validated_data
-        onboarding_token = data["onboarding_token"]
+        capability = data["onboarding_token"]
         email = data["email"]
         full_name = data["full_name"]
 
-        user_email = process_aws_onboarding(onboarding_token, email, full_name)
+        if capability.startswith("aws1_"):
+            terminal_reason = None
+            with use_attempt(capability) as onboarding_token:
+                try:
+                    get_onboarding_session(onboarding_token)
+                except ValueError as exc:
+                    raise HandoffRefused() from exc
+                try:
+                    user_email = process_aws_onboarding(
+                        onboarding_token, email, full_name
+                    )
+                except ValueError as exc:
+                    if str(exc) not in SIGNUP_TERMINAL_REASONS:
+                        # An email that already has an account (or any other
+                        # failure) keeps this form attempt for a retry.
+                        raise
+                    # Nothing a new email could fix: leaving the block
+                    # normally spends the attempt.
+                    terminal_reason = str(exc)
+            if terminal_reason is not None:
+                return _gm.bad_request(terminal_reason)
+        else:
+            # Compatibility for already-open clients: a redirect code still
+            # redeems once. Raw purchase capabilities remain refused.
+            payload, expires_at = redeem_with_deadline(capability, KIND_AWS_ONBOARDING)
+            try:
+                user_email = process_aws_onboarding(
+                    payload["onboarding_token"], email, full_name
+                )
+            except ValueError as exc:
+                if str(exc) == SIGNUP_EMAIL_TAKEN:
+                    # No account was created, so the buyer keeps this link for
+                    # a corrected email, inside its original deadline.
+                    restore(capability, KIND_AWS_ONBOARDING, payload, expires_at)
+                raise
 
         response_data = {
             "message": "Account created successfully",
@@ -170,8 +281,22 @@ def aws_marketplace_signup(request):
 
         return _gm.success_response(response_data)
 
-    except Exception as e:
-        return _gm.bad_request(f"Signup failed: {str(e)}")
+    except OnboardingAttemptBusy:
+        return _gm.bad_request("Signup is already in progress. Please try again shortly.")
+    except HandoffRefused:
+        # Fixed terminal category already recognized by the registration reader.
+        # Keep HTTP 400 and the existing bad_request envelope, never exception text.
+        return _gm.bad_request("Invalid or expired onboarding token")
+    except ValueError as exc:
+        # A fixed, actionable validation category, never arbitrary helper text.
+        reason = str(exc)
+        if reason == SIGNUP_EMAIL_TAKEN:
+            return _gm.bad_request(SIGNUP_EMAIL_TAKEN_MESSAGE)
+        if reason in SIGNUP_TERMINAL_REASONS:
+            return _gm.bad_request(reason)
+        return _gm.bad_request("Signup failed")
+    except Exception:
+        return _gm.bad_request("Signup failed")
 
 
 @swagger_auto_schema(
@@ -189,8 +314,8 @@ def aws_marketplace_launch_software(request):
     """
     Handle "Launch Software" action from AWS Marketplace
 
-    This endpoint authenticates an existing AWS Marketplace customer
-    and redirects appropriately.
+    Resolve the AWS Marketplace customer and redirect to signup or real sign-in.
+    The subscription token does not authenticate a person.
     """
     try:
         registration_token = None
@@ -198,29 +323,37 @@ def aws_marketplace_launch_software(request):
             body_str = request.body.decode("utf-8")
             parsed = urllib.parse.parse_qs(body_str)
             registration_token = parsed.get("x-amzn-marketplace-token", [None])[0]
-        except Exception as parse_error:
-            return _gm.bad_request(
-                f"Invalid or expired AWS Marketplace token: {str(parse_error)}"
-            )
+        except Exception:
+            return _gm.bad_request("Invalid or expired AWS Marketplace token")
 
         if not registration_token:
             return _gm.bad_request("Missing AWS Marketplace registration token")
 
-        logger.info(
-            f"AWS Marketplace launch software - Token: {registration_token[:20]}..."
-        )
+        logger.info("AWS Marketplace launch software requested")
 
         response_data, error_message = process_aws_launch_software(registration_token)
 
         if error_message:
-            return _gm.bad_request(error_message)
+            # Helper failures can contain exception text; expose only a category.
+            return _gm.bad_request("Launch failed")
+
+        if response_data and response_data.get("action") == "login":
+            redirect_url = f"{APP_URL}/auth/jwt/login?returnTo=%2Fdashboard%2Fdevelop"
+            response = HttpResponseRedirect(redirect_url)
+            response["Cache-Control"] = "no-store"
+            response["Referrer-Policy"] = "no-referrer"
+            return response
 
         if response_data and response_data.get("action") == "signup":
-            onboarding_token = response_data.get("onboarding_token")
-            redirect_url = (
-                f"{APP_URL}/auth/jwt/register?onboarding_token={onboarding_token}"
+            code = issue(
+                KIND_AWS_ONBOARDING,
+                {"onboarding_token": response_data.get("onboarding_token")},
             )
-            return HttpResponseRedirect(redirect_url)
+            redirect_url = f"{APP_URL}/auth/jwt/register?onboarding_token={code}"
+            response = HttpResponseRedirect(redirect_url)
+            response["Cache-Control"] = "no-store"
+            response["Referrer-Policy"] = "no-referrer"
+            return response
 
         access_token = response_data.get("access")
         refresh_token = response_data.get("refresh")
@@ -228,16 +361,18 @@ def aws_marketplace_launch_software(request):
 
         dashboard_base = f"{APP_URL}/dashboard/develop"
 
+        code = issue(
+            KIND_AWS_MARKETPLACE, {"access": access_token, "refresh": refresh_token}
+        )
         query = urllib.parse.urlencode(
-            {
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "new_org": new_org,
-            }
+            {"code": code, "kind": KIND_AWS_MARKETPLACE, "new_org": new_org}
         )
         redirect_url = f"{dashboard_base}?{query}"
 
-        return HttpResponseRedirect(redirect_url)
+        response = HttpResponseRedirect(redirect_url)
+        response["Cache-Control"] = "no-store"
+        response["Referrer-Policy"] = "no-referrer"
+        return response
 
-    except Exception as e:
-        return _gm.bad_request(f"Launch failed: {str(e)}")
+    except Exception:
+        return _gm.bad_request("Launch failed")

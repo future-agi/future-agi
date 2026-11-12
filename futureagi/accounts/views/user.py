@@ -4,13 +4,10 @@ from datetime import datetime, timedelta
 import structlog
 from django.contrib.auth.hashers import check_password
 from django.core.cache import cache
-from django.db import DatabaseError, InterfaceError
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.crypto import constant_time_compare
-from django_redis.exceptions import ConnectionInterrupted
 from drf_yasg.utils import swagger_auto_schema
-from redis.exceptions import RedisError
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -19,6 +16,8 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from accounts.authentication import (
+    INFRASTRUCTURE_ERRORS,
+    allows_no_organization,
     decrypt_message,
     generate_encrypted_message,
     get_client_ip,
@@ -47,7 +46,12 @@ from accounts.serializers.contracts import (
     UserOnboardingSaveResponseSerializer,
 )
 from accounts.serializers.user import UserOnboardingSerializer
+from accounts.services.auth_cache import (
+    cache_access_token,
+    is_access_token_cache_key,
+)
 from accounts.services.simulate_access import restrict_simulate_to_environments
+from accounts.services.workspace_landing import resolve_user_workspace
 
 # from accounts.user_onboard import upload_demo_dataset
 from accounts.utils import record_hubspot_login
@@ -67,18 +71,9 @@ from tfc.utils.api_contracts import validated_api_request, validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
 
 logger = structlog.get_logger(__name__)
-
-# Postgres or Redis being slow or down says nothing about the password, so a
-# login that fails with one of these must not count towards the lockout.
-LOGIN_INFRASTRUCTURE_ERRORS = (
-    DatabaseError,
-    InterfaceError,
-    ConnectionInterrupted,
-    RedisError,
-)
 
 
 @swagger_auto_schema(
@@ -114,6 +109,10 @@ def manage_redis_key(request):
         key = data.get("key")
         if not key:
             return gm.bad_request("Key is required")
+        if is_access_token_cache_key(key):
+            return gm.bad_request(
+                "Access-token cache entries are managed by authentication"
+            )
 
         if request.method == "POST":
             value = data.get("value")
@@ -368,10 +367,12 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             access_token_encrypted = generate_encrypted_message(
                 {"user_id": str(user.id), "id": str(access_token.id)}
             )
-            cache.set(
-                f"access_token_{str(access_token.id)}",
-                {"token": access_token_encrypted, "user": user},
+            cache_access_token(
+                str(access_token.id),
+                access_token_encrypted,
+                user,
                 timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
+                cache_backend=cache,
             )
 
             # If user has no active org membership, signal frontend for org setup
@@ -451,7 +452,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
             return response
 
-        except LOGIN_INFRASTRUCTURE_ERRORS as exc:
+        except INFRASTRUCTURE_ERRORS as exc:
             # The cache may be what is down, so don't touch the attempt counter.
             logger.exception(
                 "login_infrastructure_unavailable",
@@ -514,6 +515,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             )
 
 
+@allows_no_organization
 class CustomTokenRefreshView(APIView):
     _gm = GeneralMethods()
     permission_classes = [AllowAny]
@@ -610,10 +612,12 @@ class CustomTokenRefreshView(APIView):
             new_access_token_encrypted = generate_encrypted_message(
                 {"user_id": str(user.id), "id": str(new_access_token.id)}
             )
-            cache.set(
-                f"access_token_{str(new_access_token.id)}",
-                {"token": new_access_token_encrypted, "user": user},
+            cache_access_token(
+                str(new_access_token.id),
+                new_access_token_encrypted,
+                user,
                 timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
+                cache_backend=cache,
             )
 
             return Response(
@@ -632,6 +636,7 @@ class CustomTokenRefreshView(APIView):
     method="get",
     responses={200: UserInfoResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
+@allows_no_organization
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_user_info(request):
@@ -663,6 +668,8 @@ def get_user_info(request):
     data["remember_me"] = remember_me
     data["get_started_completed"] = get_started_completed
     data["onboarding_completed"] = onboarding_completed
+    # Session capability, not an organization role: SAML owners are scoped too.
+    data["can_create_organization"] = getattr(request, "auth_scope", None) is None
 
     # Resolve current organization from middleware (respects X-Organization-Id
     # header, user.config, etc.) instead of using user.organization FK directly.
@@ -748,119 +755,34 @@ def get_user_info(request):
         else:
             return str(RoleMapping.get_workspace_role(org_role))
 
-    # Explicit authenticated workspace selection also applies to API-key clients.
+    # Explicit authenticated choices (including API-key scope) still win.
+    # Only landing/fallback selection consults the shared membership policy.
     selected_workspace = getattr(request, "workspace", None)
-    current_workspace_id = (
-        selected_workspace.id
-        if selected_workspace is not None
-        else user.config.get("currentWorkspaceId")
-        or user.config.get("defaultWorkspaceId")
-    )
+    current_workspace = None
+    if selected_workspace is not None:
+        current_workspace = Workspace.objects.filter(
+            pk=selected_workspace.pk, organization=current_org, is_active=True
+        ).first()
+    if current_workspace is None:
+        current_workspace = resolve_user_workspace(user, current_org)
 
-    if current_workspace_id:
-        try:
-            current_workspace = Workspace.objects.get(
-                id=current_workspace_id, organization=current_org, is_active=True
-            )
-            data["default_workspace_id"] = str(current_workspace.id)
-            data["default_workspace_name"] = current_workspace.name
-            data["default_workspace_display_name"] = (
-                current_workspace.display_name or current_workspace.name
-            )
-
-            # Get user's role in current workspace
-            try:
-                workspace_membership = WorkspaceMembership.no_workspace_objects.get(
-                    workspace=current_workspace, user=user, is_active=True
-                )
-                workspace_role = workspace_membership.role
-            except WorkspaceMembership.DoesNotExist:
-                workspace_role = None
-
-            # Determine effective role based on hierarchy
-            data["default_workspace_role"] = get_effective_workspace_role(
-                current_org_role, workspace_role
-            )
-
-        except Workspace.DoesNotExist:
-            # Fallback to default workspace if current workspace not found
-            try:
-                default_workspace = Workspace.objects.get(
-                    organization=current_org, is_default=True, is_active=True
-                )
-                data["default_workspace_id"] = str(default_workspace.id)
-                data["default_workspace_name"] = default_workspace.name
-                data["default_workspace_display_name"] = (
-                    default_workspace.display_name or default_workspace.name
-                )
-
-                # Get user's role in default workspace
-                try:
-                    workspace_membership = WorkspaceMembership.no_workspace_objects.get(
-                        workspace=default_workspace, user=user, is_active=True
-                    )
-                    workspace_role = workspace_membership.role
-                except WorkspaceMembership.DoesNotExist:
-                    workspace_role = None
-
-                # Determine effective role based on hierarchy
-                data["default_workspace_role"] = get_effective_workspace_role(
-                    current_org_role, workspace_role
-                )
-
-            except Workspace.DoesNotExist:
-                data["default_workspace_id"] = None
-                data["default_workspace_name"] = None
-                data["default_workspace_display_name"] = None
-                data["default_workspace_role"] = None
-    else:
-        # No current workspace set — prefer a workspace the user actually
-        # has membership in, falling back to the org's default workspace.
-        _user_ws_mem = (
-            WorkspaceMembership.no_workspace_objects.filter(
-                user=user,
-                workspace__organization=current_org,
-                workspace__is_active=True,
-                is_active=True,
-            )
-            .select_related("workspace")
-            .first()
+    if current_workspace is not None:
+        data["default_workspace_id"] = str(current_workspace.id)
+        data["default_workspace_name"] = current_workspace.name
+        data["default_workspace_display_name"] = (
+            current_workspace.display_name or current_workspace.name
         )
-        _fallback_ws = _user_ws_mem.workspace if _user_ws_mem else None
-
-        if _fallback_ws is None:
-            # No membership found — try the org's default workspace
-            try:
-                _fallback_ws = Workspace.objects.get(
-                    organization=current_org, is_default=True, is_active=True
-                )
-            except Workspace.DoesNotExist:
-                _fallback_ws = None
-
-        if _fallback_ws:
-            data["default_workspace_id"] = str(_fallback_ws.id)
-            data["default_workspace_name"] = _fallback_ws.name
-            data["default_workspace_display_name"] = (
-                _fallback_ws.display_name or _fallback_ws.name
-            )
-
-            # Get user's role in this workspace
-            try:
-                workspace_membership = WorkspaceMembership.no_workspace_objects.get(
-                    workspace=_fallback_ws, user=user, is_active=True
-                )
-                workspace_role = workspace_membership.role
-            except WorkspaceMembership.DoesNotExist:
-                workspace_role = None
-
-            data["default_workspace_role"] = get_effective_workspace_role(
-                current_org_role, workspace_role
-            )
-        else:
-            data["default_workspace_id"] = None
-            data["default_workspace_name"] = None
-            data["default_workspace_display_name"] = None
-            data["default_workspace_role"] = None
+        membership = WorkspaceMembership.no_workspace_objects.filter(
+            workspace=current_workspace, user=user, is_active=True
+        ).first()
+        data["default_workspace_role"] = get_effective_workspace_role(
+            current_org_role, membership.role if membership else None
+        )
+    else:
+        data["default_workspace_id"] = None
+        data["default_workspace_name"] = None
+        data["default_workspace_display_name"] = None
+        data["default_workspace_role"] = None
 
     # Add integer RBAC levels alongside existing string roles
     try:
@@ -923,7 +845,9 @@ def get_user_info(request):
 
 def _workspace_scope_q(workspace, *, relation_prefix="", organization_id=None):
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     workspace_field = f"{relation_prefix}workspace"
     if not getattr(workspace, "is_default", False):
@@ -969,7 +893,12 @@ def get_user_checks(user, *, organization=None, workspace=None):
     datasets_qs = Dataset.no_workspace_objects.filter(user=user)
     evaluations_qs = UserEvalMetric.no_workspace_objects.filter(user=user)
     experiments_qs = ExperimentsTable.no_workspace_objects.filter(user=user)
-    observe_qs = Project.no_workspace_objects.filter(trace_type="observe", user=user)
+    # The project a first trace creates has no user (the collector does not
+    # set one), so count the organization's Observe projects. The demo project
+    # seeded for every new organization is not the user's setup.
+    observe_qs = Project.no_workspace_objects.filter(trace_type="observe").exclude(
+        source=ProjectSourceChoices.DEMO.value
+    )
 
     if organization_id:
         keys_qs = keys_qs.filter(organization_id=organization_id)
@@ -977,6 +906,8 @@ def get_user_checks(user, *, organization=None, workspace=None):
         evaluations_qs = evaluations_qs.filter(organization_id=organization_id)
         experiments_qs = experiments_qs.filter(dataset__organization_id=organization_id)
         observe_qs = observe_qs.filter(organization_id=organization_id)
+    else:
+        observe_qs = observe_qs.filter(user=user)
 
     keys_qs = _workspace_scope_queryset(
         keys_qs, workspace, organization_id=organization_id
@@ -1067,6 +998,7 @@ class FirstChecksView(APIView):
     request_body=UserOnboardingSerializer,
     responses={200: UserOnboardingSaveResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
+@allows_no_organization
 @api_view(["POST", "GET"])
 @permission_classes([IsAuthenticated])
 @validated_api_request(

@@ -1,12 +1,17 @@
 import React, { useRef, useEffect, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Typography, Stack } from "@mui/material";
+import { Box, ButtonBase, Typography, Stack } from "@mui/material";
 
 import ConversationCard from "./ConversationCard";
 import SvgColor from "src/components/svg-color";
 import { useTraceDrawerStore } from "../TracesDrawer/useTraceDrawerStore";
 import { getVisiblePercentage } from "./common";
 import { throttle } from "lodash";
+
+// ConversationCard draws its copy button in the bubble's top-right corner
+// (24px small icon button). The role label row leaves room for it, so a short
+// reply such as "Yes." still shows its whole label beside the button.
+const ROLE_LABEL_ROW_SX = { pr: "32px" };
 
 const Conversation = ({ human, ai, activeSessionId }) => {
   const { viewType } = useTraceDrawerStore();
@@ -142,7 +147,7 @@ const Conversation = ({ human, ai, activeSessionId }) => {
               sx={{
                 height: "16px",
                 width: "16px",
-                bgcolor: "blue.500",
+                bgcolor: "text.secondary",
               }}
             />
           </Box>
@@ -158,7 +163,7 @@ const Conversation = ({ human, ai, activeSessionId }) => {
               minWidth: 0,
             }}
           >
-            <Stack gap={0} mb={1}>
+            <Stack gap={0} mb={1} sx={ROLE_LABEL_ROW_SX}>
               <Typography
                 sx={{
                   typography: "s1",
@@ -202,7 +207,7 @@ const Conversation = ({ human, ai, activeSessionId }) => {
               sx={{
                 height: "16px",
                 width: "16px",
-                bgcolor: "pink.500",
+                bgcolor: "action.hover",
               }}
             />
           </Box>
@@ -219,7 +224,7 @@ const Conversation = ({ human, ai, activeSessionId }) => {
               minWidth: 0,
             }}
           >
-            <Stack gap={0} mb={1}>
+            <Stack gap={0} mb={1} sx={ROLE_LABEL_ROW_SX}>
               <Typography
                 sx={{
                   typography: "s1",
@@ -235,22 +240,19 @@ const Conversation = ({ human, ai, activeSessionId }) => {
         </Box>
 
         {showButton && (
-          <Stack
-            direction={"row"}
-            alignItems={"center"}
-            component={"button"}
+          <ButtonBase
             onClick={() =>
               scrollToElement(showButton === "human" ? humanRef : aiRef)
             }
             sx={{
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
               position: "absolute",
               top: showButton === "human" ? "unset" : 20,
               bottom: showButton === "ai" ? "unset" : 20,
-              border: "none",
               right: 10,
               gap: 1.5,
-              bgcolor: "transparent",
-              cursor: "pointer",
             }}
           >
             <Box
@@ -284,7 +286,7 @@ const Conversation = ({ human, ai, activeSessionId }) => {
             >
               {showButton === "human" ? <>View Input</> : <>View Output</>}
             </Typography>
-          </Stack>
+          </ButtonBase>
         )}
       </Box>
     </Box>

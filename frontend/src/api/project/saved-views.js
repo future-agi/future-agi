@@ -93,7 +93,8 @@ export const buildUpdateSavedViewPayload = (data) => {
 export const getOwnViewNames = (views, currentUserId) =>
   (views ?? [])
     .filter(
-      (v) => currentUserId && String(v.created_by?.id) === String(currentUserId),
+      (v) =>
+        currentUserId && String(v.created_by?.id) === String(currentUserId),
     )
     .map((v) => v.name);
 
@@ -158,9 +159,32 @@ const reorderCustomViewsInCache = (currentResult, order) => {
 // Queries
 // ---------------------------------------------------------------------------
 
-export const useGetSavedViews = (projectId) => {
+// Several components watch one saved-views read (the tab bar, the view
+// dialog, the tracing view), and the app-wide toast (utils/queryErrorHandler)
+// reads meta.errorHandled from whichever of them rendered last. This getter
+// answers when the read fails, for all of them: true when a watcher's
+// `showsFailure` says that component shows the failure on screen.
+// project-detail.js keeps its own copy, because tests mock either file on
+// its own.
+const sharedReadMeta = (queryClient, queryKey, showsFailure) => ({
+  showsFailure,
+  get errorHandled() {
+    const query = queryClient.getQueryCache().find({ queryKey });
+    return Boolean(
+      query?.observers.some((observer) =>
+        observer.options.meta?.showsFailure?.(query.state.error, query),
+      ),
+    );
+  },
+});
+
+// `showsFailure(error, query)`: true when the caller shows this failed read
+// on screen itself, so it is not toasted as well.
+export const useGetSavedViews = (projectId, { showsFailure } = {}) => {
+  const queryClient = useQueryClient();
+  const queryKey = [SAVED_VIEWS_KEY, projectId];
   return useQuery({
-    queryKey: [SAVED_VIEWS_KEY, projectId],
+    queryKey,
     queryFn: async () => {
       const res = await axios.get(endpoints.savedViews.list, {
         params: { project_id: projectId },
@@ -169,6 +193,7 @@ export const useGetSavedViews = (projectId) => {
     },
     staleTime: 60_000,
     enabled: !!projectId,
+    meta: sharedReadMeta(queryClient, queryKey, showsFailure),
   });
 };
 

@@ -1,7 +1,0 @@
-.ag-root .ag-overlay {
-  pointer-events: unset;
-}
-
-.no-rows .ag-header {
-  display: none !important;
-}

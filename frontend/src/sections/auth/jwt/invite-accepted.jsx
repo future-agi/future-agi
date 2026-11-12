@@ -35,7 +35,8 @@ export default function InviteAcceptedPage() {
   const location = useLocation();
   const { login, logout } = useAuthContext();
 
-  const orgName = location.state?.orgName || "";
+  const [preview, setPreview] = useState(null);
+  const orgName = preview?.org_name || location.state?.orgName || "";
 
   // Validate invite token on mount
   useEffect(() => {
@@ -43,10 +44,11 @@ export default function InviteAcceptedPage() {
 
     const validateToken = async () => {
       try {
-        await axiosInstance.get(
+        const response = await axiosInstance.get(
           endpoints.invite.accept_invitation(uuid, token),
         );
         if (!cancelled) {
+          setPreview(response.data);
           setTokenStatus("valid");
         }
       } catch (error) {
@@ -92,10 +94,11 @@ export default function InviteAcceptedPage() {
 
   const { mutate: setNewPassword, isPending } = useMutation({
     mutationFn: (body) =>
-      axiosInstance.post(endpoints.invite.accept_invitation(uuid, token), {
-        new_password: body.newPassword,
-        repeat_password: body.repeatPassword,
-      }),
+      axiosInstance.post(endpoints.invite.accept_invitation(uuid, token),
+        preview?.requires_password === false ? {} : {
+          new_password: body.newPassword,
+          repeat_password: body.repeatPassword,
+        }),
     onSuccess: async (response) => {
       try {
         await login(response);
@@ -105,7 +108,7 @@ export default function InviteAcceptedPage() {
           navigate(paths.dashboard.root);
         }
       } catch {
-        enqueueSnackbar("Password set successfully. Please log in.", {
+        enqueueSnackbar("Invitation accepted. Please log in.", {
           variant: "success",
         });
         navigate(paths.auth.jwt.login);
@@ -131,7 +134,7 @@ export default function InviteAcceptedPage() {
       <Typography
         fontWeight="fontWeightSemiBold"
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -226,13 +229,14 @@ export default function InviteAcceptedPage() {
       />
       {!!errorMsg && (
         <Alert
-          icon={<Iconify icon="fluent:warning-24-regular" color="red.500" />}
+          icon={
+            <Iconify
+              icon="solar:danger-triangle-linear"
+              color="status.danger.fg"
+            />
+          }
           severity="error"
           sx={{
-            color: "red.500",
-            border: "1px solid",
-            borderColor: "red.200",
-            backgroundColor: "red.o5",
             width: "100%",
           }}
         >
@@ -246,41 +250,42 @@ export default function InviteAcceptedPage() {
         variant="contained"
         loading={isPending}
         color="primary"
-        sx={{
-          borderRadius: 0.5,
-          height: "42px",
-        }}
       >
         Set Password & Continue
       </LoadingButton>
     </Stack>
   );
 
+  // The accept endpoint refuses a used, cancelled or expired invite with the
+  // same answer, and a malformed link with a similar one, so this page cannot
+  // tell them apart: one message that is true for each, and the next steps.
   const renderTokenInvalid = (
     <Stack sx={{ maxWidth: "440px" }} spacing={3}>
       <Typography
+        component="h1"
         fontWeight="fontWeightSemiBold"
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
         }}
       >
-        Invite Link Expired
+        This invite link no longer works
       </Typography>
       <Alert
-        icon={<Iconify icon="fluent:warning-24-regular" color="red.500" />}
+        icon={
+          <Iconify
+            icon="solar:danger-triangle-linear"
+            color="status.danger.fg"
+          />
+        }
         severity="error"
         sx={{
-          color: "red.500",
-          border: "1px solid",
-          borderColor: "red.200",
-          backgroundColor: "red.o5",
           width: "100%",
         }}
       >
-        This invite link has expired or is invalid.
+        It may have been used already, cancelled, or it may have expired.
       </Alert>
       <Typography
         variant="body2"
@@ -289,8 +294,19 @@ export default function InviteAcceptedPage() {
           fontFamily: "Inter",
         }}
       >
-        Contact your administrator for a new invite.
+        If you already accepted this invite, sign in. Otherwise, ask an
+        administrator of the organization for a new invite.
       </Typography>
+      <Button
+        component={RouterLink}
+        href={paths.auth.jwt.login}
+        fullWidth
+        size="large"
+        variant="contained"
+        color="primary"
+      >
+        Sign in
+      </Button>
       <Link
         component={RouterLink}
         href={paths.auth.jwt["forget-password"]}
@@ -298,7 +314,7 @@ export default function InviteAcceptedPage() {
         color="primary"
         underline="hover"
       >
-        Go to Forgot Password
+        Reset your password
       </Link>
     </Stack>
   );
@@ -309,7 +325,7 @@ export default function InviteAcceptedPage() {
       <Typography
         fontWeight="fontWeightMedium"
         sx={{
-          fontSize: "14px",
+          fontSize: "13px",
           color: "text.secondary",
           fontFamily: "Inter",
         }}
@@ -335,7 +351,7 @@ export default function InviteAcceptedPage() {
       <Typography
         fontWeight="fontWeightSemiBold"
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -344,13 +360,11 @@ export default function InviteAcceptedPage() {
         Wrong Account
       </Typography>
       <Alert
-        icon={<Iconify icon="fluent:warning-24-regular" color="warning.main" />}
+        icon={
+          <Iconify icon="solar:danger-triangle-linear" color="warning.main" />
+        }
         severity="warning"
         sx={{
-          color: "warning.dark",
-          border: "1px solid",
-          borderColor: "warning.light",
-          backgroundColor: "warning.lighter",
           width: "100%",
         }}
       >
@@ -372,10 +386,6 @@ export default function InviteAcceptedPage() {
         variant="contained"
         color="primary"
         onClick={handleLogoutAndRetry}
-        sx={{
-          borderRadius: 0.5,
-          height: "42px",
-        }}
       >
         Logout & Try Again
       </Button>
@@ -386,6 +396,25 @@ export default function InviteAcceptedPage() {
     if (tokenStatus === "loading") return renderLoading;
     if (tokenStatus === "invalid") return renderTokenInvalid;
     if (tokenStatus === "wrong_user") return renderWrongUser;
+    if (preview?.requires_password === false) {
+      return (
+        <Stack spacing={3} maxWidth="440px">
+          <Typography variant="h4">Join {orgName}</Typography>
+          <Typography>Your existing password will not be changed.</Typography>
+          {errorMsg && <Alert severity="error">{errorMsg}</Alert>}
+          {preview.requires_login ? (
+            <Button component={RouterLink} variant="contained"
+              href={`${paths.auth.jwt.login}?returnTo=${encodeURIComponent(location.pathname)}`}>
+              Sign in to accept invitation
+            </Button>
+          ) : (
+            <LoadingButton variant="contained" loading={isPending} onClick={() => setNewPassword({})}>
+              Accept invitation
+            </LoadingButton>
+          )}
+        </Stack>
+      );
+    }
     return (
       <form onSubmit={onSubmit}>
         {renderHead}

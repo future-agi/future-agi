@@ -1,0 +1,7 @@
+{
+  "synthetic": true,
+  "liveValidated": false,
+  "deployment": "off",
+  "limitations": "Read workbook sheets, tables, names and ranges in business drives; delegated Files.ReadWrite.",
+  "scopeNotes": "Delegated scopes only; no /.default. No binary upload or document-edit API is claimed."
+}

@@ -1,6 +1,9 @@
-import React, { memo, useMemo } from "react";
+import React, { memo, useMemo, useState } from "react";
 import {
   Box,
+  Button,
+  Chip,
+  Collapse,
   Typography,
   Divider,
   IconButton,
@@ -10,12 +13,13 @@ import {
 import SvgColor from "src/components/svg-color";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
+import { useNavigate } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
-import { format } from "date-fns";
 import CustomTooltip from "../../../components/tooltip/CustomTooltip";
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
 import Iconify from "src/components/iconify";
+import RelativeTime from "src/sections/common/ux/RelativeTime";
 
 const MinimumTotalCallsForCriticalIssue = 5;
 
@@ -46,21 +50,30 @@ const CriticalIssueRefetchStates = [
 const confidenceMapping = {
   high: {
     icon: "ic_critical",
-    bgColor: "red.o10",
-    color: "red.500",
+    bgColor: "status.danger.bg",
+    color: "status.danger.fg",
+    label: "High confidence",
   },
   mid: {
     icon: "ic_critical",
-    bgColor: "red.o10",
-    color: "red.500",
+    bgColor: "status.warning.bg",
+    color: "status.warning.fg",
+    label: "Medium confidence",
   },
   low: {
     icon: "ic_critical",
-    bgColor: "red.o10",
-    color: "red.500",
+    bgColor: "action.hover",
+    color: "text.secondary",
+    label: "Low confidence",
   },
 };
 
+const smallChip = {
+  height: 20,
+  typography: "s3",
+  borderRadius: "4px",
+  "& .MuiChip-label": { px: 0.75 },
+};
 const CustomTooltipTitle = ({ value }) => {
   return (
     <Box
@@ -92,7 +105,163 @@ CustomTooltipTitle.propTypes = {
   value: PropTypes.string,
 };
 
-const CriticalIssues = ({ mode = "develop" }) => {
+/**
+ * One cluster: icon, theme, guidance, confidence / eval / trigger chips.
+ * Failure clusters open the Data tab filtered to that eval's failing rows.
+ */
+const IssueRow = ({ issue, first, success = false, onOpen }) => {
+  const conf = confidenceMapping[issue.type] ?? confidenceMapping.mid;
+  const clickable = Boolean(onOpen);
+  return (
+    <Box display="flex" gap={1.5} flexDirection={"column"}>
+      {!first && (
+        <Divider orientation="horizontal" sx={{ borderColor: "divider" }} />
+      )}
+      <CustomTooltip
+        card
+        slotProps={{
+          popper: {
+            modifiers: [{ name: "offset", options: { offset: [0, -25] } }],
+          },
+        }}
+        placement="bottom"
+        show={Boolean(issue.evidenceSummary)}
+        title={<CustomTooltipTitle value={issue.evidenceSummary} />}
+        arrow
+      >
+        <Box
+          role={clickable ? "button" : undefined}
+          tabIndex={clickable ? 0 : undefined}
+          onClick={onOpen ?? undefined}
+          onKeyDown={(e) => {
+            if (clickable && (e.key === "Enter" || e.key === " ")) {
+              e.preventDefault();
+              onOpen();
+            }
+          }}
+          sx={{
+            display: "flex",
+            gap: 1.5,
+            alignItems: "flex-start",
+            borderRadius: "6px",
+            p: 0.5,
+            mx: -0.5,
+            cursor: clickable ? "pointer" : "default",
+            "&:hover": clickable ? { bgcolor: "action.hover" } : undefined,
+          }}
+        >
+          <Box
+            sx={{
+              borderRadius: "4px",
+              height: "32px",
+              width: "32px",
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: success ? "status.success.bg" : conf.bgColor,
+            }}
+          >
+            {success ? (
+              <Iconify
+                icon="qlementine-icons:success-16"
+                width={16}
+                sx={{ color: "status.success.fg" }}
+              />
+            ) : (
+              <SvgColor
+                // @ts-ignore
+                src={`/assets/icons/${conf.icon}.svg`}
+                sx={{ color: conf.color, height: "16px", width: "16px" }}
+              />
+            )}
+          </Box>
+          <Stack sx={{ flex: 1, minWidth: 0 }} gap={0.5}>
+            <Typography
+              typography="s2"
+              fontWeight={"fontWeightMedium"}
+              color={"text.primary"}
+            >
+              {issue.title}
+            </Typography>
+            <Typography
+              typography="s2"
+              fontWeight={"fontWeightRegular"}
+              color="text.primary"
+            >
+              {issue.guidance}
+            </Typography>
+            <Stack
+              direction="row"
+              gap={0.5}
+              flexWrap="wrap"
+              alignItems="center"
+            >
+              {!success && (
+                <Chip
+                  size="small"
+                  label={conf.label}
+                  sx={{
+                    ...smallChip,
+                    bgcolor: conf.bgColor,
+                    color: conf.color,
+                  }}
+                />
+              )}
+              {issue.evalName && (
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  label={issue.evalName}
+                  sx={smallChip}
+                />
+              )}
+              {issue.triggers.map((t) => (
+                <Chip
+                  key={t}
+                  size="small"
+                  label={t}
+                  sx={{
+                    ...smallChip,
+                    bgcolor: "action.hover",
+                    color: "text.secondary",
+                  }}
+                />
+              ))}
+            </Stack>
+          </Stack>
+          {clickable && (
+            <Stack
+              direction="row"
+              alignItems="center"
+              gap={0.25}
+              sx={{ flexShrink: 0, color: "primary.main", pt: 0.25 }}
+            >
+              <Typography typography="s2" fontWeight={500} color="primary.main">
+                {issue.rowCount != null
+                  ? `${issue.rowCount} ${issue.rowCount === 1 ? "row" : "rows"}${issue.evalName && issue.link?.count ? ` · all ${issue.link.count} ${issue.evalName} fails` : ""}`
+                  : issue.link?.count
+                    ? `Failing rows (${issue.link.count})`
+                    : "View rows"}
+              </Typography>
+              <Iconify icon="mingcute:right-line" width={16} />
+            </Stack>
+          )}
+        </Box>
+      </CustomTooltip>
+    </Box>
+  );
+};
+
+IssueRow.propTypes = {
+  issue: PropTypes.object.isRequired,
+  first: PropTypes.bool,
+  success: PropTypes.bool,
+  onOpen: PropTypes.func,
+};
+
+const CriticalIssues = ({ mode = "develop", evalLinks }) => {
+  const navigate = useNavigate();
   const { dataset, executionId } = useParams();
 
   const queryKey =
@@ -156,7 +325,9 @@ const CriticalIssues = ({ mode = "develop" }) => {
 
   const { mutate: refreshCriticalIssue, isPending: isRefetchingCriticalIssue } =
     useMutation({
-      mutationFn: () => axios.post(mutationEndpoint),
+      // The contract body is an empty object; an absent body fails the dev
+      // request guard before the request is sent.
+      mutationFn: () => axios.post(mutationEndpoint, {}),
       onSuccess: () => {
         refetch();
       },
@@ -169,23 +340,30 @@ const CriticalIssues = ({ mode = "develop" }) => {
     CriticalIssueRefetchStates.includes(data?.status) ||
     isKpisLoading;
 
-  const issues = useMemo(() => {
+  const { issues, successes } = useMemo(() => {
     const issues = [];
+    const successes = [];
     Object.entries(data?.result || {}).forEach(([_key, value]) => {
       if (!Array.isArray(value)) return;
-      value
-        ?.filter((t) => t.kind === "failure")
-        .forEach((temp) => {
-          issues.push({
-            type: temp?.confidence,
-            title: temp?.theme,
-            guidance: temp?.guidance,
-            evidenceSummary: temp?.evidence_summary,
-          });
-        });
+      value.forEach((temp) => {
+        const item = {
+          type: temp?.confidence,
+          title: temp?.theme,
+          guidance: temp?.guidance,
+          evidenceSummary: temp?.evidence_summary,
+          triggers: temp?.triggers ?? [],
+          evalName: temp?.eval_name,
+          rowCount: temp?.row_count ?? null,
+          exampleRows: temp?.example_rows ?? [],
+          link: evalLinks?.[temp?.eval_config_id] ?? null,
+        };
+        if (temp.kind === "failure") issues.push(item);
+        else if (temp.kind === "success") successes.push(item);
+      });
     });
-    return issues;
-  }, [data?.result]);
+    return { issues, successes };
+  }, [data?.result, evalLinks]);
+  const [showWorks, setShowWorks] = useState(false);
 
   return (
     <Box
@@ -206,15 +384,32 @@ const CriticalIssues = ({ mode = "develop" }) => {
           fontWeight={"fontWeightMedium"}
           color="text.primary"
         >
-          Critical issues{" "}
+          Top failure patterns{" "}
           <Typography
             component={"span"}
             typography={"s1"}
             fontWeight={"fontWeightRegular"}
             color={"text.primary"}
           >
-            (How to solve it)
+            · suggested fixes
           </Typography>
+          <Box
+            component="span"
+            sx={{
+              ml: 1,
+              px: 0.75,
+              py: 0.25,
+              borderRadius: 0.5,
+              border: "1px solid",
+              borderColor: "divider",
+              typography: "s3",
+              color: "text.secondary",
+              verticalAlign: "middle",
+            }}
+            title="Found by rules over this dataset's runs and evals"
+          >
+            Rule-based
+          </Box>
         </Typography>
         <ShowComponent condition={!isLoading && isCriticalIssueFetchingAllowed}>
           <IconButton
@@ -227,8 +422,6 @@ const CriticalIssues = ({ mode = "develop" }) => {
               display: "flex",
               flexDirection: "row",
               gap: 1,
-              fontWeight: "fontWeightMedium",
-              borderRadius: "8px",
             }}
           >
             <SvgColor
@@ -269,7 +462,13 @@ const CriticalIssues = ({ mode = "develop" }) => {
             fontWeight={"fontWeightRegular"}
             color={"text.disabled"}
           >
-            Updated {format(new Date(data?.lastUpdated), "dd/MM/yyyy, hh:mm a")}
+            {isReconfiguring ? (
+              "Refreshing…"
+            ) : (
+              <>
+                Updated <RelativeTime iso={data?.lastUpdated} />
+              </>
+            )}
           </Typography>
         </Stack>
       )}
@@ -322,92 +521,51 @@ const CriticalIssues = ({ mode = "develop" }) => {
               : `Minimum ${MinimumTotalCallsForCriticalIssue} calls are required to fetch critical issues.`}
           </Typography>
         ) : (
-          issues?.map((issue, index) => {
-            return (
-              <Box
-                key={index}
-                display="flex"
-                gap={1.5}
-                flexDirection={"column"}
-              >
-                {index != 0 && (
-                  <Divider
-                    orientation="horizontal"
-                    sx={{
-                      borderColor: "divider",
-                    }}
-                  />
-                )}
-                <CustomTooltip
-                  placement="bottom"
-                  show
-                  title={<CustomTooltipTitle value={issue?.evidenceSummary} />}
-                  slotProps={{
-                    popper: {
-                      modifiers: [
-                        {
-                          name: "offset",
-                          options: {
-                            offset: [0, -25],
-                          },
-                        },
-                      ],
-                    },
-                  }}
-                  arrow
+          <>
+            {issues.map((issue, index) => (
+              <IssueRow
+                key={`${issue.evalName}-${issue.title}`}
+                issue={issue}
+                first={index === 0}
+                onOpen={
+                  issue.link?.href ? () => navigate(issue.link.href) : null
+                }
+              />
+            ))}
+            {successes.length > 0 && (
+              <Box>
+                <Divider sx={{ borderColor: "divider", mb: 1 }} />
+                <Button
+                  size="small"
+                  color="inherit"
+                  onClick={() => setShowWorks((v) => !v)}
+                  startIcon={
+                    <Iconify
+                      icon={
+                        showWorks ? "mingcute:down-line" : "mingcute:right-line"
+                      }
+                      width={16}
+                    />
+                  }
+                  sx={{ typography: "s2", fontWeight: 500, px: 0.5 }}
                 >
-                  <Box
-                    display={"flex"}
-                    gap={1}
-                    justifyContent={"space-between"}
-                  >
-                    <Box display={"flex"} gap={1.5} alignItems={"flex-start"}>
-                      <IconButton
-                        sx={{
-                          borderRadius: "4px",
-                          height: "32px",
-                          width: "32px",
-                          padding: "4px",
-                          cursor: "default",
-                          backgroundColor: confidenceMapping["high"]?.bgColor,
-                        }}
-                      >
-                        <SvgColor
-                          // @ts-ignore
-                          src={`/assets/icons/${confidenceMapping["high"]?.icon}.svg`}
-                          sx={{
-                            color: confidenceMapping["high"]?.color,
-                            height: "16px",
-                            width: "16px",
-                          }}
-                        />
-                      </IconButton>
-                      <Stack>
-                        <Typography
-                          typography="s2"
-                          fontWeight={"fontWeightMedium"}
-                          color={"text.primary"}
-                        >
-                          {issue?.title}
-                        </Typography>
-                        <Typography
-                          typography="s2"
-                          fontWeight={"fontWeightRegular"}
-                          color="text.primary"
-                        >
-                          {issue?.guidance}
-                        </Typography>
-                      </Stack>
-                    </Box>
-                    {/* <SvgColor
-                    // @ts-ignore
-                    src={"/assets/icons/custom/lucide--chevron-right.svg"}
-                  /> */}
-                  </Box>
-                </CustomTooltip>
+                  What works ({successes.length})
+                </Button>
+                <Collapse in={showWorks} unmountOnExit>
+                  <Stack gap={1.25} sx={{ pt: 1 }}>
+                    {successes.map((issue) => (
+                      <IssueRow
+                        key={`${issue.evalName}-${issue.title}`}
+                        issue={issue}
+                        first
+                        success
+                      />
+                    ))}
+                  </Stack>
+                </Collapse>
               </Box>
-            );
-          })
+            )}
+          </>
         )}
       </Box>
     </Box>
@@ -416,6 +574,7 @@ const CriticalIssues = ({ mode = "develop" }) => {
 
 CriticalIssues.propTypes = {
   mode: PropTypes.string,
+  evalLinks: PropTypes.object,
 };
 
 export default CriticalIssues;

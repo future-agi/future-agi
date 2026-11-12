@@ -26,6 +26,7 @@ import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
 import { useDatasetOriginStore } from "../../../develop-detail/states";
 import CustomDialog from "../../../develop-detail/Common/CustomDialog/CustomDialog";
 import { getDatasetQueryOptions } from "src/api/develop/develop-detail";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const titleProps = {
   variant: "s1",
@@ -267,29 +268,31 @@ export default function SyntheticSummaryDrawer() {
     select: (d) => d.data?.result?.data,
   });
 
+  // A failed generation can be run again with the saved configuration:
+  // PUT update-synthetic-config/ with regenerate true clears the rows and
+  // columns and starts generation again (UpdateSyntheticDatasetConfigView).
   const { mutate: updateSyntheticData, isPending: isUpdating } = useMutation({
-    mutationFn: (data) => {
-      return axios.put(endpoints.develop.updateSyntheticDataset(dataset), data);
+    mutationFn: (body) => {
+      return axios.put(endpoints.develop.updateSyntheticDataset(dataset), body);
     },
     onSuccess: (res) => {
-      refreshGrid();
+      refreshGrid?.();
       setOpenSummaryDrawer(false);
       enqueueSnackbar(res?.data?.result?.message || "Dataset updated", {
         variant: "success",
       });
+      // The response carries dataset_id (snake_case).
+      const datasetId = res?.data?.result?.data?.dataset_id || dataset;
       setTimeout(() => {
-        navigate(
-          `/dashboard/develop/${res?.data?.result?.data?.datasetId}?tab=data`,
-          {
-            replace: true,
-          },
-        );
+        navigate(`/dashboard/develop/${datasetId}?tab=data`, {
+          replace: true,
+        });
       }, 0);
     },
   });
 
   const handleRegenerate = useCallback(() => {
-    if (!dataset) return;
+    if (!dataset || !data) return;
     updateSyntheticData({ ...data, regenerate: true });
   }, [data, dataset, updateSyntheticData]);
 
@@ -315,22 +318,23 @@ export default function SyntheticSummaryDrawer() {
     });
   }, [setOpenConfirmEdit, setOpenEditDrawer, setOpenSummaryDrawer]);
 
+  const covered = useDrawerCovered(openSummaryDrawer);
   return (
     <>
       <Drawer
         anchor="right"
         open={openSummaryDrawer}
+        sx={coveredDrawerSx(covered)}
         onClose={() => setOpenSummaryDrawer(false)}
         PaperProps={{
           sx: {
             height: "100vh",
             position: "fixed",
             zIndex: 10,
-            boxShadow: "-10px 0px 100px #00000035",
             borderRadius: "0px !important",
             backgroundColor: "background.paper",
-            minWidth: "400px",
-            maxWidth: "500px",
+            minWidth: "480px",
+            maxWidth: "480px",
           },
         }}
         ModalProps={{
@@ -369,7 +373,7 @@ export default function SyntheticSummaryDrawer() {
           >
             <ShowComponent condition={Boolean(failedToGenerateData)}>
               <Button
-                disabled={isUpdating}
+                disabled={isUpdating || !data}
                 onClick={handleRegenerate}
                 startIcon={
                   <SvgColor
@@ -400,13 +404,7 @@ export default function SyntheticSummaryDrawer() {
                 }
               }}
               startIcon={
-                <SvgColor
-                  sx={{
-                    height: 16,
-                    width: 16,
-                  }}
-                  src="/assets/icons/ic_edit.svg"
-                />
+                <SvgColor width={16} src="/assets/icons/ic_edit.svg" />
               }
               size="small"
               color="primary"

@@ -1,0 +1,21 @@
+[
+  {
+    "name": "search",
+    "title": "Search",
+    "description": "Searches git_hub.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "q": { "type": "string" } }
+    },
+    "annotations": { "readOnlyHint": true }
+  },
+  {
+    "name": "delete_repo",
+    "description": "Pretends to delete a repository.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "repo": { "type": "string" } }
+    },
+    "annotations": { "destructiveHint": true }
+  }
+]

@@ -1,4 +1,4 @@
-import { Box, Typography } from "@mui/material";
+import { Box, Typography, ButtonBase } from "@mui/material";
 import React, { useState } from "react";
 import LoomDialog from "src/components/LoomDialog/LoomDialog";
 import SvgColor from "src/components/svg-color";
@@ -16,7 +16,7 @@ const ResourcesSection = () => {
           border: "1px solid",
           borderColor: "divider",
           backgroundColor: "background.neutral",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           gap: "12px",
           display: "flex",
           alignItems: "center",
@@ -24,7 +24,7 @@ const ResourcesSection = () => {
       >
         <Box
           sx={{
-            borderRadius: 0.5,
+            borderRadius: "4px",
             overflow: "hidden",
             backgroundColor: "background.neutral",
             maxWidth: "160px",
@@ -32,8 +32,10 @@ const ResourcesSection = () => {
           onClick={() => setOpenLoomDialog(true)}
         >
           <img
-            alt="loom video"
-            src="https://cdn.loom.com/sessions/thumbnails/f13e7911fb5c4ec583c72dc20acbc83a-d4d2e941d783a924-full-play.gif"
+            alt="Play external tutorial"
+            width={96}
+            height={64}
+            src="/assets/icons/action_buttons/ic_filled_play_button.svg"
           />
         </Box>
         <Box
@@ -55,8 +57,15 @@ const ResourcesSection = () => {
               simulations.
             </Typography>
           </Box>
-          <Box
-            sx={{ display: "flex", alignItems: "center", gap: 1 }}
+          <ButtonBase
+            component="div"
+            sx={{
+              display: "flex",
+              justifyContent: "flex-start",
+              textAlign: "left",
+              alignItems: "center",
+              gap: 1,
+            }}
             onClick={() => setOpenLoomDialog(true)}
           >
             <SvgColor
@@ -76,7 +85,7 @@ const ResourcesSection = () => {
             >
               Play video
             </Typography>
-          </Box>
+          </ButtonBase>
         </Box>
       </Box>
       <LoomDialog

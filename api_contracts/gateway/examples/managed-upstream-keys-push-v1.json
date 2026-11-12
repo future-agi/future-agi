@@ -1,0 +1,7 @@
+{
+  "openrouter": {
+    "api_key": "test-upstream-key-not-a-real-secret",
+    "key_hash": "kh_3b9e",
+    "label": "acme-prod"
+  }
+}

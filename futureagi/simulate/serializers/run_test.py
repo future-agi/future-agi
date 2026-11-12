@@ -15,6 +15,7 @@ from rest_framework import serializers
 
 from simulate.models import (
     AgentDefinition,
+    AgentVersion,
     RunTest,
     Scenarios,
     SimulateEvalConfig,
@@ -31,6 +32,8 @@ from simulate.services.harness_evals import (
     is_harness_run_test,
     regrade_mapping,
 )
+from simulate.utils.owned_relations import owned_run_for_serialization
+from simulate.utils.snapshot_projection import scrub_snapshot_secrets
 from tracer.services.observability_switch import snapshot_as_shown
 
 logger = structlog.get_logger(__name__)
@@ -173,9 +176,7 @@ class RunTestListEvalSerializer(serializers.ModelSerializer):
 class RunTestListSummarySerializer(serializers.ModelSerializer):
     """Bounded list-card shape; detail views keep using RunTestSerializer."""
 
-    agent_definition_detail = RunTestListAgentSerializer(
-        source="agent_definition", read_only=True, allow_null=True
-    )
+    agent_definition_detail = serializers.SerializerMethodField(allow_null=True)
     scenarios_detail = RunTestListScenarioSerializer(
         source="scenarios", many=True, read_only=True
     )
@@ -202,6 +203,25 @@ class RunTestListSummarySerializer(serializers.ModelSerializer):
             "last_run_at",
         ]
         read_only_fields = fields
+
+    @swagger_serializer_method(
+        serializer_or_field=RunTestListAgentSerializer(allow_null=True)
+    )
+    def get_agent_definition_detail(self, instance):
+        if hasattr(instance, "_owned_agent_definition_id"):
+            if instance._owned_agent_definition_id is None:
+                return None
+            agent = {
+                field: getattr(instance, f"_owned_agent_definition_{field}")
+                for field in RunTestListAgentSerializer.Meta.fields
+            }
+        else:
+            agent = owned_run_for_serialization(
+                instance, "agent_definition"
+            ).agent_definition
+            if agent is None:
+                return None
+        return RunTestListAgentSerializer(agent, context=self.context).data
 
 
 class RunTestSerializer(serializers.ModelSerializer):
@@ -289,19 +309,112 @@ class RunTestSerializer(serializers.ModelSerializer):
         return None
 
     def get_prompt_version_detail(self, instance):
-        """Get prompt version details for prompt source type"""
-        if instance.prompt_version:
-            return {
-                "id": str(instance.prompt_version.id),
-                "template_version": instance.prompt_version.template_version,
-                "is_default": instance.prompt_version.is_default,
-                "commit_message": instance.prompt_version.commit_message,
-            }
-        return None
+        """Resolve a version only inside the caller's organization and workspace."""
+        if not instance.prompt_version_id:
+            return None
+        request = self.context.get("request")
+        organization = getattr(request, "organization", None) or getattr(
+            getattr(request, "user", None), "organization", None
+        )
+        if request is not None and organization is None:
+            return None
+        organization_id = (
+            organization.pk if organization is not None else instance.organization_id
+        )
+        workspace = getattr(request, "workspace", None)
+        workspace_id = workspace.pk if workspace is not None else instance.workspace_id
+
+        if hasattr(instance, "_prompt_version_organization_id"):
+            # The read helper joins only ownership keys alongside the version.
+            # This keeps page/detail serialization query-free, including mixed FKs.
+            if (
+                instance._prompt_version_organization_id != organization_id
+                or instance._prompt_version_workspace_id != workspace_id
+            ):
+                return None
+            version = instance.prompt_version
+        else:
+            from model_hub.models.run_prompt import PromptVersion
+
+            # Never traverse an uncached FK before proving its parent tenant.
+            version = PromptVersion.objects.filter(
+                id=instance.prompt_version_id,
+                original_template__organization_id=organization_id,
+                original_template__workspace_id=workspace_id,
+                deleted=False,
+            ).first()
+        if version is None:
+            return None
+        return {
+            "id": str(version.id),
+            "template_version": version.template_version,
+            "is_default": version.is_default,
+            "commit_message": version.commit_message,
+        }
+
+    def _caller_tenant_ids(self, instance):
+        """The (organization_id, workspace_id) pair get_prompt_version_detail uses.
+
+        None denies: a request without an organization sees no versions.
+        """
+        request = self.context.get("request")
+        organization = getattr(request, "organization", None) or getattr(
+            getattr(request, "user", None), "organization", None
+        )
+        if request is not None and organization is None:
+            return None
+        workspace = getattr(request, "workspace", None)
+        return (
+            organization.pk if organization is not None else instance.organization_id,
+            workspace.pk if workspace is not None else instance.workspace_id,
+        )
+
+    def _scope_agent_versions(self, instance):
+        """Expose only versions inside the caller's tenant to every version reader.
+
+        The latest-version pick below and the nested agent detail's active/latest
+        credential pick both read ``_prefetched_versions``; without it they follow
+        the definition FK alone. Install it before ``super()`` runs: query-free
+        when the read helper prefetched, otherwise one exact-tenant query.
+        """
+        if instance.agent_definition_id is None:
+            return
+        agent = instance.agent_definition
+        tenant = self._caller_tenant_ids(instance)
+        if tenant is None:
+            agent._prefetched_versions = []
+            return
+        organization_id, workspace_id = tenant
+        versions = getattr(agent, "_prefetched_versions", None)
+        if versions is None:
+            versions = (
+                AgentVersion.no_workspace_objects.filter(
+                    agent_definition_id=agent.pk,
+                    organization_id=organization_id,
+                    workspace_id=workspace_id,
+                    deleted=False,
+                )
+                .select_related("credentials")
+                .order_by("-version_number")
+            )
+        agent._prefetched_versions = [
+            version
+            for version in versions
+            if version.organization_id == organization_id
+            and version.workspace_id == workspace_id
+            and not version.deleted
+        ]
 
     def to_representation(self, instance):
         """Custom representation to handle backward compatibility"""
+        # Null both the raw FK and nested detail on a read-only copy. The shared
+        # read queryset has already excluded foreign targets from its LEFT JOIN.
+        instance = owned_run_for_serialization(instance, "simulator_agent")
+        self._scope_agent_versions(instance)
         data = super().to_representation(instance)
+        if data.get("prompt_version_detail") is None:
+            # The raw PK field must not leak the version hidden by the detail field.
+            data["prompt_version"] = None
 
         # Add evals field for backward compatibility. ``super()`` already
         # serialized ``simulate_eval_configs`` via ``evals_detail`` /
@@ -319,7 +432,9 @@ class RunTestSerializer(serializers.ModelSerializer):
                     data["agent_version"] = None
                 elif instance.agent_version:
                     # Use the select_related agent_version
-                    snapshot = instance.agent_version.configuration_snapshot or {}
+                    snapshot = scrub_snapshot_secrets(
+                        instance.agent_version.configuration_snapshot or {}
+                    )
                     if "agent_type" not in snapshot:
                         snapshot = {
                             **snapshot,
@@ -339,23 +454,19 @@ class RunTestSerializer(serializers.ModelSerializer):
                         pass
                     data["agent_version"] = agent_version_data
                 else:
-                    # Try to use prefetched versions first to avoid N+1.
-                    # _prefetched_versions is set by RunTestListView.get() using:
-                    #   Prefetch("agent_definition__versions", ..., to_attr="_prefetched_versions")
-                    # The versions are ordered by -version_number so first item is latest.
-                    latest_version = None
-                    if hasattr(instance.agent_definition, "_prefetched_versions"):
-                        prefetched = instance.agent_definition._prefetched_versions
-                        if prefetched:
-                            latest_version = prefetched[0]  # First is latest
-                    else:
-                        # Fallback - this triggers an additional query if not prefetched.
-                        # This path is taken for executions without explicit agent_version
-                        # when the view doesn't use the prefetch (e.g., detail views).
-                        latest_version = instance.agent_definition.latest_version
+                    # _scope_agent_versions installed the caller-scoped list,
+                    # ordered by -version_number, so the first item is latest.
+                    # Never the FK-only agent_definition.latest_version property.
+                    prefetched = (
+                        getattr(instance.agent_definition, "_prefetched_versions", None)
+                        or []
+                    )
+                    latest_version = prefetched[0] if prefetched else None
 
                     if latest_version:
-                        snapshot = latest_version.configuration_snapshot or {}
+                        snapshot = scrub_snapshot_secrets(
+                            latest_version.configuration_snapshot or {}
+                        )
                         if "agent_type" not in snapshot:
                             snapshot = {
                                 **snapshot,

@@ -4,6 +4,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
+from accounts.authentication import allows_no_organization
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
     PublicConfigResponseSerializer,
@@ -29,8 +30,10 @@ def _parse_regions():
 
 
 @swagger_auto_schema(
-    method="get", responses={200: PublicConfigResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    method="get",
+    responses={200: PublicConfigResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
+@allows_no_organization
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def public_config(request):

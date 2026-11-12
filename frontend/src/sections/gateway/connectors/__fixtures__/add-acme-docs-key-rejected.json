@@ -1,0 +1,9 @@
+{
+  "code": "connector_credential_rejected",
+  "detail": "the provider refused the credential (HTTP 401 or 403) when the gateway listed its tools; check it and add the app again",
+  "error": "the provider refused the credential (HTTP 401 or 403) when the gateway listed its tools; check it and add the app again",
+  "message": "the provider refused the credential (HTTP 401 or 403) when the gateway listed its tools; check it and add the app again",
+  "result": "the provider refused the credential (HTTP 401 or 403) when the gateway listed its tools; check it and add the app again",
+  "status": false,
+  "type": "validation_error"
+}

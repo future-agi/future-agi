@@ -1183,8 +1183,8 @@ func TestTranslateResponse_TextResponse(t *testing.T) {
 			},
 		},
 		UsageMetadata: &geminiUsageMetadata{
-			PromptTokenCount:     10,
-			CandidatesTokenCount: 5,
+			PromptTokenCount:     usageCount(10),
+			CandidatesTokenCount: usageCount(5),
 			TotalTokenCount:      15,
 		},
 	}
@@ -1496,7 +1496,7 @@ func TestTranslateResponse_NoCandidates(t *testing.T) {
 	resp := &geminiResponse{
 		Candidates: nil,
 		UsageMetadata: &geminiUsageMetadata{
-			PromptTokenCount: 5,
+			PromptTokenCount: usageCount(5),
 			TotalTokenCount:  5,
 		},
 	}
@@ -2226,8 +2226,8 @@ func TestMapGeminiErrorType(t *testing.T) {
 func TestTranslateResponse_FoldsThinkingTokensIntoCompletion(t *testing.T) {
 	resp := &geminiResponse{
 		UsageMetadata: &geminiUsageMetadata{
-			PromptTokenCount:     100,
-			CandidatesTokenCount: 40,
+			PromptTokenCount:     usageCount(100),
+			CandidatesTokenCount: usageCount(40),
 			ThoughtsTokenCount:   25,
 			TotalTokenCount:      165,
 		},
@@ -2248,7 +2248,7 @@ func TestTranslateResponse_FoldsThinkingTokensIntoCompletion(t *testing.T) {
 
 func TestTranslateResponse_PreservesCachedTokensWithoutInventingCacheHits(t *testing.T) {
 	for _, value := range []*int{nil, new(int)} {
-		resp := &geminiResponse{UsageMetadata: &geminiUsageMetadata{PromptTokenCount: 100,
+		resp := &geminiResponse{UsageMetadata: &geminiUsageMetadata{PromptTokenCount: usageCount(100),
 			CachedContentTokenCount: value}}
 		out := translateResponse(resp, "gemini-3.8-flash")
 		if value == nil && out.Usage.PromptTokensDetails != nil {
@@ -2260,7 +2260,7 @@ func TestTranslateResponse_PreservesCachedTokensWithoutInventingCacheHits(t *tes
 	}
 	cached := 75
 	out := translateResponse(&geminiResponse{UsageMetadata: &geminiUsageMetadata{
-		PromptTokenCount: 100, CachedContentTokenCount: &cached}}, "gemini-3.8-flash")
+		PromptTokenCount: usageCount(100), CachedContentTokenCount: &cached}}, "gemini-3.8-flash")
 	if out.Usage.PromptTokens != 100 || string(*out.Usage.PromptTokensDetails) != `{"cached_tokens":75}` {
 		t.Fatal("cached tokens must be retained without subtracting input context")
 	}

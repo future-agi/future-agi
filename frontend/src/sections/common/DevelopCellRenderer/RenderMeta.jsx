@@ -33,14 +33,14 @@ const RenderMeta = ({ meta, originType, showToken = true, valuesInfo }) => {
       >
         <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
           <Iconify
-            icon="material-symbols:schedule-outline"
+            icon="solar:clock-circle-linear"
             width="15px"
             height="15px"
             color="text.secondary"
           />
           <Typography typography="s3" color="text.secondary">
-            {meta?.responseTimeMs
-              ? `${Math.round(meta?.responseTimeMs)} ms`
+            {meta?.response_time_ms
+              ? `${Math.round(meta?.response_time_ms)} ms`
               : "-"}
           </Typography>
         </Box>
@@ -51,7 +51,7 @@ const RenderMeta = ({ meta, originType, showToken = true, valuesInfo }) => {
               sx={{ width: "15px", height: "15px", color: "text.secondary" }}
             />
             <Typography typography="s3" color="text.secondary">
-              {meta?.tokenCount ? `${meta?.tokenCount}` : "-"}
+              {meta?.token_count ? `${meta?.token_count}` : "-"}
             </Typography>
           </Box>
         </ShowComponent>
@@ -74,7 +74,7 @@ const RenderMeta = ({ meta, originType, showToken = true, valuesInfo }) => {
 
       <Box sx={{ display: "flex", alignItems: "center" }}>
         <Iconify
-          icon="basil:copy-outline"
+          icon="solar:copy-linear"
           width="14px"
           height="14px"
           color="text.disabled"

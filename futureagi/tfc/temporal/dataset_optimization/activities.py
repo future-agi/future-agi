@@ -11,14 +11,12 @@ Design notes:
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import structlog
 from asgiref.sync import sync_to_async
-from django.conf import settings
 from django.db import close_old_connections
 from temporalio import activity
-from temporalio.exceptions import ApplicationError
 
 from model_hub.models.dataset_optimization_step import DatasetOptimizationStep
 from model_hub.models.dataset_optimization_trial import DatasetOptimizationTrial
@@ -29,10 +27,38 @@ from model_hub.utils.dataset_optimization import (
     store_single_trial,
     update_dataset_optimization_step,
 )
+from model_hub.utils.optimizer_prompt_text import (
+    canonicalize_optimizer_prompt_text,
+    optimizer_column_references,
+    optimizer_prompt_text,
+    replace_optimizer_column_ids,
+)
 from simulate.utils.llm import get_api_key_for_model
 from tfc.temporal.common.heartbeat import Heartbeater
 
 logger = structlog.get_logger(__name__)
+
+
+def _persist_terminal_refusal(run, steps, refusal):
+    """Persist the safe typed reason before Temporal wraps the exception."""
+    if not refusal["non_retryable"]:
+        return
+    from django.db import transaction
+    with transaction.atomic():
+        current = OptimizeDataset.objects.select_for_update(of=("self",)).get(id=run.id)
+        if current.status == OptimizeDataset.StatusType.CANCELLED:
+            return
+        config = dict(current.optimizer_config or {})
+        config["managed_refusal"] = {
+            "code": refusal["type"], "message": refusal["message"]
+        }
+        current.optimizer_config = config
+        current.save(update_fields=["optimizer_config"])
+        current.mark_as_failed(error_message=refusal["message"])
+    update_dataset_optimization_step(
+        steps, 3, status=DatasetOptimizationStep.Status.FAILED,
+        description=refusal["message"],
+    )
 
 
 def _safe_close_db():
@@ -42,7 +68,36 @@ def _safe_close_db():
         pass
 
 
-def _compute_total_trials(optimizer_algorithm: str, config: Dict[str, Any]) -> int:
+def _verify_run_binding(run: OptimizeDataset):
+    # Recheck the persisted admission binding before reading prompts or
+    # returning a resumed trial. Missing legacy bindings are not wildcards.
+    column = run.column
+    dataset = column.dataset if column else None
+    if (
+        dataset is None
+        or column.deleted
+        or dataset.deleted
+        or run.organization_id is None
+        or dataset.organization_id != run.organization_id
+        or dataset.workspace_id != run.workspace_id
+    ):
+        raise ValueError("Optimization dataset not found")
+    return dataset
+
+
+def _refuse_optimizer_reference(run, steps):
+    from temporalio.exceptions import ApplicationError
+
+    reason = "Optimization reference not found"
+    run.mark_as_failed(error_message=reason)
+    update_dataset_optimization_step(
+        steps, 2, status=DatasetOptimizationStep.Status.FAILED, error=reason
+    )
+    logger.warning(reason)
+    raise ApplicationError(reason, non_retryable=True) from None
+
+
+def _compute_total_trials(optimizer_algorithm: str, config: dict[str, Any]) -> int:
     """
     Calculate total trials based on optimizer type and configuration.
 
@@ -73,7 +128,7 @@ def _compute_total_trials(optimizer_algorithm: str, config: Dict[str, Any]) -> i
 
         total = 0
         current_beam = 1
-        for round_num in range(num_rounds):
+        for round_num in range(num_rounds):  # noqa: B007
             expanded = current_beam * num_gradients * prompts_per_gradient
             candidate_pool_size = current_beam + expanded
             total += candidate_pool_size
@@ -138,7 +193,7 @@ def _calc_best_from_trials_by_id(run_id: str):
 
 
 @activity.defn(name="dataset_optimization_setup_activity")
-async def setup_run_activity(input: Dict[str, Any]) -> Dict[str, Any]:
+async def setup_run_activity(input: dict[str, Any]) -> dict[str, Any]:
     """
     Mark run as RUNNING, compute totals.
     Simplified without locks - workflows are guaranteed not to conflict.
@@ -155,7 +210,7 @@ async def setup_run_activity(input: Dict[str, Any]) -> Dict[str, Any]:
             try:
                 run = OptimizeDataset.objects.get(id=run_id)
             except OptimizeDataset.DoesNotExist:
-                raise ValueError(f"Run {run_id} does not exist")
+                raise ValueError(f"Run {run_id} does not exist")  # noqa: B904
 
             # Update status if not already running
             if run.status != OptimizeDataset.StatusType.RUNNING:
@@ -216,7 +271,7 @@ async def setup_run_activity(input: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @activity.defn(name="dataset_optimization_run_activity")
-async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
+async def run_optimization_activity(input: dict[str, Any]) -> dict[str, Any]:
     """
     Run entire optimization in one activity. Resume from latest DatasetOptimizationTrial if exists.
     Uses callback to persist each trial immediately after completion.
@@ -250,7 +305,10 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
                     "column__dataset", "optimizer_model"
                 ).get(id=run_id)
             except OptimizeDataset.DoesNotExist:
-                raise ValueError(f"Run {run_id} does not exist")
+                raise ValueError(f"Run {run_id} does not exist")  # noqa: B904
+
+            dataset = _verify_run_binding(run)
+            column = run.column
 
             steps = get_dataset_optimization_steps(run_id)
 
@@ -282,36 +340,16 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
             )
             remaining = max(0, total_trials - max(0, completed))
 
-            if remaining <= 0:
-                _, best_score, best_prompt = _calc_best_from_trials(run)
-                return {
-                    "trials_run": 0,
-                    "best_score": best_score,
-                    "best_prompt": best_prompt,
-                }
-
-            # Get the column and dataset for optimization context
-            column = run.column
-            if not column:
-                raise ValueError(f"Run {run_id} has no column associated")
-
-            dataset = column.dataset
-            if not dataset:
-                raise ValueError(f"Column {column.id} has no dataset")
-
+            # Recheck references even when a resumed run has no remaining trials.
             # Get the initial prompt based on column source type
             from model_hub.models.develop_dataset import Cell, Column, Row
 
             initial_prompt = ""
+            source_messages = []
             prompt_template = None  # For PromptEvalConfig lookup
 
-            logger.info(
-                "Extracting initial prompt",
-                column_id=str(column.id),
-                column_name=column.name,
-                column_source=column.source,
-                column_source_id=str(column.source_id) if column.source_id else None,
-            )
+            if column.source == "run_prompt" and not column.source_id:
+                _refuse_optimizer_reference(run, steps)
 
             if column.source_id:
                 # Check source type to determine which model to query
@@ -320,58 +358,18 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
                     from model_hub.models.run_prompt import RunPrompter
 
                     try:
-                        run_prompter = RunPrompter.objects.get(id=column.source_id)
-                        logger.info(
-                            "Found RunPrompter",
-                            run_prompter_id=str(run_prompter.id),
-                            run_prompter_name=run_prompter.name,
+                        run_prompter = RunPrompter.no_workspace_objects.get(
+                            id=column.source_id,
+                            dataset_id=dataset.id,
+                            dataset__organization_id=run.organization_id,
+                            dataset__workspace_id=run.workspace_id,
+                            dataset__deleted=False,
+                            deleted=False,
                         )
-
-                        # Extract prompt from messages
-                        # Messages format: [{'role': 'user', 'content': [{'text': '{{column_id}}', 'type': 'text'}]}]
-                        if run_prompter.messages:
-                            prompt_parts = []
-                            for msg in run_prompter.messages:
-                                content = msg.get("content", [])
-                                if isinstance(content, list):
-                                    # New format: content is list of parts
-                                    for part in content:
-                                        if (
-                                            isinstance(part, dict)
-                                            and part.get("type") == "text"
-                                        ):
-                                            prompt_parts.append(part.get("text", ""))
-                                elif isinstance(content, str):
-                                    # Old format: content is string
-                                    prompt_parts.append(content)
-
-                            initial_prompt = "".join(prompt_parts).strip()
-
-                            # Convert column ID references to column name references
-                            # e.g., {{b3732734-de83-457e-a53c-c0594f76734a}} -> {{prompt}}
-                            import re
-
-                            uuid_pattern = r"\{\{([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}\}"
-                            matches = re.findall(uuid_pattern, initial_prompt)
-                            for col_id in matches:
-                                try:
-                                    ref_col = Column.objects.get(id=col_id)
-                                    initial_prompt = initial_prompt.replace(
-                                        f"{{{{{col_id}}}}}", f"{{{{{ref_col.name}}}}}"
-                                    )
-                                except Column.DoesNotExist:
-                                    pass
-
-                            logger.info(
-                                "Extracted initial prompt from RunPrompter",
-                                prompt_len=len(initial_prompt),
-                                prompt_preview=initial_prompt[:200],
-                            )
-
+                        source_messages = run_prompter.messages or []
+                        initial_prompt = optimizer_prompt_text(source_messages)
                     except RunPrompter.DoesNotExist:
-                        logger.warning(
-                            f"RunPrompter {column.source_id} not found for column {column.id}"
-                        )
+                        _refuse_optimizer_reference(run, steps)
 
                 else:
                     # Default: try PromptTemplate
@@ -381,50 +379,38 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
                     )
 
                     try:
-                        prompt_template = PromptTemplate.objects.get(
-                            id=column.source_id
+                        prompt_template = PromptTemplate.no_workspace_objects.get(
+                            id=column.source_id,
+                            organization_id=run.organization_id,
+                            workspace_id=run.workspace_id,
+                            deleted=False,
                         )
-                        logger.info(
-                            "Found PromptTemplate",
-                            template_id=str(prompt_template.id),
-                            template_name=prompt_template.name,
-                        )
-
-                        # Get the default version's prompt
-                        default_version = PromptVersion.objects.filter(
-                            original_template=prompt_template, is_default=True
+                        default_version = PromptVersion.no_workspace_objects.filter(
+                            original_template=prompt_template,
+                            original_template__organization_id=run.organization_id,
+                            original_template__workspace_id=run.workspace_id,
+                            original_template__deleted=False,
+                            is_default=True,
+                            deleted=False,
                         ).first()
-
-                        if default_version:
-                            logger.info(
-                                "Found default version",
-                                version_id=str(default_version.id),
-                                has_config=bool(default_version.prompt_config_snapshot),
-                            )
-
-                            if default_version.prompt_config_snapshot:
-                                # Extract prompt from first message config
-                                configs = default_version.prompt_config_snapshot
-                                if configs and len(configs) > 0:
-                                    messages = configs[0].get("messages", [])
-                                    # Concatenate all message contents
-                                    initial_prompt = "\n".join(
-                                        msg.get("content", "") for msg in messages
-                                    )
-                                    logger.info(
-                                        "Extracted initial prompt from PromptVersion",
-                                        prompt_len=len(initial_prompt),
-                                        num_messages=len(messages),
-                                    )
-                        else:
-                            logger.warning(
-                                "No default version found for prompt template"
-                            )
-                    except PromptTemplate.DoesNotExist:
-                        logger.warning(
-                            f"PromptTemplate {column.source_id} not found for column {column.id}"
+                        if (
+                            not default_version
+                            or not default_version.prompt_config_snapshot
+                        ):
+                            _refuse_optimizer_reference(run, steps)
+                        configs = default_version.prompt_config_snapshot
+                        source_messages = configs[0].get("messages", [])
+                        # Preserve message whitespace and the existing separators;
+                        # canonicalize the final joined prompt before checking IDs.
+                        initial_prompt = "\n".join(
+                            optimizer_prompt_text([message], strip=False)
+                            for message in source_messages
                         )
+                    except PromptTemplate.DoesNotExist:
+                        _refuse_optimizer_reference(run, steps)
 
+            # Only a source-less or successfully scoped empty prompt may use
+            # the existing same-dataset cell fallback; scoped misses raised above.
             # Fallback: if initial_prompt is still empty, try to get from first cell in this column
             if not initial_prompt:
                 first_row = Row.objects.filter(dataset=dataset).first()
@@ -434,11 +420,46 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
                     ).first()
                     if first_cell and first_cell.value:
                         initial_prompt = str(first_cell.value)
-                        logger.info(
-                            "Extracted initial prompt from first cell (fallback)",
-                            prompt_len=len(initial_prompt),
-                            prompt_preview=initial_prompt[:100],
-                        )
+
+            # Validate and replace UUIDs in the same canonical text execution uses.
+            # Normalizing later can introduce references after the final guard.
+            initial_prompt = canonicalize_optimizer_prompt_text(initial_prompt)
+            requested_ids = optimizer_column_references(source_messages)
+            requested_ids.update(
+                optimizer_column_references(
+                    [{"content": initial_prompt, "resume_state": resume_state}]
+                )
+            )
+            for saved_prompt in DatasetOptimizationTrial.objects.filter(
+                optimization_run=run
+            ).values_list("prompt", flat=True):
+                requested_ids.update(
+                    optimizer_column_references([{"content": saved_prompt or ""}])
+                )
+            reference_columns = list(
+                Column.no_workspace_objects.filter(
+                    id__in=requested_ids,
+                    dataset_id=dataset.id,
+                    dataset__organization_id=run.organization_id,
+                    dataset__workspace_id=run.workspace_id,
+                    dataset__deleted=False,
+                    deleted=False,
+                )
+            )
+            if {reference.id for reference in reference_columns} != requested_ids:
+                _refuse_optimizer_reference(run, steps)
+            initial_prompt = replace_optimizer_column_ids(
+                initial_prompt,
+                {str(reference.id): reference.name for reference in reference_columns},
+            )
+
+            if remaining <= 0:
+                _, best_score, best_prompt = _calc_best_from_trials(run)
+                return {
+                    "trials_run": 0,
+                    "best_score": best_score,
+                    "best_prompt": best_prompt,
+                }
 
             if not initial_prompt:
                 logger.warning(
@@ -472,7 +493,7 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
             except ImportError:
                 from temporalio.exceptions import ApplicationError
 
-                raise ApplicationError(
+                raise ApplicationError(  # noqa: B904
                     "Dataset optimization requires ee.agenthub (EE).",
                     type="FeatureUnavailable",
                     non_retryable=True,
@@ -511,24 +532,20 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
                     description = f"Trial {trial_number} completed."
                     update_dataset_optimization_step(steps, 3, description=description)
 
-            # Normalize Unicode characters (non-breaking spaces, zero-width chars, etc.)
-            # that come from rich text editors / web UI copy-paste
+            # Load template-preservation helpers after canonical reference validation.
             try:
                 from ee.agent_opt.utils.template_variables import (
                     build_template_variable_instruction,
                     extract_template_variables,
-                    normalize_prompt_text,
                 )
             except ImportError:
                 from temporalio.exceptions import ApplicationError
 
-                raise ApplicationError(
+                raise ApplicationError(  # noqa: B904
                     "Dataset optimization requires ee.agent_opt (EE).",
                     type="FeatureUnavailable",
                     non_retryable=True,
                 )
-
-            initial_prompt = normalize_prompt_text(initial_prompt)
 
             # Prepare the dataset execution data for optimization
             # This follows the pattern from agent_prompt_optimiser but adapted for dataset optimization
@@ -542,8 +559,11 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
             agent = FixYourAgent()
 
             configured_model_name = (run.optimizer_config or {}).get("model_name")
-            # Get execution model (model used to run prompts and generate outputs)
-            execution_model_name = (
+            # Prefer the source model captured at creation. Keep the old
+            # fallback for legacy runs and columns without a RunPrompter.
+            execution_model_name = (run.optimizer_config or {}).get(
+                "execution_model_name"
+            ) or (
                 run.model.user_model_id
                 if run.model
                 else configured_model_name or "gpt-4o"
@@ -565,7 +585,12 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
 
             template_vars = extract_template_variables(initial_prompt)
             optimizer_config = dict(run.optimizer_config or {})
-            if template_vars:
+            # Execution metadata is not an optimizer algorithm argument.
+            optimizer_config.pop("execution_model_name", None)
+            template_format = execution_data["agent_definition_prompt"].get(
+                "template_format"
+            )
+            if template_vars and template_format not in ("jinja", "jinja2"):
                 existing_desc = optimizer_config.get("task_description", "")
                 optimizer_config["task_description"] = (
                     existing_desc + build_template_variable_instruction(template_vars)
@@ -593,25 +618,56 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
                 # No usable key for this org; fail without retries
                 raise ApplicationError(str(e), non_retryable=True) from e
 
-            # Run optimization with direct evaluation (single input/output, no conversation simulation)
-            result = agent.optimize_from_execution(
-                execution_data=execution_data,
-                optimizer_type=run.optimizer_algorithm,
-                optimization_model=optimization_model_name,
-                optimizer_config=optimizer_config,
-                use_dual_llm_sim=False,  # Not using dual LLM for dataset optimization
-                agent_optimiser_run_steps=steps,
-                organization=organization,
-                workspace=workspace,
-                resume_state=resume_state,
-                max_new_trials=remaining,
-                skip_baseline=skip_baseline,
-                on_trial_callback=on_trial_complete,
-                use_temporal_evaluation=False,  # Simpler for dataset optimization
-                use_direct_evaluation=True,  # Use direct evaluation for datasets (no conversation simulation)
-                execution_model=execution_model_name,  # Model to run prompts and generate outputs
-                api_key=api_key,
-            )
+            # Module-qualified: ApplicationError is a local name in _sync (it is
+            # imported inside the ImportError branches above).
+            from temporalio import exceptions as temporal_exceptions
+
+            from model_hub.services import credit_ledger_port as credit_ledger
+
+            # One key (OK-E): the run's billing scope. The optimizer's proposal,
+            # teacher and trial calls dispatch on direct provider credentials,
+            # so a Future AGI credits route is refused before any of them; the
+            # first credit or usage refusal (including a RATE_LIMITED eval usage
+            # row) ends the run with a typed error, never a fallback. Only the
+            # contract's retryable refusals leave the activity retryable.
+            try:
+                with credit_ledger.billing_scope(
+                    organization=organization,
+                    workspace=workspace,
+                    source="dataset_optimization",
+                    source_id=run.id,
+                ) as billing:
+                    # Run optimization with direct evaluation (single input/output, no conversation simulation)
+                    result = agent.optimize_from_execution(
+                        execution_data=execution_data,
+                        optimizer_type=run.optimizer_algorithm,
+                        optimization_model=optimization_model_name,
+                        optimizer_config=optimizer_config,
+                        use_dual_llm_sim=False,  # Not using dual LLM for dataset optimization
+                        agent_optimiser_run_steps=steps,
+                        organization=organization,
+                        workspace=workspace,
+                        resume_state=resume_state,
+                        max_new_trials=remaining,
+                        skip_baseline=skip_baseline,
+                        on_trial_callback=on_trial_complete,
+                        use_temporal_evaluation=False,  # Simpler for dataset optimization
+                        use_direct_evaluation=True,  # Use direct evaluation for datasets (no conversation simulation)
+                        execution_model=execution_model_name,  # Model to run prompts and generate outputs
+                        api_key=api_key,
+                    )
+                    # An optimizer that swallowed the refusal still stops here.
+                    billing.raise_if_refused()
+            except Exception as e:
+                if credit_ledger.is_terminal_refusal(e):
+                    refusal = credit_ledger.refusal_activity_error(e)
+                    _persist_terminal_refusal(run, steps, refusal)
+                    raise temporal_exceptions.ApplicationError(
+                        refusal["message"],
+                        type=refusal["type"],
+                        non_retryable=refusal["non_retryable"],
+                    ) from e
+                raise
 
             # Mark step 3 as completed
             update_dataset_optimization_step(
@@ -637,13 +693,30 @@ def _prepare_dataset_execution_data(column, dataset, user_eval_metrics, initial_
     """
     from model_hub.models.develop_dataset import Cell, Column, Row
 
+    # Carry the persisted Run Prompt format through both baseline and candidates.
+    # Non-Run-Prompt callers keep the legacy DirectEvaluator substitution path.
+    template_format = None
+    if getattr(column, "source", None) == "run_prompt" and column.source_id:
+        from model_hub.models.run_prompt import RunPrompter
+
+        run_prompter = RunPrompter.objects.get(id=column.source_id, dataset=dataset)
+        template_format = (run_prompter.run_prompt_config or {}).get(
+            "template_format"
+        ) or "jinja2"
+
     # Get rows and cells for the dataset
     rows = Row.objects.filter(dataset=dataset).order_by("order")
 
-    # Build a mapping of column UUID -> column name for converting mappings
-    column_id_to_name = {
-        str(col.id): col.name for col in Column.objects.filter(dataset=dataset)
-    }
+    # The caller rechecks this dataset against the persisted run binding.
+    # Use the same exact dataset scope for both sibling name resolvers.
+    scoped_columns = Column.objects.filter(
+        dataset_id=dataset.id,
+        dataset__organization_id=dataset.organization_id,
+        dataset__workspace_id=dataset.workspace_id,
+        dataset__deleted=False,
+        deleted=False,
+    )
+    column_id_to_name = {str(col.id): col.name for col in scoped_columns}
 
     # Build eval configs from UserEvalMetric objects
     # Each UserEvalMetric has:
@@ -672,12 +745,18 @@ def _prepare_dataset_execution_data(column, dataset, user_eval_metrics, initial_
                     param_key in ("output", "response")
                     or param_value == optimization_column_id
                 ):
-                    converted_mapping[param_key] = "output"
+                    converted_mapping[param_key] = {"type": "generated_output"}
                     logger.info(
                         f"Mapping '{param_key}' to LLM output (column '{column_name}' is the optimization target)"
                     )
                 else:
-                    converted_mapping[param_key] = column_name
+                    # Preserve the binding kind: a dataset column can be named
+                    # "output", "input", "prompt", or any other legacy alias.
+                    # Tagged references also survive config JSON round trips.
+                    converted_mapping[param_key] = {
+                        "type": "dataset_column",
+                        "name": column_name,
+                    }
             else:
                 converted_mapping[param_key] = param_value
 
@@ -698,7 +777,7 @@ def _prepare_dataset_execution_data(column, dataset, user_eval_metrics, initial_
                 "config": metric_config.get(
                     "config", {}
                 ),  # For SimulateEvalConfig.config
-                "mapping": converted_mapping,  # Converted mapping with column names
+                "mapping": converted_mapping,  # Tagged column/output references
                 "model": user_eval_metric.model or eval_template.model,  # Eval model
                 "eval_type_id": template_config.get("eval_type_id"),
                 "output_type": template_config.get("output"),
@@ -726,13 +805,13 @@ def _prepare_dataset_execution_data(column, dataset, user_eval_metrics, initial_
         double_brace_placeholders = set(re.findall(r"\{\{(\w+)\}\}", initial_prompt))
         single_brace_placeholders = set(re.findall(r"\{(\w+)\}", initial_prompt))
         all_placeholders = double_brace_placeholders | single_brace_placeholders
+        if template_format in ("jinja", "jinja2"):
+            from model_hub.utils.jinja_variables import extract_jinja_variables
 
-        # Get all column names from dataset
-        from model_hub.models.develop_dataset import Column
+            all_placeholders = set(extract_jinja_variables(initial_prompt))
 
-        available_columns = set(
-            Column.objects.filter(dataset=dataset).values_list("name", flat=True)
-        )
+        # Get all column names from the same explicitly bound dataset.
+        available_columns = set(scoped_columns.values_list("name", flat=True))
 
         # Check for missing columns
         missing_columns = all_placeholders - available_columns
@@ -789,13 +868,14 @@ def _prepare_dataset_execution_data(column, dataset, user_eval_metrics, initial_
         "agent_definition_prompt": {
             "description": initial_prompt,
             "inbound": True,
+            "template_format": template_format,
         },
         "call_executions": call_executions,
     }
 
 
 @activity.defn(name="dataset_optimization_finalize_activity")
-async def finalize_run_activity(input: Dict[str, Any]) -> Dict[str, Any]:
+async def finalize_run_activity(input: dict[str, Any]) -> dict[str, Any]:
     """
     Mark run as completed/failed/canceled.
     Simplified without locks - workflows are guaranteed not to conflict.
@@ -817,7 +897,7 @@ async def finalize_run_activity(input: Dict[str, Any]) -> Dict[str, Any]:
             run = OptimizeDataset.objects.get(id=run_id)
         except OptimizeDataset.DoesNotExist:
             logger.error("Run does not exist in finalize", run_id=run_id)
-            raise ValueError(f"Run {run_id} does not exist")
+            raise ValueError(f"Run {run_id} does not exist")  # noqa: B904
 
         steps = get_dataset_optimization_steps(run_id)
 
@@ -826,8 +906,17 @@ async def finalize_run_activity(input: Dict[str, Any]) -> Dict[str, Any]:
             steps, 4, status=DatasetOptimizationStep.Status.RUNNING
         )
 
+        # A reference refusal is terminal, including for an in-flight finalize
+        # carrying a stale completion command. Keep the operator-visible reason.
+        if (
+            run.status == OptimizeDataset.StatusType.FAILED
+            and run.error_message == "Optimization reference not found"
+        ):
+            update_dataset_optimization_step(
+                steps, 4, status=DatasetOptimizationStep.Status.FAILED
+            )
         # Update status based on input
-        if status == "completed":
+        elif status == "completed":
             if run.status != OptimizeDataset.StatusType.COMPLETED:
                 finalize_optimization_run(run)
                 logger.info("Run marked as completed", run_id=run_id)
@@ -870,10 +959,19 @@ async def finalize_run_activity(input: Dict[str, Any]) -> Dict[str, Any]:
             best_score=best_score,
         )
 
+        stored_refusal = (run.optimizer_config or {}).get("managed_refusal")
+        error_code = None
+        if (
+            final_status == OptimizeDataset.StatusType.FAILED
+            and isinstance(stored_refusal, dict)
+            and stored_refusal.get("message") == run.error_message
+        ):
+            error_code = stored_refusal.get("code")
         return {
             "run_id": run_id,
             "status": final_status,
-            "error": error,
+            "error": run.error_message or error,
+            "error_code": error_code,
             "best_score": best_score,
             "best_prompt": best_prompt,
         }

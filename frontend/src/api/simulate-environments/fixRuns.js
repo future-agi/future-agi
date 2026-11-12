@@ -70,23 +70,31 @@ export function useEnvironmentFixRuns(
 }
 
 export function useFixRun(fixId) {
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, isFetching, error, refetch } = useQuery({
     queryKey: fixRunKey(fixId),
     queryFn: () => getFixRun(fixId),
     enabled: !!fixId,
     refetchInterval: (query) => fixPollInterval(query.state.data),
   });
-  return { fix: data, isLoading, error };
+  return { fix: data, isLoading, isFetching, error, refetch };
 }
 
 const PATCH_OFFER_CODES = new Set([
   "fix_github_not_connected",
   "fix_github_commit_unknown",
   "github_repository_invalid",
+  // git or GitHub did not take the change, so the patch is a way out. The
+  // server marks a failed push, or a GitHub 5xx, retryable: Ship stays then,
+  // since sending it again pushes the same commit.
+  "fix_github_patch_failed",
+  "fix_github_branch_changed",
+  "fix_github_push_failed",
+  "fix_github_pull_request_failed",
 ]);
 
 // The app's axios rejects with the body spread plus statusCode; an
-// axios-style { response } is accepted too.
+// axios-style { response } is accepted too. retryable is the server's own
+// flag: the same request may succeed if sent again.
 export function fixErrorOf(error) {
   const data = error?.response?.data ?? error ?? {};
   const status = error?.response?.status ?? error?.statusCode;
@@ -106,6 +114,7 @@ export function fixErrorOf(error) {
     code: code || "unknown",
     message: data.message || "",
     offerPatch: PATCH_OFFER_CODES.has(code),
+    retryable: data.retryable,
   };
 }
 
@@ -117,17 +126,20 @@ export async function stopFixRun(fixId) {
   return res.data;
 }
 
-export async function shipCandidate(fix, candidateId) {
+// A candidate only its must-pass check refused ships on the user's reason; the
+// winner ships without one, since the server refuses a reason for it.
+export async function shipCandidate(fix, candidateId, overrideReason = "") {
+  const body = overrideReason ? { override_reason: overrideReason } : {};
   if (fix.agent?.kind === "github") {
     const res = await axios.post(
       endpoints.agentFixRuns.pullRequest(fix.id, candidateId),
-      {},
+      body,
     );
     return { kind: "pull_request", url: res.data?.pull_request_url };
   }
   const res = await axios.post(
     endpoints.agentFixRuns.makeDefault(fix.id, candidateId),
-    {},
+    body,
   );
   return {
     kind:
@@ -177,7 +189,8 @@ export function useShipCandidate(fix) {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { errorHandled: true },
-    mutationFn: (candidateId) => shipCandidate(fix, candidateId),
+    mutationFn: ({ candidateId, overrideReason }) =>
+      shipCandidate(fix, candidateId, overrideReason),
     onSuccess: () => refreshFix(queryClient, fix),
   });
 }
@@ -233,13 +246,31 @@ export function useFixScenarioRows(fix, candidateId) {
       staleTime: 1000 * 60 * 5,
     })),
   });
+  const candidateResults = results.slice(baseline.length);
+  const runByScenario = new Map();
+  candidateResults.forEach((result, index) => {
+    (result.data ?? []).forEach((task) => {
+      const status = task.harnessOutcomeStatus;
+      if (status !== "passed" && status !== "failed") return;
+      // Keep a measured check for each scenario. Any failed trial makes the
+      // pooled outcome fail, so its evidence takes precedence over a pass.
+      if (!runByScenario.has(task.sourceScenarioKey) || status === "failed") {
+        runByScenario.set(task.sourceScenarioKey, candidateRuns[index]);
+      }
+    });
+  });
   const rowsOf = (list) => list.flatMap((r) => r.data ?? []);
+  // A failed read leaves its rows out, so the caller must not count what is
+  // left; refetch reads only the runs that failed.
+  const failed = results.filter((r) => r.isError);
   return {
     before: rowsOf(results.slice(0, baseline.length)),
-    after: rowsOf(results.slice(baseline.length)),
-    run: candidateRuns[0],
+    after: rowsOf(candidateResults),
+    runByScenario,
     isLoading: results.some((r) => r.isLoading),
-    isError: results.some((r) => r.isError),
+    isError: failed.length > 0,
+    isFetching: results.some((r) => r.isFetching),
+    refetch: () => Promise.all(failed.map((r) => r.refetch())),
   };
 }
 

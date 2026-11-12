@@ -39,8 +39,26 @@ from model_hub.serializers.develop_dataset_contracts import (
     DatasetCreationProgressResponseSerializer,
     LocalFileDatasetCreateStartedResponseSerializer,
 )
+from model_hub.services.file_import_admission import (
+    READER_KEY,
+    read_previewed_json,
+    upload_reader,
+    worker_reader,
+)
+from model_hub.services.file_import_limits import (
+    MAX_IMPORT_FILE_BYTES,
+    check_import_shape,
+    prepare_import_values,
+)
+from model_hub.services.file_media_dispatch import (
+    MEDIA_FAILURE_MESSAGE,
+    dispatch_import_media,
+    refresh_media_dispatch,
+)
+from model_hub.services.row_activity_writes import file_import_activity
 from model_hub.utils.file_reader import FileProcessor
 from model_hub.views.utils.dataset_limit import dataset_add_refusal
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.temporal import temporal_activity
 from tfc.utils.api_contracts import validated_request
@@ -57,7 +75,7 @@ from tfc.utils.storage_client import (
     extract_object_key,
     get_storage_client,
 )
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import (
         ROW_LIMIT_REACHED_MESSAGE,
@@ -77,7 +95,9 @@ def _request_organization(request):
 def _request_workspace_filter(request, field_name="workspace"):
     workspace = getattr(request, "workspace", None)
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     if getattr(workspace, "is_default", False):
         return (
@@ -111,8 +131,14 @@ def normalize_cell_value(value):
         value: The value to normalize (can be pandas Series, string, number, etc.)
 
     Returns:
-        Normalized value (None for empty/null values, str(value) otherwise)
+        Normalized value (JSON for structured values, None for empty/null
+        scalars, str(value) otherwise).
     """
+    # JSON/JSONL readers yield native containers. Serialize before pd.isna:
+    # lists produce an array of booleans there, and str(dict) is Python repr,
+    # not JSON. Empty containers are meaningful values, not missing cells.
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, allow_nan=False)
     try:
         # Check for NaN/None values first (works for pandas Series and regular values)
         if pd.isna(value):
@@ -169,7 +195,11 @@ def upload_file_to_minio(file_obj, object_key, org_id=None):
                 except ImportError:
                     emit = None
 
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                if (
+                    emit is not None
+                    and UsageEvent is not None
+                    and BillingEventType is not None
+                ):
                     emit(
                         UsageEvent(
                             org_id=str(org_id),
@@ -221,170 +251,66 @@ def download_file_from_minio(file_url, original_filename=None):
         raise
 
 
+MEDIA_COLUMN_TYPES = {
+    DataTypeChoices.IMAGE.value,
+    DataTypeChoices.IMAGES.value,
+    DataTypeChoices.AUDIO.value,
+    DataTypeChoices.DOCUMENT.value,
+}
+IMPORT_BATCH_SIZE = 1000
+
+
 def handle_columns_bulk(dataset_id, data, column_mapping, row_mapping):
-    """Handle bulk creation of cells for all columns - gevent-safe version"""
-    try:
-        close_old_connections()
+    """Write bounded batches in the caller's transaction; any failure propagates.
 
-        cells_to_create = []
-        error_columns = set()
-        completed_columns = set()
-
-        logger.info(
-            f"Processing {len(column_mapping)} columns for dataset {dataset_id}"
-        )
-
-        # Process columns sequentially to avoid threading issues with gevent
-        for column_name, column_id in column_mapping.items():
-            try:
-                column = Column.objects.get(id=column_id)
-                values = data[column_name]
-                has_error = False
-
-                logger.info(
-                    f"Processing column {column_name} with {len(values)} values"
+    Never close connections here: doing so inside atomic() closes its connection.
+    Keep at most 1000 Cell instances, not a second copy of the entire import.
+    """
+    cells = []
+    completed_columns = []
+    for name, column_id in column_mapping.items():
+        column = Column.objects.get(id=column_id)
+        media = column.data_type in MEDIA_COLUMN_TYPES
+        for index, value in data[name].items():
+            cells.append(
+                Cell(
+                    dataset_id=dataset_id,
+                    column=column,
+                    row_id=row_mapping[index],
+                    value=str(value) if media else normalize_cell_value(value),
+                    value_infos=json.dumps(
+                        {"note": "Media upload will be processed separately"}
+                        if media
+                        else {}
+                    ),
+                    column_metadata={},
+                    status=CellStatus.RUNNING.value if media else CellStatus.PASS.value,
                 )
-
-                # Process cells in batches to avoid memory issues
-                batch_size = 500
-                for i in range(0, len(values), batch_size):
-                    batch_values = dict(list(values.items())[i : i + batch_size])
-
-                    for index, value in batch_values.items():
-                        try:
-                            value_infos = {}
-                            column_metadata = {}
-                            status = CellStatus.PASS.value
-
-                            # Handle image data type - temporarily store raw value to avoid threading issues
-                            if column.data_type == DataTypeChoices.IMAGE.value:
-                                # Store the raw value temporarily - will be processed later
-                                cell_value = str(value)
-                                status = CellStatus.RUNNING.value
-                                value_infos["note"] = (
-                                    "Image upload will be processed separately to avoid threading conflicts"
-                                )
-                                logger.info(
-                                    f"Storing raw image value for later processing: {len(str(value))} chars"
-                                )
-
-                            elif column.data_type == DataTypeChoices.AUDIO.value:
-                                # Store the raw value temporarily - will be processed later
-                                cell_value = str(value)
-                                status = CellStatus.RUNNING.value
-                                value_infos["note"] = (
-                                    "Audio upload will be processed separately to avoid threading conflicts"
-                                )
-                                logger.info(
-                                    f"Storing raw audio value for later processing: {len(str(value))} chars"
-                                )
-
-                            elif column.data_type == DataTypeChoices.DOCUMENT.value:
-                                # Store the raw value temporarily - will be processed later
-                                cell_value = str(value)
-                                status = CellStatus.RUNNING.value
-                                value_infos["note"] = (
-                                    "Document upload will be processed separately to avoid threading conflicts"
-                                )
-                                logger.info(
-                                    f"Storing raw document value for later processing: {len(str(value))} chars"
-                                )
-
-                            elif column.data_type == DataTypeChoices.IMAGES.value:
-                                # Store the raw comma-separated image URLs - will be processed later
-                                cell_value = str(value)
-                                status = CellStatus.RUNNING.value
-                                value_infos["note"] = (
-                                    "Multiple images upload will be processed separately to avoid threading conflicts"
-                                )
-                                logger.info(
-                                    f"Storing raw images value for later processing: {len(str(value))} chars"
-                                )
-                            else:
-                                # Handle pandas Series/arrays and regular values safely
-                                cell_value = normalize_cell_value(value)
-
-                            cells_to_create.append(
-                                Cell(
-                                    dataset_id=dataset_id,
-                                    column=column,
-                                    row_id=row_mapping[index],
-                                    value=cell_value,
-                                    value_infos=json.dumps(value_infos),
-                                    column_metadata=column_metadata,
-                                    status=status,
-                                )
-                            )
-
-                        except Exception:
-                            logger.exception(
-                                f"Error processing cell: {traceback.format_exc()}"
-                            )
-                            has_error = True
-
-                # Check if this is a media column that needs async processing
-                is_media_column = column.data_type in [
-                    DataTypeChoices.IMAGE.value,
-                    DataTypeChoices.AUDIO.value,
-                    DataTypeChoices.DOCUMENT.value,
-                    DataTypeChoices.IMAGES.value,
-                ]
-
-                if has_error:
-                    error_columns.add(column_id)
-                elif not is_media_column:
-                    # Only mark non-media columns as completed
-                    # Media columns will be marked completed after process_media_batch finishes
-                    completed_columns.add(column_id)
-
-            except Exception:
-                logger.exception(
-                    f"Error processing column {column_name}: {traceback.format_exc()}"
-                )
-                error_columns.add(column_id)
-
-        # Bulk create all cells in batches
-        if cells_to_create:
-            logger.info(f"Creating {len(cells_to_create)} cells in bulk")
-            batch_size = 1000
-            for i in range(0, len(cells_to_create), batch_size):
-                batch = cells_to_create[i : i + batch_size]
-                Cell.objects.bulk_create(batch, batch_size=batch_size)
-                logger.info(
-                    f"Created batch {i // batch_size + 1} of {(len(cells_to_create) + batch_size - 1) // batch_size}"
-                )
-
-        # Update column statuses
-        if completed_columns:
-            Column.objects.filter(id__in=list(completed_columns)).update(
-                status=StatusType.COMPLETED.value
             )
+            if len(cells) == IMPORT_BATCH_SIZE:
+                Cell.objects.bulk_create(cells, batch_size=IMPORT_BATCH_SIZE)
+                cells.clear()
+        if not media:
+            completed_columns.append(column_id)
+    if cells:
+        Cell.objects.bulk_create(cells, batch_size=IMPORT_BATCH_SIZE)
+    Column.objects.filter(id__in=completed_columns).update(
+        status=StatusType.COMPLETED.value
+    )
+    return len(completed_columns), 0
 
-        if error_columns:
-            Column.objects.filter(id__in=list(error_columns)).update(
-                status=StatusType.PARTIAL_EXTRACTED.value
+
+def _resume_import_media_dispatch(dataset):
+    if (dataset.dataset_config or {}).get("file_media_dispatch_status") == "pending":
+        transaction.on_commit(
+            lambda: dispatch_import_media(
+                dataset.id, dataset.organization_id, process_media_uploads.delay
             )
-
-        # Trigger embeddings task - temporarily disabled to avoid threading conflicts
-        # embedding_column_ids = list(error_columns) + list(completed_columns)
-        # if embedding_column_ids:
-        #     insert_embeddings_task.delay(dataset_id=dataset_id, column_ids=embedding_column_ids)
-        logger.info("Skipping embeddings task to avoid threading conflicts with gevent")
-
-        logger.info(
-            f"Completed processing: {len(completed_columns)} successful, {len(error_columns)} with errors"
         )
-        return len(completed_columns), len(error_columns)
-
-    except Exception as e:
-        traceback.print_exc()
-        logger.exception(f"Error in bulk cell creation: {e}")
-        return 0, len(column_mapping)
-    finally:
-        close_old_connections()
 
 
 @temporal_activity(time_limit=3600 * 2, queue="tasks_l")
+@file_import_activity
 def process_dataset_from_file(dataset_id, file_url, original_filename):
     """
     Celery task to process dataset creation from uploaded file in background
@@ -394,19 +320,40 @@ def process_dataset_from_file(dataset_id, file_url, original_filename):
 
         logger.info(f"Starting background processing for dataset {dataset_id}")
 
-        # Update dataset metadata to show processing started
-        dataset = Dataset.objects.get(id=dataset_id)
-        dataset_config = dataset.dataset_config or {}
-        dataset_config.update(
-            {
-                "file_processing_status": "processing",
-                "file_processing_started_at": pd.Timestamp.now().isoformat(),
-                "original_filename": original_filename,
-                "file_url": file_url,
-            }
-        )
-        dataset.dataset_config = dataset_config
-        dataset.save()
+        # Keep tenant filtering, but lock only Dataset: the default-workspace
+        # manager joins nullable workspace rows, which PostgreSQL cannot lock.
+        # Update dataset metadata to show processing started.
+        with transaction.atomic():
+            dataset = Dataset.objects.select_for_update(of=("self",)).get(id=dataset_id)
+            dataset_config = dataset.dataset_config or {}
+            if dataset_config.get("file_processing_status") == "completed":
+                _resume_import_media_dispatch(dataset)
+                return  # Redelivery must not recreate the published table.
+            # F32: only an upload the route admitted while ON uses the
+            # previewed reader (services/file_import_admission.py).
+            reader, refusal = worker_reader(dataset_config)
+            if refusal:
+                # Admitted, but the reader is off here: store no table.
+                dataset_config.update(
+                    {
+                        "file_processing_status": "failed",
+                        "file_processing_error": refusal,
+                        "file_processing_failed_at": pd.Timestamp.now().isoformat(),
+                    }
+                )
+                dataset.dataset_config = dataset_config
+                dataset.save(update_fields=["dataset_config"])
+                return
+            dataset_config.update(
+                {
+                    "file_processing_status": "processing",
+                    "file_processing_started_at": pd.Timestamp.now().isoformat(),
+                    "original_filename": original_filename,
+                    "file_url": file_url,
+                }
+            )
+            dataset.dataset_config = dataset_config
+            dataset.save(update_fields=["dataset_config"])
 
         # Download file from Minio to temporary location
         temp_file_path = download_file_from_minio(file_url, original_filename)
@@ -425,15 +372,26 @@ def process_dataset_from_file(dataset_id, file_url, original_filename):
                 def __getattr__(self, name):
                     return getattr(self.file_obj, name)
 
+            if os.path.getsize(temp_file_path) > MAX_IMPORT_FILE_BYTES:
+                raise ValueError(
+                    "File import exceeds 25 MiB. Split the file into smaller imports."
+                )
             with open(temp_file_path, "rb") as temp_file:
                 file_with_name = FileWithName(temp_file, original_filename)
-                data, error = FileProcessor.process_file(file_obj=file_with_name)
+                if reader is None:
+                    data, error = FileProcessor.process_file(file_obj=file_with_name)
+                    data_types = None
+                else:
+                    data, data_types, error = read_previewed_json(
+                        file_with_name, original_filename
+                    )
 
             if error:
                 logger.error(f"FileProcessor error: {error}")
                 raise Exception(f"File processing error: {error}")
 
             data.columns = data.columns.str.strip()
+            check_import_shape(data)
 
             # Strip whitespace and convert empty strings to None (pandas will convert to NaN)
             # This ensures empty cells are properly handled as null values instead of empty strings
@@ -455,9 +413,15 @@ def process_dataset_from_file(dataset_id, file_url, original_filename):
             row_mapping = {}
 
             # Prepare columns
-            for column_name in data.columns:
+            for position, column_name in enumerate(data.columns):
                 column_id = uuid.uuid4()
-                data_type = determine_data_type(data[column_name])
+                # The previewed reader returns each column's type; FileProcessor
+                # frames are inferred, as before.
+                data_type = (
+                    determine_data_type(data[column_name])
+                    if data_types is None
+                    else data_types[position]
+                )
                 status = StatusType.RUNNING.value
                 if data_type in [
                     DataTypeChoices.IMAGE.value,
@@ -488,69 +452,53 @@ def process_dataset_from_file(dataset_id, file_url, original_filename):
                 rows_to_create.append(Row(id=row_id, dataset=dataset, order=i))
                 row_mapping[index] = str(row_id)
 
-            # Bulk create columns and rows
+            values = prepare_import_values(
+                data, columns_to_create, MEDIA_COLUMN_TYPES, normalize_cell_value
+            )
+            # One publication point: no committed Row can precede its Cells.
+            # Bounds are enforced before this transaction (file_import_limits).
             with transaction.atomic():
-                Column.objects.bulk_create(columns_to_create)
-                Row.objects.bulk_create(rows_to_create)
-
-                # Update dataset configuration
+                dataset = Dataset.objects.select_for_update(of=("self",)).get(
+                    id=dataset_id
+                )
+                dataset_config = dataset.dataset_config or {}
+                if dataset_config.get("file_processing_status") == "completed":
+                    _resume_import_media_dispatch(dataset)
+                    return
+                Column.objects.bulk_create(
+                    columns_to_create, batch_size=IMPORT_BATCH_SIZE
+                )
+                Row.objects.bulk_create(rows_to_create, batch_size=IMPORT_BATCH_SIZE)
+                completed_cols, error_cols = handle_columns_bulk(
+                    str(dataset.id), values, column_mapping, row_mapping
+                )
                 dataset.column_order = column_order
                 dataset.column_config = column_config
-                dataset.save()
-
-            # Update progress
-            dataset_config.update(
-                {
-                    "file_processing_status": "creating_cells",
-                    "total_rows": len(data),
-                    "total_columns": len(data.columns),
-                }
-            )
-            dataset.dataset_config = dataset_config
-            dataset.save()
-
-            # Process cells in bulk
-            completed_cols, error_cols = handle_columns_bulk(
-                str(dataset.id), data.to_dict(), column_mapping, row_mapping
-            )
-
-            media_column_types = [
-                DataTypeChoices.IMAGE.value,
-                DataTypeChoices.IMAGES.value,
-                DataTypeChoices.AUDIO.value,
-                DataTypeChoices.DOCUMENT.value,
-            ]
-            has_media_cells = Cell.objects.filter(
-                dataset_id=dataset.id,
-                status=CellStatus.RUNNING.value,
-                column__data_type__in=media_column_types,
-            ).exists()
-            if has_media_cells:
-                # Start media upload processing in a separate task to avoid threading conflicts.
-                process_media_uploads.delay(str(dataset.id))
-            else:
-                logger.info(
-                    f"No media cells to process for dataset {dataset_id}; skipping media upload task"
+                dataset_config.update(
+                    {
+                        "file_processing_status": "completed",
+                        "file_processing_completed_at": pd.Timestamp.now().isoformat(),
+                        "total_rows": len(data),
+                        "total_columns": len(data.columns),
+                        "completed_columns": int(completed_cols),
+                        "error_columns": int(error_cols),
+                        "dataset_source_local": True,
+                    }
                 )
-
-            logger.info(
-                "Skipping recommendations to avoid threading conflicts with gevent"
-            )
-
-            # Update final status
-            dataset_config.update(
-                {
-                    "file_processing_status": "completed",
-                    "file_processing_completed_at": pd.Timestamp.now().isoformat(),
-                    "completed_columns": (
-                        int(completed_cols) if completed_cols is not None else 0
-                    ),
-                    "error_columns": int(error_cols) if error_cols is not None else 0,
-                    "dataset_source_local": True,
-                }
-            )
-            dataset.dataset_config = dataset_config
-            dataset.save()
+                dataset_config.pop("file_processing_error", None)
+                dataset_config.pop("file_processing_failed_at", None)
+                if (
+                    any(c.data_type in MEDIA_COLUMN_TYPES for c in columns_to_create)
+                    and row_mapping
+                ):
+                    # Commit the handoff intent with the complete table. A failed
+                    # on_commit callback propagates, but cannot undo publication.
+                    dataset_config["file_media_dispatch_status"] = "pending"
+                dataset.dataset_config = dataset_config
+                dataset.save(
+                    update_fields=["column_order", "column_config", "dataset_config"]
+                )
+                _resume_import_media_dispatch(dataset)
 
             logger.info(f"Successfully completed processing for dataset {dataset_id}")
 
@@ -560,21 +508,28 @@ def process_dataset_from_file(dataset_id, file_url, original_filename):
                 os.unlink(temp_file_path)
 
     except Exception as e:
-        logger.exception(f"Error processing dataset {dataset_id}: {str(e)}")
+        # Dispatch exceptions may contain private URLs. Record only their class;
+        # publication stays completed, with the bounded handoff state intact.
+        logger.error("dataset_processing_failed", error_class=type(e).__name__)
 
         # Update dataset with error status
         try:
-            dataset = Dataset.objects.get(id=dataset_id)
-            dataset_config = dataset.dataset_config or {}
-            dataset_config.update(
-                {
-                    "file_processing_status": "failed",
-                    "file_processing_error": str(e),
-                    "file_processing_failed_at": pd.Timestamp.now().isoformat(),
-                }
-            )
-            dataset.dataset_config = dataset_config
-            dataset.save()
+            with transaction.atomic():
+                dataset = Dataset.objects.select_for_update(of=("self",)).get(
+                    id=dataset_id
+                )
+                dataset_config = dataset.dataset_config or {}
+                # A competing retry may already have published successfully.
+                if dataset_config.get("file_processing_status") != "completed":
+                    dataset_config.update(
+                        {
+                            "file_processing_status": "failed",
+                            "file_processing_error": str(e),
+                            "file_processing_failed_at": pd.Timestamp.now().isoformat(),
+                        }
+                    )
+                    dataset.dataset_config = dataset_config
+                    dataset.save(update_fields=["dataset_config"])
         except Exception as save_error:
             logger.exception(f"Error updating dataset status: {str(save_error)}")
 
@@ -1010,8 +965,15 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
                 except Exception as validation_err:
                     return self._gm.bad_request(str(validation_err.detail[0]))
 
-            # Quick file validation and row count check
-            data, error = FileProcessor.process_file(file_obj=file)
+            # Quick file validation and row count check. F32: a JSON/JSONL
+            # dialog upload admitted while ON uses the previewed reader
+            # (services/file_import_admission.py); every other upload uses
+            # FileProcessor, as before.
+            reader = upload_reader(request, file.name, source)
+            if reader is None:
+                data, error = FileProcessor.process_file(file_obj=file)
+            else:
+                data, _, error = read_previewed_json(file, file.name)
             if error:
                 return self._gm.bad_request(error)
 
@@ -1034,7 +996,9 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
                 call_log_row_entry = log_and_deduct_cost_for_resource_request(
                     organization=organization,
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                    sdk_source=True if source == DatasetSourceChoices.SDK.value else False,
+                    sdk_source=True
+                    if source == DatasetSourceChoices.SDK.value
+                    else False,
                     workspace=request.workspace,
                 )
                 refusal = dataset_add_refusal(
@@ -1083,6 +1047,8 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
                     "file_url": file_url,
                     "estimated_rows": rows_in_dataset,
                     "estimated_columns": data.shape[1],
+                    # The worker's admission record; absent for every other upload.
+                    **({READER_KEY: reader} if reader is not None else {}),
                 },
                 user=request.user,
             )
@@ -1146,7 +1112,7 @@ class DatasetCreationProgressView(APIView):
             if not dataset:
                 return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
-            dataset_config = dataset.dataset_config or {}
+            dataset_config = refresh_media_dispatch(dataset)
 
             # Check if this is a file-based dataset
             if not dataset_config.get("dataset_source_local"):
@@ -1169,6 +1135,20 @@ class DatasetCreationProgressView(APIView):
                 "is_processing": is_processing,
                 "is_completed": is_completed,
                 "is_failed": is_failed,
+                "media_dispatch_status": dataset_config.get(
+                    "file_media_dispatch_status"
+                ),
+                "media_dispatch_attempts": dataset_config.get(
+                    "file_media_dispatch_attempts", 0
+                ),
+                "media_dispatch_last_error_class": dataset_config.get(
+                    "file_media_dispatch_last_error_class"
+                ),
+                "media_processing_message": (
+                    MEDIA_FAILURE_MESSAGE
+                    if dataset_config.get("file_media_dispatch_status") == "failed"
+                    else None
+                ),
                 "original_filename": dataset_config.get("original_filename"),
                 "estimated_rows": dataset_config.get("estimated_rows"),
                 "estimated_columns": dataset_config.get("estimated_columns"),

@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/admission"
 	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"github.com/futureagi/agentcc-gateway/internal/providers/gauth"
 )
@@ -26,7 +26,7 @@ type Provider struct {
 	vertexAI      bool
 	tokenProvider *gauth.TokenProvider
 	httpClient    *http.Client
-	semaphore     chan struct{}
+	slots         *admission.Limiter
 	headers       map[string]string
 }
 
@@ -36,14 +36,12 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		timeout = 120 * time.Second
 	}
 
-	maxConcurrent := cfg.MaxConcurrent
-	if maxConcurrent == 0 {
-		maxConcurrent = 100
-	}
-
+	// max_concurrent, conn_pool_size and queue_timeout come resolved from the
+	// registry (local or remote defaults); admission and these defaults cover
+	// an instance built from a config that left them unset.
 	poolSize := cfg.ConnPoolSize
-	if poolSize == 0 {
-		poolSize = 100
+	if poolSize <= 0 {
+		poolSize = admission.DefaultConnPoolSize
 	}
 
 	transport := &http.Transport{
@@ -75,8 +73,8 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 			Timeout:       timeout,
 			CheckRedirect: keepCredentialInOrigin,
 		},
-		semaphore: make(chan struct{}, maxConcurrent),
-		headers:   cfg.Headers,
+		slots:   admission.New(id, cfg.MaxConcurrent, cfg.QueueTimeout),
+		headers: cfg.Headers,
 	}
 
 	if vertexAI && (cfg.CredentialsFile != "" || cfg.ServiceAccountJSON != "") {
@@ -88,6 +86,7 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 			tp, err = gauth.NewTokenProvider(cfg.CredentialsFile, gauth.ScopeCloudPlatform)
 		}
 		if err != nil {
+			p.slots.Close()
 			return nil, fmt.Errorf("gemini: vertex ai credentials: %w", err)
 		}
 		p.tokenProvider = tp
@@ -98,14 +97,10 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 
 func (p *Provider) ID() string { return p.id }
 
-// PriceTableName is "vertex_ai" on Vertex AI and "gemini" on the Gemini API,
-// the names the price table keys each one's models under.
-func (p *Provider) PriceTableName() string {
-	if p.vertexAI {
-		return "vertex_ai"
-	}
-	return "gemini"
-}
+// UpstreamModelName is the id every translated call sends the host for
+// model (providers.UpstreamModelNamer). The native GenAI pass-through sends
+// the model it is given as it is.
+func (p *Provider) UpstreamModelName(model string) string { return resolveModelName(model) }
 
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any
@@ -177,18 +172,19 @@ func (p *Provider) setAPIKey(req *http.Request) {
 	}
 }
 
+// acquireSemaphore takes one of the entry's upstream slots. Its error, a
+// provider_busy 503 once the queue wait ends or a gateway timeout when ctx
+// ends first, is the call's answer: nothing was sent upstream.
 func (p *Provider) acquireSemaphore(ctx context.Context) error {
-	select {
-	case p.semaphore <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return p.slots.Acquire(ctx)
 }
 
 func (p *Provider) releaseSemaphore() {
-	<-p.semaphore
+	p.slots.Release()
 }
+
+// Admission is the instance's upstream slots (providers.SlotHolder).
+func (p *Provider) Admission() *admission.Limiter { return p.slots }
 
 // ChatCompletion sends a non-streaming request to Gemini.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
@@ -197,7 +193,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	}
 
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, models.ErrGatewayTimeout("gemini: concurrency limit reached")
+		return nil, err
 	}
 	defer p.releaseSemaphore()
 
@@ -212,7 +208,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("gemini: creating request: %v", err))
+		return nil, models.ErrInternal("gemini: creating request: " + withoutURL(err))
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -226,7 +222,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("gemini: request timed out")
 		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("gemini: request failed: %v", err))
+		return nil, models.ErrUpstreamProvider(0, "gemini: request failed: "+withoutURL(err))
 	}
 	defer resp.Body.Close()
 
@@ -252,6 +248,10 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 // StreamChatCompletion sends a streaming request to Gemini.
 func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
+	// Capture routing fields before returning, not after the goroutine waits
+	// for admission. Nested payloads remain read-only for the call's lifetime.
+	snapshot := *req
+	req = &snapshot
 	chunks := make(chan models.StreamChunk, 64)
 	errs := make(chan error, 1)
 
@@ -265,7 +265,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		}
 
 		if err := p.acquireSemaphore(ctx); err != nil {
-			errs <- models.ErrGatewayTimeout("gemini: concurrency limit reached")
+			errs <- err
 			return
 		}
 		defer p.releaseSemaphore()
@@ -284,7 +284,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		defer cancelUpstream()
 		httpReq, err := http.NewRequestWithContext(upstreamCtx, "POST", url, bytes.NewReader(body))
 		if err != nil {
-			errs <- models.ErrInternal(fmt.Sprintf("gemini: creating request: %v", err))
+			errs <- models.ErrInternal("gemini: creating request: " + withoutURL(err))
 			return
 		}
 
@@ -301,7 +301,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 				errs <- models.ErrGatewayTimeout("gemini: request timed out")
 				return
 			}
-			errs <- models.ErrUpstreamProvider(0, fmt.Sprintf("gemini: request failed: %v", err))
+			errs <- models.ErrUpstreamProvider(0, "gemini: request failed: "+withoutURL(err))
 			return
 		}
 		defer resp.Body.Close()
@@ -320,6 +320,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			return
 		}
 
+		models.MarkStreamAccepted(ctx)
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
@@ -336,11 +337,6 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 			chunk, err := state.parseStreamData(data)
 			if err != nil {
-				var apiErr *models.APIError
-				if errors.As(err, &apiErr) {
-					errs <- apiErr
-					return
-				}
 				slog.Warn("gemini: error parsing stream data",
 					"error", err,
 					"provider", p.id,
@@ -407,7 +403,7 @@ func (p *Provider) EmbedContent(ctx context.Context, model string, reqBody []byt
 // StreamGenerateContent sends a streaming Google GenAI request.
 func (p *Provider) StreamGenerateContent(ctx context.Context, model string, reqBody []byte, headers map[string]string) (io.ReadCloser, int, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, 0, models.ErrGatewayTimeout("gemini: concurrency limit reached")
+		return nil, 0, err
 	}
 	// Semaphore released when caller closes the stream.
 
@@ -434,7 +430,7 @@ func (p *Provider) StreamGenerateContent(ctx context.Context, model string, reqB
 		defer resp.Body.Close()
 		p.releaseSemaphore()
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-		return nil, resp.StatusCode, models.ErrUpstreamProvider(resp.StatusCode, string(respBody))
+		return nil, resp.StatusCode, common.NativeHTTPError(resp.StatusCode, respBody)
 	}
 
 	return &semaphoreReadCloser{ReadCloser: resp.Body, release: p.releaseSemaphore}, resp.StatusCode, nil
@@ -443,7 +439,7 @@ func (p *Provider) StreamGenerateContent(ctx context.Context, model string, reqB
 // doGenAIRequest is a shared helper for non-streaming native GenAI requests.
 func (p *Provider) doGenAIRequest(ctx context.Context, model string, action string, reqBody []byte, headers map[string]string) ([]byte, int, error) {
 	if err := p.acquireSemaphore(ctx); err != nil {
-		return nil, 0, models.ErrGatewayTimeout("gemini: concurrency limit reached")
+		return nil, 0, err
 	}
 	defer p.releaseSemaphore()
 
@@ -524,6 +520,7 @@ func (s *semaphoreReadCloser) Close() error {
 
 // Close releases resources.
 func (p *Provider) Close() error {
+	p.slots.Close()
 	p.httpClient.CloseIdleConnections()
 	return nil
 }

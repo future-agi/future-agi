@@ -1,4 +1,5 @@
 import React from "react";
+import ObservedUsageValue from "./ObservedUsageValue";
 import PropTypes from "prop-types";
 import { Box, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -9,13 +10,18 @@ const BreakdownTooltip = ({ promptTokens, completionTokens, totalTokens }) => (
     <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 1 }}>
       Usage breakdown
     </Typography>
-    <BRow label="Input usage" value={promptTokens} icon="mdi:arrow-down" bold />
+    <BRow
+      label="Input usage"
+      value={promptTokens}
+      icon="solar:arrow-down-linear"
+      bold
+    />
     <BRow label="input" value={promptTokens} />
     <Box sx={{ my: 0.75 }} />
     <BRow
       label="Output usage"
       value={completionTokens}
-      icon="mdi:arrow-up"
+      icon="solar:arrow-up-linear"
       bold
     />
     <BRow label="output" value={completionTokens} />
@@ -71,12 +77,23 @@ BreakdownTooltip.propTypes = {
   totalTokens: PropTypes.number,
 };
 
-const TokenCell = ({ value, data }) => {
+const TokenCell = ({ value, data, colId = "total_tokens" }) => {
+  const isTotal = colId === "total_tokens";
   const promptTokens = data?.prompt_tokens ?? 0;
   const completionTokens = data?.completion_tokens ?? 0;
-  const totalTokens = value ?? data?.total_tokens ?? 0;
+  const totalTokens = data?.total_tokens ?? value ?? 0;
+  const tokenCount = isTotal ? totalTokens : value ?? data?.[colId] ?? 0;
 
-  if (!totalTokens && !promptTokens && !completionTokens) {
+  if (data?._captureCoverage?.coverage_unknown) {
+    return (
+      <ObservedUsageValue
+        coverage={data._captureCoverage}
+        value={`${tokenCount.toLocaleString()} tokens`}
+      />
+    );
+  }
+
+  if (isTotal && !totalTokens && !promptTokens && !completionTokens) {
     return (
       <Typography
         variant="body2"
@@ -93,7 +110,7 @@ const TokenCell = ({ value, data }) => {
     );
   }
 
-  const hasBreakdown = promptTokens > 0 || completionTokens > 0;
+  const hasBreakdown = isTotal && (promptTokens > 0 || completionTokens > 0);
 
   return (
     <Box
@@ -122,7 +139,7 @@ const TokenCell = ({ value, data }) => {
             {fShortenNumber(promptTokens)}
           </Typography>
           <Iconify
-            icon="mdi:arrow-down"
+            icon="solar:arrow-down-linear"
             width={12}
             sx={{ color: "text.secondary" }}
           />
@@ -133,7 +150,7 @@ const TokenCell = ({ value, data }) => {
             {fShortenNumber(completionTokens)}
           </Typography>
           <Iconify
-            icon="mdi:arrow-up"
+            icon="solar:arrow-up-linear"
             width={12}
             sx={{ color: "text.secondary" }}
           />
@@ -153,11 +170,12 @@ const TokenCell = ({ value, data }) => {
             whiteSpace: "nowrap",
           }}
         >
-          {totalTokens.toLocaleString()}
+          {tokenCount.toLocaleString()}
         </Typography>
       )}
       {hasBreakdown && (
         <Tooltip
+          classes={{ tooltip: "ds-hovercard" }}
           title={
             <BreakdownTooltip
               promptTokens={promptTokens}
@@ -168,7 +186,7 @@ const TokenCell = ({ value, data }) => {
           arrow
           placement="bottom"
           slotProps={{
-            tooltip: { sx: { maxWidth: 280, bgcolor: "grey.900", p: 1 } },
+            tooltip: { sx: { maxWidth: 280 } },
           }}
         >
           <Box
@@ -182,7 +200,7 @@ const TokenCell = ({ value, data }) => {
             }}
           >
             <Iconify
-              icon="mdi:information-outline"
+              icon="solar:info-circle-linear"
               width={14}
               color="text.secondary"
             />
@@ -194,6 +212,11 @@ const TokenCell = ({ value, data }) => {
 };
 
 TokenCell.propTypes = {
+  colId: PropTypes.oneOf([
+    "total_tokens",
+    "prompt_tokens",
+    "completion_tokens",
+  ]),
   value: PropTypes.any,
   data: PropTypes.object,
 };

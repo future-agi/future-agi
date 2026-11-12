@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import {
   Box,
   Dialog,
@@ -8,12 +9,17 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Iconify from "src/components/iconify";
 
 const AgentVideoPlayerModal = ({ open, onClose, content }) => {
   const { title, subtitle, url } = content || {};
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+  useEffect(() => {
+    // A closed or changed video must not leave its old loading overlay over
+    // the next consent facade, especially when the earlier load was blocked.
+    setIsLoading(false);
+  }, [open, url]);
   return (
     <Dialog
       open={open}
@@ -67,10 +73,9 @@ const AgentVideoPlayerModal = ({ open, onClose, content }) => {
             top: 8,
             right: 8,
             color: "text.primary",
-            p: 1,
           }}
         >
-          <Iconify icon="mdi:close" height={24} width={24} />
+          <Iconify icon="solar:close-linear" height={24} width={24} />
         </IconButton>
       </DialogTitle>
 
@@ -91,6 +96,7 @@ const AgentVideoPlayerModal = ({ open, onClose, content }) => {
             height: "100%",
             borderRadius: "0 0 12px 12px",
             overflow: "hidden",
+            position: "relative",
           }}
         >
           {isLoading && (
@@ -98,14 +104,16 @@ const AgentVideoPlayerModal = ({ open, onClose, content }) => {
               variant="rectangular"
               sx={{
                 width: "100%",
-                height: "93%",
+                height: "100%",
+                position: "absolute",
+                inset: 0,
                 borderRadius: "8px",
-                mt: 2,
               }}
             />
           )}
           {url ? (
-            <iframe
+            <ExternalContentFrame
+              onRequestLoad={() => setIsLoading(true)}
               src={url}
               title={title || "Video Player"}
               frameBorder="0"

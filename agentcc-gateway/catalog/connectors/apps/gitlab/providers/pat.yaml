@@ -1,0 +1,53 @@
+# GitLab's built-in MCP server on GitLab.com with a fine-grained personal
+# access token that has the MCP tool resource's Execute permission. GitLab's
+# MCP server refuses legacy personal, project and group access tokens. The
+# token goes in PRIVATE-TOKEN, the header GitLab's REST API recommends.
+# GitLab Self-Managed and Dedicated serve the same server on each instance's
+# own host; this provider is GitLab.com only, so a token never goes to a
+# host an org typed in (connect a self-managed instance as a Custom MCP).
+schema: "connector-manifest/v1#provider"
+app: gitlab
+id: pat
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: ga
+  source: https://docs.gitlab.com/user/model_context_protocol/mcp_server/
+transport:
+  kind: http
+  url: https://gitlab.com/api/v4/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: PRIVATE-TOKEN
+      secret: true
+      label: Fine-grained personal access token
+      help: "A GitLab fine-grained personal access token with the MCP tool resource and the Execute permission. A top-level group Owner must allow MCP server access. Calls act as the token's owner."
+      helpUrl: https://docs.gitlab.com/user/model_context_protocol/mcp_server/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.gitlab.com/user/model_context_protocol/mcp_server/
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.gitlab.com/user/model_context_protocol/mcp_server/
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://docs.gitlab.com/user/model_context_protocol/mcp_server/
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://docs.gitlab.com/api/rest/authentication/
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://docs.gitlab.com/auth/tokens/fine_grained_access_tokens_rest/
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

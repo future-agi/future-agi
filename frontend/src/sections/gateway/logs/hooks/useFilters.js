@@ -1,5 +1,6 @@
 import { useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
+import { AGENT_BILLING_FILTER_PARAMS } from "../explorerFilters";
 
 // ---------------------------------------------------------------------------
 // Bidirectional mapping: camelCase <-> snake_case URL param names.
@@ -23,10 +24,17 @@ const CAMEL_TO_SNAKE = {
   userId: "user_id",
   sessionId: "session_id",
   apiKeyId: "api_key_id",
+  fallbackUsed: "fallback_used",
+  isStream: "is_stream",
+  requestId: "request_id",
+  minTokens: "min_tokens",
+  maxTokens: "max_tokens",
+  ...AGENT_BILLING_FILTER_PARAMS,
 };
 
 // Keys that are NOT content filters (excluded from active filter count).
 const NON_CONTENT_KEYS = new Set([
+  "log",
   "view",
   "page",
   "pageSize",

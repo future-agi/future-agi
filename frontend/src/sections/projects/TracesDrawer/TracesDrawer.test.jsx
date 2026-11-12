@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   scroll: null,
   fetchNext: vi.fn(),
   totalCost: undefined,
+  captureCoverage: undefined,
 }));
 vi.mock("@tanstack/react-query", async (importOriginal) => {
   const actual = await importOriginal();
@@ -29,6 +30,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
               data: {
                 result: {
                   response: [{ id: "cached-row" }],
+                  capture_coverage: state.captureCoverage,
                   session_metadata: {
                     next_session_id: "session-2",
                     previous_session_id: "session-0",
@@ -47,7 +49,9 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
 vi.mock("src/utils/axios", () => ({
   readQuery: (...args) => state.get(...args),
   default: { get: (...args) => state.get(...args) },
-  endpoints: { project: { traceSessionQuery: (id) => `/sessions/${id}/query/` } },
+  endpoints: {
+    project: { traceSessionQuery: (id) => `/sessions/${id}/query/` },
+  },
 }));
 vi.mock("src/contexts/WorkspaceContext", () => ({
   useWorkspace: () => ({ currentWorkspaceId: state.workspace }),
@@ -122,16 +126,74 @@ describe("Session drawer navigation request", () => {
     state.history = null;
     state.fetchNext.mockReset();
     state.totalCost = undefined;
+    state.captureCoverage = undefined;
   });
   it.each([
+    // OBS-SW-127: a summed float cost prints as money, not binary noise.
     [0.000029999999999999997, "$0.00003"],
-    [3e-8, "< $0.0000001"],
+    [3e-8, "$0.00000003"],
     [2.37e-5, "$0.0000237"],
     [0, "$0.00"],
     [null, "N/A"],
     [undefined, "N/A"],
-  ])("formats session cost %s without float noise or false missing values", (cost, display) => {
-    state.totalCost = cost;
+  ])(
+    "formats session cost %s without float noise or false missing values",
+    (cost, display) => {
+      state.totalCost = cost;
+      render(
+        <TracesDrawer
+          open
+          onClose={vi.fn()}
+          rowData={{ session_id: "session-1" }}
+        />,
+      );
+      expect(
+        screen.getByText(`Total Cost: ${display}`, { exact: true }),
+      ).toBeVisible();
+    },
+  );
+  it("keeps a parent-only session zero scoped to observed requests as children arrive", () => {
+    state.totalCost = 0;
+    state.captureCoverage = {
+      scope: "observed_requests",
+      source_summary_present: true,
+      request_count: 0,
+      coverage_unknown: true,
+    };
+    const props = {
+      open: true,
+      onClose: vi.fn(),
+      rowData: { session_id: "session-1" },
+    };
+    const view = render(<TracesDrawer {...props} />);
+    expect(
+      screen.getByText("Total Cost: $0.00*", { exact: true }),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("Total Cost: $0.00", { exact: true }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("note", { name: "Capture coverage" }),
+    ).toHaveTextContent("We haven't received any model calls");
+    state.captureCoverage = { ...state.captureCoverage, request_count: 3 };
+    state.totalCost = null;
+    view.rerender(<TracesDrawer {...props} />);
+    expect(screen.getByText("Total Cost: N/A*", { exact: true })).toBeVisible();
+    const note = screen.getByRole("note", { name: "Capture coverage" });
+    expect(note).toHaveTextContent(
+      "Usage counts only the 3 model calls we received",
+    );
+    expect(note).toHaveTextContent("so the real total may be higher");
+    expect(note).toHaveTextContent("the agent's own run summary isn't added");
+  });
+  it("keeps the Total Cost label and explains received-calls usage in plain words (W10-TRACING-OTHER-U01)", () => {
+    state.totalCost = 1.2;
+    state.captureCoverage = {
+      scope: "observed_requests",
+      source_summary_present: true,
+      request_count: 3,
+      coverage_unknown: true,
+    };
     render(
       <TracesDrawer
         open
@@ -139,7 +201,20 @@ describe("Session drawer navigation request", () => {
         rowData={{ session_id: "session-1" }}
       />,
     );
-    expect(screen.getByText(`Total Cost: ${display}`, { exact: true })).toBeVisible();
+    expect(
+      screen.getByText("Total Cost: $1.20*", { exact: true }),
+    ).toBeVisible();
+    expect(screen.queryByText(/Observed Cost/)).not.toBeInTheDocument();
+    const note = screen.getByRole("note", { name: "Capture coverage" });
+    expect(note).toHaveTextContent(
+      "Usage counts only the 3 model calls we received",
+    );
+    expect(note).toHaveTextContent(
+      "Some calls may not have been sent, and the agent's own run summary isn't added, so the real total may be higher.",
+    );
+    expect(note).not.toHaveTextContent(
+      /Observed|nonadditive|Capture coverage|Source summar/,
+    );
   });
   it.each(["project-1", null])(
     "loads the same-workspace %s session using the provider contract",

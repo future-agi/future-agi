@@ -137,7 +137,9 @@ describe("list total metadata", () => {
     ).toEqual({ count: 2, isLowerBound: false });
   });
 
-  it("preserves the existing minimum count for exact select-all state", () => {
+  // OBS-SW-116: an exact total with every row excluded selects nothing; the
+  // old one-row floor made the toolbar say "1 selected" here.
+  it("counts zero when every row of an exact select-all is excluded", () => {
     expect(
       getSelectionCountState({
         selectAll: true,
@@ -146,6 +148,6 @@ describe("list total metadata", () => {
         totalRowCountLowerBound: null,
         totalRowCountIsLowerBound: false,
       }),
-    ).toEqual({ count: 1, isLowerBound: false });
+    ).toEqual({ count: 0, isLowerBound: false });
   });
 });

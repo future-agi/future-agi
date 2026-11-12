@@ -5,9 +5,19 @@
 # Sourced, with the repository root as the working directory; needs say, ok,
 # die and log_only, and DIM and RESET set.
 
+# FUTURE_AGI_REVISION overrides the checkout revision; use a full lowercase
+# commit SHA. Archives without either keep the Dockerfile's default.
 build_local_image() { # tag, then `docker build` arguments
-  local tag="$1"
+  local tag="$1" rev="${FUTURE_AGI_REVISION:-}"
   shift
+  if [[ -n "$rev" ]]; then
+    [[ "$rev" =~ ^[0-9a-f]{40}$ ]] || die "FUTURE_AGI_REVISION must be a full 40-character lowercase hexadecimal commit SHA."
+  elif ! rev="$(git rev-parse --verify -q HEAD 2>/dev/null)"; then
+    rev=
+  fi
+  if [[ -n "$rev" ]]; then
+    set -- --build-arg "REVISION=$rev" --label "org.opencontainers.image.revision=$rev" "$@"
+  fi
   say "  ${DIM}building ${tag}${RESET}"
   log_only "running: docker build -t $tag $*"
   docker build -t "$tag" "$@" || die "Building $tag failed; the build output above has the reason."
@@ -44,6 +54,23 @@ build_local_images() { # standalone|distributed, [what], [tag]
   if [[ "$setup" == standalone ]]; then
     build_local_standalone_app "$tag"
   fi
+}
+
+# The code-evaluation sandbox, tagged TAG (default `local`). The stack runs it
+# as a non-root user on a read-only root filesystem, settings a published
+# executor of another release may not support. Its Dockerfile builds FROM the
+# base image it pins (ARG CODE_EXECUTOR_BASE); a pin that is neither on this
+# host nor published yet is built first, under that tag, from Dockerfile.base.
+build_local_code_executor() { # [tag]
+  local base
+  [[ -f futureagi/code-executor/Dockerfile ]] ||
+    die "futureagi/code-executor/Dockerfile is missing, so the code executor cannot be built from this checkout."
+  base="$(sed -n 's/^ARG CODE_EXECUTOR_BASE=//p' futureagi/code-executor/Dockerfile | head -n 1)"
+  [[ -n "$base" ]] || die "futureagi/code-executor/Dockerfile pins no CODE_EXECUTOR_BASE, so the code executor cannot be built from this checkout."
+  if ! docker image inspect "$base" >/dev/null 2>&1 && ! docker manifest inspect "$base" >/dev/null 2>&1; then
+    build_local_image "$base" -f futureagi/code-executor/Dockerfile.base futureagi/code-executor
+  fi
+  build_local_image "futureagi/code-executor:${1:-local}" futureagi/code-executor
 }
 
 # Standalone's app image alone, over the four component images already built

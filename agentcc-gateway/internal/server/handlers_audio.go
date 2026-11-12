@@ -12,8 +12,10 @@ import (
 	"strconv"
 	"unicode/utf8"
 
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/requestview"
 	"github.com/futureagi/agentcc-gateway/internal/streaming"
 )
 
@@ -25,6 +27,7 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 	rc.RequestID = models.GetRequestID(r.Context())
 	rc.TraceID = w.Header().Get("x-agentcc-trace-id")
 	rc.EndpointType = "speech"
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 	rc.RequestHeaders = cloneRequestHeaders(r)
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.maxBodySize+1))
 	if err != nil {
@@ -43,7 +46,7 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 
 	var req models.SpeechRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON in request body: "+err.Error()))
+		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON in request body: "+models.DescribeJSONError(err)))
 		return
 	}
 	if req.Model == "" {
@@ -61,9 +64,14 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 
 	rc.Model = req.Model
 	rc.SpeechRequest = &req
+	// The checks on the request read its text (rc.PassThrough, in the chat
+	// shape), and a check's rewrite of it goes into the input, which the provider
+	// gets; X-Guardrail-Policy applies here as on chat.
+	rc.PassThrough = requestview.Speech(&req)
 
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
+	readGuardrailPolicyHeader(rc, r)
 
 	// Resolve timeout and apply.
 	timeout := h.resolveTimeout(rc, r)
@@ -83,10 +91,11 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 	provider, upstreamModel, err := h.resolveProvider(ctx, rc, req.Model)
 	if err != nil {
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
+			if orgP, providerID, upstream := h.resolveOrgProvider(rc, orgID, orgCfg, req.Model); orgP != nil {
 				provider = orgP
 				rc.Provider = providerID
 				rc.Metadata["org_provider"] = "true"
+				req.Model = upstream
 				err = nil
 			}
 		}
@@ -100,6 +109,10 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 			provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
 		}
 	}
+	if apiErr := h.keyProviderACL(rc); apiErr != nil {
+		models.WriteError(w, apiErr)
+		return
+	}
 
 	// Type-assert to SpeechProvider.
 	sp, ok := provider.(providers.SpeechProvider)
@@ -110,6 +123,10 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 			Code:    "not_supported",
 			Message: fmt.Sprintf("Provider %q does not support text-to-speech", rc.Provider),
 		})
+		return
+	}
+	if refusal := h.callCapGate(ctx, r, rc, body, orgCfg); refusal != nil {
+		models.WriteError(w, refusal)
 		return
 	}
 
@@ -129,7 +146,10 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 
 		audioData = data
 		contentType = ct
-		rc.ResolvedModel = rc.Model
+		// The model sent, not rc.Model: a route may have replaced the
+		// requested one, and this is the model the request is reported,
+		// logged and priced (implicitAttempt) on.
+		rc.ResolvedModel = rc.SpeechRequest.Model
 		rc.SetMetadata("input_characters", strconv.Itoa(utf8.RuneCountInString(rc.SpeechRequest.Input)))
 		rc.SetMetadata("response_content_type", ct)
 		rc.SetMetadata("response_size_bytes", strconv.Itoa(len(data)))
@@ -137,7 +157,7 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
-		models.WriteErrorFromError(w, err)
+		models.WriteErrorFromError(w, providerFailure(rc, err))
 		return
 	}
 
@@ -156,6 +176,7 @@ func (h *Handlers) CreateTranslation(w http.ResponseWriter, r *http.Request) {
 	rc.RequestID = models.GetRequestID(r.Context())
 	rc.TraceID = w.Header().Get("x-agentcc-trace-id")
 	rc.EndpointType = "translation"
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 	rc.RequestHeaders = cloneRequestHeaders(r)
 	const maxAudioSize = 25 << 20
 	if err := r.ParseMultipartForm(maxAudioSize); err != nil {
@@ -208,9 +229,15 @@ func (h *Handlers) CreateTranslation(w http.ResponseWriter, r *http.Request) {
 
 	rc.Model = req.Model
 	rc.TranslationReq = &req
+	// The checks on the request read the prompt (rc.PassThrough); the audio
+	// file is not text they can read, so a check that would block or
+	// rewrite the request refuses it before the provider (request_unavailable).
+	// X-Guardrail-Policy applies here as on chat.
+	rc.PassThrough = requestview.Translation(&req)
 
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
+	readGuardrailPolicyHeader(rc, r)
 
 	// Resolve timeout and apply.
 	timeout := h.resolveTimeout(rc, r)
@@ -230,10 +257,11 @@ func (h *Handlers) CreateTranslation(w http.ResponseWriter, r *http.Request) {
 	provider, upstreamModel, err := h.resolveProvider(ctx, rc, req.Model)
 	if err != nil {
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
+			if orgP, providerID, upstream := h.resolveOrgProvider(rc, orgID, orgCfg, req.Model); orgP != nil {
 				provider = orgP
 				rc.Provider = providerID
 				rc.Metadata["org_provider"] = "true"
+				req.Model = upstream
 				err = nil
 			}
 		}
@@ -247,6 +275,10 @@ func (h *Handlers) CreateTranslation(w http.ResponseWriter, r *http.Request) {
 			provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
 		}
 	}
+	if apiErr := h.keyProviderACL(rc); apiErr != nil {
+		models.WriteError(w, apiErr)
+		return
+	}
 
 	// Type-assert to TranslationProvider.
 	tp, ok := provider.(providers.TranslationProvider)
@@ -259,6 +291,10 @@ func (h *Handlers) CreateTranslation(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if refusal := h.callCapGate(ctx, r, rc, nil, orgCfg); refusal != nil {
+		models.WriteError(w, refusal)
+		return
+	}
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		resp, err := tp.CreateTranslation(ctx, rc.TranslationReq)
@@ -266,15 +302,13 @@ func (h *Handlers) CreateTranslation(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		rc.TranslationResp = resp
-		rc.ResolvedModel = rc.Model
-		if secs, ok := wavDurationSeconds(rc.TranslationReq.FileData); ok {
-			rc.SetMetadata("audio_seconds", formatAudioSeconds(secs))
-		}
+		rc.ResolvedModel = rc.TranslationReq.Model // the model sent (see CreateSpeech)
+		recordAudioSeconds(rc, rc.TranslationReq.FileData)
 		return nil
 	}
 
 	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
-		models.WriteErrorFromError(w, err)
+		models.WriteErrorFromError(w, providerFailure(rc, err))
 		return
 	}
 
@@ -294,6 +328,7 @@ func (h *Handlers) CreateTranscription(w http.ResponseWriter, r *http.Request) {
 	rc.RequestID = models.GetRequestID(r.Context())
 	rc.TraceID = w.Header().Get("x-agentcc-trace-id")
 	rc.EndpointType = "transcription"
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 	rc.RequestHeaders = cloneRequestHeaders(r)
 	const maxAudioSize = 25 << 20
 	if err := r.ParseMultipartForm(maxAudioSize); err != nil {
@@ -348,9 +383,15 @@ func (h *Handlers) CreateTranscription(w http.ResponseWriter, r *http.Request) {
 
 	rc.Model = req.Model
 	rc.TranscriptionReq = &req
+	// The checks on the request read the prompt (rc.PassThrough); the audio
+	// file is not text they can read, so a check that would block or
+	// rewrite the request refuses it before the provider (request_unavailable).
+	// X-Guardrail-Policy applies here as on chat.
+	rc.PassThrough = requestview.Transcription(&req)
 
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
+	readGuardrailPolicyHeader(rc, r)
 
 	// Resolve timeout and apply.
 	timeout := h.resolveTimeout(rc, r)
@@ -370,10 +411,11 @@ func (h *Handlers) CreateTranscription(w http.ResponseWriter, r *http.Request) {
 	provider, upstreamModel, err := h.resolveProvider(ctx, rc, req.Model)
 	if err != nil {
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
+			if orgP, providerID, upstream := h.resolveOrgProvider(rc, orgID, orgCfg, req.Model); orgP != nil {
 				provider = orgP
 				rc.Provider = providerID
 				rc.Metadata["org_provider"] = "true"
+				req.Model = upstream
 				err = nil
 			}
 		}
@@ -387,6 +429,10 @@ func (h *Handlers) CreateTranscription(w http.ResponseWriter, r *http.Request) {
 			provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
 		}
 	}
+	if apiErr := h.keyProviderACL(rc); apiErr != nil {
+		models.WriteError(w, apiErr)
+		return
+	}
 
 	// Type-assert to TranscriptionProvider.
 	tp, ok := provider.(providers.TranscriptionProvider)
@@ -399,6 +445,10 @@ func (h *Handlers) CreateTranscription(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if refusal := h.callCapGate(ctx, r, rc, nil, orgCfg); refusal != nil {
+		models.WriteError(w, refusal)
+		return
+	}
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		resp, err := tp.CreateTranscription(ctx, rc.TranscriptionReq)
@@ -406,15 +456,13 @@ func (h *Handlers) CreateTranscription(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		rc.TranscriptionResp = resp
-		rc.ResolvedModel = rc.Model
-		if secs, ok := wavDurationSeconds(rc.TranscriptionReq.FileData); ok {
-			rc.SetMetadata("audio_seconds", formatAudioSeconds(secs))
-		}
+		rc.ResolvedModel = rc.TranscriptionReq.Model // the model sent (see CreateSpeech)
+		recordAudioSeconds(rc, rc.TranscriptionReq.FileData)
 		return nil
 	}
 
 	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
-		models.WriteErrorFromError(w, err)
+		models.WriteErrorFromError(w, providerFailure(rc, err))
 		return
 	}
 
@@ -424,6 +472,20 @@ func (h *Handlers) CreateTranscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeTranscript(w, rc, rc.TranscriptionResp)
+}
+
+// recordAudioSeconds records the upload's length, which the cost plugin
+// prices a transcription or translation on, when the gateway can read it (a
+// WAV), and otherwise clears audio_seconds, so an upload the gateway did not
+// measure is never priced on a number someone else put there; it stays
+// unpriced, as any unmeasurable upload is. A caller cannot set the key
+// (isBlockedMetadataKey); this holds even if a value got there another way.
+func recordAudioSeconds(rc *models.RequestContext, upload []byte) {
+	if secs, ok := wavDurationSeconds(upload); ok {
+		rc.SetMetadata("audio_seconds", formatAudioSeconds(secs))
+		return
+	}
+	rc.DeleteMetadata("audio_seconds")
 }
 
 // formTemperature reads the optional multipart temperature field.
@@ -515,6 +577,7 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 	rc.RequestID = models.GetRequestID(r.Context())
 	rc.TraceID = w.Header().Get("x-agentcc-trace-id")
 	rc.EndpointType = "speech_stream"
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 	rc.RequestHeaders = cloneRequestHeaders(r)
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.maxBodySize+1))
 	if err != nil {
@@ -533,7 +596,7 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 
 	var req models.SpeechRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON in request body: "+err.Error()))
+		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON in request body: "+models.DescribeJSONError(err)))
 		return
 	}
 	if req.Model == "" {
@@ -551,9 +614,14 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 
 	rc.Model = req.Model
 	rc.SpeechRequest = &req
+	// The checks on the request read its text (rc.PassThrough, in the chat
+	// shape), and a check's rewrite of it goes into the input, which the provider
+	// gets; X-Guardrail-Policy applies here as on chat.
+	rc.PassThrough = requestview.Speech(&req)
 
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
+	readGuardrailPolicyHeader(rc, r)
 
 	// Resolve timeout and apply.
 	timeout := h.resolveTimeout(rc, r)
@@ -573,10 +641,11 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 	provider, upstreamModel, err := h.resolveProvider(ctx, rc, req.Model)
 	if err != nil {
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
+			if orgP, providerID, upstream := h.resolveOrgProvider(rc, orgID, orgCfg, req.Model); orgP != nil {
 				provider = orgP
 				rc.Provider = providerID
 				rc.Metadata["org_provider"] = "true"
+				req.Model = upstream
 				err = nil
 			}
 		}
@@ -590,6 +659,10 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 			provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
 		}
 	}
+	if apiErr := h.keyProviderACL(rc); apiErr != nil {
+		models.WriteError(w, apiErr)
+		return
+	}
 
 	// Type-assert to SpeechProvider.
 	sp, ok := provider.(providers.SpeechProvider)
@@ -600,6 +673,10 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 			Code:    "not_supported",
 			Message: fmt.Sprintf("Provider %q does not support text-to-speech", rc.Provider),
 		})
+		return
+	}
+	if refusal := h.callCapGate(ctx, r, rc, body, orgCfg); refusal != nil {
+		models.WriteError(w, refusal)
 		return
 	}
 
@@ -667,36 +744,21 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 		}
 		if readErr != nil {
 			if ctx.Err() != nil {
-				// The client left, or the request reached its deadline; only
-				// the second has anyone to tell.
-				if apiErr := streamEndError(ctx, readErr); apiErr != nil {
-					rc.AddError(apiErr)
-					sse.WriteError(apiErr)
-				}
 				finalize(true)
 				return
 			}
 			// Headers are already sent, so a cut-off clip is reported in-band
 			// instead of being closed out as complete.
 			slog.Warn("error reading audio stream", "request_id", rc.RequestID, "error", readErr)
-			apiErr := models.ErrUpstreamProvider(0, "reading speech stream: "+readErr.Error())
-			rc.AddError(apiErr)
-			sse.WriteError(apiErr)
+			rc.AddError(readErr)
+			sse.WriteError(models.ErrUpstreamProvider(0, "reading speech stream: "+readErr.Error()))
 			finalize(false)
 			return
 		}
 	}
 
-	doneChunk := models.AudioStreamChunk{Index: index, Done: true}
-	if wantsStreamMetadata(rc) {
-		// Finalise first: the done chunk carries the cost.
-		finalize(false)
-		doneChunk.AgentccMetadata = streamMetadata(rc)
-	}
-	done, _ := json.Marshal(doneChunk)
+	done, _ := json.Marshal(models.AudioStreamChunk{Index: index, Done: true})
 	sse.WriteRaw(done)
 	sse.WriteDone()
-	if doneChunk.AgentccMetadata == nil {
-		finalize(false)
-	}
+	finalize(false)
 }

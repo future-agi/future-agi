@@ -1,82 +1,89 @@
 package futureagi
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/evaltarget"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
 )
 
+// defaultBaseURL is the evaluation API a rule that names no base_url calls,
+// unless the operator set FI_BASE_URL.
+const defaultBaseURL = "https://api.futureagi.com"
+
+// defaultTimeout bounds one evaluation call when the rule sets none.
+const defaultTimeout = 15 * time.Second
+
 // FutureAGIGuardrail calls Future AGI's evaluation API for ML-based guardrail checks.
 type FutureAGIGuardrail struct {
-	name      string
-	evalIDs   []string
-	apiKey    string
-	secretKey string
-	baseURL   string
-	callType  string
-	maxTokens int
-	retry     int
-	client    *http.Client
+	name            string
+	evalIDs         []string
+	apiKey          string
+	secretKey       string
+	baseURL         string
+	callType        string
+	maxTokens       int
+	retry           int
+	client          *http.Client
+	authMode        string
+	serviceSecret   string
+	operatorBackend bool
+	// configErr is why the rule cannot call the evaluation API (a missing
+	// key or eval id, an invalid "judges"), or nil. Check refuses every
+	// request while it is set.
+	configErr error
+	// judges is the check's kind on the answer (guardrails.JudgesSays or
+	// JudgesShape), "" when unknown; judgesSource is how it was decided
+	// (guardrails.KindSet, KindDerived, KindNone or KindInvalid).
+	judges, judgesSource string
 }
 
-// evalRequest is the payload sent to the evaluation API.
-type evalRequest struct {
-	Inputs []evalInput           `json:"inputs"`
-	Config map[string]evalConfig `json:"config"`
+// NewConfigFileRule creates a FutureAGIGuardrail from a rule in the gateway's
+// own config file, the one constructor that reads the environment. A
+// config-file rule is operator-trusted, so a ${VAR} api_key, secret_key or
+// base_url is expanded from the gateway's environment, the convenience
+// config.yaml rules have always had, and it keeps a plain client (a
+// config.yaml rule may name the operator's own evaluation API on a private or
+// loopback address without listing it), as it always has. A rule that lacks a
+// key or an eval id is still built, so the registry can hold it, but its Check
+// refuses every request; ValidateConfig reports the same fault up front. Only
+// the config.yaml registry loop and ValidateConfig call it: anything an
+// organization configures is built with New (orgconfig.go), which reads no
+// environment and dials through the guarded egress dialer.
+func NewConfigFileRule(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
+	return build(name, cfg, expandEnv, plainClient)
 }
 
-type evalInput struct {
-	Input     string `json:"input"`
-	CallType  string `json:"call_type,omitempty"`
-	MaxTokens int    `json:"max_tokens,omitempty"`
+// plainClient is NewConfigFileRule's client, and New's for the operator's own
+// backend (FI_BASE_URL): no egress guard.
+func plainClient(timeout time.Duration, _ bool) *http.Client {
+	return &http.Client{Timeout: timeout}
 }
 
-type evalConfig struct {
-	CallType  string `json:"call_type,omitempty"`
-	MaxTokens int    `json:"max_tokens,omitempty"`
-}
-
-// evalResponse is the top-level API response.
-type evalResponse struct {
-	Result []evalResultGroup `json:"result"`
-}
-
-type evalResultGroup struct {
-	Evaluations []evaluation `json:"evaluations"`
-}
-
-type evaluation struct {
-	Name       string      `json:"name"`
-	Output     interface{} `json:"output"`
-	Reason     string      `json:"reason"`
-	Runtime    float64     `json:"runtime"`
-	OutputType string      `json:"outputType"`
-	EvalID     string      `json:"evalId"`
-}
-
-// New creates a FutureAGIGuardrail from rule config.
-func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
+// build parses a rule into a guardrail. expand resolves each credential and
+// base_url string: NewConfigFileRule expands ${VAR} from the environment; New
+// keeps the value literal. The FI_BASE_URL fallback for an unset base_url is
+// operator configuration (it is never org-controllable and carries no org
+// secret), so both keep it. The client comes from mkClient once the timeout
+// and the destination are known; operatorBackend says the call goes to the
+// operator's FI_BASE_URL rather than to a base_url the rule chose.
+func build(name string, cfg map[string]interface{}, expand func(string) string, mkClient func(timeout time.Duration, operatorBackend bool) *http.Client) *FutureAGIGuardrail {
 	g := &FutureAGIGuardrail{
 		name:      name,
-		baseURL:   "https://api.futureagi.com",
+		baseURL:   defaultBaseURL,
 		callType:  "protect",
 		maxTokens: 10,
 		retry:     0,
-		client:    &http.Client{Timeout: 15 * time.Second},
 	}
+	timeout := defaultTimeout
 
-	if cfg == nil {
-		return g
-	}
-
+	// A nil cfg reads as empty: the rule is built with configErr set.
 	if v, ok := cfg["eval_ids"]; ok {
 		switch arr := v.(type) {
 		case []interface{}:
@@ -98,14 +105,23 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 			g.evalIDs = []string{v}
 		}
 	}
-	if v, ok := cfg["api_key"].(string); ok {
-		g.apiKey = expandEnv(v)
+	if v, present := cfg["auth"]; present {
+		var ok bool
+		g.authMode, ok = v.(string)
+		if !ok {
+			g.authMode = "invalid"
+		}
 	}
-	if v, ok := cfg["secret_key"].(string); ok {
-		g.secretKey = expandEnv(v)
+	if g.authMode != "gateway_service" {
+		if v, ok := cfg["api_key"].(string); ok {
+			g.apiKey = expand(v)
+		}
+		if v, ok := cfg["secret_key"].(string); ok {
+			g.secretKey = expand(v)
+		}
 	}
 	if v, ok := cfg["base_url"].(string); ok && v != "" {
-		g.baseURL = expandEnv(v)
+		g.baseURL = expand(v)
 	}
 	if v, ok := cfg["call_type"].(string); ok && v != "" {
 		g.callType = v
@@ -128,45 +144,137 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 	}
 	if v, ok := cfg["timeout"].(string); ok {
 		if d, err := time.ParseDuration(v); err == nil {
-			g.client.Timeout = d
+			timeout = d
 		}
 	}
 
-	// Fallback to env vars for keys.
-	if g.apiKey == "" {
-		g.apiKey = os.Getenv("FI_API_KEY")
-	}
-	if g.secretKey == "" {
-		g.secretKey = os.Getenv("FI_SECRET_KEY")
-	}
-	if g.baseURL == "https://api.futureagi.com" {
-		if envURL := os.Getenv("FI_BASE_URL"); envURL != "" {
+	// A rule names its own credentials: a process-wide FI_API_KEY or
+	// FI_SECRET_KEY would evaluate every org's traffic under one account.
+	// The evaluation API's address is the operator's to set: FI_BASE_URL
+	// stands in for the built-in default.
+	if g.authMode == "gateway_service" {
+		base, ok := cfg["base_url"].(string)
+		g.baseURL, g.configErr = evaltarget.ServiceBase(expand(base), os.Getenv("FI_BASE_URL"))
+		if _, present := cfg["base_url"]; present && !ok {
+			g.configErr = fmt.Errorf("gateway_service base_url must be a string matching FI_BASE_URL")
+		}
+		g.operatorBackend = g.configErr == nil
+		// Never resolve a rule-controlled secret or use a process-wide FI pair.
+		g.serviceSecret = os.Getenv("AGENTCC_ADMIN_TOKEN")
+	} else if envURL := os.Getenv("FI_BASE_URL"); envURL != "" {
+		// Preserve the legacy pair mode's fallback and exact-match behavior.
+		if g.baseURL == defaultBaseURL {
 			g.baseURL = envURL
+			g.operatorBackend = true
+		} else if strings.TrimRight(g.baseURL, "/") == strings.TrimRight(envURL, "/") {
+			g.operatorBackend = true
+		}
+	}
+	g.client = mkClient(timeout, g.operatorBackend)
+	if g.authMode == "gateway_service" {
+		// net/http otherwise forwards custom auth headers on redirects, even
+		// to a different origin. No redirect is part of the signed eval route.
+		g.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
+
+	// The kind: the config's "judges", else derived from the rule's system
+	// eval ids (systemEvalKind); an invalid "judges" fails the rule closed.
+	judges, err := guardrails.ParseJudges(cfg)
+	switch {
+	case err != nil:
+		g.judgesSource = guardrails.KindInvalid
+		if g.configErr == nil {
+			g.configErr = fmt.Errorf("futureagi guardrail %q: %w", name, err)
+		}
+	case judges != "":
+		g.judges, g.judgesSource = judges, guardrails.KindSet
+	default:
+		g.judges = derivedJudges(g.evalIDs)
+		g.judgesSource = guardrails.KindDerived
+		if g.judges == "" {
+			g.judgesSource = guardrails.KindNone
 		}
 	}
 
+	if g.configErr == nil {
+		g.configErr = g.validate()
+	}
 	return g
 }
 
-func (g *FutureAGIGuardrail) Name() string           { return g.name }
-func (g *FutureAGIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
+// ValidateConfig reports a missing pair in pair mode, a missing deployment
+// signer or non-operator destination in gateway_service mode, or no eval id.
+// Check refuses every request on a rule this rejects. The error names the
+// rule and configuration fields, never a credential.
+func ValidateConfig(name string, cfg map[string]any) error {
+	return NewConfigFileRule(name, cfg).configErr
+}
 
-// Check evaluates text against the Future AGI evaluation API.
-func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
-	if input == nil {
-		return &guardrails.CheckResult{Pass: true}
-	}
-	if g.apiKey == "" || g.secretKey == "" {
-		return &guardrails.CheckResult{
-			Pass:    true,
-			Message: "futureagi guardrail: missing api_key or secret_key, skipping",
+// validate is ValidateConfig over the parsed rule.
+func (g *FutureAGIGuardrail) validate() error {
+	var missing []string
+	switch g.authMode {
+	case "gateway_service":
+		if !g.operatorBackend {
+			return fmt.Errorf("futureagi guardrail %q requires the operator FI_BASE_URL for gateway_service", g.name)
 		}
+		if len(g.serviceSecret) < 32 {
+			return fmt.Errorf("futureagi guardrail %q requires AGENTCC_ADMIN_TOKEN of at least 32 characters for gateway_service", g.name)
+		}
+	case "", "pair":
+		if g.apiKey == "" {
+			missing = append(missing, "api_key")
+		}
+		if g.secretKey == "" {
+			missing = append(missing, "secret_key")
+		}
+	default:
+		return fmt.Errorf("futureagi guardrail %q has unsupported auth (use pair or gateway_service)", g.name)
 	}
 	if len(g.evalIDs) == 0 {
-		return &guardrails.CheckResult{
-			Pass:    true,
-			Message: "futureagi guardrail: missing eval_id, skipping",
+		missing = append(missing, "eval_id or eval_ids")
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("futureagi guardrail %q cannot run: missing %s (an unset ${VAR} counts as missing)",
+		g.name, strings.Join(missing, ", "))
+}
+
+func (g *FutureAGIGuardrail) Name() string            { return g.name }
+func (g *FutureAGIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
+
+// KindUnknown marks the check as one whose kind the gateway cannot tell
+// (guardrails.UnknownKindCheck): its config sets no "judges" and its eval
+// ids are not all system evals of one kind (derivedJudges). It then does
+// not read a model's refusal, as in production.
+func (g *FutureAGIGuardrail) KindUnknown() bool { return g.judges == "" }
+
+// JudgesShape marks the check as one that judges the answer's shape
+// (guardrails.ShapeCheck): "judges" is "shape", or every eval id is a
+// system eval that judges format or length.
+func (g *FutureAGIGuardrail) JudgesShape() bool { return g.judges == guardrails.JudgesShape }
+
+// KindSource says how the check's kind was decided (guardrails.KindSourcer).
+func (g *FutureAGIGuardrail) KindSource() string { return g.judgesSource }
+
+// Check evaluates text against the Future AGI evaluation API. A rule that
+// ValidateConfig rejects fails closed before anything else, with no call: a
+// failure without a score, which triggers at any threshold.
+func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
+	if g.configErr != nil {
+		return &guardrails.CheckResult{Pass: false, Message: g.configErr.Error()}
+	}
+	var principal evalPrincipal
+	if g.authMode == "gateway_service" {
+		var err error
+		principal, err = requestPrincipal(ctx, input)
+		if err != nil {
+			return &guardrails.CheckResult{Pass: false, Message: err.Error()}
 		}
+	}
+	if input == nil {
+		return &guardrails.CheckResult{Pass: true}
 	}
 
 	// Determine text to evaluate.
@@ -174,13 +282,13 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 	if input.Response != nil {
 		text = extractOutputText(input)
 	} else {
-		text = extractInputText(input)
+		text = extractInputText(ctx, input)
 	}
 	if text == "" {
 		return &guardrails.CheckResult{Pass: true}
 	}
 
-	resp, err := g.callAPI(ctx, text)
+	resp, err := g.callAPI(ctx, text, principal)
 	if err != nil {
 		return &guardrails.CheckResult{
 			Pass:    false,
@@ -192,15 +300,17 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 	return parseResult(resp)
 }
 
-// extractInputText concatenates all message contents from the request.
-func extractInputText(input *guardrails.CheckInput) string {
+// extractInputText is the text of the request's messages the service reads.
+func extractInputText(ctx context.Context, input *guardrails.CheckInput) string {
 	if input.Request == nil || len(input.Request.Messages) == 0 {
 		return ""
 	}
+	// Each message's text and its tool calls' arguments
+	// (guardrails.MessageText), so the service reads a value in a tool
+	// call's arguments as it reads one in a message.
 	var parts []string
-	for _, msg := range input.Request.Messages {
-		text := extractContentText(msg.Content)
-		if text != "" {
+	for i := range input.Request.Messages {
+		if text, ok := guardrails.MessageText(ctx, &input.Request.Messages[i]); ok && text != "" {
 			parts = append(parts, text)
 		}
 	}
@@ -248,142 +358,6 @@ func extractContentText(raw json.RawMessage) string {
 		return strings.Join(texts, " ")
 	}
 	return ""
-}
-
-// callAPI sends the evaluation request to Future AGI.
-func (g *FutureAGIGuardrail) callAPI(ctx context.Context, text string) (*evalResponse, error) {
-	configMap := make(map[string]evalConfig, len(g.evalIDs))
-	for _, id := range g.evalIDs {
-		configMap[id] = evalConfig{CallType: g.callType}
-	}
-	payload := evalRequest{
-		Inputs: []evalInput{
-			{Input: text, CallType: g.callType, MaxTokens: g.maxTokens},
-		},
-		Config: configMap,
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
-	url := strings.TrimRight(g.baseURL, "/") + "/sdk/api/v1/eval/"
-
-	var lastErr error
-	attempts := 1 + g.retry
-	for i := 0; i < attempts; i++ {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		resp, err := g.doRequest(ctx, url, body)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		return resp, nil
-	}
-
-	return nil, fmt.Errorf("failed after %d attempts: %w", attempts, lastErr)
-}
-
-func (g *FutureAGIGuardrail) doRequest(ctx context.Context, url string, body []byte) (*evalResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", g.apiKey)
-	req.Header.Set("X-Secret-Key", g.secretKey)
-
-	resp, err := g.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusForbidden {
-		return nil, fmt.Errorf("authentication failed (HTTP 403)")
-	}
-	if resp.StatusCode == http.StatusBadRequest {
-		return nil, fmt.Errorf("bad request (HTTP 400)")
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
-	}
-
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	var result evalResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("parse response: %w", err)
-	}
-
-	return &result, nil
-}
-
-// parseResult maps the evaluation API response to a CheckResult.
-// When multiple eval_ids are checked, the result fails if any single eval fails;
-// the failing eval's reason and details are surfaced.
-func parseResult(resp *evalResponse) *guardrails.CheckResult {
-	if resp == nil || len(resp.Result) == 0 {
-		return &guardrails.CheckResult{Pass: true, Message: "no evaluation results"}
-	}
-
-	var firstEval *evaluation
-	var firstFail *evaluation
-
-	for i := range resp.Result {
-		for j := range resp.Result[i].Evaluations {
-			eval := &resp.Result[i].Evaluations[j]
-			if firstEval == nil {
-				firstEval = eval
-			}
-			if isFailedOutput(eval.Output) && firstFail == nil {
-				firstFail = eval
-			}
-		}
-	}
-
-	if firstFail != nil {
-		return buildResult(firstFail, false, 1.0)
-	}
-	if firstEval != nil {
-		return buildResult(firstEval, true, 0.0)
-	}
-	return &guardrails.CheckResult{Pass: true, Message: "no evaluation results"}
-}
-
-func isFailedOutput(output interface{}) bool {
-	switch v := output.(type) {
-	case string:
-		return strings.EqualFold(v, "failed")
-	case bool:
-		return v
-	}
-	return false
-}
-
-func buildResult(eval *evaluation, pass bool, score float64) *guardrails.CheckResult {
-	return &guardrails.CheckResult{
-		Pass:    pass,
-		Score:   score,
-		Message: eval.Reason,
-		Details: map[string]interface{}{
-			"eval_id":     eval.EvalID,
-			"eval_name":   eval.Name,
-			"runtime_ms":  eval.Runtime,
-			"output_type": eval.OutputType,
-			"output":      eval.Output,
-		},
-	}
 }
 
 // IsFutureAGIConfig returns true if the config map has provider set to "futureagi".

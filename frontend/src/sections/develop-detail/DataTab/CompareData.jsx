@@ -1,4 +1,5 @@
-import { Box, Stack, Typography } from "@mui/material";
+import EmptyContent from "src/components/empty-content";
+import { Alert, Box, Button } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import React, {
   useCallback,
@@ -20,7 +21,6 @@ import { ExperimentDataDefaultColDef } from "src/sections/experiment-detail/Expe
 import CustomExperimentGroupHeader from "src/sections/experiment-detail/ExperimentData/CustomExperimentGroupHeader";
 import ExperimentStatusBar from "src/sections/experiment-detail/ExperimentData/ExperimentStatusBar";
 import { getEachCompareColumnDef } from "./compareTableConfig";
-import { typography } from "src/theme/typography";
 import CompareDatasetDetailDrawer from "./CompareDatasetDetailDrawer/CompareDatasetDetailDrawer";
 import { useDeleteCompare } from "src/api/develop/dataset-compare";
 import { useDevelopDetailContext } from "src/pages/dashboard/Develop/Context/DevelopDetailContext";
@@ -54,31 +54,11 @@ const CompareData = ({
     "showSummaryExp",
     { vals: [] },
   );
-  const [columnDefs, setColumnDefs] = useState([
-    {
-      headerName: "Column 1",
-      field: "name",
-      flex: 1,
-    },
-    {
-      headerName: "Column 2",
-      field: "numberOfDatapoints",
-      flex: 1,
-    },
-    {
-      headerName: "Column 3",
-      field: "numberOfExperiments",
-      flex: 1,
-    },
-    {
-      headerName: "Column 4",
-      field: "numberOfOptimisations",
-      flex: 1,
-    },
-  ]);
+  const [columnDefs, setColumnDefs] = useState([]);
   const [columnConfig, setColumnConfig] = useState([]);
   const [columnData, setColumnData] = useState([]);
   const [hasData, setHasData] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const isRefreshingColumns = useRef(null);
 
   preventHeaderSelection();
@@ -94,10 +74,14 @@ const CompareData = ({
   }, [diffMode, gridApiRef]);
 
   React.useEffect(() => {
-    if (gridApiRef.current?.api && !hasData) {
-      gridApiRef.current.api.showNoRowsOverlay();
+    const api = gridApiRef.current?.api;
+    if (!api) return;
+    if (!hasData && !loadError) {
+      api.showNoRowsOverlay();
+    } else {
+      api.hideOverlay();
     }
-  }, [gridApiRef, hasData]);
+  }, [gridApiRef, hasData, loadError]);
 
   React.useEffect(() => {
     setColumnDefs(filterColumnDef(columnData, selectedColumns));
@@ -139,7 +123,7 @@ const CompareData = ({
   }, [selectedDatasetsValues]);
 
   function filterColumnDef(columnDefs, selectedColumns) {
-    if (columnDefs?.length < 1) return;
+    if (!columnDefs?.length) return [];
 
     return columnDefs.map((col) => {
       if (!selectedColumns?.includes(col?.id)) {
@@ -185,7 +169,7 @@ const CompareData = ({
     const column = params.column.colDef.col;
     const extraMenuItems = [];
     if (
-      column.originType === "evaluation" &&
+      column.origin_type === "evaluation" &&
       !column.name.includes("-reason")
     ) {
       const isSummaryShown = showSummary.vals.find((v) => {
@@ -300,6 +284,7 @@ const CompareData = ({
         const pageNumber = Math.floor(request.startRow / 10);
 
         try {
+          setLoadError(false);
           const { data } = await axios.post(
             endpoints.dataset.getCompareDataset(selectedDatasetsValues[0]),
             {
@@ -311,23 +296,23 @@ const CompareData = ({
             },
           );
 
-          compareId.current = data?.result?.metadata?.compareId;
-
-          // Check if data is empty or doesn't have required structure
-          if (!data?.result?.table || data.result.table.length === 0) {
-            setHasData(false);
-            params.success({
-              rowData: [],
-              rowCount: 0,
-            });
-            return;
+          // Axios preserves the API's snake_case keys; cell values are opaque.
+          const result = data?.result;
+          if (
+            !Array.isArray(result?.table) ||
+            !Array.isArray(result?.column_config) ||
+            typeof result?.metadata?.total_rows !== "number"
+          ) {
+            throw new Error("Invalid comparison response");
           }
+          compareId.current = result.metadata.compare_id;
 
           resetDLabels();
-          setHasData(true);
-          setCommonColumn(data?.result?.metadata?.commonColumnNames);
-          setDatasetInfo(data?.result?.metadata?.datasetInfo);
-          const columns = data?.result?.columnConfig;
+          setHasData(result.table.length > 0);
+          setCommonColumn(result.metadata.common_column_names || []);
+          setDatasetInfo(result.metadata.dataset_info || {});
+          // Even an empty comparison has named columns, not placeholder headers.
+          const columns = result.column_config;
 
           setColumnConfig(columns);
 
@@ -373,7 +358,7 @@ const CompareData = ({
               for (const eachCol of value) {
                 const headerName = eachCol?.headerName || eachCol?.col?.name;
                 const isChildColumn = true;
-                if (eachCol?.col?.originType === "evaluation") {
+                if (eachCol?.col?.origin_type === "evaluation") {
                   const findInShowSummary = showSummary?.vals?.find(
                     (v) =>
                       v.group.id === eachCol?.col?.group?.id &&
@@ -445,22 +430,22 @@ const CompareData = ({
           setColumnData(columnMap);
           setColumnDefs(columnWithHeadAndIndex);
           setCompareColumnDefs(columnMap);
-          const rows = data?.result?.table;
+          const rows = result.table;
 
           params.success({
             rowData: rows,
-            rowCount: data?.result?.metadata.total_rows,
+            rowCount: result.metadata.total_rows,
           });
 
           const filteredColumns = columnMap.flatMap((col) =>
             col.children
               ? col.children.filter(
                   (child) =>
-                    child?.col?.averageScore !== null &&
-                    child?.col?.averageScore !== undefined,
+                    child?.col?.average_score !== null &&
+                    child?.col?.average_score !== undefined,
                 )
-              : col?.col?.averageScore !== null &&
-                  col?.col?.averageScore !== undefined
+              : col?.col?.average_score !== null &&
+                  col?.col?.average_score !== undefined
                 ? [col]
                 : [],
           );
@@ -468,7 +453,7 @@ const CompareData = ({
           const pinnedRow = {};
           filteredColumns.forEach((col) => {
             if (col.field) {
-              const avgValue = `${col.col.averageScore.toFixed(2)}%`;
+              const avgValue = `${col.col.average_score.toFixed(2)}%`;
               pinnedRow[col.field] = `Average: ${avgValue}`;
             }
           });
@@ -476,23 +461,19 @@ const CompareData = ({
           setPinnedBottomRowData([pinnedRow]);
 
           const averages = Object.entries(
-            data?.result?.metadata?.averageScore || {},
+            result.metadata.average_score || {},
           ).map(([id, value]) => ({
             id,
             value,
           }));
 
           setColumnAvgs(averages);
-        } catch (error) {
-          setHasData(false);
+        } catch {
+          setLoadError(true);
           isRefreshingColumns.current = null;
-          params.success({
-            rowData: [],
-            rowCount: 0,
-          });
+          params.fail();
         }
       },
-      getRowId: (data) => data.rowId,
     }),
     [
       selectedDatasetsValues,
@@ -517,54 +498,35 @@ const CompareData = ({
   };
 
   // Function to render the overlay message based on state
-  const NoRowsOverlay = () => {
-    return (
-      <Box
-        sx={{
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          alignItems: "center",
-          minHeight: "400px",
-        }}
-      >
-        <img
-          style={{
-            height: "109px",
-            width: "117px",
-          }}
-          alt="no dataset added ui"
-          src="/assets/illustrations/no-dataset-added.svg"
-        />
-        <Stack direction={"column"} rowGap={0} alignItems={"center"}>
-          <Typography
-            sx={{
-              mt: 2.5,
-              mb: 2,
-              fontFamily: typography.fontFamily,
-              color: "text.primary",
-              ...typography.subtitle2,
-            }}
-          >
-            No Common rows
-          </Typography>
-          <Typography
-            sx={{
-              fontFamily: typography.fontFamily,
-              color: "text.disabled",
-              fontWeight: typography.fontWeightRegular,
-              ...typography.s1,
-            }}
-          >
-            There are no common rows to show
-          </Typography>
-        </Stack>
-      </Box>
-    );
-  };
+  const NoRowsOverlay = () => (
+    <EmptyContent
+      title="No Common rows"
+      description="There are no common rows to show"
+      sx={{ minHeight: 400 }}
+    />
+  );
 
   return (
     <AudioPlaybackProvider>
+      {loadError && (
+        <Alert
+          severity="error"
+          sx={{ mx: 1.5, mt: 1.5 }}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() =>
+                gridApiRef.current?.api?.refreshServerSide({ purge: true })
+              }
+            >
+              Retry
+            </Button>
+          }
+        >
+          Could not load the comparison. Try again.
+        </Alert>
+      )}
       <Box
         className="ag-theme-quartz"
         sx={{
@@ -613,6 +575,7 @@ const CompareData = ({
           <CompositeEvalDialog />
           <AgGridReact
             ref={gridApiRef}
+            getRowId={({ data }) => data.row_id}
             columnDefs={columnDefs}
             noRowsOverlayComponent={NoRowsOverlay}
             onColumnHeaderClicked={(event) => {

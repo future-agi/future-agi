@@ -20,6 +20,7 @@ from integrations.models import (
     IntegrationConnection,
     IntegrationPlatform,
 )
+from integrations.permissions import CanManageIntegrations, can_manage_integrations
 from integrations.services.credentials import CredentialManager
 from integrations.services.slack_oauth import (
     consume_slack_state,
@@ -68,7 +69,7 @@ class SlackChannelsResponseSerializer(serializers.Serializer):
 
 
 class SlackInstallView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageIntegrations]
 
     @validated_request(
         SlackInstallSerializer, responses={200: SlackInstallResponseSerializer}
@@ -124,7 +125,11 @@ def slack_oauth_callback(request):
         workspace = Workspace.objects.get(
             pk=context["workspace_id"], organization=organization, is_active=True
         )
-        if not user.is_active or not user.can_write_to_workspace(workspace):
+        if (
+            not user.is_active
+            or not user.can_write_to_workspace(workspace)
+            or not can_manage_integrations(user, organization, workspace)
+        ):
             return _callback_redirect(state="error")
 
         credentials = exchange_slack_code(request.GET["code"])

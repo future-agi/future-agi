@@ -1,0 +1,41 @@
+# Fixture for the manifest validator tests, not catalog data. Facts are
+# illustrative; the catalog itself lives in agentcc-gateway/catalog/connectors.
+schema: "connector-manifest/v1#provider"
+app: github
+id: remote
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: ga, source: https://github.com/github/github-mcp-server }
+transport: { kind: http, url: https://api.githubcopilot.com/mcp/ }
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://github.com/login/oauth/authorize
+    tokenUrl: https://github.com/login/oauth/access_token
+    scopes: [repo, read:org]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    registration: [preregistered]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: free }
+quality: { tier: listed }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-19
+  - fact: auth.oauth2.authorizeUrl
+    url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps
+    fetchedAt: 2026-10-19
+  - fact: auth.oauth2.tokenUrl
+    url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps
+    fetchedAt: 2026-10-19
+  - fact: auth.oauth2.scopes
+    url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+    fetchedAt: 2026-10-19
+x-omega: { ossId: github-remote }

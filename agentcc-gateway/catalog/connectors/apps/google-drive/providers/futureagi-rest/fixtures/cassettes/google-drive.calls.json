@@ -1,0 +1,66 @@
+[
+  {
+    "tool": "list_files",
+    "arguments": {
+      "q": "trashed = false",
+      "pageSize": 10
+    }
+  },
+  {
+    "tool": "get_file",
+    "arguments": {
+      "fileId": "file-fixture"
+    }
+  },
+  {
+    "tool": "copy_file",
+    "arguments": {
+      "fileId": "file-fixture",
+      "body": {
+        "name": "Quarterly copy"
+      }
+    }
+  },
+  {
+    "tool": "create_file",
+    "arguments": {
+      "body": {
+        "name": "Reports",
+        "mimeType": "application/vnd.google-apps.folder"
+      }
+    }
+  },
+  {
+    "tool": "rename_file",
+    "arguments": {
+      "fileId": "file-fixture",
+      "body": {
+        "name": "Quarterly report"
+      }
+    }
+  },
+  {
+    "tool": "delete_file",
+    "arguments": {
+      "fileId": "file-fixture"
+    }
+  },
+  {
+    "tool": "list_permissions",
+    "arguments": {
+      "fileId": "file-fixture"
+    }
+  },
+  {
+    "tool": "list_revisions",
+    "arguments": {
+      "fileId": "file-fixture"
+    }
+  },
+  {
+    "tool": "get_file",
+    "arguments": {
+      "fileId": "missing-fixture"
+    }
+  }
+]

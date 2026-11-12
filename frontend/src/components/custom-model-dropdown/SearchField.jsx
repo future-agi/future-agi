@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import { Box, InputAdornment, TextField } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { forwardRef, useCallback, useRef } from "react";
@@ -22,6 +23,7 @@ const SearchField = forwardRef(
       modelRef,
       showIcon,
       logoUrl,
+      provider,
       multiple,
       onClick,
       // Used by the dropdown menu, not the TextField input.
@@ -135,11 +137,11 @@ const SearchField = forwardRef(
             opacity: 0.7,
           },
           "& .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline": {
-            borderColor: rest?.error ? "red.500" : "divider", // Or any color you want
+            borderColor: rest?.error ? "status.danger.border" : "divider", // Or any color you want
           },
           "& .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline":
             {
-              borderColor: rest?.error ? "red.500" : "divider", // Or any color you want
+              borderColor: rest?.error ? "status.danger.border" : "divider", // Or any color you want
             },
           ...sx,
         }}
@@ -161,11 +163,11 @@ const SearchField = forwardRef(
                     width: theme.spacing(2.5),
                     objectFit: "cover",
                     ...(theme.palette.mode === "dark" &&
-                      isBlackBackgroundLogo(logoUrl) && {
+                      isBlackBackgroundLogo(localProviderLogo(provider)) && {
                         filter: "invert(1) brightness(2)",
                       }),
                   })}
-                  src={logoUrl}
+                  src={localProviderLogo(provider)}
                   alt="icon"
                 />
               </InputAdornment>
@@ -174,7 +176,7 @@ const SearchField = forwardRef(
             <InputAdornment position="end">
               {isFocus && searchedValue ? (
                 <Iconify
-                  icon="mdi:close"
+                  icon="solar:close-linear"
                   sx={{
                     cursor: "pointer",
                     color: "text.primary",
@@ -185,7 +187,7 @@ const SearchField = forwardRef(
                 />
               ) : !isFocus && getValue && !rest.disabled ? (
                 <Iconify
-                  icon="mdi:close"
+                  icon="solar:close-linear"
                   sx={{
                     cursor: "pointer",
                     color: "text.primary",
@@ -196,14 +198,14 @@ const SearchField = forwardRef(
                 />
               ) : (
                 <Iconify
-                  icon="eva:arrow-ios-upward-fill"
+                  icon="solar:alt-arrow-up-linear"
                   sx={{
                     cursor: rest?.disabled ? "not-allowed" : "pointer",
                     color: "text.primary",
                     width: 20,
                     height: 20,
                     transform: `rotateX(${openDropdown ? 0 : -180}deg)`,
-                    transition: "transform 0.5s",
+                    transition: "transform 0.2s",
                   }}
                   onClick={handleDropdownIconClick}
                 />
@@ -234,6 +236,7 @@ SearchField.propTypes = {
   modelRef: PropTypes.oneOfType([PropTypes.object, PropTypes.func]),
   showIcon: PropTypes.bool,
   logoUrl: PropTypes.string,
+  provider: PropTypes.oneOfType([PropTypes.string, PropTypes.array]),
   multiple: PropTypes.bool,
   openDropdown: PropTypes.bool,
   onClick: PropTypes.func,

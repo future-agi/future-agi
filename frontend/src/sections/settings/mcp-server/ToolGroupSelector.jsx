@@ -14,22 +14,23 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useUpdateMCPToolGroups } from "src/api/mcp";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 
 const TOOL_GROUP_ICONS = {
-  context: "ph:compass-bold",
-  evaluations: "ph:exam-bold",
-  datasets: "ph:database-bold",
-  annotations: "ph:check-square-bold",
-  optimization: "ph:sparkle-bold",
-  observability: "ph:tree-structure-bold",
-  error_feed: "ph:warning-circle-bold",
-  experiments: "ph:flask-bold",
-  agents: "ph:robot-bold",
-  simulation: "ph:waveform-bold",
-  prompts: "ph:chat-text-bold",
-  usage: "ph:chart-line-up-bold",
-  gateway: "ph:plugs-bold",
-  dashboards: "ph:squares-four-bold",
+  context: "solar:compass-linear",
+  evaluations: "solar:clipboard-check-linear",
+  datasets: "solar:database-linear",
+  annotations: "solar:check-square-linear",
+  optimization: "solar:stars-minimalistic-linear",
+  observability: "solar:graph-linear",
+  error_feed: "solar:danger-circle-linear",
+  experiments: "solar:test-tube-linear",
+  agents: "solar:bot-linear",
+  simulation: "solar:soundwave-linear",
+  prompts: "solar:chat-round-line-linear",
+  usage: "solar:graph-up-linear",
+  gateway: "solar:plug-circle-linear",
+  dashboards: "solar:widget-linear",
 };
 
 const DEFAULT_TOOL_GROUPS = [
@@ -165,6 +166,13 @@ ToolGroupSelector.propTypes = {
 export default function ToolGroupSelector({ config }) {
   const theme = useTheme();
   const updateMutation = useUpdateMCPToolGroups();
+  const { currentWorkspaceDisplayName, currentWorkspaceName } = useWorkspace();
+  const workspaceName = currentWorkspaceDisplayName || currentWorkspaceName;
+  // The switches are saved for the signed-in person in the current workspace
+  // only; other members' editors keep their own settings.
+  const heading = workspaceName
+    ? `Your editor's tools in ${workspaceName}`
+    : "Your editor's tools in this workspace";
 
   const toolGroups = useMemo(() => normalizeMCPToolGroups(config), [config]);
   const enabledFromConfig = useMemo(
@@ -222,40 +230,46 @@ export default function ToolGroupSelector({ config }) {
       }}
     >
       <AccordionSummary
-        expandIcon={<Iconify icon="ph:caret-down-bold" width={16} />}
+        expandIcon={<Iconify icon="solar:alt-arrow-down-linear" width={16} />}
         sx={{ px: 3, py: 0.5 }}
       >
         <Box display="flex" alignItems="center" gap={1.5} flex={1} mr={2}>
           <Iconify
-            icon="ph:wrench-bold"
-            width={18}
-            sx={{ color: "text.secondary" }}
+            icon="solar:toolbox-linear"
+            width={20}
+            sx={{ color: "text.secondary", flexShrink: 0 }}
           />
-          <Typography
-            sx={{
-              typography: "s1",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.primary",
-            }}
-          >
-            Tool Groups
-          </Typography>
-          <Chip
-            label={
-              allEnabled
-                ? "All enabled"
-                : `${enabled.length} of ${toolGroups.length}`
-            }
-            size="small"
-            color={allEnabled ? "success" : "default"}
-            variant="outlined"
-            sx={{ fontSize: 11, height: 22 }}
-          />
-          <Typography
-            sx={{ typography: "s2", color: "text.disabled", ml: "auto" }}
-          >
-            Restrict which tools are available to connected clients
-          </Typography>
+          <Box sx={{ minWidth: 0 }}>
+            <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+              <Typography
+                sx={{
+                  typography: "s1",
+                  fontWeight: "fontWeightSemiBold",
+                  color: "text.primary",
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {heading}
+              </Typography>
+              <Chip
+                label={
+                  allEnabled
+                    ? "All enabled"
+                    : `${enabled.length} of ${toolGroups.length}`
+                }
+                size="small"
+                color={allEnabled ? "success" : "default"}
+                variant="outlined"
+              />
+            </Box>
+            <Typography
+              sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
+            >
+              {
+                "Only affects your own editor. It does not change other members' editors."
+              }
+            </Typography>
+          </Box>
         </Box>
       </AccordionSummary>
 
@@ -266,7 +280,7 @@ export default function ToolGroupSelector({ config }) {
             gridTemplateColumns: "1fr 1fr",
             gap: 0,
             borderTop: "1px solid",
-            borderColor: "divider",
+            borderColor: "border.subtle",
           }}
         >
           {toolGroups.map((group) => {
@@ -281,13 +295,13 @@ export default function ToolGroupSelector({ config }) {
                   py: 1,
                   px: 1,
                   borderBottom: "1px solid",
-                  borderColor: "divider",
+                  borderColor: "border.subtle",
                   opacity: isEnabled ? 1 : 0.5,
                   transition: "opacity 0.15s",
                 }}
               >
                 <Iconify
-                  icon={TOOL_GROUP_ICONS[group.id] || "ph:wrench-bold"}
+                  icon={TOOL_GROUP_ICONS[group.id] || "solar:toolbox-linear"}
                   width={16}
                   sx={{
                     color: isEnabled ? "primary.main" : "text.disabled",
@@ -296,7 +310,7 @@ export default function ToolGroupSelector({ config }) {
                 />
                 <Typography
                   sx={{
-                    typography: "s2",
+                    typography: "s2_1",
                     fontWeight: "fontWeightMedium",
                     color: "text.primary",
                     flex: 1,
@@ -328,7 +342,6 @@ export default function ToolGroupSelector({ config }) {
                   <CircularProgress size={14} color="inherit" />
                 ) : null
               }
-              sx={{ textTransform: "none" }}
             >
               {updateMutation.isPending ? "Saving..." : "Save changes"}
             </Button>

@@ -1,13 +1,10 @@
-import { Box, Button, Tab, Tabs, useTheme } from "@mui/material";
+import { Box } from "@mui/material";
 import React, { useEffect, useRef } from "react";
-import PageHeadings from "../develop-detail/Common/PageHeadings";
 import PropTypes from "prop-types";
-import { useNavigate } from "react-router";
 import EvaluationProvider from "../common/EvaluationDrawer/context/EvaluationProvider";
 import { EvaluationContext } from "../common/EvaluationDrawer/context/EvaluationContext";
-import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { resetEvalStore } from "./store/useEvalStore";
-import SvgColor from "src/components/svg-color";
+import EvalsPageHeader from "./EvalsPageHeader";
 
 const ContextConsumer = ({
   context,
@@ -50,29 +47,7 @@ ContextConsumer.propTypes = {
 };
 
 const EvalsWrapper = ({ currentTab, children, containerSx = {} }) => {
-  const theme = useTheme();
   const setVisibleSectionRef = useRef(null);
-  const navigate = useNavigate();
-  const tabItems = [
-    {
-      label: "Evaluators",
-      value: "evaluators",
-      disabled: false,
-      navigateRoute: "/dashboard/evaluations",
-    },
-    {
-      label: "Usage",
-      value: "usage",
-      disabled: false,
-      navigateRoute: "/dashboard/evaluations/usage",
-    },
-    {
-      label: "Groups",
-      value: "groups",
-      disabled: false,
-      navigateRoute: "/dashboard/evaluations/groups",
-    },
-  ];
 
   useEffect(() => {
     return () => {
@@ -109,77 +84,7 @@ const EvalsWrapper = ({ currentTab, children, containerSx = {} }) => {
           ...containerSx,
         }}
       >
-        <Box
-          sx={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <PageHeadings
-            title="Evaluations"
-            description="Create and manage your evaluations"
-          />
-          <Button
-            variant="outlined"
-            size="small"
-            sx={{
-              color: "text.primary",
-              borderColor: "divider",
-              padding: 1.5,
-              fontSize: "14px",
-              height: "38px",
-            }}
-            startIcon={<SvgColor src="/assets/icons/ic_docs_single.svg" />}
-            component="a"
-            href="https://docs.futureagi.com/docs/cookbook/quickstart/first-eval"
-            target="_blank"
-          >
-            View Docs
-          </Button>
-        </Box>
-        <Box>
-          <Tabs
-            textColor="primary"
-            value={currentTab}
-            onChange={(e, value) => {
-              navigate(
-                tabItems.find((tab) => tab.value === value).navigateRoute,
-              );
-              if (value === "usage") {
-                trackEvent(Events.evalsUsagetabClicked, {
-                  [PropertyName.click]: true,
-                });
-              }
-            }}
-            TabIndicatorProps={{
-              style: { backgroundColor: theme.palette.primary.main },
-            }}
-            sx={{ borderBottom: "1px solid", borderColor: "divider" }}
-          >
-            {tabItems.map((tab) => (
-              <Tab
-                disabled={tab.disabled}
-                key={tab.value}
-                label={tab.label}
-                value={tab.value}
-                sx={{
-                  paddingLeft: "24px",
-                  paddingRight: "24px",
-                  ...theme.typography["s1"],
-                  fontWeight: theme.typography["fontWeightSemiBold"],
-                  "&:not(.Mui-selected)": {
-                    color: "text.disabled", // Color for unselected tabs
-                    fontWeight: theme.typography["fontWeightMedium"],
-                  },
-                  ["&:not(:last-of-type)"]: {
-                    marginRight: "4px",
-                  },
-                }}
-              />
-            ))}
-          </Tabs>
-        </Box>
+        <EvalsPageHeader currentTab={currentTab} />
         <Box sx={{ height: "calc(100% - 120px)" }}>{children}</Box>
       </Box>
     </EvaluationProvider>

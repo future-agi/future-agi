@@ -1,0 +1,28 @@
+# The description covers what the default provider, FutureAGI's own
+# connector (futureagi-rest), does over Microsoft Graph under the scopes it
+# requests. Microsoft's Work IQ MCP server (workiq) is a second provider; it
+# is one server for all of Microsoft 365, not Outlook alone.
+schema: "connector-manifest/v1#app"
+id: microsoft-outlook
+version: 1.0.0
+name: Microsoft Outlook
+description: "Search, read, draft and send Outlook mail, and manage calendar events, over Microsoft Graph."
+vendor:
+  name: Microsoft
+  # graph.microsoft.com (futureagi-rest) and workiq.svc.cloud.microsoft (workiq)
+  domains: [microsoft.com, cloud.microsoft]
+eeCategory: communication
+group: microsoft
+categories: [communication, email, calendar]
+tags: [email, mail, calendar, microsoft-365]
+docsUrl: https://learn.microsoft.com/en-us/graph/outlook-mail-concept-overview
+archetype: mailbox
+defaultProvider: futureagi-rest
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://learn.microsoft.com/en-us/graph/api/overview?view=graph-rest-1.0
+    fetchedAt: 2026-10-22
+  - fact: vendor.domains
+    url: https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/mcp/retrieve
+    fetchedAt: 2026-10-21

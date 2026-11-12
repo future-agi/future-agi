@@ -1,0 +1,138 @@
+schema: connector-gen/rest-overlay/v1
+spec: fixtures/spec/docs-v1.discovery.json.gz
+tools:
+  - name: get_document
+    title: Get document
+    description: Read document text and structure for an app-authorized documentId, for example doc-fixture.
+    operation:
+      id: docs.documents.get
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+    posture: auto
+  - name: create_document
+    title: Create document
+    description: Create a blank document with a title, for example "Meeting notes".
+    operation:
+      id: docs.documents.create
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - title
+      required:
+        - title
+      description: Create a blank document with a title, for example "Meeting notes".
+  - name: insert_text
+    title: Insert text
+    description: Insert text at a UTF-16 index, for example index=1 and text="Hello".
+    operation:
+      id: docs.documents.batchUpdate
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - requests.insertText
+      required:
+        - requests
+        - requests.insertText
+      description: Insert text at a UTF-16 index, for example index=1 and text="Hello".
+  - name: replace_text
+    title: Replace text
+    description: Replace matching text, for example containsText.text="PLACEHOLDER", matchCase=true.
+    operation:
+      id: docs.documents.batchUpdate
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: true
+    posture: deny
+    body:
+      fields:
+        - requests.replaceAllText
+      required:
+        - requests
+        - requests.replaceAllText
+      description: Replace matching text, for example containsText.text="PLACEHOLDER", matchCase=true.
+  - name: delete_text
+    title: Delete text
+    description: Delete a UTF-16 index range, for example startIndex=1 and endIndex=3.
+    operation:
+      id: docs.documents.batchUpdate
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: true
+    posture: deny
+    body:
+      fields:
+        - requests.deleteContentRange
+      required:
+        - requests
+        - requests.deleteContentRange
+      description: Delete a UTF-16 index range, for example startIndex=1 and endIndex=3.
+  - name: insert_table
+    title: Insert table
+    description: Insert a table, for example rows=2, columns=2, location.index=1.
+    operation:
+      id: docs.documents.batchUpdate
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - requests.insertTable
+      required:
+        - requests
+        - requests.insertTable
+      description: Insert a table, for example rows=2, columns=2, location.index=1.
+  - name: format_text
+    title: Format text
+    description: Apply text style to a range. For bold text use textStyle.bold=true and fields="bold".
+    operation:
+      id: docs.documents.batchUpdate
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - requests.updateTextStyle
+      required:
+        - requests
+        - requests.updateTextStyle
+      description: Apply text style to a range. For bold text use textStyle.bold=true and fields="bold".
+  - name: format_paragraph
+    title: Format paragraph
+    description: Apply paragraph style to a range. For a heading use namedStyleType="HEADING_1" and fields="namedStyleType".
+    operation:
+      id: docs.documents.batchUpdate
+    scopes:
+      - https://www.googleapis.com/auth/drive.file
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - requests.updateParagraphStyle
+      required:
+        - requests
+        - requests.updateParagraphStyle
+      description: Apply paragraph style to a range. For a heading use namedStyleType="HEADING_1" and fields="namedStyleType".

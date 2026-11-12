@@ -1,129 +1,287 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Tabs, Tab } from "@mui/material";
-import { useNavigate, useParams } from "react-router-dom";
+import { Alert, Box, Button, Tab, Typography } from "@mui/material";
+import {
+  useLocation,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
+import { useIsFetching, useQueryClient } from "@tanstack/react-query";
+import { enqueueSnackbar } from "notistack";
+
+import { paths } from "src/routes/paths";
+import { CustomTabs } from "src/components/tabs/tabs";
+
 import { useGatewayContext } from "../context/useGatewayContext";
-import TimeRangeSelector from "./TimeRangeSelector";
-import OverviewKPIs from "./OverviewKPIs";
+import { GatewayEmptyState, GatewayPageFrame } from "../components/frame";
+import AnalyticsKpis from "./AnalyticsKpis";
 import UsageCharts from "./UsageCharts";
+import RangeToggle from "./RangeToggle";
+import CustomAnalyticsRangeDialog from "./CustomAnalyticsRangeDialog";
 import CostAnalytics from "./CostAnalytics";
 import LatencyAnalytics from "./LatencyAnalytics";
 import ErrorAnalytics from "./ErrorAnalytics";
 import ModelComparison from "./ModelComparison";
-import SectionHeader from "../components/SectionHeader";
-import { GATEWAY_ICONS } from "../constants/gatewayIcons";
+import { useAnalyticsOverview } from "./hooks/useAnalyticsOverview";
+import { ANALYTICS_RANGES, rangeWindow } from "./analyticsRange";
+import {
+  analyticsReadLabel,
+  parseAnalyticsQuery,
+  refreshAnalyticsQuery,
+  serializeAnalyticsQuery,
+} from "./queryState";
+import { zoneNote } from "../utils/timeZone";
+import { useGatewayConfig } from "../providers/hooks/useGatewayConfig";
+import { sectionEnforcement } from "../settings/sectionEnforcement";
 
-// ---------------------------------------------------------------------------
-// Time range preset → { start, end } converter
-// ---------------------------------------------------------------------------
-
-const TIME_RANGE_OFFSETS = {
-  "1h": 1 * 60 * 60 * 1000,
-  "6h": 6 * 60 * 60 * 1000,
-  "24h": 24 * 60 * 60 * 1000,
-  "7d": 7 * 24 * 60 * 60 * 1000,
-  "30d": 30 * 24 * 60 * 60 * 1000,
-  "90d": 90 * 24 * 60 * 60 * 1000,
+const TABS = [
+  { slug: "usage", label: "Usage" },
+  { slug: "cost", label: "Cost" },
+  { slug: "latency", label: "Latency" },
+  { slug: "errors", label: "Errors" },
+  { slug: "models", label: "Models" },
+];
+const PANELS = {
+  usage: UsageCharts,
+  cost: CostAnalytics,
+  latency: LatencyAnalytics,
+  errors: ErrorAnalytics,
+  models: ModelComparison,
 };
 
-function computeDateRange(preset) {
-  const now = new Date();
-  const offsetMs = TIME_RANGE_OFFSETS[preset] || TIME_RANGE_OFFSETS["24h"];
-  const start = new Date(now.getTime() - offsetMs);
-  return {
-    start: start.toISOString(),
-    end: now.toISOString(),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Tab definitions
-// ---------------------------------------------------------------------------
-
-const TAB_LABELS = ["Usage", "Cost", "Latency", "Errors", "Models"];
-const TAB_SLUGS = ["usage", "cost", "latency", "errors", "models"];
-
-function tabSlugToIndex(slug) {
-  const idx = TAB_SLUGS.indexOf(slug);
-  return idx >= 0 ? idx : 0;
-}
-
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
-
-const AnalyticsDashboardSection = ({ gatewayId: gatewayIdProp } = {}) => {
+export default function AnalyticsDashboardSection({
+  gatewayId: gatewayIdProp,
+} = {}) {
   const { gatewayId: ctxGatewayId } = useGatewayContext();
   const gatewayId = gatewayIdProp || ctxGatewayId;
-  const { tab: tabSlug } = useParams();
+  const { tab } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
-  const activeTab = tabSlugToIndex(tabSlug);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const queryClient = useQueryClient();
+  const active = TABS.some((t) => t.slug === tab) ? tab : "usage";
+  const search = searchParams.toString();
+  // Only a new URL resolves an absent/invalid window. Canonicalizing once
+  // preserves its clock sample across rerenders, tabs, reload and history.
+  const state = useMemo(() => parseAnalyticsQuery(search), [search]);
+  const canonical = serializeAnalyticsQuery(state);
+  const { start, end, granularity } = state;
+  const [customOpen, setCustomOpen] = useState(false);
+  useEffect(() => {
+    if (search !== canonical) setSearchParams(canonical, { replace: true });
+  }, [search, canonical, setSearchParams]);
 
-  const handleTabChange = useCallback(
-    (_event, newIndex) => {
-      if (newIndex === 0) {
-        navigate("/dashboard/gateway/analytics", { replace: true });
-      } else {
-        navigate(`/dashboard/gateway/analytics/${TAB_SLUGS[newIndex]}`, {
-          replace: true,
-        });
-      }
-    },
-    [navigate],
-  );
+  const overview = useAnalyticsOverview({ start, end, gatewayId });
+  const lastOverview = useRef({ gatewayId, at: 0 });
+  useEffect(() => {
+    if (lastOverview.current.gatewayId !== gatewayId)
+      lastOverview.current = { gatewayId, at: 0 };
+    if (
+      !overview.error &&
+      !overview.isPlaceholderData &&
+      overview.dataUpdatedAt
+    ) {
+      lastOverview.current = { gatewayId, at: overview.dataUpdatedAt };
+    }
+  }, [
+    gatewayId,
+    overview.error,
+    overview.isPlaceholderData,
+    overview.dataUpdatedAt,
+  ]);
+  const panelQuery = (query) => {
+    const [domain, name, params] = query.queryKey;
+    return (
+      domain === "analytics" &&
+      name === active &&
+      params?.start === start &&
+      params?.end === end &&
+      (params?.gateway_id || null) === (gatewayId || null)
+    );
+  };
+  const panelFetching = useIsFetching({ predicate: panelQuery }) > 0;
+  const cacheOff =
+    sectionEnforcement(
+      useGatewayConfig(gatewayId, { meta: { errorHandled: true } }),
+      "cache",
+    ) === "not_enforced";
 
-  const [timeRange, setTimeRange] = useState("24h");
-
-  const { start, end } = useMemo(
-    () => computeDateRange(timeRange),
-    [timeRange],
-  );
-
-  // Common props passed to all analytics sub-components
-  const analyticsProps = { start, end, gatewayId };
+  const refresh = () => {
+    const next = refreshAnalyticsQuery(state);
+    if (next.start !== start || next.end !== end) {
+      // New query keys perform the reads. Never also refetch the old window.
+      setSearchParams(serializeAnalyticsQuery(next));
+    } else {
+      overview.refetch();
+      queryClient.refetchQueries({ type: "active", predicate: panelQuery });
+    }
+  };
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        `${window.location.origin}${location.pathname}?${canonical}`,
+      );
+      enqueueSnackbar("View link copied", { variant: "success" });
+    } catch {
+      enqueueSnackbar(
+        "Could not copy the link. Copy the address from your browser.",
+        { variant: "warning" },
+      );
+    }
+  };
+  const Panel = PANELS[active];
+  const retainedOverview = overview.data != null && !overview.isPlaceholderData;
 
   return (
-    <Box p={3}>
-      {/* ---- Header: Title + Time Range Selector ---- */}
-      <SectionHeader
-        icon={GATEWAY_ICONS.analytics}
-        title="Analytics"
-        subtitle="Explore usage, cost, latency, and error trends"
+    <GatewayPageFrame
+      title="Analytics"
+      description={`Requests, cost, latency and errors through the gateway over time, by model and provider. ${zoneNote()}`}
+      actions={
+        <>
+          <RangeToggle
+            value={state.preset}
+            options={ANALYTICS_RANGES}
+            onChange={(preset) =>
+              setSearchParams(
+                serializeAnalyticsQuery({
+                  ...state,
+                  preset,
+                  ...rangeWindow(preset),
+                }),
+              )
+            }
+          />
+          <Button size="small" onClick={() => setCustomOpen(true)}>
+            Custom interval
+          </Button>
+          <Button
+            size="small"
+            onClick={refresh}
+            disabled={overview.isFetching || panelFetching}
+          >
+            Refresh
+          </Button>
+          <Button size="small" onClick={copy}>
+            Copy view link
+          </Button>
+        </>
+      }
+    >
+      {customOpen && (
+        <CustomAnalyticsRangeDialog
+          start={start}
+          end={end}
+          onClose={() => setCustomOpen(false)}
+          onApply={(bounds) => {
+            setSearchParams(
+              serializeAnalyticsQuery({ ...state, ...bounds, preset: "" }),
+            );
+            setCustomOpen(false);
+          }}
+        />
+      )}
+      <Typography
+        typography="s2"
+        color="text.secondary"
+        sx={{ overflowWrap: "anywhere" }}
       >
-        <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
-      </SectionHeader>
-
-      {/* ---- Overview KPIs (always visible) ---- */}
-      <Box mb={3}>
-        <OverviewKPIs {...analyticsProps} />
-      </Box>
-
-      {/* ---- Tab navigation ---- */}
-      <Tabs
-        value={activeTab}
-        onChange={handleTabChange}
-        variant="standard"
-        sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
+        {`${start} to ${end}${state.preset ? " · Rolling preset; Refresh advances this window." : " · Fixed snapshot; Refresh keeps these bounds."}`}
+      </Typography>
+      <Typography
+        typography="s2"
+        color="text.secondary"
+        aria-label="Overview freshness"
       >
-        {TAB_LABELS.map((label, index) => (
-          <Tab key={label} label={label} value={index} />
+        {`Overview · ${analyticsReadLabel(overview, lastOverview.current.gatewayId === gatewayId ? lastOverview.current.at : 0)}. Panels load independently.`}
+      </Typography>
+      {(overview.isFetching || overview.isPlaceholderData) && (
+        <Typography role="status" typography="s2">
+          Updating overview…
+        </Typography>
+      )}
+      {overview.error &&
+        (retainedOverview ? (
+          <Alert
+            severity="warning"
+            action={
+              <Button
+                size="small"
+                color="inherit"
+                onClick={() => overview.refetch()}
+              >
+                Retry
+              </Button>
+            }
+          >
+            Overview could not be refreshed. Showing stale data from the last
+            successful load.
+          </Alert>
+        ) : (
+          <GatewayEmptyState
+            icon="alertCircle"
+            title="Analytics could not be loaded"
+            description={
+              overview.error.message || "The gateway API did not answer."
+            }
+            actionLabel="Retry"
+            onAction={() => overview.refetch()}
+          />
         ))}
-      </Tabs>
-
-      {/* ---- Active tab content ---- */}
-      <Box>
-        {activeTab === 0 && <UsageCharts {...analyticsProps} />}
-        {activeTab === 1 && <CostAnalytics {...analyticsProps} />}
-        {activeTab === 2 && <LatencyAnalytics {...analyticsProps} />}
-        {activeTab === 3 && <ErrorAnalytics {...analyticsProps} />}
-        {activeTab === 4 && <ModelComparison {...analyticsProps} />}
+      {(!overview.error || retainedOverview) && (
+        <AnalyticsKpis
+          overview={overview.data}
+          cacheOff={cacheOff}
+          loading={overview.isLoading || overview.isPlaceholderData}
+          period={
+            ANALYTICS_RANGES.find((r) => r.value === state.preset)?.period ||
+            "selected period"
+          }
+        />
+      )}
+      <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
+        <CustomTabs
+          value={active}
+          onChange={(_event, slug) => {
+            const root = paths.dashboard.gateway.analytics;
+            navigate(
+              `${slug === "usage" ? root : `${root}/${slug}`}?${canonical}`,
+            );
+          }}
+          variant="scrollable"
+          allowScrollButtonsMobile
+          aria-label="Analytics views"
+        >
+          {TABS.map((t) => (
+            <Tab key={t.slug} value={t.slug} label={t.label} />
+          ))}
+        </CustomTabs>
       </Box>
-    </Box>
+      {panelFetching && !["usage", "cost", "errors"].includes(active) && (
+        <Typography role="status" typography="s2">
+          Updating {TABS.find((t) => t.slug === active)?.label}…
+        </Typography>
+      )}
+      <Box sx={{ minWidth: 0 }}>
+        <Panel
+          start={start}
+          end={end}
+          granularity={granularity}
+          gatewayId={gatewayId}
+          cacheOff={cacheOff}
+          groupBy={state.groups[active]}
+          onGroupByChange={(groupBy) =>
+            setSearchParams(
+              serializeAnalyticsQuery({
+                ...state,
+                groups: { ...state.groups, [active]: groupBy },
+              }),
+            )
+          }
+        />
+      </Box>
+    </GatewayPageFrame>
   );
-};
+}
 
-AnalyticsDashboardSection.propTypes = {
-  gatewayId: PropTypes.string,
-};
-
-export default AnalyticsDashboardSection;
+AnalyticsDashboardSection.propTypes = { gatewayId: PropTypes.string };

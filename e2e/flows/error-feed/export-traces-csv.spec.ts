@@ -231,11 +231,11 @@ test(
     const datasetName = `e2e-err4-dataset-${suffix}`;
     await page.goto("/dashboard/develop", { waitUntil: "domcontentloaded" });
     await page
-      .getByRole("button", { name: "Add Dataset", exact: true })
+      .getByRole("button", { name: /^add dataset$/i })
       .first()
       .click({ timeout: UI_READY });
     await page
-      .getByText("Upload a file (JSON, CSV)", { exact: true })
+      .getByText("Upload a file", { exact: true })
       .click({ timeout: UI_READY });
     const dialog = page
       .getByRole("dialog")

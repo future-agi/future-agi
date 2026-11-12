@@ -13,11 +13,13 @@ import { useSystemThemeMode } from "src/hooks/use-system-theme-mode";
 import { palette } from "./palette";
 import { shadows } from "./shadows";
 import { typography } from "./typography";
+import { dsShape } from "./ds-tokens";
 // options
 import RTL from "./options/right-to-left";
 import { customShadows } from "./custom-shadows";
 import { componentsOverrides } from "./overrides";
-import { createPresets } from "./options/presets";
+import "./tokens.css";
+import "./legacy-bridge.css";
 import { createContrast } from "./options/contrast";
 
 // ----------------------------------------------------------------------
@@ -30,14 +32,13 @@ export default function ThemeProvider({ children }) {
   const effectiveMode =
     settings.themeMode === "system" ? systemMode : settings.themeMode;
 
-  const presets = createPresets(settings.themeColorPresets);
-
   const contrast = createContrast(settings.themeContrast, effectiveMode);
 
   // Sync data-theme attribute and CSS variables from palette on <body>
   useEffect(() => {
     const body = document.body;
     body.setAttribute("data-theme", effectiveMode);
+    document.documentElement.setAttribute("data-theme", effectiveMode);
   }, [effectiveMode]);
 
   const memoizedValue = useMemo(
@@ -45,23 +46,16 @@ export default function ThemeProvider({ children }) {
       palette: {
         ...palette(effectiveMode),
       },
-      customShadows: {
-        ...customShadows(effectiveMode),
-        ...presets.customShadows,
-      },
-      direction: settings.themeDirection,
+      customShadows: customShadows(effectiveMode),
+      direction: /** @type {"ltr" | "rtl"} */ (
+        settings.themeDirection === "rtl" ? "rtl" : "ltr"
+      ),
       shadows: shadows(effectiveMode),
-      shape: { borderRadius: 8 },
+      shape: dsShape,
       typography,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      effectiveMode,
-      settings.themeDirection,
-      presets.palette,
-      presets.customShadows,
-      contrast.palette,
-    ],
+    [effectiveMode, settings.themeDirection, contrast.palette],
   );
 
   const theme = createTheme(memoizedValue);
@@ -77,7 +71,9 @@ export default function ThemeProvider({ children }) {
     s.setProperty("--bg-paper", p.background.paper);
     s.setProperty("--bg-neutral", p.background.neutral);
     s.setProperty("--bg-subtle", p.background.subtle);
-    s.setProperty("--bg-elevated", p.background.neutral);
+    s.setProperty("--bg-elevated", p.background.overlay);
+    s.setProperty("--bg-overlay", p.background.overlay);
+    s.setProperty("--border-subtle", p.border?.subtle || p.divider);
     s.setProperty("--input-surface", p.background.paper);
     s.setProperty("--text-primary", p.text.primary);
     s.setProperty("--text-secondary", p.text.secondary);
@@ -87,7 +83,7 @@ export default function ThemeProvider({ children }) {
     s.setProperty("--border-hover", p.border?.hover || p.divider);
     s.setProperty("--border-active", p.border?.active || p.divider);
     s.setProperty("--border-light", p.border?.default || "#e6e6e6");
-    s.setProperty("--surface-menu", p.background.neutral);
+    s.setProperty("--surface-menu", p.background.overlay);
     s.setProperty("--surface-header", p.background.neutral);
     s.setProperty("--surface-row-active", p.action.selected);
     s.setProperty("--surface-row-hover", p.action.hover);

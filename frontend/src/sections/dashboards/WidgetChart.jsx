@@ -1,6 +1,7 @@
+import { statusColors } from "src/utils/runStatus";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Alert, Box, CircularProgress, Stack, Typography } from "@mui/material";
+import { Alert, Box, Stack, Typography } from "@mui/material";
 import ChartLegend from "./ChartLegend";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material/styles";
@@ -22,8 +23,9 @@ import {
   isAbsentChartPoint,
   getSeriesScalar,
   getSuggestedUnitConfig,
-  getUnitRendering,
+  getSeriesFormatConfig,
   getYAxisRangeWarning,
+  getTopSeriesIndices,
   getVisibleIndices,
   resolveWidgetAxisPlan,
   groupPieSeries,
@@ -44,21 +46,10 @@ import {
 } from "src/utils/queryReadState";
 import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
 import useClampedChartTooltips from "./hooks/useClampedChartTooltips";
+import ContentSkeleton from "src/components/content-skeleton";
+import { seriesColors } from "src/theme/data-colors";
 
 const CHART_HEIGHT_FALLBACK = 280;
-const COLORS = [
-  "#7B56DB", // purple (primary)
-  "#1ABCFE", // cyan
-  "#FF6B6B", // coral red
-  "#2ECB71", // emerald green
-  "#F7B731", // amber
-  "#E84393", // magenta pink
-  "#0984E3", // ocean blue
-  "#FD7E14", // tangerine orange
-  "#00CEC9", // teal
-  "#A29BFE", // lavender
-];
-
 const hashSeriesName = (name) => {
   const s = String(name || "");
   let h = 0;
@@ -70,26 +61,27 @@ const hashSeriesName = (name) => {
 // Name-hash gives cross-reload stability, but a bare hash % palette collides ~50%
 // at 4 series. Walk each name once and, on a taken slot, advance to the next
 // free one — distinct up to palette size, stable for the common non-colliding case.
-const buildSeriesColorMap = (names) => {
+// `palette` is the theme's data palette (seriesColors(theme)).
+const buildSeriesColorMap = (names, palette) => {
   const map = {};
   const used = new Set();
   (names || []).forEach((name) => {
-    const start = hashSeriesName(name) % COLORS.length;
+    const start = hashSeriesName(name) % palette.length;
     let picked = start;
-    for (let i = 0; i < COLORS.length; i += 1) {
-      const candidate = (start + i) % COLORS.length;
+    for (let i = 0; i < palette.length; i += 1) {
+      const candidate = (start + i) % palette.length;
       if (!used.has(candidate)) {
         picked = candidate;
         break;
       }
     }
     used.add(picked);
-    map[name] = COLORS[picked];
+    map[name] = palette[picked];
   });
   return map;
 };
-const getSeriesColorFromMap = (map, name) =>
-  (map && map[name]) || COLORS[hashSeriesName(name) % COLORS.length];
+const getSeriesColorFromMap = (map, name, palette) =>
+  (map && map[name]) || palette[hashSeriesName(name) % palette.length];
 
 function getApexType(chartType) {
   const map = {
@@ -227,19 +219,25 @@ export default function WidgetChart({
   const [acknowledgedRequest, setAcknowledgedRequest] = useState(() =>
     queryMutation.data ? { signature: querySignature, refreshRequestId } : null,
   );
-  const previousSignatureRef = useRef(null);
   const previousRefreshRequestRef = useRef(refreshRequestId);
+  // The manual refresh this widget still owes the dashboard an answer for.
+  const unsettledManualRefreshRef = useRef(null);
   const onQuerySettledRef = useRef(onQuerySettled);
   onQuerySettledRef.current = onQuerySettled;
 
   useEffect(() => {
     if (!queryConfig?.metrics?.length) return undefined;
 
-    const signatureChanged = previousSignatureRef.current !== querySignature;
+    // A manual relative-range refresh also changes the query signature. A
+    // query replaced before its manual refresh settled (the date range changed
+    // mid-refresh) hands that refresh on, or the dashboard waits for it forever.
     const isManualRefresh =
-      !signatureChanged && refreshRequestId > previousRefreshRequestRef.current;
-    previousSignatureRef.current = querySignature;
+      refreshRequestId > previousRefreshRequestRef.current ||
+      unsettledManualRefreshRef.current === refreshRequestId;
     previousRefreshRequestRef.current = refreshRequestId;
+    unsettledManualRefreshRef.current = isManualRefresh
+      ? refreshRequestId
+      : null;
     let active = true;
     let pollTimer = null;
     let requestTimer = null;
@@ -262,6 +260,7 @@ export default function WidgetChart({
       }
       requestController?.abort();
       requestController = null;
+      if (isManualRefresh) unsettledManualRefreshRef.current = null;
       onQuerySettledRef.current?.({
         dashboardId,
         widgetId: widget.id,
@@ -471,7 +470,7 @@ export default function WidgetChart({
     acknowledgedRequest?.signature === querySignature &&
     acknowledgedRequest?.refreshRequestId === refreshRequestId;
 
-  // Auto-select top 10 series by total value when there are many breakdown series
+  // Auto-select the top 10 series by period value when there are many breakdown series
   const MAX_CHART_SERIES = 10;
   const [visibleSeries, setVisibleSeries] = useState(null); // null = all visible
 
@@ -494,16 +493,7 @@ export default function WidgetChart({
       if (visibleSeries !== null) setVisibleSeries(null);
       return;
     }
-    const ranked = series
-      .map((s, i) => ({
-        i,
-        total: s.data.reduce((sum, pt) => sum + (pt.y || 0), 0),
-      }))
-      .sort((a, b) => b.total - a.total);
-    const topIndices = new Set(
-      ranked.slice(0, MAX_CHART_SERIES).map((r) => r.i),
-    );
-    setVisibleSeries(topIndices);
+    setVisibleSeries(getTopSeriesIndices(series, MAX_CHART_SERIES));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series, savedVisibleKey]);
 
@@ -530,20 +520,31 @@ export default function WidgetChart({
 
   // Build from the full `series` list (not filtered chartSeries) so a
   // hidden series keeps its slot and its color stays put when unhidden.
+  const palette = seriesColors(theme);
   const seriesColorMap = useMemo(
-    () => buildSeriesColorMap(series.map((s) => s.name)),
-    [series],
+    () =>
+      buildSeriesColorMap(
+        series.map((s) => s.name),
+        palette,
+      ),
+    [series, palette],
   );
-  const colorFor = (name) => getSeriesColorFromMap(seriesColorMap, name);
+  const colorFor = (name) =>
+    getSeriesColorFromMap(seriesColorMap, name, palette);
 
   // Pie slices are breakdown values, which repeat across metrics. Key their
   // colours by the raw breakdown name so a given project is the same colour in
   // every pie — the composite series label differs per metric.
   const pieColorMap = useMemo(
-    () => buildSeriesColorMap([...new Set(series.map((s) => s.breakdownName))]),
-    [series],
+    () =>
+      buildSeriesColorMap(
+        [...new Set(series.map((s) => s.breakdownName))],
+        palette,
+      ),
+    [series, palette],
   );
-  const pieColorFor = (name) => getSeriesColorFromMap(pieColorMap, name);
+  const pieColorFor = (name) =>
+    getSeriesColorFromMap(pieColorMap, name, palette);
 
   const isDenseSeries = isDenseChartSeries(plottedChartSeries);
   const markerSizes = useMemo(
@@ -640,7 +641,7 @@ export default function WidgetChart({
           minHeight: 0,
         }}
       >
-        <CircularProgress size={24} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -705,6 +706,8 @@ export default function WidgetChart({
   // Metric card — also the fallback for a pie with nothing to slice by, where
   // each metric would otherwise render as a meaningless 100%-full circle.
   if (isMetricCard || (isPie && !pieHasBreakdown)) {
+    // Pie ignores selections inherited from other chart types.
+    const metricSeries = isPie ? series : chartSeries;
     return (
       <Box
         ref={containerRef}
@@ -729,11 +732,13 @@ export default function WidgetChart({
           alignItems="center"
           sx={{ flex: 1, minHeight: 0 }}
         >
-          {series.map((s, i) => {
-            const value = getSeriesScalar(s.data, s.aggregation);
-            const cellConfig = s.unit
-              ? { ...leftAxisFormatConfig, ...getUnitRendering(s.unit) }
-              : leftAxisFormatConfig;
+          {metricSeries.map((s, i) => {
+            const value = getSeriesScalar(
+              s.data,
+              s.aggregation,
+              s.aggregateValue,
+            );
+            const cellConfig = getSeriesFormatConfig(s, leftAxisFormatConfig);
             return (
               <Box key={i} sx={{ textAlign: "center" }}>
                 <Typography variant="h3" sx={{ color: colorFor(s.name) }}>
@@ -759,7 +764,7 @@ export default function WidgetChart({
     // Time as rows, Segments as columns
     // One row per bucket becomes thousands of rows at minute granularity, so
     // empty buckets are dropped and the remainder capped (TH-7757).
-    const bucketPlan = getTableBucketPlan(series);
+    const bucketPlan = getTableBucketPlan(chartSeries);
     const granLabel = (queryConfig?.granularity || "day").toLowerCase();
     const dateFmt =
       granLabel === "minute"
@@ -802,7 +807,7 @@ export default function WidgetChart({
                   textAlign: "left",
                   padding: "6px 10px",
                   fontWeight: 600,
-                  fontSize: "11px",
+                  fontSize: "12px",
                   color: theme.palette.text.secondary,
                   borderBottom: `2px solid ${theme.palette.divider}`,
                   position: "sticky",
@@ -829,14 +834,14 @@ export default function WidgetChart({
                   </Box>
                 )}
               </th>
-              {series.map((s, i) => (
+              {chartSeries.map((s, i) => (
                 <th
                   key={i}
                   style={{
                     textAlign: "right",
                     padding: "6px 10px",
                     fontWeight: 500,
-                    fontSize: "11px",
+                    fontSize: "12px",
                     color: theme.palette.text.secondary,
                     borderBottom: `2px solid ${theme.palette.divider}`,
                     position: "sticky",
@@ -859,7 +864,7 @@ export default function WidgetChart({
                       sx={{
                         width: 8,
                         height: 8,
-                        borderRadius: "2px",
+                        borderRadius: "4px",
                         bgcolor: colorFor(s.name),
                         display: "inline-block",
                         flexShrink: 0,
@@ -872,7 +877,10 @@ export default function WidgetChart({
                             queryConfig?.metrics?.[0]?.name ||
                             "Total"
                           : s.name;
-                      const unit = s.unit || leftAxisFormatConfig?.unit;
+                      const { unit } = getSeriesFormatConfig(
+                        s,
+                        leftAxisFormatConfig,
+                      );
                       return unit ? `${label} (${unit})` : label;
                     })()}
                   </span>
@@ -882,11 +890,11 @@ export default function WidgetChart({
           </thead>
           <tbody>
             {bucketPlan.indices.map((ri) => {
-              // The plan is sized by the widest series, so a shorter series[0]
-              // must not drop a row another series still reports (TH-7757 review).
-              const pt = series.find((s) => s?.data?.[ri])?.data?.[ri];
+              // The plan is sized by the widest visible series, so a shorter first
+              // series must not drop a row another visible series reports (TH-7757).
+              const pt = chartSeries.find((s) => s?.data?.[ri])?.data?.[ri];
               if (!pt) return null;
-              const hasNonZero = series.some(
+              const hasNonZero = chartSeries.some(
                 (s) => s.data[ri]?.y != null && s.data[ri].y !== 0,
               );
               return (
@@ -912,11 +920,12 @@ export default function WidgetChart({
                   >
                     {format(new Date(pt.x), dateFmt)}
                   </td>
-                  {series.map((s, si) => {
+                  {chartSeries.map((s, si) => {
                     const val = s.data[ri]?.y;
-                    const cellConfig = s.unit
-                      ? { ...leftAxisFormatConfig, ...getUnitRendering(s.unit) }
-                      : leftAxisFormatConfig;
+                    const cellConfig = getSeriesFormatConfig(
+                      s,
+                      leftAxisFormatConfig,
+                    );
                     return (
                       <td
                         key={si}
@@ -976,7 +985,7 @@ export default function WidgetChart({
     const barRows = chartSeries.map((s) => {
       // Same aggregation-aware value the metric card, table and pie use, so
       // one widget cannot read differently per chart type.
-      const value = getSeriesScalar(s.data, s.aggregation);
+      const value = getSeriesScalar(s.data, s.aggregation, s.aggregateValue);
       return {
         value,
         numericValue: value == null ? 0 : value,
@@ -1018,7 +1027,7 @@ export default function WidgetChart({
                 sx={{
                   width: 10,
                   height: 10,
-                  borderRadius: "2px",
+                  borderRadius: "4px",
                   bgcolor: colorFor(s.name),
                   flexShrink: 0,
                 }}
@@ -1054,7 +1063,7 @@ export default function WidgetChart({
               flexShrink: 0,
               fontWeight: 600,
               color: "text.secondary",
-              fontSize: "11px",
+              fontSize: "12px",
             }}
           >
             Metric
@@ -1065,7 +1074,7 @@ export default function WidgetChart({
               flex: 1,
               fontWeight: 600,
               color: "text.secondary",
-              fontSize: "11px",
+              fontSize: "12px",
             }}
           >
             Value
@@ -1121,10 +1130,8 @@ export default function WidgetChart({
                     sx={{
                       flex: 1,
                       height: 18,
-                      bgcolor: isDark
-                        ? "rgba(255,255,255,0.04)"
-                        : "rgba(0,0,0,0.02)",
-                      borderRadius: "3px",
+                      bgcolor: "background.neutral",
+                      borderRadius: "4px",
                       overflow: "hidden",
                     }}
                   >
@@ -1133,7 +1140,7 @@ export default function WidgetChart({
                         height: "100%",
                         width: `${Math.max(pct, 1)}%`,
                         bgcolor: color,
-                        borderRadius: "3px",
+                        borderRadius: "4px",
                         transition: "width 0.4s ease",
                       }}
                     />
@@ -1314,7 +1321,7 @@ export default function WidgetChart({
       ...(!isHorizontal && chartTimeWindow ? chartTimeWindow : {}),
       labels: {
         show: axisConfig?.xAxis?.visible !== false,
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
         datetimeUTC: false,
         ...(!isHorizontal && {
           datetimeFormatter: {
@@ -1371,7 +1378,7 @@ export default function WidgetChart({
             },
           }),
           labels: {
-            style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+            style: { colors: theme.palette.text.secondary, fontSize: "12px" },
             formatter: formatVal,
           },
         };
@@ -1402,7 +1409,7 @@ export default function WidgetChart({
             },
           }),
           labels: {
-            style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+            style: { colors: theme.palette.text.secondary, fontSize: "12px" },
             formatter: makeFormatter(cfg),
           },
         };
@@ -1434,7 +1441,7 @@ export default function WidgetChart({
     markers: {
       size: markerSizes,
       strokeWidth: 2,
-      strokeColors: isDark ? theme.palette.background.paper : "#fff",
+      strokeColors: theme.palette.background.paper,
       hover: isLineChart
         ? { size: 8, sizeOffset: 2 }
         : { size: 6, sizeOffset: 3 },
@@ -1462,10 +1469,10 @@ export default function WidgetChart({
             formatter: (val, { seriesIndex, dataPointIndex, w } = {}) => {
               if (isAbsentChartPoint(w, seriesIndex, dataPointIndex))
                 return "-";
-              const seriesUnit = chartSeries[seriesIndex]?.unit;
-              const cfg = seriesUnit
-                ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
-                : leftAxisFormatConfig;
+              const cfg = getSeriesFormatConfig(
+                chartSeries[seriesIndex],
+                leftAxisFormatConfig,
+              );
               return makeFormatter(cfg)(val);
             },
           },
@@ -1478,39 +1485,37 @@ export default function WidgetChart({
           intersect: isLineChart && !isDenseSeries,
           custom: ({ series: s, seriesIndex, dataPointIndex, w }) => {
             const sName = w.globals.seriesNames[seriesIndex] || "";
-            const color = w.globals.colors[seriesIndex] || "#6366F1";
+            const color = w.globals.colors[seriesIndex] || palette[0];
             const val = s[seriesIndex]?.[dataPointIndex];
             const prevVal =
               dataPointIndex > 0 ? s[seriesIndex]?.[dataPointIndex - 1] : null;
             const ts = w.globals.seriesX[seriesIndex]?.[dataPointIndex];
             const dateStr = ts ? format(new Date(ts), "MMM dd, yyyy") : "";
-            const seriesUnit = chartSeries[seriesIndex]?.unit;
-            const perSeriesCfg = seriesUnit
-              ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
-              : leftAxisFormatConfig;
+            const perSeriesCfg = getSeriesFormatConfig(
+              chartSeries[seriesIndex],
+              leftAxisFormatConfig,
+            );
             const fmtVal = makeFormatter(perSeriesCfg)(val);
-            const bg = isDark ? "#1e1e2e" : "#fff";
-            const _border = isDark
-              ? "rgba(255,255,255,0.08)"
-              : "rgba(0,0,0,0.06)";
-            const textPrimary = isDark ? "#fff" : "#1a1a2e";
-            const textSecondary = isDark
-              ? "rgba(255,255,255,0.5)"
-              : "rgba(0,0,0,0.45)";
+            const bg = theme.palette.background.paper;
+            const border = theme.palette.divider;
+            const textPrimary = theme.palette.text.primary;
+            const textSecondary = theme.palette.text.secondary;
             let changeHtml = "";
             if (prevVal != null && prevVal !== 0 && val != null) {
               const pct = ((val - prevVal) / Math.abs(prevVal)) * 100;
               const sign = pct >= 0 ? "+" : "";
-              const changeColor = pct >= 0 ? "#22C55E" : "#FF4842";
+              const changeColor = statusColors(
+                theme,
+                pct >= 0 ? "success" : "danger",
+              ).fg;
               changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:13px">from previous</span></div>`;
             }
-            return `<div style="display:flex;background:${bg};border:none;border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
-              <div style="width:4px;flex-shrink:0;background:${color}"></div>
-              <div style="padding:14px 16px;flex:1">
-                <div style="font-weight:700;font-size:14px;color:${textPrimary};line-height:1.3">${escapeHtml(sName)}</div>
+            return `<div style="display:flex;background:${bg};border:1px solid ${border};border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
+                            <div style="padding:14px 16px;flex:1">
+                <div style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:14px;color:${textPrimary};line-height:1.3"><span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${color}"></span>${escapeHtml(sName)}</div>
                 <div style="font-size:12px;color:${textSecondary};margin-top:3px">${escapeHtml(dateStr)}</div>
                 <div style="display:flex;align-items:baseline;gap:8px;margin-top:8px">
-                  <span style="font-weight:700;font-size:20px;color:${textPrimary}">${escapeHtml(fmtVal)}</span>
+                  <span style="font-weight:600;font-size:20px;color:${textPrimary}">${escapeHtml(fmtVal)}</span>
                 </div>
                 ${changeHtml}
               </div>

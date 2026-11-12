@@ -7,7 +7,7 @@ import React, {
 } from "react";
 import PropTypes from "prop-types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "react-router";
+import { useLocation, useParams } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import { getRandomId, sanitizeContent } from "src/utils/utils";
 import { useDebouncedFunction } from "src/hooks/use-debounced-function";
@@ -19,6 +19,11 @@ import { isContentNotEmpty } from "./Playground/common";
 import { modelConfigDefault, PromptWorkbenchContext } from "./WorkbenchContext";
 import { visibleWorkbenchTab } from "./workbenchTab";
 import {
+  prefillOf,
+  withPrefilledModel,
+  withPrefilledVariables,
+} from "./workbenchPrefill";
+import {
   getVariables,
   handleAuthFailClose,
   normalizeConfigurationForLoad,
@@ -26,6 +31,10 @@ import {
   normalizeMessagesForLoad,
   runPromptOverSocket,
 } from "./common";
+import {
+  isTemplateRefusal,
+  runRefusalToast,
+} from "./Playground/OutputSection/runRefusal";
 import logger from "src/utils/logger";
 import { usePromptStreamUrl } from "src/sections/workbench/createPrompt/hooks/usePromptStreamUrl";
 
@@ -66,16 +75,33 @@ const buildPromptRunOutput = (runStatus) => {
           cost: metadata?.cost?.total_cost,
           tokens: metadata?.usage?.total_tokens,
           responseTime: metadata?.response_time,
+          responseTimeUnit: metadata?.response_time_unit,
+          // IT-R1 G4 (additive): what the model and its tools did.
+          steps: metadata?.steps,
+          tools: metadata?.tools,
+          // IT-R2 G4 (additive): the tool choice used and the request sent.
+          toolChoice: metadata?.tool_choice,
+          request: metadata?.request,
         },
         outputFormat,
       };
     });
 };
 
+// `V3`, `v3` and `3` name the same prompt version.
+const sameVersionName = (a, b) =>
+  a != null &&
+  b != null &&
+  String(a).replace(/^v/i, "") === String(b).replace(/^v/i, "");
+
 const WorkbenchProvider = ({ children }) => {
   const { id } = useParams();
 
   const unsavedDrafts = useRef({});
+  // Columns whose committed version was edited, by column index, while their
+  // one new draft is waiting to be made ("queued") or being made
+  // ("creating"); `from` is the committed version, restored if it fails.
+  const draftCreation = useRef({});
   const streamingIds = useRef({});
   const queryClient = useQueryClient();
 
@@ -126,6 +152,14 @@ const WorkbenchProvider = ({ children }) => {
     }
     return selectedVersions.map(() => false);
   });
+  // Which columns are running right now, for the stream handler (setWsData).
+  // A run can open its stream from a render older than the one that marked
+  // it as running: Run anyway in the empty-variable box starts the run once
+  // the box has closed. Read from the closure, that handler then dropped
+  // every message of the run, its answer and its end included, and the
+  // output stayed on "Creating your final output..." for good.
+  const loadingStatusRef = useRef(loadingStatus);
+  loadingStatusRef.current = loadingStatus;
 
   // Singular global states
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
@@ -133,6 +167,32 @@ const WorkbenchProvider = ({ children }) => {
   const [isImportDatasetDrawerOpen, setImportDatasetDrawerOpen] =
     useState(false);
   const [variableData, setVariableData] = useState({});
+  // `Open in Prompts with this row ↗` (results drawer, PRODUCT-SPEC M12;
+  // L7b G8): the router state is read ONCE at mount (a later navigate that
+  // writes the selected versions into the URL drops location.state) and
+  // applied after the ?version= restore below has settled, so the row's
+  // variables, the run's model and its params win over the draft's values.
+  const { state: locationState, search: mountSearch } = useLocation();
+  const prefillRef = useRef(prefillOf(locationState));
+  const [versionSettled, setVersionSettled] = useState(
+    () => !new URLSearchParams(mountSearch).get("version"),
+  );
+  useEffect(() => {
+    const prefill = prefillRef.current;
+    if (!prefill || !versionSettled || !Object.keys(variableData).length)
+      return;
+    prefillRef.current = null;
+    if (prefill.variables)
+      setVariableData((prev) =>
+        withPrefilledVariables(prev, prefill.variables),
+      );
+    if (prefill.model || prefill.params)
+      setModelConfig((prev) =>
+        prev.map((config, index) =>
+          index === 0 ? withPrefilledModel(config, prefill) : config,
+        ),
+      );
+  }, [versionSettled, variableData]);
   const [promptName, setPromptName] = useState("");
   const [openSelectModel, setOpenSelectModel] = useState(null);
   const [valuesChanged, setValuesChanged] = useState(false);
@@ -142,7 +202,7 @@ const WorkbenchProvider = ({ children }) => {
   const activeSocketsRef = useRef({});
   // Skip the next getPrompt(latest) load when collapsing compare -> single.
   const skipLatestLoadOnce = useRef(false);
-  const promptStreamUrl = usePromptStreamUrl();
+  const getPromptStreamUrl = usePromptStreamUrl();
 
   // Close all active sockets on unmount to prevent leaks
   useEffect(() => {
@@ -258,6 +318,7 @@ const WorkbenchProvider = ({ children }) => {
     setResults([{ output: [], isAnimating: false }]);
     setLoadingStatus([false]);
     unsavedDrafts.current = {};
+    draftCreation.current = {};
   };
 
   const resultCache = useRef({});
@@ -435,7 +496,7 @@ const WorkbenchProvider = ({ children }) => {
           versionIndex = runningVersionIndexMapping.current[version];
         }
 
-        const versionLoadingStatus = loadingStatus[versionIndex];
+        const versionLoadingStatus = loadingStatusRef.current?.[versionIndex];
 
         if (!versionLoadingStatus) {
           // check if running event are coming from this version
@@ -492,6 +553,29 @@ const WorkbenchProvider = ({ children }) => {
               break;
             }
             resultSetter(versionIndex, resultIndex, wsData?.chunk, "running");
+            // IT-R5 G4 P3: a run that streams its steps (model and tool
+            // calls) fills the structured `What the model did` panel as it
+            // goes, instead of raw intermediate text.
+            if (Array.isArray(wsData?.metadata?.steps)) {
+              const m = wsData.metadata;
+              setResultsByIndex(versionIndex, (prev) => ({
+                ...prev,
+                output: (prev?.output ?? []).map((opt, rIndex) =>
+                  rIndex === resultIndex
+                    ? {
+                        ...opt,
+                        metadata: {
+                          ...(opt?.metadata ?? {}),
+                          steps: m.steps,
+                          tools: m.tools,
+                          toolChoice: m.tool_choice,
+                          request: m.request,
+                        },
+                      }
+                    : opt,
+                ),
+              }));
+            }
             break;
           }
           case "completed": {
@@ -511,6 +595,11 @@ const WorkbenchProvider = ({ children }) => {
                       cost: wsData.metadata?.cost?.total_cost,
                       tokens: wsData.metadata?.usage?.total_tokens,
                       responseTime: wsData.metadata?.response_time,
+                      responseTimeUnit: wsData.metadata?.response_time_unit,
+                      steps: wsData.metadata?.steps,
+                      tools: wsData.metadata?.tools,
+                      toolChoice: wsData.metadata?.tool_choice,
+                      request: wsData.metadata?.request,
                     },
                     outputFormat: wsData?.output_format,
                   };
@@ -538,9 +627,12 @@ const WorkbenchProvider = ({ children }) => {
             break;
           }
           case "error": {
-            enqueueSnackbar(wsData?.error || "Something went wrong", {
-              variant: "error",
-            });
+            enqueueSnackbar(
+              runRefusalToast(wsData?.error) || "Something went wrong",
+              {
+                variant: "error",
+              },
+            );
             resultSetter(versionIndex, resultIndex, wsData?.error, "error");
             if (versionIndex !== undefined) {
               setLoadingStatusByIndex(versionIndex, false);
@@ -654,6 +746,11 @@ const WorkbenchProvider = ({ children }) => {
             cost: data?.metadata?.[outputIdx]?.cost?.total_cost,
             tokens: data?.metadata?.[outputIdx]?.usage?.total_tokens,
             responseTime: data?.metadata?.[outputIdx]?.response_time,
+            responseTimeUnit: data?.metadata?.[outputIdx]?.response_time_unit,
+            steps: data?.metadata?.[outputIdx]?.steps,
+            tools: data?.metadata?.[outputIdx]?.tools,
+            toolChoice: data?.metadata?.[outputIdx]?.tool_choice,
+            request: data?.metadata?.[outputIdx]?.request,
           },
           outputFormat: data?.prompt_config?.[0]?.configuration?.output_format,
         })),
@@ -665,54 +762,72 @@ const WorkbenchProvider = ({ children }) => {
   const { mutate: compareRun } = useMutation({
     mutationFn: async () => {
       // Create promises for all versions in parallel
-      const promises = selectedVersions.map(({ version }, versionIndex) => {
-        return new Promise((resolve, reject) => {
-          const comparePayload = {
-            type: "run_template",
-            template_id: id,
-            version: version,
-            is_run: "prompt",
-          };
+      const promises = selectedVersions.map(
+        async ({ version }, versionIndex) => {
+          const socketKey = `compare-${versionIndex}`;
+          closeSocketByIndex(socketKey);
+          const connection = new AbortController();
+          const pending = { close: () => connection.abort() };
+          activeSocketsRef.current[socketKey] = pending;
+          let promptStreamUrl;
+          try {
+            // Mint inside the per-version attempt, never once for the comparison.
+            promptStreamUrl = await getPromptStreamUrl(connection.signal);
+          } catch (error) {
+            if (activeSocketsRef.current[socketKey] === pending) {
+              delete activeSocketsRef.current[socketKey];
+              setLoadingStatusByIndex(versionIndex, false);
+            }
+            return Promise.reject({ version, error });
+          }
+          return new Promise((resolve, reject) => {
+            const comparePayload = {
+              type: "run_template",
+              template_id: id,
+              version: version,
+              is_run: "prompt",
+            };
 
-          // @ts-ignore
-          const socket = runPromptOverSocket({
-            url: promptStreamUrl,
-            payload: { ...comparePayload },
-            onMessage: (data) => {
-              const shouldShowCompleted =
-                data?.streaming_status === "all_completed";
+            // @ts-ignore
+            const socket = runPromptOverSocket({
+              url: promptStreamUrl,
+              payload: { ...comparePayload },
+              onMessage: (data) => {
+                const shouldShowCompleted =
+                  data?.streaming_status === "all_completed";
 
-              if (!shouldShowCompleted) {
-                setWsData(data);
-              }
+                if (!shouldShowCompleted) {
+                  setWsData(data);
+                }
 
-              if (data?.streaming_status === "all_completed") {
-                closeSocketByIndex(`compare-${versionIndex}`);
-                resolve({ version, data });
-              }
-            },
-            onError: (err) => {
-              closeSocketByIndex(`compare-${versionIndex}`);
-              reject({ version, error: err });
-            },
-            onClose: (event) => {
-              // Server-initiated auth-fail closes: settle the version's
-              // Promise, clear its spinner, and surface the reason so
-              // Promise.allSettled + the UI don't hang.
-              handleAuthFailClose({
-                event,
-                cleanup: () => {
+                if (data?.streaming_status === "all_completed") {
                   closeSocketByIndex(`compare-${versionIndex}`);
-                  setLoadingStatusByIndex(versionIndex, false);
-                },
-                reject,
-                buildRejection: (reason) => ({ version, error: reason }),
-              });
-            },
+                  resolve({ version, data });
+                }
+              },
+              onError: (err) => {
+                closeSocketByIndex(`compare-${versionIndex}`);
+                reject({ version, error: err });
+              },
+              onClose: (event) => {
+                // Server-initiated auth-fail closes: settle the version's
+                // Promise, clear its spinner, and surface the reason so
+                // Promise.allSettled + the UI don't hang.
+                handleAuthFailClose({
+                  event,
+                  cleanup: () => {
+                    closeSocketByIndex(`compare-${versionIndex}`);
+                    setLoadingStatusByIndex(versionIndex, false);
+                  },
+                  reject,
+                  buildRejection: (reason) => ({ version, error: reason }),
+                });
+              },
+            });
+            activeSocketsRef.current[`compare-${versionIndex}`] = socket;
           });
-          activeSocketsRef.current[`compare-${versionIndex}`] = socket;
-        });
-      });
+        },
+      );
 
       // Wait for all versions to complete
       // eslint-disable-next-line no-useless-catch
@@ -810,6 +925,12 @@ const WorkbenchProvider = ({ children }) => {
               cost: version?.metadata?.[outputIdx]?.cost?.total_cost,
               tokens: version?.metadata?.[outputIdx]?.usage?.total_tokens,
               responseTime: version?.metadata?.[outputIdx]?.response_time,
+              responseTimeUnit:
+                version?.metadata?.[outputIdx]?.response_time_unit,
+              steps: version?.metadata?.[outputIdx]?.steps,
+              tools: version?.metadata?.[outputIdx]?.tools,
+              toolChoice: version?.metadata?.[outputIdx]?.tool_choice,
+              request: version?.metadata?.[outputIdx]?.request,
             },
             outputFormat:
               version?.prompt_config_snapshot?.configuration?.output_format,
@@ -834,8 +955,12 @@ const WorkbenchProvider = ({ children }) => {
       const currentConfig = { ...modelConfig[index] };
       delete currentConfig.id;
       const configuration = normalizeConfigurationForSave(currentConfig);
+      // IT-R2 G4 P1: the playground's Tool choice (Auto · Required · a
+      // tool) is sent as is; Auto when tools are attached and none is set.
       configuration["tool_choice"] =
-        currentConfig?.tools?.length > 0 ? "auto" : "";
+        currentConfig?.tools?.length > 0
+          ? currentConfig?.tool_choice || "auto"
+          : "";
       configuration["template_format"] = templateFormat || "mustache";
 
       const selectedVersion = selectedVersions[index];
@@ -958,7 +1083,19 @@ const WorkbenchProvider = ({ children }) => {
 
   const applyPromptRunStatus = useCallback(
     (index, runStatus) => {
-      const output = buildPromptRunOutput(runStatus);
+      // A row the HTTP run refused (a template part that is not allowed)
+      // shows as the stream shows it: an error result and the same line in
+      // a toast.
+      const output = buildPromptRunOutput(runStatus).map((result) =>
+        isTemplateRefusal(result.text)
+          ? { ...result, status: "error" }
+          : result,
+      );
+      output
+        .filter((result) => result.status === "error")
+        .forEach((result) =>
+          enqueueSnackbar(runRefusalToast(result.text), { variant: "error" }),
+        );
       setResultsByIndex(index, {
         output,
         isAnimating: false,
@@ -968,7 +1105,13 @@ const WorkbenchProvider = ({ children }) => {
         queryKey: ["prompt-versions", id],
       });
     },
-    [id, queryClient, setLoadingStatusByIndex, setResultsByIndex],
+    [
+      enqueueSnackbar,
+      id,
+      queryClient,
+      setLoadingStatusByIndex,
+      setResultsByIndex,
+    ],
   );
 
   const runPromptTemplateOverHttp = useCallback(
@@ -1002,14 +1145,45 @@ const WorkbenchProvider = ({ children }) => {
     },
   });
 
+  const runFromDraft = useRef([]);
   const { mutate: runPromptTemplate } = useMutation({
     /**
      *
      * @param {Object} data
      * @returns
      */
-    mutationFn: ({ index }) => {
+    mutationFn: async ({ index }) => {
       const payload = getRunTemplatePayload(index);
+      // IT-R4 G4 P2: save the editor first, so the run reads what is on
+      // screen (a variable value typed < 0.5 s ago is still waiting for its
+      // debounced save; the stream only names the version). Only a draft
+      // is saved in place; a committed version is never edited.
+      if (runFromDraft.current[index] && selectedVersions[index]?.version)
+        try {
+          await axios.post(
+            endpoints.develop.runPrompt.runTemplatePrompt(id),
+            getSaveTemplatePayload(index, false),
+          );
+        } catch {
+          // the run still starts on the saved version
+        }
+
+      const socketKey = `run-${index}`;
+      closeSocketByIndex(socketKey);
+      const connection = new AbortController();
+      const pending = { close: () => connection.abort() };
+      activeSocketsRef.current[socketKey] = pending;
+      let promptStreamUrl;
+      try {
+        // Each run/retry mints just before opening; waiting is not a URL failure.
+        promptStreamUrl = await getPromptStreamUrl(connection.signal);
+      } catch (error) {
+        if (activeSocketsRef.current[socketKey] === pending) {
+          delete activeSocketsRef.current[socketKey];
+        }
+        if (error?.name === "AbortError") throw error;
+        return runPromptTemplateOverHttp({ index, startRun: true });
+      }
 
       return new Promise((resolve, reject) => {
         let completed = false;
@@ -1047,14 +1221,6 @@ const WorkbenchProvider = ({ children }) => {
             reject(error);
           }
         };
-
-        if (!promptStreamUrl) {
-          fallbackToHttpPolling({
-            startRun: true,
-            reason: "missing_prompt_stream_url",
-          });
-          return;
-        }
 
         fallbackTimer = setTimeout(() => {
           fallbackToHttpPolling({
@@ -1124,11 +1290,21 @@ const WorkbenchProvider = ({ children }) => {
     onError: (error, variables) => {
       const index = variables?.index ?? 0;
       setLoadingStatusByIndex(index, false);
+      // IT-R4 G4 P2: the failure stays in the output panel with Retry
+      // (`Couldn't run: <reason>`), not only in a toast that fades.
+      const reason =
+        error?.response?.data?.result ??
+        error?.response?.data?.detail ??
+        error?.result ??
+        error?.detail ??
+        error?.message ??
+        "the run did not start";
       setResultsByIndex(index, (previous) => ({
         ...previous,
         isAnimating: false,
+        error: typeof reason === "string" ? reason : "the run did not start",
       }));
-      enqueueSnackbar(error?.message || "Prompt run failed.", {
+      enqueueSnackbar(runRefusalToast(error?.message) || "Prompt run failed.", {
         variant: "error",
       });
     },
@@ -1146,156 +1322,137 @@ const WorkbenchProvider = ({ children }) => {
     (args) => args[0].index,
   );
 
-  const saveAndDraft = async (index) => {
+  // Saves one column's edit. A committed version is never edited: its edit
+  // goes to ONE new draft, which the effect below makes once React has
+  // applied the edit. Making it here would read the column from this render,
+  // so edits that land together before a re-render (Quill replaces a
+  // selection as a delete and then an insert) would each see the version
+  // still committed and each make a draft, the first from an empty editor.
+  // Returns true when it queued a draft; the caller then shows the column
+  // as a draft that has no version yet.
+  const saveEdit = (index) => {
     const currentVersion = selectedVersions[index];
+    const pending = draftCreation.current[index];
+
+    if (pending) {
+      // A queued draft is made from the editor as it is after this edit;
+      // one already being made gets this edit saved into it afterwards.
+      if (pending.status === "creating") unsavedDrafts.current[index] = true;
+      return false;
+    }
+    if (!currentVersion) return false;
 
     if (currentVersion.isDraft) {
       if (currentVersion.version) {
         debouncedSaveOrRunPromptTemplate({ index, isRun: false });
       } else {
+        // A draft still being made (Compare's new column): saved once it is.
         unsavedDrafts.current[index] = true;
       }
-    } else {
-      const payload = getSaveTemplatePayload(index, false);
+      return false;
+    }
 
-      setSelectedVersionByIndex(index, (p) => {
-        return {
-          ...p,
-          isDraft: true,
-          version: null,
-        };
-      });
+    draftCreation.current[index] = { status: "queued", from: currentVersion };
+    return true;
+  };
 
-      unsavedDrafts.current[index] = true;
-
-      await addDraftToPromptAsync(
-        // @ts-ignore
-        {
-          new_prompts: [
-            {
-              variable_names: payload.variable_names,
-              prompt_config: payload.prompt_config,
-              evaluation_configs: [],
-            },
-          ],
-        },
-        {
-          onSuccess: (newDraftRes) => {
-            const newVersion = newDraftRes.data.result?.[0];
-
-            setSelectedVersionByIndex(index, (p) => {
-              return {
-                ...p,
-                version: newVersion?.template_version,
-                lastSaved: newVersion?.updated_at,
-                isDefault: newVersion?.is_default,
-                isDraft: newVersion?.is_draft,
-              };
-            });
-
-            // run the save which if remaining
-            if (unsavedDrafts.current[index]) {
-              debouncedSaveOrRunPromptTemplate({
-                index,
-                isRun: false,
-              });
-              unsavedDrafts.current[index] = null;
-            }
-          },
-        },
-      );
+  const saveAndDraft = (index) => {
+    if (saveEdit(index)) {
+      setSelectedVersionByIndex(index, (p) => ({
+        ...p,
+        isDraft: true,
+        version: null,
+      }));
     }
   };
 
   const saveAndDraftAll = useCallback(
-    async (saveDraftIndexes) => {
+    (saveDraftIndexes) => {
       const indexesToRun = saveDraftIndexes?.length
         ? saveDraftIndexes
         : selectedVersions.map((_, idx) => idx);
 
-      const isDraftIndexes = indexesToRun.filter(
-        (index) => selectedVersions[index]?.isDraft,
-      );
+      const queued = indexesToRun.filter((index) => saveEdit(index));
 
-      const isNotDraftIndexes = indexesToRun.filter(
-        (index) => !selectedVersions[index]?.isDraft,
-      );
-
-      isDraftIndexes.forEach((index) => {
-        debouncedSaveOrRunPromptTemplate({ index, isRun: false });
-      });
-
-      const payloads = isNotDraftIndexes.reduce((acc, index) => {
-        acc[index] = getSaveTemplatePayload(index, false);
-        return acc;
-      }, {});
-
-      setSelectedVersions((pre) => {
-        return pre.map((version, idx) => {
-          if (isNotDraftIndexes.includes(idx)) {
-            return {
-              ...version,
-              isDraft: true,
-              version: null,
-            };
-          }
-          return version;
-        });
-      });
-
-      isNotDraftIndexes.forEach((isNotDraftIndex) => {
-        unsavedDrafts.current[isNotDraftIndex] = true;
-      });
-
-      if (isNotDraftIndexes.length) {
-        // @ts-ignore
-        const addResults = await addDraftToPromptAsync({
-          new_prompts: isNotDraftIndexes.map(
-            (isNotDraftIndex) => payloads[isNotDraftIndex],
+      if (queued.length) {
+        setSelectedVersions((pre) =>
+          pre.map((version, idx) =>
+            queued.includes(idx)
+              ? { ...version, isDraft: true, version: null }
+              : version,
           ),
-        });
-
-        const addDraftResults = addResults?.data.result;
-
-        setSelectedVersions((pre) => {
-          return pre.map((version, idx) => {
-            const isNotDraftIndex = isNotDraftIndexes.findIndex(
-              (id) => id === idx,
-            );
-            if (isNotDraftIndex !== -1) {
-              const newVersion = addDraftResults[isNotDraftIndex];
-              return {
-                ...version,
-                version: newVersion?.template_version,
-                lastSaved: newVersion?.updated_at,
-                isDefault: newVersion?.is_default,
-                isDraft: newVersion?.is_draft,
-              };
-            }
-            return version;
-          });
-        });
-
-        isNotDraftIndexes.forEach((isNotDraftIndex) => {
-          if (unsavedDrafts.current[isNotDraftIndex]) {
-            debouncedSaveOrRunPromptTemplate({
-              index: isNotDraftIndex,
-              isRun: false,
-            });
-
-            unsavedDrafts.current[isNotDraftIndex] = null;
-          }
-        });
+        );
       }
     },
-    [
-      addDraftToPromptAsync,
-      debouncedSaveOrRunPromptTemplate,
-      getSaveTemplatePayload,
-      selectedVersions,
-      setSelectedVersions,
-    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [debouncedSaveOrRunPromptTemplate, selectedVersions, setSelectedVersions],
   );
+
+  // Makes the one draft for each column queued by saveEdit, from the editor
+  // as this render shows it, so every edit made before it is in the draft.
+  useEffect(() => {
+    const queued = Object.keys(draftCreation.current)
+      .map(Number)
+      .filter((index) => draftCreation.current[index]?.status === "queued");
+    if (!queued.length) return;
+
+    const entries = queued.map((index) => {
+      const entry = draftCreation.current[index];
+      entry.status = "creating";
+      return entry;
+    });
+    // Only the edit's content goes to the new draft, never the committed
+    // version's name or version.
+    const newPrompts = queued.map((index) => {
+      const payload = getSaveTemplatePayload(index, false);
+      return {
+        variable_names: payload.variable_names,
+        prompt_config: payload.prompt_config,
+        evaluation_configs: [],
+      };
+    });
+    // A reset since (another prompt opened) drops the result.
+    const stillWaiting = (i) => draftCreation.current[queued[i]] === entries[i];
+
+    // @ts-ignore
+    addDraftToPromptAsync({ new_prompts: newPrompts })
+      .then((res) => {
+        const created = res?.data?.result || [];
+        queued.forEach((index, i) => {
+          if (!stillWaiting(i)) return;
+          draftCreation.current[index] = null;
+          const newVersion = created[i];
+          setSelectedVersionByIndex(index, (p) => ({
+            ...p,
+            version: newVersion?.template_version,
+            lastSaved: newVersion?.updated_at,
+            isDefault: newVersion?.is_default,
+            isDraft: newVersion?.is_draft,
+          }));
+          // Edits made while the draft was being made.
+          if (unsavedDrafts.current[index]) {
+            debouncedSaveOrRunPromptTemplate({ index, isRun: false });
+            unsavedDrafts.current[index] = null;
+          }
+        });
+      })
+      .catch((error) => {
+        logger.error("Couldn't make a draft for the edit", error);
+        queued.forEach((index, i) => {
+          if (!stillWaiting(i)) return;
+          const { from } = entries[i];
+          draftCreation.current[index] = null;
+          unsavedDrafts.current[index] = null;
+          // Back on the committed version, so the next edit tries again.
+          setSelectedVersionByIndex(index, (p) => ({
+            ...p,
+            isDraft: from?.isDraft ?? false,
+            version: from?.version,
+          }));
+        });
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedVersions]);
 
   // Auto-save when user changes template format (skip initial load from API).
   const templateFormatUserChanged = useRef(false);
@@ -1354,6 +1511,11 @@ const WorkbenchProvider = ({ children }) => {
             cost: version?.metadata?.[index]?.cost?.total_cost,
             tokens: version?.metadata?.[index]?.usage?.total_tokens,
             responseTime: version?.metadata?.[index]?.response_time,
+            responseTimeUnit: version?.metadata?.[index]?.response_time_unit,
+            steps: version?.metadata?.[index]?.steps,
+            tools: version?.metadata?.[index]?.tools,
+            toolChoice: version?.metadata?.[index]?.tool_choice,
+            request: version?.metadata?.[index]?.request,
           },
           outputFormat:
             version?.prompt_config_snapshot?.configuration?.output_format,
@@ -1363,6 +1525,69 @@ const WorkbenchProvider = ({ children }) => {
       },
     ]);
   };
+
+  // options-truth L3 G8 P5: `Open in Prompts` from a run card carries the
+  // card's version (`?version=V3`); once the latest load lands, open that
+  // version (its messages, model and tools) instead of the latest one.
+  const { search: locationSearch } = useLocation();
+  const openVersionRef = useRef(
+    new URLSearchParams(locationSearch).get("version"),
+  );
+  useEffect(() => {
+    const want = openVersionRef.current;
+    if (!want || !data) return;
+    openVersionRef.current = null;
+    if (sameVersionName(data?.version, want)) {
+      setVersionSettled(true);
+      return;
+    }
+    let cancelled = false;
+    axios
+      .get(endpoints.develop.runPrompt.getPromptVersions(), {
+        params: { template_id: id, page: 1 },
+      })
+      .then((res) => {
+        const hit = (res?.data?.results ?? []).find((v) =>
+          sameVersionName(v?.template_version, want),
+        );
+        if (cancelled) return;
+        if (!hit) {
+          setVersionSettled(true);
+          return;
+        }
+        // Keep the values already typed for the variables this version uses.
+        const saved = hit.variable_names;
+        const names = Array.isArray(saved) ? saved : Object.keys(saved ?? {});
+        onRestoreVersion({ ...hit, variable_names: undefined });
+        if (names.length)
+          setVariableData((cur) =>
+            Object.fromEntries(
+              names.map((n) => {
+                const typed = cur?.[n];
+                const has = Array.isArray(typed)
+                  ? typed.some((x) => String(x ?? "") !== "")
+                  : String(typed ?? "") !== "";
+                return [
+                  n,
+                  has ? typed : (!Array.isArray(saved) && saved?.[n]) || [""],
+                ];
+              }),
+            ),
+          );
+        setVersionSettled(true);
+      })
+      .catch((e) => {
+        logger.error("Couldn't open the version", e);
+        setVersionSettled(true);
+      });
+    return () => {
+      cancelled = true;
+      // The restore is skipped; a pending prefill still applies to what
+      // is loaded rather than never.
+      setVersionSettled(true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, id]);
 
   const addToCompare = async () => {
     if (selectedVersions.length === 3) {
@@ -1374,19 +1599,37 @@ const WorkbenchProvider = ({ children }) => {
 
     const newIndex = selectedVersions.length;
 
+    // FA-PROMPTS-05: the new column starts as an unsaved draft copy of the
+    // open version (index 0, the one the header shows): its messages and
+    // model settings, under new ids and a new draft version.
+    // With nothing loaded yet it starts empty, as before.
+    const hasBase = Boolean(prompts[0]?.prompts?.length);
+    const baseMessages = hasBase ? prompts[0].prompts : DefaultMessages;
+    const baseConfig = hasBase
+      ? { ...(modelConfig[0] || modelConfigDefault) }
+      : { ...modelConfigDefault };
+    delete baseConfig.id;
+    const basePayload = hasBase ? getSaveTemplatePayload(0, false) : null;
+
     setPromptsByIndex(newIndex, {
-      prompts: DefaultMessages.map((content) => ({
-        ...content,
+      prompts: baseMessages.map((message) => ({
+        ...message,
+        content: Array.isArray(message.content)
+          ? message.content.map((block) => ({ ...block }))
+          : message.content,
         id: getRandomId(),
       })),
       id: getRandomId(),
     });
 
-    setPlaceholdersByIndex(newIndex, []);
+    setPlaceholdersByIndex(
+      newIndex,
+      hasBase ? [...(placeholders[0] || [])] : [],
+    );
 
     setModelConfigByIndex(newIndex, {
+      ...baseConfig,
       id: getRandomId(),
-      ...modelConfigDefault,
     });
 
     setResultsByIndex(newIndex, {
@@ -1415,21 +1658,29 @@ const WorkbenchProvider = ({ children }) => {
       return existing;
     });
 
+    // Only the copy's content goes to the new draft; never the open
+    // version's name or version, so saving it cannot overwrite the original.
     //@ts-ignore
     const newDraftRes = await addDraftToPromptAsync(
       //@ts-ignore
       {
         new_prompts: [
-          {
-            variable_names: {},
-            prompt_config: [
-              {
-                messages: [...DefaultMessages],
-                configuration: { ...modelConfigDefault },
+          basePayload
+            ? {
+                variable_names: basePayload.variable_names,
+                prompt_config: basePayload.prompt_config,
+                evaluation_configs: [],
+              }
+            : {
+                variable_names: {},
+                prompt_config: [
+                  {
+                    messages: [...DefaultMessages],
+                    configuration: { ...modelConfigDefault },
+                  },
+                ],
+                evaluation_configs: [],
               },
-            ],
-            evaluation_configs: [],
-          },
         ],
       },
     );
@@ -1509,13 +1760,23 @@ const WorkbenchProvider = ({ children }) => {
       });
     });
 
-    setSelectedVersions((e) => [e[0], ...newVersions]);
-    setPrompts((e) => [e[0], ...newPrompts]);
-    setPlaceholders((e) => [e[0], ...newPlaceholders]);
-    setModelConfig((e) => [e[0], ...newModelConfigs]);
-    setResults((e) => [e[0], ...newResults]);
+    // The open version stays the first pane only when it holds content: an
+    // empty draft (one an earlier edit left behind) never joins on its own,
+    // so Compare shows just the versions picked in History.
+    const keepOpen = !(
+      selectedVersions[0]?.isDraft && isEmptyPrompt.includes(0)
+    );
+    const withOpen = (added) => (e) => (keepOpen ? [e[0], ...added] : added);
+
+    setSelectedVersions(withOpen(newVersions));
+    setPrompts(withOpen(newPrompts));
+    setPlaceholders(withOpen(newPlaceholders));
+    setModelConfig(withOpen(newModelConfigs));
+    setResults(withOpen(newResults));
     // Merge added versions' variables into the shared panel; base (index 0) wins on conflicts.
-    setVariableData((prev) => ({ ...addedVariableData, ...prev }));
+    setVariableData((prev) =>
+      keepOpen ? { ...addedVariableData, ...prev } : addedVariableData,
+    );
   };
 
   const removeFromCompare = (index) => {
@@ -1556,9 +1817,13 @@ const WorkbenchProvider = ({ children }) => {
       return newPre;
     });
     unsavedDrafts.current[index] = null;
+    draftCreation.current[index] = null;
   };
 
   const saveAndRun = (index) => {
+    // IT-R4 G4 P2: which versions were drafts when Run was pressed (the
+    // run then clears isDraft); only those are saved before the stream.
+    runFromDraft.current = selectedVersions.map((v) => Boolean(v?.isDraft));
     // If no index we run all
     if (index === undefined) {
       runningVersionIndexMapping.current = selectedVersions.reduce(

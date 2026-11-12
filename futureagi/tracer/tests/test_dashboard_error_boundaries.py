@@ -536,6 +536,11 @@ def test_dashboard_query_uses_direct_write_backend_independent_of_routing(
     observe_project,
 ):
     settings.CLICKHOUSE_V2 = routing_config
+    query_config = _trace_query(observe_project.id)
+    query_config["time_range"] = {
+        "custom_start": "2026-08-01T00:00:00+00:00",
+        "custom_end": "2026-08-03T00:00:00+00:00",
+    }
     v2_client = MagicMock()
     # The direct-write read is taken through the measured transport, which
     # reports native rows/bytes progress alongside the rows. This double leaves
@@ -543,8 +548,16 @@ def test_dashboard_query_uses_direct_write_backend_independent_of_routing(
     # statement, not about what the statement cost.
     # The legacy ``execute_read`` must stay untouched.
     v2_client.execute_read_with_progress.return_value = (
-        [(datetime(2026, 8, 1, tzinfo=UTC), 123.0)],
-        [("time_bucket", "DateTime('UTC')"), ("metric_0", "Float64")],
+        [
+            (datetime(2026, 8, 1, tzinfo=UTC), 10.0, 0),
+            (datetime(2026, 8, 2, tzinfo=UTC), 100.0, 0),
+            (datetime(2026, 8, 1, tzinfo=UTC), 19.0, 1),
+        ],
+        [
+            ("time_bucket", "DateTime('UTC')"),
+            ("value", "Float64"),
+            ("is_period_aggregate", "UInt8"),
+        ],
         1.0,
         None,
         None,
@@ -576,7 +589,7 @@ def test_dashboard_query_uses_direct_write_backend_independent_of_routing(
     ):
         response = auth_client.post(
             "/tracer/dashboard/query/",
-            _trace_query(observe_project.id),
+            query_config,
             format="json",
         )
 
@@ -585,9 +598,19 @@ def test_dashboard_query_uses_direct_write_backend_independent_of_routing(
     assert response.json()["result"]["query_provenance"] == "exact_snapshot"
     assert v2_client.execute_read_with_progress.call_count == 1
     v2_client.execute_read.assert_not_called()
-    # Cache planning and execution build separate configs; only execution reads CH.
-    assert v2_builder.call_count == 2
-    assert v2_builder.call_args_list[0].args[0]["require_versioned_snapshot"] is True
+    # Formatting may reuse the period-aware execution builder; constructor
+    # counts do not measure reads. Pin the versioned query and real transport.
+    assert any(
+        call.args[0].get("require_versioned_snapshot") is True
+        for call in v2_builder.call_args_list
+    )
+    sql = v2_client.execute_read_with_progress.call_args.args[0]
+    assert "GROUP BY GROUPING SETS ((time_bucket), ())" in sql
+    series = response.json()["result"]["metrics"][0]["series"][0]
+    assert [
+        point["value"] for point in series["data"] if point["value"] is not None
+    ] == [10.0, 100.0]
+    assert series["aggregate_value"] == 19.0
     exact_snapshot.assert_called_once()
     assert exact_snapshot.call_args.kwargs["schedule_on_miss"] is False
     dispatch.assert_not_called()
@@ -608,6 +631,10 @@ def test_widget_trace_queries_use_direct_write_backend_independent_of_routing(
 ):
     settings.CLICKHOUSE_V2 = routing_config
     query_config = _trace_query(observe_project.id)
+    query_config["time_range"] = {
+        "custom_start": "2026-08-01T00:00:00+00:00",
+        "custom_end": "2026-08-03T00:00:00+00:00",
+    }
     dashboard_widget.query_config = query_config
     dashboard_widget.save(update_fields=["query_config"])
 
@@ -618,8 +645,16 @@ def test_widget_trace_queries_use_direct_write_backend_independent_of_routing(
     # statement, not about what the statement cost.
     # The legacy ``execute_read`` must stay untouched.
     v2_client.execute_read_with_progress.return_value = (
-        [(datetime(2026, 8, 1, tzinfo=UTC), 123.0)],
-        [("time_bucket", "DateTime('UTC')"), ("metric_0", "Float64")],
+        [
+            (datetime(2026, 8, 1, tzinfo=UTC), 10.0, 0),
+            (datetime(2026, 8, 2, tzinfo=UTC), 100.0, 0),
+            (datetime(2026, 8, 1, tzinfo=UTC), 19.0, 1),
+        ],
+        [
+            ("time_bucket", "DateTime('UTC')"),
+            ("value", "Float64"),
+            ("is_period_aggregate", "UInt8"),
+        ],
         1.0,
         None,
         None,
@@ -670,9 +705,19 @@ def test_widget_trace_queries_use_direct_write_backend_independent_of_routing(
     assert response.json()["result"]["query_provenance"] == "exact_snapshot"
     assert v2_client.execute_read_with_progress.call_count == 1
     v2_client.execute_read.assert_not_called()
-    # Cache planning and execution build separate configs; only execution reads CH.
-    assert v2_builder.call_count == 2
-    assert v2_builder.call_args_list[0].args[0]["require_versioned_snapshot"] is True
+    # Formatting may reuse the period-aware execution builder; constructor
+    # counts do not measure reads. Pin the versioned query and real transport.
+    assert any(
+        call.args[0].get("require_versioned_snapshot") is True
+        for call in v2_builder.call_args_list
+    )
+    sql = v2_client.execute_read_with_progress.call_args.args[0]
+    assert "GROUP BY GROUPING SETS ((time_bucket), ())" in sql
+    series = response.json()["result"]["metrics"][0]["series"][0]
+    assert [
+        point["value"] for point in series["data"] if point["value"] is not None
+    ] == [10.0, 100.0]
+    assert series["aggregate_value"] == 19.0
     exact_snapshot.assert_called_once()
     assert exact_snapshot.call_args.kwargs["schedule_on_miss"] is False
     dispatch.assert_not_called()
@@ -699,11 +744,15 @@ def test_dashboard_running_refresh_suppresses_duplicate_direct_read(
         ) as cache_probe,
         patch(
             "tracer.views.dashboard._read_dashboard_rollup_fast_path",
-            side_effect=AssertionError("an in-flight worker must suppress direct reads"),
+            side_effect=AssertionError(
+                "an in-flight worker must suppress direct reads"
+            ),
         ),
         patch(
             "tracer.views.dashboard.V2AnalyticsQueryService",
-            side_effect=AssertionError("an in-flight worker must suppress direct reads"),
+            side_effect=AssertionError(
+                "an in-flight worker must suppress direct reads"
+            ),
         ),
     ):
         response = auth_client.post(

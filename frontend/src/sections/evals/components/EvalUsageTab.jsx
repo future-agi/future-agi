@@ -23,10 +23,12 @@ import CustomTooltip from "src/components/tooltip";
 import { useDebounce } from "src/hooks/use-debounce";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback/AddEvalsFeedbackDrawer";
+import EmptyState from "src/sections/common/ux/EmptyState";
 
 import PartialInputWarningDetails from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
 
 import { useEvalUsageChart, useEvalUsageLogs } from "../hooks/useEvalUsage";
+import { RECORDED_VERSION_TOOLTIP } from "../Helpers/evalVersionCopy";
 import { isEditableElement } from "src/utils/keyboardUtils";
 import { getStorage, setStorage } from "src/hooks/use-local-storage";
 import UsageChart from "./UsageChart";
@@ -68,7 +70,7 @@ const EvalUsageTab = ({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [searchQuery, setSearchQuery] = useState("");
-  const [detailIndex, setDetailIndex] = useState(null); // index in filteredLogs
+  const [detailId, setDetailId] = useState(null);
   const debouncedSearch = useDebounce(searchQuery.trim(), 400);
   const columnConfigureRef = useRef(null);
 
@@ -267,9 +269,14 @@ const EvalUsageTab = ({
     [currentColumnConfig, applyColumnConfig],
   );
 
+  // Clearing the field shows every row at once; typing still waits for the
+  // debounce.
+  const activeSearch = searchQuery.trim() ? debouncedSearch : "";
+
+  // Search covers the loaded page only (the field says so).
   const filteredLogs = useMemo(() => {
-    if (!debouncedSearch) return logItems;
-    const q = debouncedSearch.toLowerCase();
+    if (!activeSearch) return logItems;
+    const q = activeSearch.toLowerCase();
     return logItems.filter(
       (l) =>
         l.id?.toLowerCase?.().includes(q) ||
@@ -277,18 +284,37 @@ const EvalUsageTab = ({
         l.result?.toLowerCase?.().includes(q) ||
         l.reason?.toLowerCase?.().includes(q),
     );
-  }, [logItems, debouncedSearch]);
+  }, [logItems, activeSearch]);
+  const noPageMatches =
+    Boolean(activeSearch) && logItems.length > 0 && filteredLogs.length === 0;
 
   const columns = useColumns(currentColumnConfig);
   const handleRowClick = useCallback(
     (row) => {
-      const idx = filteredLogs.findIndex((l) => l.id === row.id);
-      setDetailIndex(idx >= 0 ? idx : 0);
+      setDetailId(filteredLogs.some((l) => l.id === row.id) ? row.id : null);
     },
     [filteredLogs],
   );
 
+  // The position may change after a refresh or filter; the selected run must not.
+  const selectedIndex =
+    detailId !== null ? filteredLogs.findIndex((l) => l.id === detailId) : -1;
+  const detailIndex = selectedIndex >= 0 ? selectedIndex : null;
   const detailRow = detailIndex !== null ? filteredLogs[detailIndex] : null;
+
+  React.useEffect(() => {
+    // Once a run leaves the results, reopening it requires an explicit selection.
+    if (detailId !== null && detailIndex === null) setDetailId(null);
+  }, [detailId, detailIndex]);
+
+  const handleDetailNavigate = useCallback(
+    (offset) => {
+      if (detailIndex === null) return;
+      const nextRow = filteredLogs[detailIndex + offset];
+      if (nextRow) setDetailId(nextRow.id);
+    },
+    [detailIndex, filteredLogs],
+  );
 
   const handleFeedbackSubmitted = useCallback(() => {
     queryClient.invalidateQueries({
@@ -304,17 +330,17 @@ const EvalUsageTab = ({
       if (isEditableElement(e)) return;
       if (e.key === "k") {
         e.preventDefault();
-        setDetailIndex((i) => Math.max(0, (i ?? 0) - 1));
+        handleDetailNavigate(-1);
       } else if (e.key === "j") {
         e.preventDefault();
-        setDetailIndex((i) => Math.min(filteredLogs.length - 1, (i ?? 0) + 1));
+        handleDetailNavigate(1);
       } else if (e.key === "Escape") {
-        setDetailIndex(null);
+        setDetailId(null);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [detailIndex, filteredLogs.length]);
+  }, [detailIndex, handleDetailNavigate]);
 
   return (
     <Box
@@ -335,7 +361,7 @@ const EvalUsageTab = ({
           minHeight: 0,
           minWidth: 0,
           marginRight: detailIndex !== null ? "420px" : 0,
-          transition: "margin-right 0.25s",
+          transition: "margin-right 0.2s",
         }}
       >
         {/* Date picker + stats — single row */}
@@ -378,10 +404,9 @@ const EvalUsageTab = ({
             <Button
               size="small"
               variant="outlined"
-              startIcon={<Iconify icon="mdi:refresh" width={16} />}
+              startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
               disabled={isRefreshing}
               onClick={handleRefresh}
-              sx={{ textTransform: "none" }}
             >
               {isRefreshing ? "Refreshing" : "Refresh"}
             </Button>
@@ -431,10 +456,7 @@ const EvalUsageTab = ({
             borderColor: "divider",
             p: 1.5,
             mb: 1.5,
-            backgroundColor: (t) =>
-              t.palette.mode === "dark"
-                ? "rgba(255,255,255,0.01)"
-                : "background.default",
+            backgroundColor: "background.neutral",
           }}
         >
           {chartLoading ? (
@@ -503,6 +525,14 @@ const EvalUsageTab = ({
           >
             <Typography variant="body2" fontWeight={600}>
               Evaluation Logs
+              <Typography
+                component="span"
+                variant="caption"
+                color="text.secondary"
+                sx={{ ml: 1 }}
+              >
+                Newest first
+              </Typography>
               {logsFetching && (
                 <Typography
                   component="span"
@@ -539,7 +569,8 @@ const EvalUsageTab = ({
               <FormSearchField
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search..."
+                placeholder="Search this page"
+                inputProps={{ "aria-label": "Search this page" }}
                 size="small"
                 sx={{
                   minWidth: "120px",
@@ -583,6 +614,22 @@ const EvalUsageTab = ({
                 rowCount={totalLogs}
                 onRowClick={handleRowClick}
                 emptyMessage="No evaluation logs for this period"
+                emptyContent={
+                  noPageMatches ? (
+                    <EmptyState
+                      compact
+                      icon="mdi:magnify"
+                      title={`No logs on this page match "${activeSearch}"`}
+                      body="Search looks at this page only. Clear the search or go to another page."
+                      actions={[
+                        {
+                          label: "Clear search",
+                          onClick: () => setSearchQuery(""),
+                        },
+                      ]}
+                    />
+                  ) : undefined
+                }
               />
             )}
           </Box>
@@ -644,11 +691,9 @@ const EvalUsageTab = ({
                   <IconButton
                     size="small"
                     disabled={detailIndex === 0}
-                    onClick={() =>
-                      setDetailIndex((i) => Math.max(0, (i ?? 0) - 1))
-                    }
+                    onClick={() => handleDetailNavigate(-1)}
                   >
-                    <Iconify icon="mingcute:arrow-up-line" width={16} />
+                    <Iconify icon="solar:arrow-up-linear" width={16} />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -657,13 +702,9 @@ const EvalUsageTab = ({
                   <IconButton
                     size="small"
                     disabled={detailIndex >= filteredLogs.length - 1}
-                    onClick={() =>
-                      setDetailIndex((i) =>
-                        Math.min(filteredLogs.length - 1, (i ?? 0) + 1),
-                      )
-                    }
+                    onClick={() => handleDetailNavigate(1)}
                   >
-                    <Iconify icon="mingcute:arrow-down-line" width={16} />
+                    <Iconify icon="solar:arrow-down-linear" width={16} />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -681,8 +722,8 @@ const EvalUsageTab = ({
                   sx={{
                     px: 0.5,
                     py: 0.125,
-                    borderRadius: "3px",
-                    fontSize: "9px",
+                    borderRadius: "4px",
+                    fontSize: "12px",
                     fontFamily: "monospace",
                     border: "1px solid",
                     borderColor: "divider",
@@ -696,8 +737,8 @@ const EvalUsageTab = ({
                   sx={{
                     px: 0.5,
                     py: 0.125,
-                    borderRadius: "3px",
-                    fontSize: "9px",
+                    borderRadius: "4px",
+                    fontSize: "12px",
                     fontFamily: "monospace",
                     border: "1px solid",
                     borderColor: "divider",
@@ -714,19 +755,20 @@ const EvalUsageTab = ({
                 <Typography
                   variant="caption"
                   color="text.disabled"
-                  sx={{ fontFamily: "monospace", fontSize: "10px" }}
+                  sx={{ fontFamily: "monospace", fontSize: "12px" }}
                 >
                   {detailRow.id?.slice(0, 12)}
                 </Typography>
               )}
-              <IconButton size="small" onClick={() => setDetailIndex(null)}>
-                <Iconify icon="mingcute:close-line" width={16} />
+              <IconButton size="small" onClick={() => setDetailId(null)}>
+                <Iconify icon="solar:close-linear" width={16} />
               </IconButton>
             </Box>
           </Box>
           {/* Content: Formatted / JSON toggle */}
           {detailRow && (
             <DetailPanelContent
+              key={detailRow.id}
               row={detailRow}
               isDark={isDark}
               templateId={templateId}
@@ -793,22 +835,14 @@ const DetailPanelContent = ({
             sx={{
               px: 1.5,
               py: 0.375,
-              borderRadius: "5px",
-              fontSize: "11px",
+              borderRadius: "6px",
+              fontSize: "12px",
               fontWeight: viewMode === m ? 600 : 400,
               color: viewMode === m ? "text.primary" : "text.secondary",
               backgroundColor:
-                viewMode === m
-                  ? (t) =>
-                      t.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.08)"
-                        : "action.hover"
-                  : "transparent",
+                viewMode === m ? "action.selected" : "transparent",
               "&:hover": {
-                backgroundColor: (t) =>
-                  t.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.04)"
-                    : "action.hover",
+                backgroundColor: "action.hover",
               },
             }}
           >
@@ -862,10 +896,10 @@ const DetailPanelContent = ({
                 color={
                   typeof row.score === "number"
                     ? row.score >= 0.7
-                      ? "success.main"
+                      ? "status.success.fg"
                       : row.score >= 0.3
-                        ? "warning.main"
-                        : "error.main"
+                        ? "status.warning.fg"
+                        : "status.danger.fg"
                     : undefined
                 }
               />
@@ -933,12 +967,11 @@ const DetailPanelContent = ({
               />
               {row.version != null && row.version !== "" && (
                 <DetailRow
-                  label="Version"
+                  label="Recorded version"
                   value={
-                    typeof row.version === "number" ||
-                    !String(row.version).startsWith("v")
-                      ? `v${row.version}`
-                      : String(row.version)
+                    <span title={RECORDED_VERSION_TOOLTIP}>
+                      {`Recorded ${typeof row.version === "number" || !String(row.version).startsWith("v") ? `v${row.version}` : String(row.version)}`}
+                    </span>
                   }
                 />
               )}
@@ -1052,15 +1085,15 @@ const DetailPanelContent = ({
                         <Iconify
                           icon={
                             row.feedback.value === "passed"
-                              ? "mingcute:thumb-up-2-fill"
-                              : "mingcute:thumb-down-2-fill"
+                              ? "solar:like-bold"
+                              : "solar:dislike-bold"
                           }
                           width={16}
                           sx={{
                             color:
                               row.feedback.value === "passed"
-                                ? "success.main"
-                                : "error.main",
+                                ? "status.success.fg"
+                                : "status.danger.fg",
                           }}
                         />
                         <Chip
@@ -1078,7 +1111,6 @@ const DetailPanelContent = ({
                               : "error"
                           }
                           variant="outlined"
-                          sx={{ fontSize: "11px", height: 20 }}
                         />
                       </Box>
                       <Box
@@ -1092,7 +1124,7 @@ const DetailPanelContent = ({
                           <Typography
                             variant="caption"
                             color="text.disabled"
-                            sx={{ fontSize: "10px" }}
+                            sx={{ fontSize: "12px" }}
                           >
                             {row.feedback.user}
                           </Typography>
@@ -1103,7 +1135,7 @@ const DetailPanelContent = ({
                           onClick={() => setFeedbackOpen(true)}
                         >
                           <Iconify
-                            icon="mingcute:edit-line"
+                            icon="solar:pen-linear"
                             width={14}
                             sx={{ color: "text.secondary" }}
                           />
@@ -1133,54 +1165,31 @@ const DetailPanelContent = ({
                         }
                         size="small"
                         variant="outlined"
-                        sx={{ fontSize: "10px", height: 18, mt: 0.75 }}
+                        sx={{ mt: 0.75 }}
                       />
                     )}
                   </Box>
                 ) : null}
 
-                <Box
-                  component="button"
+                <Button
+                  variant="outlined"
+                  size="small"
+                  fullWidth
                   disabled={!canEditEvals}
                   onClick={() => setFeedbackOpen(true)}
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 1,
-                    px: 2,
-                    py: 0.75,
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: "8px",
-                    backgroundColor: "transparent",
-                    color: "text.primary",
-                    cursor: canEditEvals ? "pointer" : "not-allowed",
-                    opacity: canEditEvals ? 1 : 0.5,
-                    fontSize: "12px",
-                    fontWeight: 500,
-                    width: "100%",
-                    "&:hover": canEditEvals
-                      ? {
-                          borderColor: "primary.main",
-                          backgroundColor: (t) =>
-                            t.palette.mode === "dark"
-                              ? "rgba(124,77,255,0.06)"
-                              : "rgba(124,77,255,0.04)",
-                        }
-                      : {},
-                  }}
+                  sx={{ gap: 1, color: "text.primary" }}
                 >
                   <Iconify
                     icon={
                       row.feedback
-                        ? "mingcute:edit-line"
-                        : "mingcute:message-3-line"
+                        ? "solar:pen-linear"
+                        : "solar:chat-round-line-linear"
                     }
                     width={14}
                     sx={{ color: "primary.main" }}
                   />
                   {row.feedback ? "Edit Feedback" : "Add Feedback"}
-                </Box>
+                </Button>
               </Box>
             )}
 
@@ -1244,7 +1253,6 @@ const CompositeChildrenSection = ({ row }) => {
           label={aggFunction.replace("_", " ")}
           size="small"
           variant="outlined"
-          sx={{ fontSize: "10px", height: 18, textTransform: "capitalize" }}
         />
       </Box>
 
@@ -1290,7 +1298,6 @@ const CompositeChildrenSection = ({ row }) => {
                       size="small"
                       color="error"
                       variant="outlined"
-                      sx={{ fontSize: "10px", height: 18 }}
                     />
                   ) : (
                     <ScoreCell value={child.score} />
@@ -1302,7 +1309,7 @@ const CompositeChildrenSection = ({ row }) => {
                     variant="body2"
                     color="text.secondary"
                     sx={{
-                      fontSize: "11px",
+                      fontSize: "12px",
                       lineHeight: 1.4,
                       mb: 0.75,
                       display: "-webkit-box",
@@ -1325,7 +1332,7 @@ const CompositeChildrenSection = ({ row }) => {
                   <Typography
                     variant="caption"
                     color="text.disabled"
-                    sx={{ fontSize: "10px" }}
+                    sx={{ fontSize: "12px" }}
                   >
                     weight: {child.weight ?? 1}
                     {!isFailed && ` · score: ${scoreDisplay}`}
@@ -1339,10 +1346,9 @@ const CompositeChildrenSection = ({ row }) => {
                           "_blank",
                         )
                       }
-                      sx={{ p: 0.25 }}
                     >
                       <Iconify
-                        icon="mingcute:external-link-line"
+                        icon="solar:arrow-right-up-linear"
                         width={14}
                         sx={{ color: "primary.main" }}
                       />
@@ -1402,7 +1408,6 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
           size="small"
           color={chipColor || "default"}
           variant="outlined"
-          sx={{ fontSize: "11px", height: 20 }}
         />
       ) : (
         <Typography

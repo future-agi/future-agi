@@ -393,3 +393,7 @@ class EditRunPromptColumnSerializer(serializers.Serializer):
     column_id = serializers.UUIDField(required=True)
     name = serializers.CharField(required=False, allow_null=True)
     config = PromptConfigSerializer(required=False, allow_null=True)
+
+    scope = serializers.ChoiceField(
+        choices=["all", "changed", "failed"], required=False, default="all"
+    )

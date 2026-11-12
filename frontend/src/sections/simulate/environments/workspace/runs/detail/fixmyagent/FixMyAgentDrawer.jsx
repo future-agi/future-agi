@@ -1,12 +1,12 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button } from "@mui/material";
+import { Box, Stack, Typography, Button, Tab } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import { CustomTabs } from "src/components/tabs/tabs";
+import NotInReleaseChip from "src/components/NotInRelease/NotInReleaseChip";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import SideDrawer from "../../../../components/SideDrawer";
-import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import {
   useDebugAnalysis,
   useRunCalls,
@@ -21,42 +21,12 @@ import ImaginePane from "./ImaginePane";
  * Opened by the run header's "Debug failures" button. Opening it requests the
  * run's Omega diagnosis once (`debug-analysis`); the DiagnosisPane shows the
  * issues it found and hands their calls back to the table. A second "Imagine"
- * tab is present but gated (no backend).
+ * tab opens an inert pane: it is not built in this release and says so.
  *
  * The drawer uses the shared `SideDrawer`, which already paints the single
  * close-X — so this content deliberately does NOT add its own, or the two would
  * stack in the same corner.
  */
-function TabButton({ active, onClick, icon, children }) {
-  return (
-    <Box
-      onClick={onClick}
-      sx={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 0.5,
-        py: 1.25,
-        cursor: "pointer",
-        borderBottom: "2px solid",
-        borderColor: active ? "text.primary" : "transparent",
-        color: active ? "text.primary" : "text.subtitle",
-        "&:hover": { color: "text.primary" },
-      }}
-    >
-      <Iconify icon={icon} width={14} />
-      <Typography sx={{ typography: "s2", fontWeight: active ? 700 : 500 }}>
-        {children}
-      </Typography>
-    </Box>
-  );
-}
-TabButton.propTypes = {
-  active: PropTypes.bool,
-  onClick: PropTypes.func,
-  icon: PropTypes.string,
-  children: PropTypes.node,
-};
-
 // The API refuses a run whose calls are still in flight; anything else is a
 // generic failure — raw backend text is not user copy.
 function refusalMessage(error) {
@@ -114,9 +84,12 @@ export default function FixMyAgentDrawer({
   }, [analysis, requestError, citedCalls]);
 
   // Once diagnosed, the header counts what the diagnosis counts, so they agree.
+  // Before that only the run's failing count shows: it holds errored calls, which
+  // the run's measured count leaves out, so the two can read as "19 of 18".
   const failing = view.summary?.brokenCalls ?? stats?.failed ?? 0;
-  const measured =
-    view.summary?.measuredCalls ?? stats?.measured ?? stats?.total ?? 0;
+  const countLine = view.summary
+    ? `${failing} failing of ${view.summary.measuredCalls} measured`
+    : `${failing} failing`;
 
   // The primary path out of the diagnosis: start a fix from this run. Shown once
   // the diagnosis has finished, to orgs that have Fix my agent switched on.
@@ -148,56 +121,55 @@ export default function FixMyAgentDrawer({
             sx={{
               width: 30,
               height: 30,
-              borderRadius: 1,
+              borderRadius: "8px",
               display: "grid",
               placeItems: "center",
               flexShrink: 0,
-              color: BUILD_TONES.accent,
-              bgcolor: (t) =>
-                alpha(
-                  BUILD_TONES.accent,
-                  t.palette.mode === "dark" ? 0.16 : 0.1,
-                ),
+              color: "status.discovery.fg",
+              bgcolor: "status.discovery.bg",
             }}
           >
             <Iconify icon="solar:magic-stick-3-linear" width={16} />
           </Box>
           <Box flex={1} minWidth={0}>
-            <Typography sx={{ typography: "s1", fontWeight: 700 }}>
+            <Typography sx={{ typography: "m2", fontWeight: 500 }}>
               Debug failures
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {failing} failing of {measured} measured
+              {countLine}
             </Typography>
           </Box>
         </Stack>
 
-        {/* Tab bar — Diagnosis (real) and Imagine (gated). */}
-        <Stack
-          direction="row"
-          spacing={2}
+        {/* Tab bar — Diagnosis (built) and Imagine (not in this release). */}
+        <CustomTabs
+          value={tab}
+          onChange={(_, v) => setTab(v)}
           sx={{
-            px: 2.5,
+            boxShadow: "none",
             borderBottom: "1px solid",
             borderColor: "divider",
             flexShrink: 0,
           }}
         >
-          <TabButton
-            active={tab === "diagnosis"}
-            onClick={() => setTab("diagnosis")}
-            icon="solar:document-medicine-linear"
-          >
-            Diagnosis
-          </TabButton>
-          <TabButton
-            active={tab === "imagine"}
-            onClick={() => setTab("imagine")}
-            icon="solar:magic-stick-3-linear"
-          >
-            Imagine
-          </TabButton>
-        </Stack>
+          <Tab
+            value="diagnosis"
+            label="Diagnosis"
+            icon={<Iconify icon="solar:document-medicine-linear" width={14} />}
+            iconPosition="start"
+          />
+          <Tab
+            value="imagine"
+            label={
+              <Stack direction="row" alignItems="center" spacing={0.75}>
+                <span>Imagine</span>
+                <NotInReleaseChip />
+              </Stack>
+            }
+            icon={<Iconify icon="solar:magic-stick-3-linear" width={14} />}
+            iconPosition="start"
+          />
+        </CustomTabs>
 
         {tab === "diagnosis" ? (
           <DiagnosisPane
@@ -228,7 +200,6 @@ export default function FixMyAgentDrawer({
               color="primary"
               onClick={onLaunch}
               startIcon={<Iconify icon="solar:magic-stick-3-bold" width={16} />}
-              sx={{ typography: "s2", fontWeight: 700 }}
             >
               Improve
             </Button>
@@ -245,8 +216,6 @@ FixMyAgentDrawer.propTypes = {
   executionId: PropTypes.string,
   stats: PropTypes.shape({
     failed: PropTypes.number,
-    measured: PropTypes.number,
-    total: PropTypes.number,
   }),
   onLaunch: PropTypes.func,
   onViewCalls: PropTypes.func,

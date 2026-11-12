@@ -1,17 +1,17 @@
 import { Box, Stack } from "@mui/material";
 
-import ComingSoonChip from "../../../../components/ComingSoonChip";
+import NotInReleaseChip from "src/components/NotInRelease/NotInReleaseChip";
 import EmptyState from "../../../../components/EmptyState";
 
 /**
- * Imagine — GATED, coming soon.
+ * Imagine — not built in this release.
  *
  * The designer's Imagine tab is an exploratory chat-to-widgets canvas driven
  * entirely by a local mock resolver (`resolvePrompt` over fabricated task data).
  * There is no backend for it — no analytics endpoint on the run answers freeform
- * questions — so rather than fabricate widgets, the tab is present but inert with
- * a coming-soon marker, keeping the drawer's shape while being honest about the
- * gap.
+ * questions — so rather than fabricate widgets, the tab is present but inert and
+ * carries the shared line, keeping the drawer's shape while being honest about
+ * the gap.
  */
 export default function ImaginePane() {
   return (
@@ -19,10 +19,10 @@ export default function ImaginePane() {
       <EmptyState
         icon="solar:magic-stick-3-linear"
         title="Imagine"
-        body="Ask freeform questions about this run and get charts back. This exploratory canvas isn't wired to a backend yet."
+        body="Ask freeform questions about this run and get charts back."
       />
       <Box sx={{ mt: -1.5 }}>
-        <ComingSoonChip />
+        <NotInReleaseChip />
       </Box>
     </Stack>
   );

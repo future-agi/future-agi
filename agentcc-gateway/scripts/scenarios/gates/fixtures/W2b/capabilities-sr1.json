@@ -1,0 +1,101 @@
+{
+  "generated_at": "2026-10-16T22:00:00Z",
+  "endpoints": [
+    {
+      "endpoint": "search",
+      "launch_tier": "provider_dependent",
+      "providers": {
+        "exa": {
+          "status": "supported",
+          "credential_type": "managed",
+          "features": {
+            "stream": false,
+            "tools": false,
+            "json_schema": false,
+            "vision": false,
+            "audio_input": false,
+            "reasoning": false,
+            "prompt_caching": false
+          },
+          "managed_allowed": true,
+          "managed_resale_terms": "cleared",
+          "price": {
+            "sku": "search.request",
+            "usd_per_unit_billed": 0.0105,
+            "markup_percent": 5
+          },
+          "source": "config",
+          "qualified": false,
+          "qualified_at": null
+        },
+        "tavily": {
+          "status": "provider_dependent",
+          "credential_type": "byok",
+          "features": {
+            "stream": false,
+            "tools": false,
+            "json_schema": false,
+            "vision": false,
+            "audio_input": false,
+            "reasoning": false,
+            "prompt_caching": false
+          },
+          "managed_allowed": false,
+          "managed_resale_terms": "byok_only",
+          "source": "config",
+          "qualified": false,
+          "qualified_at": null
+        }
+      }
+    },
+    {
+      "endpoint": "fetch",
+      "launch_tier": "beta",
+      "providers": {
+        "futureagi": {
+          "status": "supported",
+          "credential_type": "managed",
+          "features": {
+            "stream": false,
+            "tools": false,
+            "json_schema": false,
+            "vision": false,
+            "audio_input": false,
+            "reasoning": false,
+            "prompt_caching": false
+          },
+          "managed_allowed": true,
+          "managed_resale_terms": "native",
+          "price": {
+            "sku": "fetch.page",
+            "usd_per_unit_billed": 0.00105,
+            "markup_percent": 5
+          },
+          "source": "config",
+          "qualified": false,
+          "qualified_at": null
+        }
+      }
+    },
+    {
+      "endpoint": "documents.parse",
+      "launch_tier": "unsupported",
+      "providers": {}
+    },
+    {
+      "endpoint": "guardrails",
+      "launch_tier": "unsupported",
+      "providers": {}
+    },
+    {
+      "endpoint": "evals",
+      "launch_tier": "unsupported",
+      "providers": {}
+    },
+    {
+      "endpoint": "browser.sessions",
+      "launch_tier": "unsupported",
+      "providers": {}
+    }
+  ]
+}

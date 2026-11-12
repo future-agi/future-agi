@@ -39,11 +39,18 @@ from simulate.models import (
     HostedHarnessConversation,
     HostedHarnessConversationLease,
     HostedHarnessConversationMessage,
+    HostedHarnessExecution,
     HostedHarnessJob,
+    HostedHarnessReceipt,
     HostedHarnessSecret,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
+from simulate.services.github_app_tenancy import (
+    PRIVATE_GITHUB_UNAVAILABLE_MESSAGE,
+    platform_github_app_refused,
+)
 from simulate.services.hosted_harness import (
+    RERUN_EXECUTION_KEYS,
     HostedHarnessError,
     activate_attempt_capability,
     finish_deferred_delete,
@@ -674,6 +681,44 @@ def _extend_command_for(
     )
 
 
+def _refuse_platform_installation_token() -> None:
+    """Mint no installation token where the platform App serves several organizations.
+
+    Nothing records which organization installed the App on which account, so there an
+    installation id, whether a client sent it or a runtime, version or job stored it,
+    may be another organization's. A single-organization self-hosted install that
+    configured its own App still mints.
+    """
+    if platform_github_app_refused():
+        raise HostedHarnessError(
+            "github_private_unavailable",
+            PRIVATE_GITHUB_UNAVAILABLE_MESSAGE,
+            status_code=422,
+            retryable=False,
+        )
+
+
+PRIVATE_GITHUB_UNAVAILABLE_CODE = "github_private_unavailable"
+# What an existing environment built from a private repository says once that
+# repository can no longer be read here: its runs, builds and rebuilds record this.
+# New jobs are refused at creation with PRIVATE_GITHUB_UNAVAILABLE_MESSAGE instead.
+PRIVATE_GITHUB_ENVIRONMENT_MESSAGE = (
+    "Private GitHub repositories are not available on Future AGI cloud. "
+    "Upload the code to keep using this environment."
+)
+
+
+def private_github_environment_failure() -> dict[str, str]:
+    """The failure an environment's job or rebuild records for the refusal: the user's
+    to fix (upload the code), never the platform's, so it is not retried."""
+    return {
+        "domain": "environment",
+        "stage": "acquiring_source",
+        "code": PRIVATE_GITHUB_UNAVAILABLE_CODE,
+        "message": PRIVATE_GITHUB_ENVIRONMENT_MESSAGE,
+    }
+
+
 class GitHubAppTokenProvider:
     def __init__(self, *, app_id: str, private_key: str) -> None:
         self.app_id = app_id
@@ -695,6 +740,8 @@ class GitHubAppTokenProvider:
         return cls(app_id=str(app_id), private_key=private_key)
 
     def installation_token(self, installation_id: str) -> str:
+        # Before the App JWT is signed or GitHub is asked for anything.
+        _refuse_platform_installation_token()
         now = int(time.time())
         app_jwt = jwt.encode(
             {"iat": now - 30, "exp": now + 540, "iss": self.app_id},
@@ -853,6 +900,13 @@ _GUEST_CAUSE_LINE = re.compile(r"(?:ProcessRuntimeError|RuntimeValidationError):
 _GUEST_INNER_EXCEPTION = re.compile(
     r"(?:^|\\n)([A-Za-z_.]+(?:Error|Exception)): ([^\\\"\n]+)"
 )
+
+
+# The labels of a guest's typed failures; the stored message adds the cause it printed.
+RUNTIME_VALIDATION_FAILED = (
+    "Generated environment failed real-runtime validation after bounded repair"
+)
+AUTHORING_FAILED = "Environment authoring failed before a runnable world was saved"
 
 
 def guest_failure_cause(tail: str) -> str:
@@ -1251,6 +1305,8 @@ class _ExportRefused(Exception):
 class _ExportPlan:
     """What the launch writes once the guard has finished; the default writes nothing."""
 
+    state: str = "OFF"
+    reason: str | None = None
     project_name: str | None = None
     collector_url: str | None = None
     export: str | None = None
@@ -1411,6 +1467,18 @@ def _plan_observability_export(
 ) -> _ExportPlan:
     """Decide the export without writing anything; any failure means no export."""
     try:
+        from tracer.services.collector_ingest import (
+            DISABLED_REASON,
+            SANDBOX_EXPORT_STATE,
+            get_or_create_export_credentials,
+        )
+
+        if SANDBOX_EXPORT_STATE == "OFF":
+            # One structured OFF log, no hidden project or stored credential minted.
+            get_or_create_export_credentials(
+                organization_id=None, workspace_id=None, agent_definition_id=None
+            )
+            return _ExportPlan(state="OFF", reason=DISABLED_REASON)
         return _decide_observability_export(
             job,
             payload,
@@ -1534,7 +1602,17 @@ def attach_observability_export_secret_refs(
 
 
 def _ingest_key_values(organization_id: Any) -> tuple[str, ...]:
-    """Every ingest key's two values, switched off, deleted or not; read and never created."""
+    """Every ingest key's two values, switched off, deleted or not; read and never created.
+
+    The secret column holds no plaintext once a row is sealed (READINESS L03), so the
+    secret is read back from the row's encrypted copy (ingest keys keep one,
+    ``accounts.api_key_lookup.RECOVERABLE_TYPES``). A copy that cannot be opened raises
+    ``ApiSecretNotRecoverable``: the caller then keeps no diagnostics, because this
+    secret could not be redacted from them. A hash-only row is never handed to a
+    sandbox (``get_or_create_export_credentials`` fails closed on it), so only its
+    api_key is held.
+    """
+    from accounts.api_secrets import decrypt_secret, stored_plaintext
     from accounts.models.user import OrgApiKey
 
     # A key switched off or deleted mid-run may still be in a sandbox that another worker
@@ -1542,8 +1620,14 @@ def _ingest_key_values(organization_id: Any) -> tuple[str, ...]:
     # request's workspace.
     rows = OrgApiKey._base_manager.filter(
         organization_id=organization_id, type="ingest"
-    ).values_list("api_key", "secret_key")
-    return tuple(value for row in rows for value in row if value)
+    ).values_list("api_key", "secret_key", "secret_key_hash", "secret_key_ciphertext")
+    values = []
+    for api_key, plaintext, stored_hash, ciphertext in rows:
+        secret = stored_plaintext(stored_hash, plaintext)
+        if not secret and ciphertext:
+            secret = decrypt_secret(ciphertext)
+        values.extend(value for value in (api_key, secret) if value)
+    return tuple(values)
 
 
 _MAX_EGRESS_DOMAINS = 20
@@ -3204,6 +3288,18 @@ class HostedHarnessGateway:
                 state=HostedHarnessConversation.State.DEGRADED,
                 updated_at=timezone.now(),
             )
+            if getattr(exc, "code", None) == PRIVATE_GITHUB_UNAVAILABLE_CODE:
+                # No later start can read the source either: a rebuild this start ran
+                # for ends now with the reason instead of timing out as not started.
+                try:
+                    rebuild.end_refused_rebuild(
+                        job, conversation, error=private_github_environment_failure()
+                    )
+                except Exception:  # noqa: BLE001 - the not-started check still ends it
+                    logger.exception(
+                        "refused rebuild could not be ended conversation=%s",
+                        conversation.id,
+                    )
             if isinstance(exc, HostedHarnessError):
                 raise
             raise HostedHarnessError(
@@ -3467,26 +3563,29 @@ class HostedHarnessGateway:
             < _DIAGNOSTICS_POLL_INTERVAL_SECONDS
         ):
             return None
-        secret_values = cached_attempt_redaction_values(attempt.id)
-        if secret_values is None:
-            try:
+        from accounts.services.service_grants import redaction_fragments
+
+        try:
+            # Re-derive on every capture, including warm caches: another worker
+            # may have issued a grant since this worker last saw the attempt.
+            grant_values = tuple(redaction_fragments(attempt.id))
+            secret_values = cached_attempt_redaction_values(attempt.id)
+            if secret_values is None:
                 target_secrets = PlatformSecretResolver().resolve(attempt.job)
                 simulator_secrets = resolve_platform_simulator_secrets()
-                secret_values = cache_attempt_redaction_values(
-                    attempt.id,
-                    redaction_values(
-                        {**target_secrets, **simulator_secrets},
-                        extra=_ingest_key_values(attempt.job.organization_id),
-                    ),
+                secret_values = redaction_values(
+                    {**target_secrets, **simulator_secrets},
+                    # Preserve legacy-run redaction until their rows are scrubbed.
+                    extra=_ingest_key_values(attempt.job.organization_id),
                 )
-            except Exception as exc:  # noqa: BLE001 - unsafe logs must not be persisted
-                attempt.diagnostics_error = f"redaction:{type(exc).__name__}"
-                attempt.save(update_fields=["diagnostics_error", "updated_at"])
-                logger.exception(
-                    "could not resolve diagnostics redaction inputs attempt=%s",
-                    attempt.id,
-                )
-                return None
+            secret_values = cache_attempt_redaction_values(
+                attempt.id, tuple(dict.fromkeys((*secret_values, *grant_values)))
+            )
+        except Exception as exc:  # noqa: BLE001 - unsafe logs must not be persisted
+            attempt.diagnostics_error = f"redaction:{type(exc).__name__}"
+            attempt.save(update_fields=["diagnostics_error", "updated_at"])
+            logger.warning("diagnostics redaction unavailable attempt=%s", attempt.id)
+            return None
         try:
             return poll_sandbox_diagnostics(
                 attempt,
@@ -4365,8 +4464,8 @@ class HostedHarnessGateway:
     def _should_retry(self, attempt: HostedHarnessAttempt, domain: str) -> bool:
         # An infrastructure/connectivity failure is worth a fresh attempt while
         # the domain is retryable and the whole-job attempt budget remains
-        # (spine §0.6 + §1 `retry`). Exit 0 (verdict delivered) and exit 3
-        # (superseded) never reach here.
+        # (spine §0.6 + §1 `retry`). Exit 3 (superseded) never reaches here; exit 0
+        # does only when the platform lost results the guest produced.
         retry = attempt.job.payload.get("retry", {})
         cycle_start = int(
             (attempt.job.payload.get("metadata") or {}).get("attempt_cycle_start") or 1
@@ -4375,6 +4474,48 @@ class HostedHarnessGateway:
         return domain in retry.get(
             "retryable_domains", []
         ) and attempts_in_cycle < retry.get("max_infrastructure_attempts", 1)
+
+    def _results_missing(self, attempt: HostedHarnessAttempt) -> list[str] | None:
+        """The keys of the executions this attempt was sent and delivered no result for.
+
+        None when it was sent none: a build's product is its bundle, not call results. A
+        result an earlier attempt delivered is not this attempt's.
+        """
+        job = attempt.job
+        if job.environment_id is None:
+            return None
+        executions = HostedHarnessExecution.no_workspace_objects.filter(job=job)
+        rerun_keys = (job.payload.get("metadata") or {}).get(RERUN_EXECUTION_KEYS)
+        if rerun_keys:
+            executions = executions.filter(execution_key__in=rerun_keys)
+        if not executions.exists():
+            return None
+        received = HostedHarnessReceipt.no_workspace_objects.filter(
+            job=job, attempt_number=attempt.attempt_number, execution__isnull=False
+        ).values("execution_id")
+        return sorted(
+            executions.exclude(id__in=received).values_list("execution_key", flat=True)
+        )
+
+    def _relaunch_only_missing_results(self, attempt: HostedHarnessAttempt) -> None:
+        """Scope the relaunch to the calls this attempt left without a result, as an in-run
+        re-run is scoped to its chosen calls. The results that arrived stay the Run's.
+
+        With no result in, that scope is every call. A build relaunches whole.
+        """
+        missing = self._results_missing(attempt)
+        if not missing:
+            return
+        with transaction.atomic():
+            job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=attempt.job_id
+            )
+            metadata = {
+                **(job.payload.get("metadata") or {}),
+                RERUN_EXECUTION_KEYS: missing,
+            }
+            job.payload = {**job.payload, "metadata": metadata}
+            job.save(update_fields=["payload", "updated_at"])
 
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt
@@ -4583,9 +4724,9 @@ class HostedHarnessGateway:
             )
             authoring_invalid = exit_code == 78 or authoring_failed
             label = (
-                "Generated environment failed real-runtime validation after bounded repair"
+                RUNTIME_VALIDATION_FAILED
                 if exit_code == 78
-                else "Environment authoring failed before a runnable world was saved"
+                else AUTHORING_FAILED
                 if authoring_failed
                 else f"guest entrypoint exited {exit_code}"
             )
@@ -4630,9 +4771,51 @@ class HostedHarnessGateway:
                     logger.exception(
                         "could not mark the bundle cache failed attempt=%s", attempt.id
                     )
+        elif (
+            exit_code == 0
+            and attempt.terminal_event_received
+            and not attempt.manifest_acked
+            and attempt.terminal_stage == "completed"
+            and self._results_missing(attempt) == []
+        ):
+            # Every call's result is in, and the results are what the run page and a check
+            # run read; only the manifest listing the artifacts was lost. Keep the scored
+            # Run: manifest_acked stays False as the record of what never arrived.
+            logger.warning(
+                "hosted run kept without its manifest attempt=%s provider_ref=%s",
+                attempt.id,
+                attempt.provider_ref,
+            )
+        elif (
+            exit_code == 0
+            and not attempt.terminal_event_received
+            and self._results_missing(attempt) == []
+        ):
+            # Every call's result is in and only the guest's terminal event was lost. The
+            # platform records its own ending, as it does for a cancel: a reason no guest
+            # sends, and terminal_event_received stays False.
+            attempt.terminal_stage = "completed"
+            attempt.terminal_reason = "terminal_event_lost"
+            attempt.save(
+                update_fields=["terminal_stage", "terminal_reason", "updated_at"]
+            )
+            structlog_logger.warning(
+                "hosted_run_completed_by_platform",
+                job_id=str(attempt.job_id),
+                attempt_id=str(attempt.id),
+                reason="terminal_event_lost",
+            )
         elif exit_code == 0 and (
             not attempt.terminal_event_received or not attempt.manifest_acked
         ):
+            # Retry only results the guest produced and the platform lost: an ending the
+            # guest reported as failed or canceled is its own.
+            retry_pending = (
+                not attempt.terminal_event_received
+                or attempt.terminal_stage == "completed"
+            ) and self._should_retry(attempt, "infrastructure")
+            if retry_pending:
+                self._relaunch_only_missing_results(attempt)
             attempt.terminal_stage = "failed"
             attempt.terminal_failure = {
                 "domain": "platform_sync",
@@ -6190,8 +6373,20 @@ def store_authoring_archive(
     return object_key
 
 
+def source_file_mode(data: bytes) -> int:
+    """The canonical mode for a file stored as an uploaded or candidate source."""
+    return 0o755 if data[:2] == b"#!" else 0o644
+
+
+@dataclass(frozen=True)
+class SourceSymlink:
+    """A source-tree link kept as metadata, never followed by the backend."""
+
+    target: str
+
+
 def store_source_archive(organization, files, paths, name: str) -> dict[str, Any]:
-    """Pack an uploaded folder into a `source/`-rooted tar.gz in object storage.
+    """Pack file streams and source symlinks into a `source/`-rooted tar.gz in storage.
 
     Returns the descriptor the caller echoes to the client. The resulting
     `source_id` is used later as `source.archive_artifact_id` and resolved by
@@ -6211,12 +6406,19 @@ def store_source_archive(organization, files, paths, name: str) -> dict[str, Any
                     status_code=400,
                 )
             seen.add(relative)
-            data = uploaded.read()
-            total += len(data)
             info = tarfile.TarInfo(f"source/{relative}")
-            info.size = len(data)
-            info.mode = 0o755 if data[:2] == b"#!" else 0o644
-            tar.addfile(info, io.BytesIO(data))
+            if isinstance(uploaded, SourceSymlink):
+                info.type = tarfile.SYMTYPE
+                info.linkname = uploaded.target
+                info.mode = 0o777
+                total += len(uploaded.target.encode("utf-8", "surrogateescape"))
+                tar.addfile(info)
+            else:
+                data = uploaded.read()
+                total += len(data)
+                info.size = len(data)
+                info.mode = source_file_mode(data)
+                tar.addfile(info, io.BytesIO(data))
     body = archive.getvalue()
     max_bytes = getattr(settings, "ALK_HOSTED_SOURCE_MAX_BYTES", 256 * 1024 * 1024)
     if len(body) > max_bytes:

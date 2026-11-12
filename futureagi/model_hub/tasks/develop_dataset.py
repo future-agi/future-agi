@@ -864,6 +864,20 @@ def remove_kb_files(files, org, kb_id):
                         f"Error updating file status for file {res.get('file_id')}: {str(e)}"
                     )
 
+        # Recount persisted, nondeleted files rather than subtracting requested
+        # bytes: failed removals still count, and retries must not reclaim twice.
+        for kb_file in kb_files_to_update:
+            size = 0
+            for metadata in kb_file.files.filter(deleted=False).values_list(
+                "metadata", flat=True
+            ):
+                if isinstance(metadata, str):
+                    metadata = json.loads(metadata)
+                size += (metadata or {}).get("size", 0)
+            kb_file.size = size
+            # remove_from_kb has saved the final status on a different instance.
+            kb_file.save(update_fields=["size"])
+
         return result
 
     except Exception as e:

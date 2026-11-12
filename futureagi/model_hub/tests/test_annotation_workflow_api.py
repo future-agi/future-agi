@@ -1069,13 +1069,20 @@ class TestSubmitAnnotations:
         queue_id, item_ids, label = queue_with_items
         url = submit_annotations_url(queue_id, item_ids[0])
 
-        for value in ("positive", "negative", "positive"):
+        timestamps = []
+        for value in ("positive", "negative", "positive", "positive"):
             resp = auth_client.post(
                 url,
                 {"annotations": [{"label_id": str(label.id), "value": value}]},
                 format="json",
             )
             assert resp.status_code == status.HTTP_200_OK, resp.data
+            saved = Score.objects.get(
+                queue_item_id=item_ids[0], label=label, deleted=False
+            )
+            timestamps.append(saved.value_updated_at)
+        assert timestamps[0] < timestamps[1] < timestamps[2]
+        assert timestamps[2] == timestamps[3]
 
         ann = Score.objects.get(queue_item_id=item_ids[0], label=label, deleted=False)
         assert ann.value == "positive"
@@ -4012,11 +4019,86 @@ class TestSkipItem:
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
         assert "Completed items cannot be skipped" in _result(resp)
 
-    def test_skip_rejects_non_member_even_if_workspace_admin(
+    @pytest.mark.parametrize("admin_kind", ["organization", "workspace"])
+    def test_skip_allows_implicit_admin_who_can_annotate(
+        self, api_client, queue_with_items, organization, workspace, admin_kind
+    ):
+        """W10-ANNOTATIONS-L05: annotation and skip share implicit admin access."""
+        from accounts.models.organization_membership import OrganizationMembership
+        from accounts.models.user import User
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        queue_id, item_ids, label = queue_with_items
+        if admin_kind == "workspace":
+            admin = _create_workspace_admin_user(
+                organization, workspace, email_prefix="skip-workspace-admin"
+            )
+        else:
+            admin = User.objects.create_user(
+                email=f"skip-org-admin-{uuid.uuid4().hex[:8]}@futureagi.com",
+                password="testpassword123",
+                name="Skip Organization Admin",
+                organization=organization,
+                organization_role=OrganizationRoles.ADMIN,
+            )
+            OrganizationMembership.no_workspace_objects.update_or_create(
+                user=admin,
+                organization=organization,
+                defaults={
+                    "role": OrganizationRoles.ADMIN,
+                    "level": Level.ADMIN,
+                    "is_active": True,
+                },
+            )
+
+        # Keep the two authorization branches distinct and bypass neither with
+        # an explicit queue role or the default-queue exception.
+        assert admin.has_global_workspace_access(organization) == (
+            admin_kind == "organization"
+        )
+        assert AnnotationQueue.objects.get(pk=queue_id).is_default is False
+        assert not AnnotationQueueAnnotator.objects.filter(
+            queue_id=queue_id, user=admin, deleted=False
+        ).exists()
+        api_client.force_authenticate(user=admin)
+        api_client.set_workspace(workspace)
+
+        submitted = api_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            {"annotations": [{"label_id": str(label.id), "value": "positive"}]},
+            format="json",
+        )
+        assert submitted.status_code == status.HTTP_200_OK, submitted.data
+        assert _result(submitted)["submitted"] == 1
+
+        reserved_at = timezone.now()
+        QueueItem.objects.filter(pk=item_ids[1]).update(
+            reserved_by=admin,
+            reserved_at=reserved_at,
+            reservation_expires_at=reserved_at + timedelta(minutes=30),
+        )
+        response = api_client.post(skip_url(queue_id, item_ids[1]), format="json")
+
+        assert response.status_code == status.HTTP_200_OK, response.data
+        assert _result(response)["skipped_item_id"] == str(item_ids[1])
+        item = QueueItem.objects.get(pk=item_ids[1])
+        assert item.status == QueueItemStatus.SKIPPED.value
+        assert item.reserved_by_id is None
+        assert item.reserved_at is None
+        assert item.reservation_expires_at is None
+        assert not AnnotationQueueAnnotator.objects.filter(
+            queue_id=queue_id, user=admin, deleted=False
+        ).exists()
+
+    def test_skip_rejects_non_admin_non_member(
         self, auth_client, dataset_rows, organization, workspace
     ):
-        """Custom queues require explicit membership before skipping items."""
+        """Ordinary workspace members still need a role on a custom queue."""
+        from accounts.models.organization_membership import OrganizationMembership
         from accounts.models.user import User
+        from accounts.models.workspace import WorkspaceMembership
+        from tfc.constants.levels import Level
         from tfc.constants.roles import OrganizationRoles
 
         dataset, rows = dataset_rows
@@ -4051,6 +4133,40 @@ class TestSkipItem:
             organization=organization,
             workspace=workspace,
         )
+
+        outsider = User.objects.create_user(
+            email=f"skip-outsider-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Skip Queue Outsider",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        org_membership, _ = (
+            OrganizationMembership.no_workspace_objects.update_or_create(
+                user=outsider,
+                organization=organization,
+                defaults={
+                    "role": OrganizationRoles.MEMBER,
+                    "level": Level.MEMBER,
+                    "is_active": True,
+                },
+            )
+        )
+        WorkspaceMembership.no_workspace_objects.update_or_create(
+            user=outsider,
+            workspace=workspace,
+            defaults={
+                "role": OrganizationRoles.WORKSPACE_MEMBER,
+                "level": Level.WORKSPACE_MEMBER,
+                "organization_membership": org_membership,
+                "is_active": True,
+            },
+        )
+        assert not outsider.has_global_workspace_access(organization)
+        assert not AnnotationQueueAnnotator.objects.filter(
+            queue=queue, user=outsider, deleted=False
+        ).exists()
+        auth_client.force_authenticate(user=outsider)
 
         resp = auth_client.post(skip_url(queue.id, item.id), format="json")
 
@@ -5660,7 +5776,7 @@ class TestAssignItems:
             item = QueueItem.objects.get(pk=iid)
             assert item.assigned_to_id == user.id
 
-    def test_assign_rejects_legacy_single_user_alias(
+    def test_assign_accepts_legacy_single_user_alias(
         self, auth_client, queue_with_items, user
     ):
         queue_id, item_ids, _ = queue_with_items
@@ -5671,8 +5787,35 @@ class TestAssignItems:
             format="json",
         )
 
-        assert resp.status_code == status.HTTP_400_BAD_REQUEST
-        assert "user_id" in str(resp.data)
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert _result(resp)["assigned"] == 1
+        assert QueueItemAssignment.objects.filter(
+            queue_item_id=item_ids[0], user=user, deleted=False,
+        ).exists()
+
+        unknown_key = auth_client.post(
+            assign_url(queue_id),
+            {"item_ids": [str(item_ids[0])], "user_id": None, "unexpected": True},
+            format="json",
+        )
+        assert unknown_key.status_code == status.HTTP_400_BAD_REQUEST
+        assert "unexpected" in str(unknown_key.data)
+        assert "Unknown field." in str(unknown_key.data)
+        assert QueueItemAssignment.objects.filter(
+            queue_item_id=item_ids[0], user=user, deleted=False,
+        ).exists()
+
+        clear = auth_client.post(
+            assign_url(queue_id),
+            {"item_ids": [str(item_ids[0])], "user_id": None},
+            format="json",
+        )
+        assert clear.status_code == status.HTTP_200_OK, clear.data
+        assert _result(clear)["assigned"] == 0
+        assert not QueueItemAssignment.objects.filter(
+            queue_item_id=item_ids[0], deleted=False,
+        ).exists()
+        assert QueueItem.objects.get(pk=item_ids[0]).assigned_to_id is None
 
     def test_unassign_items(self, auth_client, queue_with_items, user):
         """Unassign items by setting an empty assignment list."""

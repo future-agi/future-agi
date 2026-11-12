@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Box, Stack, Typography, Button } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
-import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import {
@@ -13,6 +12,7 @@ import { ENTRY_TAB } from "./environmentOptions";
 import { EMPTY_MESSAGE, DEFAULT_PAGE_SIZE } from "./myEnvironments.constants";
 import useEnvironmentsTab from "./hooks/useEnvironmentsTab";
 import MyEnvironmentsTable from "./MyEnvironmentsTable";
+import EmptyState from "src/components/empty-state";
 
 /**
  * Datasets-page pattern — a flex column that fills the remaining viewport
@@ -24,11 +24,16 @@ export default function MyEnvironmentsTab() {
   const { setTab } = useEnvironmentsTab();
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
-  const { data, isLoading, isPending, isError } = useMyEnvironments({ page, pageSize });
+  const { data, isLoading, isPending, isError, isFetching, refetch } =
+    useMyEnvironments({
+      page,
+      pageSize,
+    });
   const rows = data?.rows || [];
   const total = data?.total || 0;
   const loading = isLoading || isPending;
-  // A failed list must read as an error, not as "no environments yet".
+  // A failed list must read as an error, not as "no environments yet". Its
+  // poll stops without data, so Try again is the way back to the list.
   const showError = isError && !loading && total === 0;
 
   const deleteEnvironment = useDeleteEnvironment();
@@ -68,46 +73,42 @@ export default function MyEnvironmentsTab() {
             justifyContent: "center",
           }}
         >
-          <Stack spacing={0.5} alignItems="center">
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              Couldn&apos;t load your environments.
-            </Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              Something went wrong. Try again.
-            </Typography>
-          </Stack>
-        </Box>
-      ) : !loading && total === 0 ? (
-        <Box
-          sx={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Stack spacing={1.75} alignItems="center">
-            {/* The two lines read as one block, so keep them tight; the 1.75
-                gap to the button below stays as the outer Stack spacing. */}
+          <Stack spacing={1.5} alignItems="center">
             <Stack spacing={0.5} alignItems="center">
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {EMPTY_MESSAGE}
+                Couldn&apos;t load your environments.
               </Typography>
               <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                Bring your agent in to create your first environment.
+                Something went wrong loading the list.
               </Typography>
             </Stack>
             <Button
               variant="contained"
+              color="primary"
               size="small"
-              onClick={() => setTab(ENTRY_TAB.BUILD)}
-              startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-              sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
+              disabled={!!isFetching}
+              onClick={() => refetch?.()}
             >
-              Build an environment
+              Try again
             </Button>
           </Stack>
         </Box>
+      ) : !loading && total === 0 ? (
+        <EmptyState
+          icon="solar:globe-linear"
+          title={EMPTY_MESSAGE}
+          description="Bring your agent in to create your first environment."
+          action={
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              onClick={() => setTab(ENTRY_TAB.BUILD)}
+            >
+              Build an environment
+            </Button>
+          }
+        />
       ) : (
         <MyEnvironmentsTable
           rows={rows}

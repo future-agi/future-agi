@@ -1,0 +1,114 @@
+{
+  "activation_sha256": "0c5d91962627a764db4fb79041506d212cb17a0f86b3c2b325085f051a1f3db9",
+  "approvals_sha256": "ebf5eb1843ba258f8c5afdc2fa0a3ae425052f8460cd688e1136faf02c8f41dc",
+  "rows": {
+    "KEYS-ROTATE-1": {
+      "rowId": "KEYS-ROTATE-1",
+      "path": "frontend/src/sections/gateway/keys/rotate.js",
+      "decision": "REWORD",
+      "afterExact": "Rotation tries to create a new key and revoke the old key before showing the new key. If a new key is shown, copy it before closing and update your apps to use it. The old key may stop working before you switch your apps, or may keep working if revocation is delayed or fails.",
+      "afterExact_sha256": "5f0092a0b0b7060cc21704a5845bda535f0325d4ffaa6ff8677ac5b366c62eb1",
+      "renderedExact": "Rotation tries to create a new key and revoke the old key before showing the new key. If a new key is shown, copy it before closing and update your apps to use it. The old key may stop working before you switch your apps, or may keep working if revocation is delayed or fails."
+    },
+    "KEYS-ROTATE-2": {
+      "rowId": "KEYS-ROTATE-2",
+      "path": "frontend/src/sections/gateway/keys/hooks/useApiKeys.js",
+      "decision": "KEEP",
+      "afterExact": "Key rotation is not permitted",
+      "afterExact_sha256": "d965dad593907eb8d8fd5ad2822cfc35c8055aef74502f8c12ce11d7e72dcf5d",
+      "renderedExact": "Key rotation is not permitted"
+    },
+    "KEYS-ROTATE-3": {
+      "rowId": "KEYS-ROTATE-3",
+      "path": "futureagi/agentcc/views/api_key.py",
+      "decision": "KEEP",
+      "afterExact": "Key rotation is not permitted",
+      "afterExact_sha256": "d965dad593907eb8d8fd5ad2822cfc35c8055aef74502f8c12ce11d7e72dcf5d",
+      "renderedExact": "Key rotation is not permitted"
+    },
+    "KEYS-ROTATE-4": {
+      "rowId": "KEYS-ROTATE-4",
+      "path": "futureagi/agentcc/views/api_key.py",
+      "decision": "KEEP",
+      "afterExact": "        except (KeyAuditUnavailable, KeyTransactionUnavailable):\n            return self._gm.custom_error_response(\n                status.HTTP_503_SERVICE_UNAVAILABLE,\n                \"Key change could not be recorded. Please retry.\",\n            )",
+      "afterExact_sha256": "b25fa4295431194bf8c85d0e5ec26d40dcc2fb2b78daebc1ff3ad8d485036a04",
+      "renderedExact": "Key change could not be recorded. Please retry."
+    },
+    "KEYS-ROTATE-5": {
+      "rowId": "KEYS-ROTATE-5",
+      "path": "futureagi/agentcc/views/api_key.py",
+      "decision": "REWORD",
+      "afterExact": "\"Revoked. Any gateway replica that has not received \"\n                    \"the change yet stops accepting this key at its next key sync.\"",
+      "afterExact_sha256": "bf8efe226b6efe5e49c93039ffdec6adf1c3a9a41f6467e44991e20539bc450b",
+      "renderedExact": "Revoked. Any gateway replica that has not received the change yet stops accepting this key at its next key sync."
+    },
+    "KEYS-ROTATE-6": {
+      "rowId": "KEYS-ROTATE-6",
+      "path": "futureagi/agentcc/views/api_key.py",
+      "decision": "KEEP",
+      "afterExact": "        except KeyAuditUnavailable:\n            return self._gm.custom_error_response(\n                status.HTTP_503_SERVICE_UNAVAILABLE,\n                \"Key change could not be recorded. Please retry.\",\n            )",
+      "afterExact_sha256": "1246cb54d348089fca892d4b3afaa8bd7b8678f524c54d6ebfa1b395fee51a81",
+      "renderedExact": "Key change could not be recorded. Please retry."
+    },
+    "KEYS-ROTATE-7": {
+      "rowId": "KEYS-ROTATE-7",
+      "path": "frontend/src/sections/gateway/keys/KeyManagementSection.jsx",
+      "decision": "REWORD",
+      "afterExact": "${name}'s old-key revocation was requested; update your apps to use the new key, and do not assume the old key has stopped working.",
+      "afterExact_sha256": "024987ac1ce8e22fb47da07c0649f2a946ec9ce65180d22a725ac1adfe6f31c4",
+      "renderedExact": "${name}'s old-key revocation was requested; update your apps to use the new key, and do not assume the old key has stopped working."
+    },
+    "KEYS-ROTATE-8": {
+      "rowId": "KEYS-ROTATE-8",
+      "path": "frontend/src/sections/gateway/keys/KeyManagementSection.jsx",
+      "decision": "REWORD",
+      "afterExact": "Revocation of the old key could not be confirmed. Check its status and revoke it if needed; update your apps to use the new key.",
+      "afterExact_sha256": "230061bdd967b4332b90cb21e88f36fa06cbd661229f7a088dae82746f81f12a",
+      "renderedExact": "Revocation of the old key could not be confirmed. Check its status and revoke it if needed; update your apps to use the new key."
+    },
+    "KEYS-ROTATE-9": {
+      "rowId": "KEYS-ROTATE-9",
+      "path": "frontend/src/sections/gateway/keys/KeyManagementSection.jsx",
+      "decision": "REWORD",
+      "afterExact": "The old key's expiry could not be confirmed on the new key. Check the new key's expiry and edit it if needed.",
+      "afterExact_sha256": "5c9fb2bb5f007415e7b3c2d4c2047bdee22e061eb6b365012eadcb8bbec674e1",
+      "renderedExact": "The old key's expiry could not be confirmed on the new key. Check the new key's expiry and edit it if needed."
+    },
+    "KEYS-ROTATE-10": {
+      "rowId": "KEYS-ROTATE-10",
+      "path": "frontend/src/sections/gateway/keys/KeyManagementSection.jsx",
+      "decision": "REWORD",
+      "afterExact": "Rotation could not be confirmed: ${err?.message || \"the new key could not be retrieved\"}. Check the key list before retrying.",
+      "afterExact_sha256": "f5d1c929594e5f80d5ebb0a39a0189004dd97809bc2f5b6486506c376abdf7ea",
+      "renderedExact": "Rotation could not be confirmed: ${err?.message || \"the new key could not be retrieved\"}. Check the key list before retrying."
+    },
+    "KEYS-ROTATE-11": {
+      "rowId": "KEYS-ROTATE-11",
+      "path": "frontend/src/sections/gateway/keys/rotate.js",
+      "afterExact": "${name}'s old key is marked as revoked in the console. This alone does not confirm that the gateway will reject it.",
+      "renderedExact": "${name}'s old key is marked as revoked in the console. This alone does not confirm that the gateway will reject it.",
+      "afterExact_sha256": "4fceb64b293f032894532d3821d7a2a5abd2a2c0a7ff6036ef33b1a081db234b"
+    },
+    "KEYS-ROTATE-12": {
+      "rowId": "KEYS-ROTATE-12",
+      "path": "frontend/src/sections/gateway/keys/rotate.js",
+      "afterExact": "The gateway acknowledged the old-key revocation request. Some requests using the old key may still be accepted.",
+      "renderedExact": "The gateway acknowledged the old-key revocation request. Some requests using the old key may still be accepted.",
+      "afterExact_sha256": "69a5bc9384c34494445ecaf2de9bb10041d2993cdf042c94ff6f35c35876cbd6"
+    },
+    "KEYS-ROTATE-13": {
+      "rowId": "KEYS-ROTATE-13",
+      "path": "frontend/src/sections/gateway/keys/rotate.js",
+      "afterExact": "Gateway revocation could not be confirmed. Requests using the old key may still be accepted.",
+      "renderedExact": "Gateway revocation could not be confirmed. Requests using the old key may still be accepted.",
+      "afterExact_sha256": "cb2be25b9251c88a6ce6518b6501fe95b5e806e9dd69c5b27edd111080bef70b"
+    },
+    "KEYS-ROTATE-14": {
+      "rowId": "KEYS-ROTATE-14",
+      "path": "futureagi/agentcc/views/api_key.py",
+      "afterExact": "            if revoke_rotated_key and \"rotates_key_id\" not in data:\n                return self._gm.custom_error_response(\n                    status.HTTP_403_FORBIDDEN, \"Key rotation is not permitted\"\n                )",
+      "renderedExact": "Key rotation is not permitted",
+      "afterExact_sha256": "09cb4c1c983407580cda4e67ac4313261b727935595f090bdad3cbdf745f2311"
+    }
+  }
+}

@@ -1,7 +1,8 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import * as React from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
-import { alpha, Stack, useTheme } from "@mui/material";
+import { Stack, IconButton } from "@mui/material";
 import PropTypes from "prop-types";
 import SvgColor from "src/components/svg-color";
 import { getNodeConfig } from "./common";
@@ -29,8 +30,6 @@ export const CustomTreeNode = ({
   onSelect,
   onToggle,
 }) => {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const { type, name, duration, cost, tokens } = node || {};
   const config = getNodeConfig(type) || {};
 
@@ -46,17 +45,13 @@ export const CustomTreeNode = ({
         margin: "4px 0",
         marginLeft: `${depth * 40}px`,
         border: "1px solid",
-        borderColor: isSelected ? "green.500" : "transparent",
-        borderRadius: 0.5,
-        backgroundColor: isSelected ? "green.o5" : "transparent",
+        borderColor: isSelected ? "status.success.solid" : "transparent",
+        borderRadius: "4px",
+        backgroundColor: isSelected ? "status.success.bg" : "transparent",
         cursor: "pointer",
         transition: "background-color 0.2s ease",
         "&:hover": {
-          backgroundColor: isSelected
-            ? "green.o10"
-            : isDark
-              ? alpha(theme.palette.divider, 0.5)
-              : "grey.100",
+          backgroundColor: isSelected ? "status.success.bg" : "action.hover",
         },
       }}
       onClick={(e) => {
@@ -69,7 +64,7 @@ export const CustomTreeNode = ({
         sx={{
           width: 20,
           height: 20,
-          borderRadius: 0.5,
+          borderRadius: "4px",
           backgroundColor: "background.paper",
           display: "flex",
           alignItems: "center",
@@ -180,7 +175,10 @@ export const CustomTreeNode = ({
                 src="/assets/icons/components/ic_cost.svg"
               />
               <Typography color="text.disabled" typography={"s3"}>
-                {(cost ?? 0).toFixed(4)}
+                {formatExactMoney(cost, {
+                  prefix: "",
+                  minimumFractionDigits: 4,
+                })}
               </Typography>
             </Box>
           </Box>
@@ -189,35 +187,24 @@ export const CustomTreeNode = ({
 
       {/* Expand/Collapse Button */}
       {hasChildren && (
-        <Box
-          component="button"
+        <IconButton
+          size="small"
           onClick={(e) => {
             e.stopPropagation();
             onToggle(e);
           }}
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 32,
-            height: 32,
-            borderRadius: 1,
-            border: "none",
-            background: "transparent",
-            cursor: "pointer",
-            flexShrink: 0,
-            transition: "background-color 0.2s ease",
-            "&:hover": {
-              backgroundColor: "action.hover",
-            },
-          }}
+          sx={{ flexShrink: 0 }}
         >
           <Iconify
-            icon={isExpanded ? "tabler:chevron-up" : "tabler:chevron-down"}
+            icon={
+              isExpanded
+                ? "solar:alt-arrow-up-linear"
+                : "solar:alt-arrow-down-linear"
+            }
             width={20}
             color="text.secondary"
           />
-        </Box>
+        </IconButton>
       )}
     </Box>
   );

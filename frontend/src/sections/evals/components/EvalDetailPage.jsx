@@ -12,11 +12,11 @@ import {
   MenuItem,
   Slider,
   Tab,
-  Tabs,
   TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { LoadingScreen } from "src/components/loading-screen";
 import React, {
   useCallback,
@@ -28,7 +28,11 @@ import React, {
 import { useNavigate, useParams } from "react-router";
 import { useSearchParams } from "react-router-dom";
 import { useSnackbar } from "notistack";
-import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import {
+  useFeatureLocked,
+  CAPABILITY,
+  useFeatureDenied,
+} from "src/hooks/useCapabilities";
 import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
@@ -57,17 +61,45 @@ import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TestPlayground from "./TestPlayground";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import { buildCompositeChildConfigs } from "../Helpers/compositeRuntimeConfig";
+import {
+  compactDefinition,
+  unsavedTestTooltip,
+} from "../utils/unsavedDefinition";
 import EvalFeedbackTab from "./EvalFeedbackTab";
+import {
+  isTypedEvalType,
+  typedEvalLabel,
+} from "src/sections/common/EvalTypes/typedEvalTypes";
+import { versionChipOf } from "./versionChip";
+import TypedEvalDetail from "../types/TypedEvalDetail";
+import { hasTypedDetail } from "../types/typedViews";
+import AgreementTab from "../alignment/AgreementTab";
+import {
+  compositeExtrasBody,
+  rowsFromDetail,
+  validateComposite,
+} from "src/sections/common/EvalTypes/compositeModel";
 import EvalGroundTruthTab from "./EvalGroundTruthTab";
+import { useGroundTruthList } from "../hooks/useGroundTruth";
 import EvalUsageTab from "./EvalUsageTab";
 import VersionBadge from "./VersionBadge";
 import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
-import { FAGI_MODEL_VALUES } from "./ModelSelector";
+import JevOutputConfig from "./JevOutputConfig";
+import {
+  buildJevMapping,
+  getJevValidationErrors,
+  hasExtraJevMessages,
+  orderChoiceScores,
+} from "../utils/jevMapping";
+import { FAGI_MODEL_VALUES, JEV_MODEL_VALUES } from "./ModelSelector";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import AllowNaSwitch from "src/sections/common/EvalPicker/AllowNaSwitch";
+import { allowNaApplies } from "src/sections/common/EvalPicker/allowNaModel";
+import { isDecisionModel } from "src/sections/common/DecisionJudges/decisionModels";
 
 const ERROR_LOCALIZER_LOCKED_TOOLTIP =
   "Error Localization isn't enabled for this workspace.";
@@ -138,6 +170,9 @@ const EvalDetailPage = () => {
     CAPABILITY.TURING_MODELS,
   );
   const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  // Only a confirmed denial locks Jev: not while capabilities load, and not
+  // when their fetch fails (self-hosted always allows Jev; the server checks).
+  const jevLocked = useFeatureDenied(CAPABILITY.JEV_MODELS);
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
   // Confirmed denial (loaded AND not allowed). Seed the default model raw and
   // only strip it on confirmed denial, so entitled users don't lose the
@@ -166,8 +201,11 @@ const EvalDetailPage = () => {
     if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) setModel("");
   }, [fagiModelsDenied, model]);
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
+  const [jevMapping, setJevMapping] = useState({});
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
+  // W1-4: a workspace judge may answer N/A (the template's allow_na).
+  const [allowNa, setAllowNa] = useState(false);
   const [choiceScores, setChoiceScores] = useState({});
   const [multiChoice, setMultiChoice] = useState(false);
   const [description, setDescription] = useState("");
@@ -222,7 +260,9 @@ const EvalDetailPage = () => {
   }, [testError]);
 
   const handleTestResult = useCallback((success, result) => {
-    setTestPassed(true);
+    // Only a run that returned a result reads "Test completed"; a failed one
+    // must not, also once its error caption above auto-dismisses.
+    setTestPassed(Boolean(success));
     setTestError(
       success
         ? null
@@ -307,14 +347,14 @@ const EvalDetailPage = () => {
   const handleVersionSelect = useCallback(
     (version) => {
       const versionToLoad = version || defaultVersion;
-      // Warn if switching versions with unsaved changes
-      if (isDirty && version !== null) {
+      // Every selection reloads config, including deselection to the default.
+      if (isDirty) {
         if (
           !window.confirm(
             "You have unsaved changes. Discard and switch version?",
           )
         )
-          return;
+          return false;
       }
 
       if (!versionToLoad) {
@@ -346,12 +386,14 @@ const EvalDetailPage = () => {
           }
           setCodeLanguage(config.language || "python");
           setModel(config.model || evalData.model || "turing_large");
+          setJevMapping(config.jev_mapping || {});
           setOutputType(
             evalData.output_type ||
               evalData.output_type_normalized ||
               "pass_fail",
           );
           setPassThreshold(evalData.pass_threshold ?? 0.5);
+          setAllowNa(Boolean(config.allow_na ?? evalData.config?.allow_na));
           // Derive choiceScores: use the backend's scored dict if present,
           // otherwise convert the `choices` array (used by deterministic /
           // multi-class evals like tone, customer_agent_*) into a default
@@ -359,7 +401,13 @@ const EvalDetailPage = () => {
           {
             const scored = evalData.choice_scores;
             if (scored && Object.keys(scored).length > 0) {
-              setChoiceScores(scored);
+              // Authored order (see the initial-load effect below).
+              setChoiceScores(
+                orderChoiceScores(
+                  scored,
+                  config.jev_mapping?.choice?.labels || evalData.choices,
+                ),
+              );
             } else if (
               Array.isArray(evalData.choices) &&
               evalData.choices.length > 0
@@ -399,17 +447,15 @@ const EvalDetailPage = () => {
           } else if (evalData.eval_type === "llm" && promptText) {
             setMessages([{ role: "system", content: promptText }]);
           }
-          if (config.few_shot_examples || config.fewShotExamples) {
-            setFewShotExamples(
-              config.few_shot_examples || config.fewShotExamples || [],
-            );
-          }
+          setFewShotExamples(
+            config.few_shot_examples || config.fewShotExamples || [],
+          );
         }
         setIsDirty(false);
         setTimeout(() => {
           isPopulatingRef.current = false;
         }, 0);
-        return;
+        return true;
       }
 
       // Load version config into the form
@@ -445,6 +491,7 @@ const EvalDetailPage = () => {
               child_name: c.child_name,
               order: c.order,
               weight: c.weight ?? 1.0,
+              config: c.config || {},
             })),
           );
           const weights = {};
@@ -460,7 +507,7 @@ const EvalDetailPage = () => {
         setTimeout(() => {
           isPopulatingRef.current = false;
         }, 0);
-        return;
+        return true;
       }
 
       // Type-aware split. A version snapshot's `criteria` field contains
@@ -476,6 +523,7 @@ const EvalDetailPage = () => {
       }
       setCodeLanguage(config.language || "python");
       setModel(config.model || versionToLoad.model || "turing_large");
+      setJevMapping(config.jev_mapping || {});
       {
         const outputMap = {
           "Pass/Fail": "pass_fail",
@@ -496,18 +544,23 @@ const EvalDetailPage = () => {
         );
       }
       setPassThreshold(config.passThreshold ?? config.pass_threshold ?? 0.5);
-      setChoiceScores(config.choiceScores || config.choice_scores || {});
+      // Keep the selected version N/A rule and Jev choice order.
+      setAllowNa(Boolean(config.allow_na ?? evalData?.config?.allow_na));
+      setChoiceScores(
+        orderChoiceScores(
+          config.choiceScores || config.choice_scores || {},
+          config.jev_mapping?.choice?.labels || config.choices,
+        ),
+      );
       setMultiChoice(config.multiChoice ?? config.multi_choice ?? false);
       if (config.messages && config.messages.length > 0) {
         setMessages(config.messages);
       } else if (evalData.eval_type === "llm" && promptText) {
         setMessages([{ role: "system", content: promptText }]);
       }
-      if (config.few_shot_examples || config.fewShotExamples) {
-        setFewShotExamples(
-          config.few_shot_examples || config.fewShotExamples || [],
-        );
-      }
+      setFewShotExamples(
+        config.few_shot_examples || config.fewShotExamples || [],
+      );
       setCheckInternet(config.check_internet ?? false);
       setAgentMode(config.agent_mode || "agent");
       setSummaryType(resolve_summary_type(config.summary));
@@ -517,10 +570,16 @@ const EvalDetailPage = () => {
       );
       setContextOptions(resolve_context_options(config.data_injection));
       setErrorLocalizerEnabled(config.error_localizer_enabled ?? false);
+      // Description and tags belong to the eval, not to a version snapshot.
+      // A custom eval always opens on a version, so load them here too, or
+      // the page shows them empty and Save Version clears the tags.
+      setDescription(evalData?.description || "");
+      setTags(evalData?.tags || evalData?.eval_tags || []);
       setIsDirty(false);
       setTimeout(() => {
         isPopulatingRef.current = false;
       }, 0);
+      return true;
     },
     [defaultVersion, evalData, isDirty, isComposite, setSearchParams],
   );
@@ -603,12 +662,14 @@ const EvalDetailPage = () => {
             "python",
         );
         setModel(config.model || evalData.model || "turing_large");
+        setJevMapping(config.jev_mapping || {});
         setOutputType(
           evalData.output_type ||
             evalData.output_type_normalized ||
             "pass_fail",
         );
         setPassThreshold(evalData.pass_threshold ?? 0.5);
+        setAllowNa(Boolean(config.allow_na ?? evalData.config?.allow_na));
         // Derive choiceScores: use the backend's scored dict if present,
         // otherwise convert the `choices` array (used by deterministic /
         // multi-class evals like tone, customer_agent_*) into a default
@@ -616,7 +677,14 @@ const EvalDetailPage = () => {
         {
           const scored = evalData.choice_scores;
           if (scored && Object.keys(scored).length > 0) {
-            setChoiceScores(scored);
+            // jsonb returns choice_scores keys shortest first; show and save
+            // them in the order the author saved.
+            setChoiceScores(
+              orderChoiceScores(
+                scored,
+                config.jev_mapping?.choice?.labels || evalData.choices,
+              ),
+            );
           } else if (
             Array.isArray(evalData.choices) &&
             evalData.choices.length > 0
@@ -656,11 +724,9 @@ const EvalDetailPage = () => {
         } else if (evalData.eval_type === "llm" && promptText) {
           setMessages([{ role: "system", content: promptText }]);
         }
-        if (config.few_shot_examples || config.fewShotExamples) {
-          setFewShotExamples(
-            config.few_shot_examples || config.fewShotExamples || [],
-          );
-        }
+        setFewShotExamples(
+          config.few_shot_examples || config.fewShotExamples || [],
+        );
         setIsDirty(false);
         initialLoadDone.current = true;
         // Release the populating guard after React flushes this batch so
@@ -674,7 +740,18 @@ const EvalDetailPage = () => {
   }, [evalData, versionsData, defaultVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const evalType = evalData?.eval_type || "llm";
+  // W7: a typed eval (decision tree, remote scorer) shows its own Details.
+  const showTypedDetail = isTypedEvalType(evalType) && hasTypedDetail(evalType);
+  // W7: agreement with reviewers, for every eval type, once real.
+  const agreementTabs = AgreementTab.ready ? ["agreement"] : [];
   const isSystemEval = evalData?.owner === "system";
+  // W1-4: where the scorer honours it (the workspace's own judges).
+  const allowNaShown = allowNaApplies({
+    evalType,
+    isSystemEval,
+    decisionModel: isDecisionModel(model) ? model : null,
+    supportsNa: evalData?.supports_na,
+  });
 
   const hasDataInjection =
     evalType === "agent" &&
@@ -724,7 +801,8 @@ const EvalDetailPage = () => {
       compositeDetail.aggregation_function || "weighted_avg",
     );
     setCompositeChildAxis(compositeDetail.composite_child_axis || "");
-    setCompositeChildren(compositeDetail.children || []);
+    // W7-5: each child with its stored seat, judge and level.
+    setCompositeChildren(rowsFromDetail(compositeDetail));
     // Seed weights map from children
     const weights = {};
     (compositeDetail.children || []).forEach((c) => {
@@ -738,8 +816,8 @@ const EvalDetailPage = () => {
   }, [isComposite, compositeDetail]);
 
   const isSaving =
-    updateEval.isLoading ||
-    createVersion.isLoading ||
+    updateEval.isPending ||
+    createVersion.isPending ||
     updateComposite.isPending;
 
   // Extract variables for the test panel
@@ -778,8 +856,171 @@ const EvalDetailPage = () => {
     return [...new Set([...requiredKeys, ...templateVars])];
   }, [instructions, evalData, evalType, isComposite, compositeDetail]);
 
+  const isJevModel = JEV_MODEL_VALUES.has(model);
+  const { data: groundTruthData } = useGroundTruthList(
+    isJevModel && !isComposite && evalType !== "code" ? evalId : null,
+  );
+  const effectiveConfig = useMemo(
+    () =>
+      viewingVersion
+        ? viewingVersion.config_snapshot || viewingVersion.configSnapshot || {}
+        : evalData?.config || {},
+    [viewingVersion, evalData],
+  );
+  const jevPayload = useMemo(
+    () =>
+      isJevModel
+        ? { jev_mapping: buildJevMapping(outputType, choiceScores, jevMapping) }
+        : {},
+    [isJevModel, outputType, choiceScores, jevMapping],
+  );
+  const jevMessages =
+    evalType === "llm" ? messages : effectiveConfig.messages || [];
+  const jevErrors = isJevModel
+    ? getJevValidationErrors({
+        mapping: jevPayload.jev_mapping,
+        groundTruthEnabled: (groundTruthData?.items || []).some(
+          (item) => item.is_active && item.enabled,
+        ),
+        config: {
+          ...effectiveConfig,
+          // Only agent evals use agent_mode; an LLM judge drafted on the
+          // Agents tab keeps a stale "agent" value that the backend ignores.
+          agent_mode: undefined,
+          check_internet: checkInternet,
+          few_shot_examples: fewShotExamples,
+          ...(evalType === "agent"
+            ? {
+                agent_mode: agentMode,
+                tools: build_tools_payload(connectorIds),
+                knowledge_bases: knowledgeBaseIds,
+                data_injection: buildDataInjection(contextOptions),
+              }
+            : {}),
+        },
+        multiChoice,
+        choiceScores,
+        inputDataTypes: evalData?.input_data_types,
+        messages: jevMessages,
+      })
+    : [];
+  const jevError = jevErrors[0];
+  const jevTestBlocked = Boolean(jevError || (isJevModel && jevLocked));
+
+  // What Test runs: the definition on screen, sent with the playground
+  // request and never saved (Save Version saves it). The template update's
+  // fields, so a Test runs exactly what Save would save.
+  const unsavedDefinition = useMemo(() => {
+    if (!evalData || isSystemEval || isComposite) return null;
+    return compactDefinition({
+      ...jevPayload,
+      instructions: evalType === "code" ? undefined : instructions || undefined,
+      code: evalType === "code" ? code : undefined,
+      code_language: evalType === "code" ? codeLanguage : undefined,
+      model: evalType === "code" ? undefined : model,
+      output_type: outputType,
+      pass_threshold: passThreshold,
+      choice_scores:
+        Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
+      multi_choice: multiChoice,
+      check_internet: checkInternet,
+      mode: evalType === "agent" ? agentMode : undefined,
+      tools:
+        evalType === "agent" ? build_tools_payload(connectorIds) : undefined,
+      knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
+      data_injection:
+        evalType === "agent" ? buildDataInjection(contextOptions) : undefined,
+      summary:
+        evalType === "agent"
+          ? summaryType === "custom"
+            ? { type: "custom", custom: "" }
+            : { type: summaryType }
+          : undefined,
+      error_localizer_enabled: errorLocalizerActive,
+      template_format: templateFormat,
+      messages: evalType === "llm" ? messages : undefined,
+      few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
+    });
+  }, [
+    evalData,
+    isSystemEval,
+    isComposite,
+    jevPayload,
+    evalType,
+    instructions,
+    code,
+    codeLanguage,
+    model,
+    outputType,
+    passThreshold,
+    choiceScores,
+    multiChoice,
+    checkInternet,
+    agentMode,
+    connectorIds,
+    knowledgeBaseIds,
+    contextOptions,
+    summaryType,
+    errorLocalizerActive,
+    templateFormat,
+    messages,
+    fewShotExamples,
+  ]);
+
+  // A composite with unsaved edits tests them through the execute-adhoc
+  // request (as the create page does), never by saving them. That request
+  // carries no pinned child versions, jury or checks, so a composite with
+  // any of those tests as saved until Save Changes.
+  const compositeExtras = compositeExtrasBody(
+    compositeChildren,
+    compositeChildWeights,
+  );
+  const compositeTestsSaved =
+    isComposite &&
+    (compositeChildren.some((c) => c.pinned_version_id) ||
+      Boolean(evalData?.config?.jury) ||
+      Object.keys(compositeExtras).length > 0);
+  const compositeTestConfig = useMemo(() => {
+    if (!isComposite || isSystemEval || !isDirty || compositeTestsSaved) {
+      return null;
+    }
+    const weights = {};
+    compositeChildren.forEach((c) => {
+      const w = compositeChildWeights[c.child_id];
+      if (w != null) weights[c.child_id] = w;
+    });
+    return {
+      child_template_ids: compositeChildren.map((c) => c.child_id),
+      child_configs: buildCompositeChildConfigs(compositeChildren),
+      aggregation_enabled: compositeAggEnabled,
+      aggregation_function: compositeAggFunction,
+      composite_child_axis: compositeChildAxis || "",
+      child_weights: Object.keys(weights).length > 0 ? weights : null,
+      pass_threshold: evalData?.pass_threshold ?? 0.5,
+    };
+  }, [
+    isComposite,
+    isSystemEval,
+    isDirty,
+    compositeTestsSaved,
+    compositeChildren,
+    compositeChildWeights,
+    compositeAggEnabled,
+    compositeAggFunction,
+    compositeChildAxis,
+    evalData,
+  ]);
+  // System evaluations are read-only: their Test sends only the picked model.
+  const testsUnsavedChanges = isComposite
+    ? Boolean(compositeTestConfig)
+    : isDirty && Boolean(unsavedDefinition);
+
   // Save version
   const handleSaveVersion = useCallback(async () => {
+    if (jevError) {
+      enqueueSnackbar(jevError, { variant: "error" });
+      return;
+    }
     if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
         "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
@@ -809,6 +1050,7 @@ const EvalDetailPage = () => {
       const tools = build_tools_payload(connectorIds);
       // Update the template first
       const payload = {
+        ...jevPayload,
         instructions:
           evalType === "code" ? undefined : instructions || undefined,
         code: evalType === "code" ? code : undefined,
@@ -833,12 +1075,14 @@ const EvalDetailPage = () => {
         // Send [] for LLM evals so the BE can persist a user-cleared list.
         // Omitting on empty would leave the previous examples in place.
         few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
+        allow_na: allowNaShown ? allowNa : undefined,
       };
       await updateEval.mutateAsync(payload);
 
       // Build a config snapshot for the version so it captures the full state
       const configSnapshot = {
-        ...(evalData?.config || {}),
+        ...(isJevModel ? effectiveConfig : evalData?.config || {}),
+        ...jevPayload,
         rule_prompt: evalType === "code" ? "" : instructions,
         code: evalType === "code" ? code : undefined,
         language: evalType === "code" ? codeLanguage : undefined,
@@ -863,6 +1107,7 @@ const EvalDetailPage = () => {
         template_format: templateFormat,
         messages: evalType === "llm" ? messages : undefined,
         few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
+        allow_na: allowNaShown ? allowNa : undefined,
       };
       const newVersion = await createVersion.mutateAsync({
         config_snapshot: configSnapshot,
@@ -896,6 +1141,12 @@ const EvalDetailPage = () => {
       );
     }
   }, [
+    jevError,
+    jevPayload,
+    isJevModel,
+    effectiveConfig,
+    templateFormat,
+    isComposite,
     evalType,
     agentEvalLocked,
     fagiLocked,
@@ -919,6 +1170,8 @@ const EvalDetailPage = () => {
     errorLocalizerActive,
     messages,
     fewShotExamples,
+    allowNa,
+    allowNaShown,
     updateEval,
     createVersion,
     enqueueSnackbar,
@@ -943,6 +1196,8 @@ const EvalDetailPage = () => {
         child_template_ids: compositeChildren.map((c) => c.child_id),
         child_configs: buildCompositeChildConfigs(compositeChildren),
         child_weights: Object.keys(weights).length > 0 ? weights : null,
+        // W7-5: jury seats, levels and checks.
+        ...compositeExtrasBody(compositeChildren, compositeChildWeights),
       };
       const result = await updateComposite.mutateAsync(payload);
       const vNum = result?.version_number;
@@ -971,8 +1226,17 @@ const EvalDetailPage = () => {
     enqueueSnackbar,
   ]);
 
-  // Test evaluation — auto-saves current config before running
-  const handleTestEvaluation = useCallback(async () => {
+  // Test runs what is on screen and saves nothing: the playground gets the
+  // unsaved definition (unsavedDefinition / compositeTestConfig) with its
+  // request. Only Save Version / Save Changes change what the evaluation,
+  // its versions and its experiments use.
+  const handleTestEvaluation = useCallback(() => {
+    if (jevTestBlocked) {
+      enqueueSnackbar(jevError || "Not included in your plan", {
+        variant: "error",
+      });
+      return;
+    }
     if (fagiLocked && evalType !== "code" && !model && !isComposite) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
@@ -982,57 +1246,6 @@ const EvalDetailPage = () => {
     setTestError(null);
     setTestPassed(false);
     try {
-      // Save current config to the template so the eval runner uses the latest
-      // state.
-      if (!isSystemEval && !isComposite) {
-        const dataInjection = buildDataInjection(contextOptions);
-        const summary =
-          summaryType === "custom"
-            ? { type: "custom", custom: "" }
-            : { type: summaryType };
-        const tools = build_tools_payload(connectorIds);
-        await updateEval.mutateAsync({
-          instructions:
-            evalType === "code" ? undefined : instructions || undefined,
-          code: evalType === "code" ? code : undefined,
-          code_language: evalType === "code" ? codeLanguage : undefined,
-          model,
-          output_type: outputType,
-          pass_threshold: passThreshold,
-          choice_scores:
-            Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
-          multi_choice: multiChoice,
-          check_internet: checkInternet,
-          mode: evalType === "agent" ? agentMode : undefined,
-          tools: evalType === "agent" ? tools : undefined,
-          knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
-          data_injection: evalType === "agent" ? dataInjection : undefined,
-          summary: evalType === "agent" ? summary : undefined,
-          error_localizer_enabled: errorLocalizerActive,
-          template_format: templateFormat,
-          messages: evalType === "llm" ? messages : undefined,
-          few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
-        });
-      }
-      // Composite evals: save current children/weights/aggregation config
-      // before testing so the execute endpoint picks up the latest state.
-      if (isComposite && !isSystemEval) {
-        const weights = {};
-        compositeChildren.forEach((c) => {
-          const w = compositeChildWeights[c.child_id];
-          if (w != null) weights[c.child_id] = w;
-        });
-        await updateComposite.mutateAsync({
-          name: compositeName?.trim() || undefined,
-          description: compositeDescription,
-          aggregation_enabled: compositeAggEnabled,
-          aggregation_function: compositeAggFunction,
-          composite_child_axis: compositeChildAxis || undefined,
-          child_template_ids: compositeChildren.map((c) => c.child_id),
-          child_configs: buildCompositeChildConfigs(compositeChildren),
-          child_weights: Object.keys(weights).length > 0 ? weights : null,
-        });
-      }
       testPlaygroundRef.current?.runTest?.(evalId);
     } catch (error) {
       handleTestResult(
@@ -1042,38 +1255,15 @@ const EvalDetailPage = () => {
       setIsTesting(false);
     }
   }, [
+    jevError,
+    jevTestBlocked,
+    enqueueSnackbar,
     evalId,
     evalType,
     fagiLocked,
-    isSystemEval,
     isComposite,
-    instructions,
-    code,
-    codeLanguage,
     model,
-    outputType,
-    passThreshold,
-    choiceScores,
-    multiChoice,
-    checkInternet,
-    agentMode,
-    summaryType,
-    connectorIds,
-    knowledgeBaseIds,
-    contextOptions,
-    errorLocalizerActive,
-    messages,
-    fewShotExamples,
-    updateEval,
-    updateComposite,
     handleTestResult,
-    compositeName,
-    compositeDescription,
-    compositeAggEnabled,
-    compositeAggFunction,
-    compositeChildAxis,
-    compositeChildren,
-    compositeChildWeights,
   ]);
 
   // Delete
@@ -1128,6 +1318,14 @@ const EvalDetailPage = () => {
     );
   }
 
+  const typeRole = isComposite
+    ? "info"
+    : evalType === "code"
+      ? "warning"
+      : evalType === "agent"
+        ? "success"
+        : "discovery";
+
   return (
     <Box
       sx={{
@@ -1162,56 +1360,36 @@ const EvalDetailPage = () => {
             </Typography>
           </Breadcrumbs>
           <VersionBadge
-            version={
-              viewingVersion
-                ? `V${viewingVersion.version_number}`
-                : evalData.current_version || "V1"
-            }
+            version={versionChipOf({ viewingVersion, evalData, evalType })}
           />
           <Box
             sx={{
               px: 1,
               py: 0.25,
               borderRadius: "4px",
-              fontSize: "11px",
+              fontSize: "12px",
               fontWeight: 600,
-              backgroundColor: (theme) =>
-                theme.palette.mode === "dark"
-                  ? isComposite
-                    ? "rgba(99,102,241,0.16)"
-                    : evalType === "code"
-                      ? "rgba(255,152,0,0.16)"
-                      : evalType === "agent"
-                        ? "rgba(46,203,113,0.16)"
-                        : "rgba(124,77,255,0.16)"
-                  : isComposite
-                    ? "rgba(99,102,241,0.08)"
-                    : evalType === "code"
-                      ? "rgba(255,152,0,0.08)"
-                      : evalType === "agent"
-                        ? "rgba(46,203,113,0.08)"
-                        : "rgba(124,77,255,0.08)",
-              color: (theme) =>
-                isComposite
-                  ? theme.palette.info.main
-                  : evalType === "code"
-                    ? theme.palette.mode === "light"
-                      ? "#B45309"
-                      : theme.palette.warning.main
-                    : evalType === "agent"
-                      ? theme.palette.success.main
-                      : theme.palette.primary.main,
+              backgroundColor: `status.${typeRole}.bg`,
+              color: `status.${typeRole}.fg`,
             }}
           >
             {(() => {
               if (!isComposite) {
+                // W7: Decision tree / Remote scorer.
+                if (typedEvalLabel(evalType)) return typedEvalLabel(evalType);
                 return evalType === "code"
                   ? "Code"
                   : evalType === "agent"
                     ? "Agent"
                     : "LLM";
               }
-              const typeLabels = { code: "Code", agent: "Agent", llm: "LLM" };
+              const typeLabels = {
+                code: "Code",
+                agent: "Agent",
+                llm: "LLM",
+                // W7-5: a task-suite check child.
+                check: "Check",
+              };
               const kids =
                 compositeChildren?.length > 0
                   ? compositeChildren
@@ -1240,7 +1418,7 @@ const EvalDetailPage = () => {
                 size="small"
                 onClick={(e) => setMenuAnchor(e.currentTarget)}
               >
-                <Iconify icon="solar:menu-dots-bold" width={18} />
+                <Iconify icon="solar:menu-dots-bold" width={20} />
               </IconButton>
               <Menu
                 anchorEl={menuAnchor}
@@ -1291,7 +1469,6 @@ const EvalDetailPage = () => {
                   <MenuItem
                     disabled={!canEditEvals}
                     onClick={handleDeleteClick}
-                    sx={{ color: "error.main" }}
                   >
                     <Iconify
                       icon="solar:trash-bin-trash-bold"
@@ -1316,75 +1493,41 @@ const EvalDetailPage = () => {
       />
 
       {/* Top Tabs */}
-      <Tabs
+      <SegmentedTabs
         value={activeTab}
         onChange={handleTabChange}
-        TabIndicatorProps={{ style: { display: "none" } }}
-        sx={{
-          minHeight: 32,
-          mb: 1.5,
-          flexShrink: 0,
-          "& .MuiTab-root": {
-            minHeight: 32,
-            px: 1.5,
-            py: 0,
-            mr: "0px !important",
-            textTransform: "none",
-            fontSize: "13px",
-            borderRadius: "6px",
-          },
-          border: "1px solid",
-          borderColor: "divider",
-          p: "2px",
-          borderRadius: "8px",
-          width: "fit-content",
-          bgcolor: (theme) =>
-            theme.palette.mode === "dark"
-              ? "rgba(255,255,255,0.04)"
-              : "#f4f4f5",
-        }}
+        sx={{ mb: 1.5, flexShrink: 0, width: "fit-content" }}
       >
-        {(evalType === "code" || isComposite
-          ? ["details", "usage"]
-          : ["details", "usage", "feedback", "ground_truth"]
+        {/* W7: a typed eval (a decision tree, a remote scorer) reads no
+            feedback or ground truth, so it has the code/composite tabs. */}
+        {(evalType === "code" || isComposite || isTypedEvalType(evalType)
+          ? ["details", "usage", ...agreementTabs]
+          : ["details", "usage", "feedback", "ground_truth", ...agreementTabs]
         ).map((tab) => {
           const labels = {
             details: "Eval Details",
             usage: "Usage",
             feedback: "Feedback",
             ground_truth: "Ground Truth",
+            agreement: "Agreement",
           };
-          return (
-            <Tab
-              key={tab}
-              value={tab}
-              label={labels[tab]}
-              sx={{
-                bgcolor:
-                  activeTab === tab
-                    ? (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.12)"
-                          : "#fff"
-                    : "transparent",
-                boxShadow:
-                  activeTab === tab
-                    ? (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "none"
-                          : "0 1px 3px rgba(0,0,0,0.08)"
-                    : "none",
-                borderRadius: "6px",
-                fontWeight: activeTab === tab ? 600 : 400,
-                color: activeTab === tab ? "text.primary" : "text.disabled",
-              }}
-            />
-          );
+          return <Tab key={tab} value={tab} label={labels[tab]} />;
         })}
-      </Tabs>
+      </SegmentedTabs>
+
+      {/* ═══ W7: a typed eval's own Details ═══ */}
+      {activeTab === "details" && showTypedDetail && (
+        <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+          <TypedEvalDetail
+            evalType={evalType}
+            templateId={evalId}
+            evalData={evalData}
+          />
+        </Box>
+      )}
 
       {/* ═══ Eval Details Tab — playground layout ═══ */}
-      {activeTab === "details" && (
+      {activeTab === "details" && !showTypedDetail && (
         <Box sx={{ flex: 1, minHeight: 0 }}>
           <ResizablePanels
             initialLeftWidth={55}
@@ -1424,10 +1567,7 @@ const EvalDetailPage = () => {
                         borderRadius: "8px",
                         border: "1px solid",
                         borderColor: "primary.main",
-                        backgroundColor: (theme) =>
-                          theme.palette.mode === "dark"
-                            ? "rgba(124,77,255,0.08)"
-                            : "rgba(124,77,255,0.04)",
+                        backgroundColor: "status.discovery.bg",
                       }}
                     >
                       <Iconify
@@ -1446,21 +1586,9 @@ const EvalDetailPage = () => {
                       <Button
                         size="small"
                         variant="text"
-                        onClick={() => {
-                          if (
-                            isDirty &&
-                            !window.confirm(
-                              "You have unsaved changes. Discard and go back to default?",
-                            )
-                          )
-                            return;
-                          handleVersionSelect(null);
-                        }}
+                        onClick={() => handleVersionSelect(null)}
                         sx={{
-                          textTransform: "none",
-                          fontSize: "12px",
                           minWidth: 0,
-                          px: 1,
                         }}
                       >
                         Back to default
@@ -1480,6 +1608,7 @@ const EvalDetailPage = () => {
                     childWeights={compositeChildWeights}
                     editable={!isSystemEval}
                     disabled={isSaving}
+                    templateId={evalId}
                     onNameChange={(v) => {
                       setCompositeName(v);
                       markDirty();
@@ -1603,6 +1732,7 @@ const EvalDetailPage = () => {
                       modelSelectorDisabled={false}
                     />
                     <FewShotExamples
+                      isJevModel={isJevModel}
                       selectedDatasets={fewShotExamples}
                       onChange={(v) => {
                         setFewShotExamples(v);
@@ -1628,6 +1758,22 @@ const EvalDetailPage = () => {
                     }}
                     datasetColumns={datasetColumns}
                     disabled={isSystemEval}
+                  />
+                )}
+
+                {isJevModel && !isComposite && evalType !== "code" && (
+                  <JevOutputConfig
+                    outputType={outputType}
+                    choiceScores={choiceScores}
+                    mapping={jevMapping}
+                    onChange={(next) => {
+                      setJevMapping(next);
+                      markDirty();
+                    }}
+                    errors={jevErrors}
+                    hasExtraMessages={hasExtraJevMessages(jevMessages)}
+                    disabled={isSystemEval}
+                    locked={jevLocked}
                   />
                 )}
 
@@ -1677,6 +1823,7 @@ const EvalDetailPage = () => {
                     </Box>
                   ) : (
                     <OutputTypeConfig
+                      isJevModel={isJevModel}
                       outputType={outputType}
                       onOutputTypeChange={(v) => {
                         setOutputType(v);
@@ -1701,6 +1848,15 @@ const EvalDetailPage = () => {
                       categoryLocked={true}
                     />
                   ))}
+                {allowNaShown && !isComposite && (
+                  <AllowNaSwitch
+                    checked={allowNa}
+                    onChange={(v) => {
+                      setAllowNa(v);
+                      markDirty();
+                    }}
+                  />
+                )}
 
                 {errorLocalizerAvailable &&
                   !isComposite &&
@@ -1793,20 +1949,20 @@ const EvalDetailPage = () => {
                         // Icon mapping for backend semantic tags. Unknown tags
                         // get a generic bookmark/tag icon.
                         const BACKEND_TAG_ICONS = {
-                          SAFETY: "mdi:shield-alert-outline",
-                          RAG: "mdi:database-search-outline",
-                          HALLUCINATION: "mdi:alert-octagon-outline",
-                          CONVERSATION: "mdi:message-text-outline",
-                          CHAT: "mdi:robot-outline",
-                          AUDIO: "mdi:volume-high",
-                          TEXT: "mdi:format-text",
-                          IMAGE: "mdi:image-outline",
-                          VIDEO: "mdi:video-outline",
+                          SAFETY: "solar:shield-warning-linear",
+                          RAG: "solar:database-linear",
+                          HALLUCINATION: "solar:danger-circle-linear",
+                          CONVERSATION: "solar:chat-round-line-linear",
+                          CHAT: "solar:bot-linear",
+                          AUDIO: "solar:volume-loud-linear",
+                          TEXT: "solar:notes-linear",
+                          IMAGE: "solar:gallery-linear",
+                          VIDEO: "solar:videocamera-linear",
                           PDF: "mdi:file-pdf-box",
-                          FUNCTION: "mdi:function-variant",
-                          LLMS: "mdi:brain",
-                          FUTURE_EVALS: "mdi:star-four-points-outline",
-                          CUSTOM: "mdi:pencil-outline",
+                          FUNCTION: "solar:programming-linear",
+                          LLMS: "solar:brain-linear",
+                          FUTURE_EVALS: "solar:stars-minimalistic-linear",
+                          CUSTOM: "solar:pen-linear",
                         };
                         const humanize = (s) =>
                           String(s)
@@ -1839,9 +1995,7 @@ const EvalDetailPage = () => {
                               isSystemEval || !onDelete ? undefined : onDelete
                             }
                             sx={{
-                              fontSize: "12px",
                               cursor: isSystemEval ? "default" : "pointer",
-                              "& .MuiChip-icon": { fontSize: "14px" },
                             }}
                           />
                         );
@@ -1852,7 +2006,8 @@ const EvalDetailPage = () => {
                             {extraTags.map((t) =>
                               renderChip({
                                 key: `extra-${t}`,
-                                icon: BACKEND_TAG_ICONS[t] || "mdi:tag-outline",
+                                icon:
+                                  BACKEND_TAG_ICONS[t] || "solar:tag-linear",
                                 label: humanize(t),
                                 selected: true,
                                 onDelete: () => {
@@ -1922,6 +2077,8 @@ const EvalDetailPage = () => {
                     onColumnsLoaded={handleColumnsLoaded}
                     onVersionSelect={handleVersionSelect}
                     isComposite={isComposite}
+                    unsavedDefinition={unsavedDefinition}
+                    compositeAdhocConfig={compositeTestConfig}
                     templateFormat={templateFormat}
                     functionParamsSchema={
                       evalData?.config?.function_params_schema ||
@@ -1963,7 +2120,7 @@ const EvalDetailPage = () => {
                   {testError && (
                     <Typography
                       variant="caption"
-                      color="error.main"
+                      color="status.danger.fg"
                       sx={{ mr: "auto", fontSize: "12px", maxWidth: 300 }}
                       noWrap
                     >
@@ -1980,13 +2137,13 @@ const EvalDetailPage = () => {
                       }}
                     >
                       <Iconify
-                        icon="mdi:check-circle"
+                        icon="solar:check-circle-bold"
                         width={16}
-                        sx={{ color: "success.main" }}
+                        sx={{ color: "status.success.fg" }}
                       />
                       <Typography
                         variant="caption"
-                        color="success.main"
+                        color="status.success.fg"
                         sx={{ fontSize: "12px" }}
                       >
                         Test completed
@@ -1994,18 +2151,32 @@ const EvalDetailPage = () => {
                     </Box>
                   )}
                   {isDirty && (
-                    <Typography
-                      variant="caption"
-                      sx={{
-                        fontSize: "11px",
-                        color: (theme) =>
-                          theme.palette.mode === "light"
-                            ? theme.palette.amber[700]
-                            : theme.palette.warning.main,
-                      }}
+                    <Tooltip
+                      placement="top"
+                      title={
+                        testsUnsavedChanges
+                          ? unsavedTestTooltip({
+                              isComposite,
+                              evalType,
+                              isJevModel,
+                            })
+                          : isComposite && !isSystemEval
+                            ? "Test runs the saved composite: pinned versions, jury seats and checks are tested once saved."
+                            : ""
+                      }
                     >
-                      Unsaved changes
-                    </Typography>
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          fontSize: "12px",
+                          color: "status.warning.fg",
+                        }}
+                      >
+                        {testsUnsavedChanges
+                          ? "Testing unsaved changes"
+                          : "Unsaved changes"}
+                      </Typography>
+                    </Tooltip>
                   )}
 
                   <Tooltip
@@ -2019,10 +2190,11 @@ const EvalDetailPage = () => {
                   >
                     <span>
                       <Button
-                        variant={isComposite ? "contained" : "outlined"}
+                        variant="outlined"
                         size="small"
                         onClick={handleTestEvaluation}
                         disabled={
+                          jevTestBlocked ||
                           isTesting ||
                           !isPlaygroundReady ||
                           needsTemplateVariable ||
@@ -2033,12 +2205,11 @@ const EvalDetailPage = () => {
                             <CircularProgress size={14} />
                           ) : (
                             <Iconify
-                              icon="mdi:play-circle-outline"
+                              icon="solar:play-circle-linear"
                               width={16}
                             />
                           )
                         }
-                        sx={{ textTransform: "none" }}
                       >
                         {isTesting
                           ? "Running..."
@@ -2063,6 +2234,7 @@ const EvalDetailPage = () => {
                           size="small"
                           onClick={handleSaveVersion}
                           disabled={
+                            Boolean(jevError) ||
                             isSaving ||
                             !isDirty ||
                             needsTemplateVariable ||
@@ -2073,12 +2245,11 @@ const EvalDetailPage = () => {
                               <CircularProgress size={14} />
                             ) : (
                               <Iconify
-                                icon="mdi:content-save-outline"
+                                icon="solar:diskette-linear"
                                 width={16}
                               />
                             )
                           }
-                          sx={{ textTransform: "none" }}
                         >
                           {isSaving ? "Saving..." : "Save Version"}
                         </Button>
@@ -2103,19 +2274,26 @@ const EvalDetailPage = () => {
                             isSaving ||
                             !isDirty ||
                             compositeChildren.length === 0 ||
-                            !canEditEvals
+                            !canEditEvals ||
+                            // W7-5: seats need a judge; vote rules need weights.
+                            validateComposite({
+                              aggregation: compositeAggEnabled
+                                ? compositeAggFunction
+                                : null,
+                              children: compositeChildren,
+                              weights: compositeChildWeights,
+                            }).length > 0
                           }
                           startIcon={
                             isSaving ? (
                               <CircularProgress size={14} />
                             ) : (
                               <Iconify
-                                icon="mdi:content-save-outline"
+                                icon="solar:diskette-linear"
                                 width={16}
                               />
                             )
                           }
-                          sx={{ textTransform: "none" }}
                         >
                           {isSaving ? "Saving..." : "Save Changes"}
                         </Button>
@@ -2147,11 +2325,19 @@ const EvalDetailPage = () => {
         </Box>
       )}
 
+      {/* ═══ W7: Agreement Tab ═══ */}
+      {activeTab === "agreement" && (
+        <Box sx={{ flex: 1, minHeight: 0 }}>
+          <AgreementTab templateId={evalId} evalData={evalData} />
+        </Box>
+      )}
+
       {/* ═══ Ground Truth Tab ═══ */}
       {activeTab === "ground_truth" && (
         <Box sx={{ flex: 1, minHeight: 0 }}>
           <EvalGroundTruthTab
             templateId={evalId}
+            isJevModel={isJevModel}
             onSwitchToDetails={() => setActiveTab("details")}
           />
         </Box>

@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Low credit balance</title></head>
+  <body>
+    <p>The AI Gateway credit balance for {{ organization_name }} has fallen below your ${{ threshold_usd }} USD alert threshold.</p>
+    <p>The settled balance at the time of this alert was ${{ balance_usd }} USD. Requests may stop when available credit runs out.</p>
+    <p><a href="{{ base_url }}/dashboard/settings/billing#ai-gateway-credits">Review your balance in Settings &gt; Billing</a></p>
+    <p>{{ base_url }}/dashboard/settings/billing#ai-gateway-credits</p>
+    <p>You received this email because you are an organization Owner or Admin. Change or clear the low-balance alert threshold in Billing to update this preference.</p>
+  </body>
+</html>

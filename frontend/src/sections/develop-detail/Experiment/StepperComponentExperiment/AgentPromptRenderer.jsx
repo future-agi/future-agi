@@ -1,27 +1,47 @@
-import {
-  Box,
-  Button,
-  IconButton,
-  Skeleton,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { isSurfaceShown } from "src/launch/launchSwitch";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useWatch, useFieldArray } from "react-hook-form";
+import React, { useEffect, useMemo, useState } from "react";
+import { useFieldArray, useWatch } from "react-hook-form";
 import { usePromptVersions } from "src/api/develop/prompt";
-import { ShowComponent } from "src/components/show";
 import SvgColor from "src/components/svg-color";
-import NewModelRenderWithParamsTool from "./NewModelRenderWithParamsTool";
-import CustomTooltip from "src/components/tooltip";
-import ChipForVariables from "./chipForVariables.jsx";
+import Iconify from "src/components/iconify";
 import CustomModelDropdownControl from "src/components/custom-model-dropdown/CustomModelDropdownControl";
-import { getOutputOptions, PROMPT_CONFIG_TYPE } from "../common";
-import { useGetAgentVersions } from "../../../../api/experiment/use-get-agents.js";
 import { VERSION_STATUS } from "src/sections/agent-playground/utils/constants";
-import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
-import { useDebounce } from "src/hooks/use-debounce";
-import SearchableSelectControl from "src/components/searchable-select-control/SearchableSelectControl";
+import NewModelRenderWithParamsTool from "./NewModelRenderWithParamsTool";
+import VersionMenuSelect from "./VersionMenuSelect";
+import { PROMPT_CONFIG_TYPE } from "../constants";
+import { useGetAgentVersions } from "../../../../api/experiment/use-get-agents.js";
+import RunLetterBadge from "../RunLetterBadge";
+import RunCardShell from "../RunCardShell";
+import { escapeModelKey } from "../utils";
+import { promptVersionConfiguration } from "../promptVersionConfiguration";
+import { useExperimentForm } from "../ExperimentFormContext";
+import { toneSx } from "../toneSx";
+import {
+  mappingChipLabel,
+  mappingStatus,
+  variablesInMessages,
+} from "../variableMapping";
+import { requestMappingFocus } from "../mappingFocus";
+import ToolModesBlock from "../ToolModesBlock";
+import RowLimits from "src/sections/common/RunSettings/RowLimits";
+import TryOnOneRow from "../TryOnOneRow";
+import { cardRunConfig, unmappedBlockText } from "../tryOnOneRowModel";
+import { EXPERIMENT_STEP } from "../constants";
+import { INPUT_SYNONYMS } from "src/sections/common/RunSources/runOnRows";
+import { useRunExperimentStore } from "../../states";
+import { PLAYGROUND_AGENTS_PATH } from "src/sections/agent-playground/agentsTabs";
+
+const sameList = (a = [], b = []) =>
+  a.length === b.length && a.every((x, i) => x === b[i]);
+
+/**
+ * A Prompt or Agent run card (PRODUCT-SPEC §3.8 step 1). Prompt: version
+ * (drafts disabled) and one row per model, each row one run. Agent: graph
+ * and version, prefilled from the graph's active version. Variables are
+ * listed here and mapped on the Data step.
+ */
 const AgentPromptRenderer = ({
   prompt,
   onRemove,
@@ -31,530 +51,521 @@ const AgentPromptRenderer = ({
   getValues,
   watch,
   unregister,
-  allColumns,
-  setError: _setError,
-  clearErrors: _clearErrors,
-  errors,
-  origin = "run-experiment",
   fieldPrefix = "config",
   type = "prompt",
+  letters = [],
+  showErrors = false,
+  readOnlyTarget = false,
 }) => {
+  const { nextOrdinal, mappingColumns, datasetId, exampleCount } =
+    useExperimentForm();
   const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const debouncedSearch = useDebounce(search, 300);
-  const {
-    data: versionsData,
-    isPending: versionIsPending,
-    refetch: refetchVersions,
-    fetchNextPage: fetchNextVersionsPage,
-    hasNextPage: hasNextVersionsPage,
-    isFetchingNextPage: isFetchingNextVersionsPage,
-  } = usePromptVersions(
-    type === PROMPT_CONFIG_TYPE.PROMPT ? prompt?.promptId : null,
-    debouncedSearch,
-  );
-  const {
-    data: agentVersionsData,
-    isPending: agentVersionIsPending,
-    fetchNextPage: fetchNextAgentVersionsPage,
-    hasNextPage: hasNextAgentVersionsPage,
-    isFetchingNextPage: isFetchingNextAgentVersionsPage,
-  } = useGetAgentVersions(
-    type === PROMPT_CONFIG_TYPE.AGENT ? prompt?.agentId : null,
-    debouncedSearch,
+  const isPrompt = type === PROMPT_CONFIG_TYPE.PROMPT;
+  const promptVersions = usePromptVersions(isPrompt ? prompt?.promptId : null);
+  const agentVersions = useGetAgentVersions(
+    isPrompt ? null : prompt?.agentId,
+    null,
   );
 
-  const pickupLatestVersion = useRef(false);
-
-  const versionsOptions = useMemo(() => {
-    return versionsData?.pages?.flatMap((page) => page?.results ?? []) || [];
-  }, [versionsData]);
-
-  const agentVersionsOptions = useMemo(() => {
+  const versions = useMemo(() => {
+    if (isPrompt)
+      return promptVersions.data?.pages?.flatMap((p) => p?.results ?? []) ?? [];
     return (
-      agentVersionsData?.pages?.flatMap(
-        (page) => page?.result?.versions ?? [],
-      ) || []
+      agentVersions.data?.pages?.flatMap((p) => p?.result?.versions ?? []) ?? []
     );
-  }, [agentVersionsData]);
+  }, [isPrompt, promptVersions.data, agentVersions.data]);
+
+  const versionField = isPrompt ? "promptVersion" : "agentVersion";
+  const selectedVersionId = useWatch({
+    control,
+    name: `${fieldPrefix}.${versionField}`,
+  });
+  const isDraftVersion = (v) =>
+    isPrompt ? Boolean(v?.is_draft) : v?.status === VERSION_STATUS.DRAFT;
+  const labelOf = (v) =>
+    isPrompt ? v?.template_version ?? "" : `v${v?.version_number}`;
+  const selected = versions.find((v) => v?.id === selectedVersionId);
+  const versionConfiguration = useMemo(
+    () => promptVersionConfiguration(selected?.prompt_config_snapshot),
+    [selected],
+  );
+  // v2.1 g4 (card:prompt): a deep link's version that this prompt or agent
+  // does not have is said, not silently swapped for the default.
+  const wantedVersion = prompt?.wantedVersion;
+  const wantedMissing =
+    wantedVersion != null &&
+    versions.length > 0 &&
+    !versions.some(
+      (v) =>
+        v?.id === wantedVersion ||
+        String(labelOf(v)).replace(/^v/i, "") ===
+          String(wantedVersion).replace(/^v/i, ""),
+    );
+
+  // Default: the prompt's default version, else the newest saved one. Never
+  // a draft (it cannot run).
+  useEffect(() => {
+    if (!versions.length || readOnlyTarget) return;
+    if (selected && !isDraftVersion(selected)) return;
+    if (selected && isDraftVersion(selected) && selectedVersionId) return;
+    const saved = versions.filter((v) => !isDraftVersion(v));
+    // R4 P5: a deep link's `prompt_version=1` picks V1.
+    const wanted = prompt?.wantedVersion;
+    const wantedPick =
+      wanted != null
+        ? saved.find(
+            (v) =>
+              String(v?.template_version ?? "").replace(/^v/i, "") ===
+                String(wanted).replace(/^v/i, "") || v?.id === wanted,
+          )
+        : null;
+    const pick =
+      wantedPick ||
+      (isPrompt && saved.find((v) => v?.is_default)) ||
+      saved[0] ||
+      null;
+    if (pick) setValue(`${fieldPrefix}.${versionField}`, pick.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [versions, selectedVersionId]);
+
+  // Mirror what the steps need: the version label, draft flag and the
+  // run's variables (mapped on the Data step).
+  useEffect(() => {
+    if (!selected) return;
+    // IT-R4 G1 P1: the `{{…}}` names the prompt's messages use, so a
+    // prompt edited in this session maps what it uses (with the saved
+    // variable_names).
+    const saved = selected.variable_names ?? {};
+    const variables = isPrompt
+      ? [
+          ...new Set([
+            ...(Array.isArray(saved) ? saved : Object.keys(saved)),
+            ...variablesInMessages(
+              selected.prompt_config_snapshot?.messages ?? [],
+            ),
+          ]),
+        ]
+      : // An agent's global variables are filled from the row's columns of
+        // the same name by the runner, not by the Data step's mapping; the
+        // card shows them and their status below (agentVariables).
+        [];
+    const current = getValues(fieldPrefix) ?? {};
+    if (current.versionLabel !== labelOf(selected))
+      setValue(`${fieldPrefix}.versionLabel`, labelOf(selected));
+    if (Boolean(current.isDraft) !== isDraftVersion(selected))
+      setValue(`${fieldPrefix}.isDraft`, isDraftVersion(selected));
+    if (!sameList(current.variables ?? [], variables))
+      setValue(`${fieldPrefix}.variables`, variables);
+    // W1-5: the version's messages, so the Data step can show the prompt
+    // this run sends on the sample row (not sent: the schema drops it).
+    const messages = isPrompt
+      ? selected.prompt_config_snapshot?.messages ?? []
+      : [];
+    if (
+      JSON.stringify(current.templateMessages ?? []) !==
+      JSON.stringify(messages)
+    )
+      setValue(`${fieldPrefix}.templateMessages`, messages);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
 
   const { fields, remove, replace } = useFieldArray({
     control,
     name: `${fieldPrefix}.model`,
   });
+  const watchModels = useWatch({ control, name: `${fieldPrefix}.model` });
+  const variables = useWatch({ control, name: `${fieldPrefix}.variables` });
+  const mapping = useWatch({ control, name: `${fieldPrefix}.variableMapping` });
+  const status = mappingStatus(variables ?? [], mapping ?? {}, mappingColumns);
+  // Row 19: an agent run fills each global variable (an unconnected input of
+  // the graph) from the row's column with the same name. Count the ones the
+  // dataset has no column for, as production does.
+  const agentVariables = useMemo(() => {
+    if (isPrompt) return { names: [], total: 0, notMapped: 0 };
+    const names = [
+      ...new Set(
+        Array.isArray(selected?.global_variables)
+          ? selected.global_variables
+          : [],
+      ),
+    ];
+    const columnNames = new Set(
+      (mappingColumns ?? []).map((c) => c?.name).filter(Boolean),
+    );
+    const notMapped = names.filter((v) => !columnNames.has(v)).length;
+    return { names, total: names.length, notMapped };
+  }, [isPrompt, selected, mappingColumns]);
 
-  // Watch the prompt/agent version to trigger validation on change
-  const watchedPromptVersion = useWatch({
-    control,
-    name: `${fieldPrefix}.promptVersion`,
+  const versionOptions = versions.map((v) => {
+    const draft = isDraftVersion(v);
+    return {
+      value: v.id,
+      label: labelOf(v),
+      chip: draft ? "Draft" : isPrompt && v.is_default ? "Default" : undefined,
+      hint: isPrompt ? v.commit_message || undefined : v.commit_message,
+      disabled: draft,
+      disabledHint: isPrompt
+        ? "Save it in Prompts to use it"
+        : "Publish it in Agent Playground to use it",
+    };
   });
 
-  const watchedAgentVersion = useWatch({
-    control,
-    name: `${fieldPrefix}.agentVersion`,
-  });
+  const models = (watchModels ?? []).filter((m) => m?.value);
+  // The card as it is now, for `Try on one row` (I1 quick test config).
+  const card = useWatch({ control, name: fieldPrefix });
+  const evalCount = useWatch({ control, name: "userEvalMetrics" })?.length ?? 0;
+  const tryConfig = useMemo(
+    () => cardRunConfig({ ...(card ?? {}), targetType: type }),
+    [card, type],
+  );
+  const cardError = !showErrors
+    ? null
+    : selected && isDraftVersion(selected)
+      ? `${labelOf(selected)} is a draft. Pick a saved version.`
+      : isPrompt && !models.length
+        ? "Add a model"
+        : null;
 
-  // Memoize column headers to prevent unnecessary re-renders
-  const columnHeaders = useMemo(() => {
-    return allColumns?.map((col) => col.headerName ?? col?.name) || [];
-  }, [allColumns]);
-
-  // Derive variablesInfo from data and store unmapped count in form
-  const prevNotMappedRef = useRef(null);
-  const variablesInfo = useMemo(() => {
-    let result;
-    let selectedVersion;
-    if (type === "prompt") {
-      selectedVersion = versionsOptions?.find(
-        (v) => v.id === watchedPromptVersion,
-      );
-      if (!selectedVersion?.variable_names) {
-        result = { total: 0, notMapped: 0 };
-      } else {
-        const versionVariables = Object.keys(selectedVersion.variable_names);
-        const missingCount = versionVariables.filter(
-          (variable) => !columnHeaders.includes(variable),
-        ).length;
-        result = { total: versionVariables.length, notMapped: missingCount };
-      }
-    } else if (type === "agent") {
-      selectedVersion = agentVersionsOptions?.find(
-        (v) => v.id === watchedAgentVersion,
-      );
-      if (
-        !selectedVersion?.global_variables ||
-        selectedVersion.global_variables.length === 0
-      ) {
-        result = { total: 0, notMapped: 0 };
-      } else {
-        const missingCount = selectedVersion.global_variables.filter(
-          (variable) => !columnHeaders.includes(variable),
-        ).length;
-        result = {
-          total: selectedVersion.global_variables.length,
-          notMapped: missingCount,
-        };
-      }
-    } else {
-      result = { total: 0, notMapped: 0 };
-    }
-
-    if (prevNotMappedRef.current !== result.notMapped) {
-      prevNotMappedRef.current = result.notMapped;
-      setValue(`${fieldPrefix}.unmappedVariables`, result.notMapped, {
-        shouldValidate: false,
-      });
-    }
-    return result;
-  }, [
-    versionsOptions,
-    agentVersionsOptions,
-    watchedPromptVersion,
-    watchedAgentVersion,
-    columnHeaders,
-    type,
-    setValue,
-    fieldPrefix,
-  ]);
-
-  // Set initial prompt version
-  useEffect(() => {
-    if (type !== "prompt") return;
-    if (
-      versionsOptions?.length === 0 ||
-      (prompt?.promptVersion && !pickupLatestVersion?.current)
-    ) {
-      return;
-    }
-    pickupLatestVersion.current = false;
-    setValue(`${fieldPrefix}.promptVersion`, versionsOptions?.[0]?.id);
-  }, [type, versionsOptions, prompt?.promptVersion, setValue, fieldPrefix]);
-
-  // Mirror the selected version's draft flag + version label onto the
-  // form item so the schema's superRefine can block "Next" when a draft
-  // version is picked, and emit a per-item error naming the exact
-  // version the user needs to save or swap (TH-4334).
-  useEffect(() => {
-    if (type !== PROMPT_CONFIG_TYPE.PROMPT) return;
-    const selected = versionsOptions?.find(
-      (v) => v?.id === watchedPromptVersion,
-    );
-    // versionLabel is informational (used in the error message) — no
-    // need to revalidate on it. isDraft drives the schema's draft guard,
-    // so validate immediately: the card goes red the moment the user
-    // picks a draft version, instead of waiting for the next Next-click.
-    setValue(`${fieldPrefix}.versionLabel`, selected?.template_version || "", {
-      shouldValidate: false,
-    });
-    setValue(`${fieldPrefix}.isDraft`, Boolean(selected?.is_draft), {
-      shouldValidate: true,
-    });
-  }, [type, watchedPromptVersion, versionsOptions, setValue, fieldPrefix]);
-
-  // Set initial agent version
-  useEffect(() => {
-    if (type !== "agent") return;
-    if (
-      agentVersionsOptions?.length === 0 ||
-      (prompt?.agentVersion && !pickupLatestVersion?.current)
-    ) {
-      return;
-    }
-    pickupLatestVersion.current = false;
-    setValue(`${fieldPrefix}.agentVersion`, agentVersionsOptions?.[0]?.id);
-  }, [type, agentVersionsOptions, prompt?.agentVersion, setValue, fieldPrefix]);
-
-  // Mirror the selected agent version's draft flag + version label onto
-  // the form item so the shared `promptConfig` superRefine blocks "Next"
-  // when a draft agent version is picked, reusing the same `isDraft` /
-  // `versionLabel` fields as the prompt branch (TH-4355). The versions
-  // endpoint returns `status` as a string; agent-playground's
-  // `VERSION_STATUS.DRAFT` is the canonical match.
-  useEffect(() => {
-    if (type !== PROMPT_CONFIG_TYPE.AGENT) return;
-    // Wait for the versions list and a concrete selection before
-    // writing. Otherwise the effect fires on every render during fetch
-    // with `selected === undefined`, which would write `isDraft=false`
-    // + `shouldValidate: true` and prematurely clear a live draft error.
-    if (!agentVersionsOptions?.length || !watchedAgentVersion) return;
-    const selected = agentVersionsOptions.find(
-      (v) => v?.id === watchedAgentVersion,
-    );
-    if (!selected) return;
+  // L3 G8 P5: Open in Prompts opens the version picked on this card.
+  const openHref = isPrompt
+    ? `/dashboard/workbench/create/${prompt?.promptId}?tab=Playground${selected ? `&version=${encodeURIComponent(labelOf(selected))}` : ""}`
+    : `/dashboard/agents/playground/${prompt?.agentId}/build${selectedVersionId ? `?version=${encodeURIComponent(selectedVersionId)}` : ""}`;
+  // IT-R2 G1 P10: Try on one row names the real blocker with its action.
+  const savedVersions = versions.filter((v) => !isDraftVersion(v));
+  const onlyDrafts =
+    isPrompt &&
+    !promptVersions.isPending &&
+    versions.length > 0 &&
+    !savedVersions.length;
+  const goMap = () => {
+    requestMappingFocus(status.unmapped?.[0]);
+    useRunExperimentStore.getState().setCurrentStep(EXPERIMENT_STEP.DATA);
+  };
+  // IT-R5 G1 S1: one obvious column for the one unmapped variable maps in
+  // one click: a free text column named like the variable, else the only
+  // free text column, else the one named like an input.
+  const used = new Set(Object.values(mapping ?? {}).filter(Boolean));
+  const textCols = (mappingColumns ?? []).filter(
+    (c) => (!c.data_type || c.data_type === "text") && !used.has(c.id),
+  );
+  const want = String(status.unmapped?.[0] ?? "").toLowerCase();
+  const named = (c) => String(c.name ?? "").toLowerCase();
+  const fixCol =
+    status.unmapped?.length === 1 && textCols.length
+      ? textCols.find(
+          (c) =>
+            named(c) === want ||
+            named(c).includes(want) ||
+            want.includes(named(c)),
+        ) ??
+        (textCols.length === 1 ? textCols[0] : null) ??
+        textCols.find((c) =>
+          [...INPUT_SYNONYMS, "user_request", "request"].includes(named(c)),
+        ) ??
+        null
+      : null;
+  const useFixCol = () =>
     setValue(
-      `${fieldPrefix}.versionLabel`,
-      selected.version_number != null ? `v${selected.version_number}` : "",
-      { shouldValidate: false },
+      `${fieldPrefix}.variableMapping`,
+      { ...(mapping ?? {}), [status.unmapped[0]]: fixCol.id },
+      { shouldDirty: true },
     );
-    setValue(
-      `${fieldPrefix}.isDraft`,
-      selected.status === VERSION_STATUS.DRAFT,
-      { shouldValidate: true },
-    );
-  }, [type, watchedAgentVersion, agentVersionsOptions, setValue, fieldPrefix]);
+  const tryBlocked =
+    isPrompt && (onlyDrafts || (selected && isDraftVersion(selected)))
+      ? {
+          reason: `This prompt is a draft. Save it as V${savedVersions.length + 1} in Prompts`,
+          action: "Open in Prompts",
+          href: openHref,
+        }
+      : isPrompt && !models.length
+        ? {
+            reason: "Pick a model",
+            action: "Pick",
+            onAction: () => setOpen(true),
+          }
+        : !selectedVersionId && savedVersions.length
+          ? { reason: "Pick a version (top right of this card)" }
+          : status.unmapped?.length
+            ? {
+                reason: unmappedBlockText(
+                  status.unmapped.map((v) => `{{${v}}}`),
+                ),
+                action: "Go to Data",
+                onAction: goMap,
+                soft: true,
+                fix: fixCol
+                  ? { label: `Use ${fixCol.name}`, onFix: useFixCol }
+                  : null,
+              }
+            : null;
 
-  const watchModels = useWatch({
-    control,
-    name: `${fieldPrefix}.model`,
-  });
-  const matched = variablesInfo.total - variablesInfo.notMapped;
-  const errorMessage =
-    (variablesInfo.notMapped > 0
-      ? `Variable mismatch: ${matched}/${variablesInfo.total} variables matched. The ${type === "agent" ? "agent" : "prompt"} variables don't match the dataset columns.`
-      : null) ||
-    errors?.promptConfig?.[index]?.unmappedVariables?.message ||
-    errors?.promptConfig?.[index]?.isDraft?.message ||
-    errors?.promptConfig?.[index]?.model?.message;
   return (
     <Box
       sx={{
-        border: "1px solid ",
-        padding: "10px 16px",
-        borderRadius: "5px",
-        backgroundColor: errorMessage ? "red.o5" : "background.default",
-        borderColor: errorMessage ? "error.main" : "divider",
-        display: "flex",
-        flexDirection: "column",
-        gap: 1.5,
+        "& > .MuiBox-root": {
+          borderRadius: "6px",
+          bgcolor: cardError ? "status.danger.bg" : "background.default",
+        },
       }}
     >
-      <Box
-        sx={{
-          display: "flex",
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
+      <RunCardShell
+        icon={
+          <SvgColor
+            src={
+              isPrompt
+                ? "/assets/icons/navbar/ic_prompt.svg"
+                : "/assets/icons/navbar/ic_agents.svg"
+            }
+            sx={{ width: 16, height: 16, color: "text.secondary" }}
+          />
+        }
+        letters={isSurfaceShown("exp.new") && !isPrompt ? letters : []}
+        title={prompt?.name}
+        typeLabel={isPrompt ? "Prompt" : "Agent"}
+        error={cardError}
+        onRemove={onRemove}
+        headerExtra={
+          <VersionMenuSelect
+            value={selectedVersionId}
+            options={versionOptions}
+            isPending={
+              isPrompt ? promptVersions.isPending : agentVersions.isPending
+            }
+            onChange={(v) => setValue(`${fieldPrefix}.${versionField}`, v)}
+            placeholder="Version"
+          />
+        }
+        actions={
+          isSurfaceShown("exp.new") && (
+            <Button
+              size="small"
+              href={openHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              endIcon={<Iconify icon="mdi:arrow-top-right" width={14} />}
+              sx={{ color: "status.info.fg", typography: "s2" }}
+            >
+              {isPrompt ? "Open in Prompts" : "Open in Agent Playground"}
+            </Button>
+          )
+        }
       >
-        <Box
-          sx={{
-            display: "flex",
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 2,
-          }}
-        >
-          <CustomTooltip
-            title={prompt?.name}
-            size="small"
-            arrow={true}
-            show={prompt?.name?.length > 40}
+        {wantedMissing ? (
+          <Typography
+            typography="s3"
+            color="warning.dark"
+            data-testid="wanted-version-missing"
           >
-            <Typography typography={"s1"} fontWeight={"fontWeightMedium"}>
-              {prompt?.name?.length > 40
-                ? `${prompt.name.substring(0, 40)}...`
-                : prompt?.name}
-            </Typography>
-          </CustomTooltip>
-
-          <ShowComponent condition={type === PROMPT_CONFIG_TYPE.PROMPT}>
-            <SearchableSelectControl
-              control={control}
-              fieldName={`${fieldPrefix}.promptVersion`}
-              options={versionsOptions}
-              isPending={versionIsPending}
-              fetchNextPage={fetchNextVersionsPage}
-              hasNextPage={hasNextVersionsPage}
-              isFetchingNextPage={isFetchingNextVersionsPage}
-              searchQuery={search}
-              onSearchChange={setSearch}
-              getOptionLabel={(v) =>
-                v?.is_default === true
-                  ? `${v?.template_version} (default)`
-                  : v?.template_version ?? ""
-              }
-              getOptionValue={(v) => v?.id}
-              placeholder="Select version"
-            />
-          </ShowComponent>
-
-          <ShowComponent condition={type === PROMPT_CONFIG_TYPE.AGENT}>
-            <SearchableSelectControl
-              control={control}
-              fieldName={`${fieldPrefix}.agentVersion`}
-              options={agentVersionsOptions}
-              isPending={agentVersionIsPending}
-              fetchNextPage={fetchNextAgentVersionsPage}
-              hasNextPage={hasNextAgentVersionsPage}
-              isFetchingNextPage={isFetchingNextAgentVersionsPage}
-              searchQuery={search}
-              onSearchChange={setSearch}
-              getOptionLabel={(v) => `v${v?.version_number}`}
-              getOptionValue={(v) => v?.id}
-              placeholder="Select version"
-            />
-          </ShowComponent>
-        </Box>
-        {onRemove && (
-          <IconButton
-            size="small"
-            onClick={onRemove}
-            sx={{
-              width: 22,
-              height: 22,
-              padding: "3px",
-              borderRadius: "2px",
-              backgroundColor: "background.default",
-              border: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            <SvgColor
-              sx={{
-                height: "20px",
-                width: "20px",
-                color: "error.main",
-              }}
-              src={"/assets/icons/ic_delete.svg"}
-            />
-          </IconButton>
-        )}
-      </Box>
-      <ShowComponent
-        condition={origin === "run-experiment" && type !== "agent"}
-      >
-        <Stack spacing={1}>
-          {fields.length > 0 &&
-            fields.map((field, modelIdx) => {
-              const handleRemoveModel = () => {
-                remove(modelIdx);
-                unregister(
-                  `${fieldPrefix}.modelParams.${watchModels?.[modelIdx]?.value}`,
-                );
-              };
+            {`The link asked for version ${String(wantedVersion).replace(/^v/i, isPrompt ? "V" : "v")}, which ${prompt?.name ?? "this " + (isPrompt ? "prompt" : "agent")} does not have. Showing ${selected ? labelOf(selected) : "its default version"}; pick another above.`}
+          </Typography>
+        ) : null}
+        {isPrompt ? (
+          <Stack spacing={0.75}>
+            {fields.map((field, modelIdx) => {
+              const letter = letters[models.indexOf(watchModels?.[modelIdx])];
               return (
                 <NewModelRenderWithParamsTool
+                  key={field.id}
                   selectedModel={watchModels?.[modelIdx]}
                   modelIndex={modelIdx}
                   index={index}
                   control={control}
                   setValue={setValue}
-                  key={field.id}
                   getValues={getValues}
                   useWatch={watch}
-                  modelParamsFieldName={`${fieldPrefix}.modelParams.${watchModels?.[modelIdx]?.value}`}
-                  modelType={"llm"}
+                  modelParamsFieldName={`${fieldPrefix}.modelParams.${escapeModelKey(watchModels?.[modelIdx]?.value)}`}
+                  modelType="llm"
+                  fallbackParams={versionConfiguration}
+                  fallbackVersionId={selectedVersionId}
+                  fallbackParamsNote={`From ${selected?.name ?? "this version"}; change it in Prompts`}
                   voiceFieldName={`${fieldPrefix}.model.${modelIdx}.voices`}
                   fieldPrefix={fieldPrefix}
-                  onRemove={fields?.length === 1 ? null : handleRemoveModel}
                   deleteIcon="/assets/icons/ic_close.svg"
+                  leading={
+                    isSurfaceShown("exp.new") && letter ? (
+                      <RunLetterBadge
+                        letter={letter}
+                        ordinal={nextOrdinal ?? undefined}
+                      />
+                    ) : null
+                  }
+                  onRemove={
+                    fields.length === 1
+                      ? null
+                      : () => {
+                          remove(modelIdx);
+                          unregister(
+                            `${fieldPrefix}.modelParams.${escapeModelKey(watchModels?.[modelIdx]?.value)}`,
+                          );
+                        }
+                  }
                 />
               );
             })}
-        </Stack>
-
-        <ShowComponent condition={type === PROMPT_CONFIG_TYPE.PROMPT}>
-          <FormSearchSelectFieldControl
-            fullWidth
-            label="Output Format"
-            size="small"
-            required={true}
-            control={control}
-            fieldName={`${fieldPrefix}.outputFormat`}
-            options={getOutputOptions["llm"] || []}
-            sx={{ backgroundColor: "background.paper" }}
-          />
-        </ShowComponent>
-        <ShowComponent
-          condition={
-            type !== "agent" &&
-            watchModels?.length > 0 &&
-            watchModels?.[0]?.value
-          }
-        >
-          <CustomModelDropdownControl
-            fieldName="model"
-            fieldPrefix={fieldPrefix}
-            modelObjectKey={null}
-            multiple={true}
-            control={control}
-            openSelectModel={open}
-            setOpenSelectModel={setOpen}
-            showButtons={true}
-            extraParams={{ model_type: "llm" }}
-            customTrigger={
-              <Button
-                startIcon={
-                  <SvgColor
-                    sx={{
-                      height: 20,
-                      width: 20,
-                    }}
-                    src="/assets/icons/ic_add.svg"
-                  />
+            <Box>
+              <CustomModelDropdownControl
+                fieldName="model"
+                fieldPrefix={fieldPrefix}
+                modelObjectKey={null}
+                multiple
+                control={control}
+                openSelectModel={open}
+                setOpenSelectModel={setOpen}
+                showButtons
+                extraParams={{ model_type: "llm" }}
+                customTrigger={
+                  <Button
+                    size="small"
+                    variant="text"
+                    startIcon={
+                      <SvgColor width={20} src="/assets/icons/ic_add.svg" />
+                    }
+                    onClick={() => setOpen(true)}
+                    sx={{ px: 1 }}
+                  >
+                    Add model
+                  </Button>
                 }
-                variant="outlined"
-                size={"small"}
-                sx={{ bgcolor: "background.paper" }}
-                onClick={() => setOpen(true)}
-              >
-                Add models
-              </Button>
-            }
-            onChange={(e) => {
-              // Use replace from useFieldArray to properly update the array
-              replace(e.target.value || []);
-            }}
-          />
-        </ShowComponent>
-      </ShowComponent>
-
-      <ShowComponent condition={type === "prompt" || type === "agent"}>
-        <ShowComponent condition={variablesInfo?.total > 0}>
-          <Box
-            sx={{
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: 0.5,
-              padding: "12px 8px",
-              backgroundColor: "background.paper",
-            }}
-          >
-            <ShowComponent condition={variablesInfo.notMapped === 0}>
-              <Box
-                sx={{
-                  display: "flex",
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 1,
-                }}
-              >
-                <Typography typography="s2" fontWeight={"fontWeightMedium"}>
-                  {`${`${variablesInfo?.total}/${variablesInfo?.total} variables mapped to dataset columns`}`}
+                onChange={(e) => replace(e.target.value || [])}
+              />
+            </Box>
+            {isSurfaceShown("exp.new") && (
+              <ToolModesBlock
+                control={control}
+                setValue={setValue}
+                getValues={getValues}
+                fieldPrefix={fieldPrefix}
+                version={selected}
+                promptName={prompt?.name}
+                rowCount={
+                  Number.isFinite(exampleCount) ? exampleCount : undefined
+                }
+              />
+            )}
+            {isSurfaceShown("exp.new") && (
+              <Stack direction="row" alignItems="center" gap={0.5}>
+                <Typography typography="s3" color="text.disabled">
+                  Need several steps? Build them as an agent graph:
                 </Typography>
-                <ChipForVariables status="all" />
-              </Box>
-            </ShowComponent>
-            <ShowComponent condition={variablesInfo.notMapped > 0}>
-              <Box
-                sx={{
-                  display: "flex",
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 1,
-                }}
-              >
-                <Typography typography="s2" fontWeight={"fontWeightMedium"}>
-                  {`${variablesInfo?.total - variablesInfo?.notMapped}/${variablesInfo?.total} variables mapped to dataset columns`}
-                </Typography>
-                <ChipForVariables
-                  status={
-                    variablesInfo?.total === variablesInfo?.notMapped
-                      ? "none"
-                      : "partial"
-                  }
-                />
                 <Button
                   size="small"
-                  sx={{ color: "blue.500", bgcolor: "background.paper" }}
-                  startIcon={
-                    <SvgColor
-                      sx={{
-                        height: 16,
-                        width: 16,
-                      }}
-                      src="/assets/icons/ic_reload.svg"
-                    />
-                  }
-                  onClick={() => {
-                    refetchVersions();
-                    pickupLatestVersion.current = true;
+                  href={PLAYGROUND_AGENTS_PATH}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  endIcon={<Iconify icon="mdi:arrow-top-right" width={12} />}
+                  sx={{
+                    typography: "s3",
+                    px: 0.5,
+                    py: 0,
+                    minWidth: 0,
+                    "& .MuiButton-endIcon": { ml: 0.25 },
                   }}
                 >
-                  Refresh
+                  Open Agent Playground
                 </Button>
-              </Box>
+              </Stack>
+            )}
+          </Stack>
+        ) : null}
+        {isSurfaceShown("exp.new") && (
+          <RowLimits control={control} fieldPrefix={fieldPrefix} />
+        )}
+
+        {isSurfaceShown("exp.new") && (variables ?? []).length > 0 ? (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              flexWrap: "wrap",
+              typography: "s2",
+              color: "text.secondary",
+            }}
+          >
+            <Iconify icon="mdi:code-braces" width={14} />
+            <Typography typography="s2" color="text.secondary">
+              {(variables ?? []).join(", ")}
+            </Typography>
+            <Box
+              component="span"
+              sx={{
+                typography: "s3",
+                px: 0.75,
+                py: 0.125,
+                borderRadius: "4px",
+                ...toneSx(status.mapped === status.total ? "pass" : "warn"),
+              }}
+            >
+              {mappingChipLabel(status)}
+            </Box>
+            <Typography typography="s3" color="text.disabled">
+              Map on the Data step
+            </Typography>
+          </Box>
+        ) : null}
+
+        {isSurfaceShown("exp.new") &&
+        !isPrompt &&
+        agentVariables.total > 0 ? (
+          <Box data-testid="agent-variables">
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                flexWrap: "wrap",
+              }}
+            >
+              <Iconify icon="mdi:code-braces" width={14} />
+              <Typography typography="s2" color="text.secondary">
+                {agentVariables.names.join(", ")}
+              </Typography>
               <Box
+                component="span"
                 sx={{
-                  display: "flex",
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 1,
-                  mt: 1,
+                  typography: "s3",
+                  px: 0.75,
+                  py: 0.125,
+                  borderRadius: "4px",
+                  ...toneSx(agentVariables.notMapped === 0 ? "pass" : "warn"),
                 }}
               >
-                <Typography typography="s2" fontWeight={"fontWeightMedium"}>
-                  {type === "prompt"
-                    ? "Update variable names in workbench to match dataset columns."
-                    : "Update global variables in agent to match dataset columns."}
-                </Typography>
-                <Button
-                  variant="outlined"
-                  sx={{
-                    bgcolor: "background.paper",
-                    px: 1.5,
-                    borderColor: "border.light",
-                  }}
-                  onClick={() => {
-                    const url =
-                      type === "prompt"
-                        ? `/dashboard/workbench/create/${prompt?.promptId}`
-                        : `/dashboard/agents/playground/${prompt?.agentId}`;
-                    window.open(url, "_blank");
-                  }}
-                  startIcon={
-                    <SvgColor src="/assets/icons/ic_arrow_top_right.svg" />
-                  }
-                >
-                  {type === "prompt"
-                    ? "Go to Workbench"
-                    : "Go to Agent Playground"}
-                </Button>
+                {`${agentVariables.total - agentVariables.notMapped}/${agentVariables.total} variables mapped to dataset columns`}
               </Box>
-            </ShowComponent>
+            </Box>
+            {agentVariables.notMapped > 0 ? (
+              <Typography
+                typography="s3"
+                color="text.disabled"
+                sx={{ mt: 0.5 }}
+              >
+                Update global variables in agent to match dataset columns.
+              </Typography>
+            ) : null}
           </Box>
-        </ShowComponent>
-      </ShowComponent>
+        ) : null}
 
-      <ShowComponent condition={Boolean(errorMessage)}>
-        <Typography
-          typography={"s2"}
-          fontWeight={"fontWeightMedium"}
-          color="error.main"
-        >
-          {errorMessage}
-        </Typography>
-      </ShowComponent>
+        {isSurfaceShown("exp.new") && !readOnlyTarget ? (
+          <Box
+            sx={{
+              pt: 1,
+              mt: 0.25,
+              borderTop: "1px dashed",
+              borderColor: "divider",
+            }}
+          >
+            <TryOnOneRow
+              datasetId={datasetId}
+              config={tryConfig}
+              kind={isPrompt ? "prompt" : "agent"}
+              hasEvals={evalCount > 0}
+              unmapped={status.unmapped}
+              onMapNow={goMap}
+              blocked={tryBlocked}
+            />
+          </Box>
+        ) : null}
+      </RunCardShell>
     </Box>
   );
 };
@@ -570,11 +581,9 @@ AgentPromptRenderer.propTypes = {
   getValues: PropTypes.func,
   watch: PropTypes.func,
   unregister: PropTypes.func,
-  allColumns: PropTypes.array,
-  setError: PropTypes.func,
-  clearErrors: PropTypes.func,
-  errors: PropTypes.object,
-  origin: PropTypes.string,
   fieldPrefix: PropTypes.string,
   type: PropTypes.string,
+  letters: PropTypes.arrayOf(PropTypes.string),
+  showErrors: PropTypes.bool,
+  readOnlyTarget: PropTypes.bool,
 };

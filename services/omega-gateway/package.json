@@ -1,0 +1,18 @@
+{
+  "name": "@futureagi/omega-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fail-closed edge between FutureAGI browser sessions and Omega EE: customer assertions only, routes from the route manifest, rate limits, tracing",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "check": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "src",
+    "manifest"
+  ]
+}

@@ -6,7 +6,7 @@ when Temporal validates workflows in its sandbox.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # =============================================================================
 # Activity Input/Output Data Classes
@@ -24,8 +24,9 @@ class ProcessRowInput:
     messages: list
     model: str
     model_config: dict
-    output_format: Optional[str] = None
-    run_prompt_config: Optional[dict] = None
+    output_format: str | None = None
+    run_prompt_config: dict | None = None
+    native_context: dict | None = None
 
 
 @dataclass
@@ -35,14 +36,17 @@ class ProcessRowOutput:
     row_id: str
     column_id: str
     status: str  # "COMPLETED" or "FAILED"
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
 class SetupExperimentInput:
-    """Input for setting up an experiment."""
+    """Input for setup, or a read-only native admission acknowledgement poll."""
 
     experiment_id: str
+    native_runs: dict[str, dict] = field(default_factory=dict)
+    admission_only: bool = False
+    http_admission_id: str = ""
 
 
 @dataclass
@@ -57,6 +61,7 @@ class SetupExperimentOutput:
     agent_configs: list = None  # V2 only: list of agent config dicts
     experiment_type: str = "llm"  # V2: experiment type (llm, tts, stt, image)
     has_base_column: bool = True  # Whether experiment has a base column
+    http_sources: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -80,10 +85,10 @@ class ProcessPromptOutput:
     messages: list  # Messages template for row processing
     model_name: str  # Extracted model name
     model_config: dict  # Model configuration
-    output_format: Optional[str]
-    run_prompt_config: Optional[dict]  # Model-specific run config
+    output_format: str | None
+    run_prompt_config: dict | None  # Model-specific run config
     status: str
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -93,7 +98,7 @@ class RunEvaluationInput:
     experiment_id: str
     dataset_id: str
     eval_template_id: str
-    row_ids: List[str] = field(default_factory=list)  # Empty = all rows
+    row_ids: list[str] = field(default_factory=list)  # Empty = all rows
 
 
 @dataclass
@@ -103,7 +108,7 @@ class RunEvaluationOutput:
     experiment_id: str
     eval_template_id: str
     status: str
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -112,6 +117,7 @@ class CheckStatusInput:
 
     entity_type: str  # "column", "experiment_dataset", or "experiment"
     entity_id: str
+    native_context: dict | None = None
 
 
 @dataclass
@@ -143,10 +149,11 @@ class RunExperimentInput:
     experiment_id: str
     max_concurrent_rows: int = 10  # Max concurrent row processing per prompt
     task_queue: str = "tasks_l"  # Task queue for child workflows and activities
-    rerun_prompt_config_ids: List[str] = field(default_factory=list)
-    rerun_agent_config_ids: List[str] = field(default_factory=list)
-    rerun_eval_template_ids: List[str] = field(default_factory=list)
+    rerun_prompt_config_ids: list[str] = field(default_factory=list)
+    rerun_agent_config_ids: list[str] = field(default_factory=list)
+    rerun_eval_template_ids: list[str] = field(default_factory=list)
     column_changed: bool = False
+    native_runs: dict[str, dict] = field(default_factory=dict)
 
 
 @dataclass
@@ -157,7 +164,7 @@ class RunExperimentOutput:
     status: str  # "COMPLETED" or "FAILED"
     total_rows_processed: int
     failed_rows: int
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -166,7 +173,7 @@ class ProcessPromptWorkflowInput:
 
     experiment_id: str
     dataset_id: str
-    prompt_config: Dict[str, Any]  # Prompt configuration dict
+    prompt_config: dict[str, Any]  # Prompt configuration dict
     model: Any  # Can be string OR dict (ModelSpec) - use Any for Temporal serialization
     max_concurrent_rows: int = 10
     task_queue: str = "tasks_l"  # Task queue for activities
@@ -189,6 +196,8 @@ class CleanupRunningCellsInput:
     """Input for cleaning up running cells after workflow failure/termination."""
 
     experiment_id: str
+    native_runs: dict[str, dict] = field(default_factory=dict)
+    http_admission_id: str = ""
 
 
 @dataclass
@@ -198,7 +207,7 @@ class CleanupRunningCellsOutput:
     experiment_id: str
     cells_cleaned: int
     status: str
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -219,7 +228,7 @@ class ProcessRowEvalOutput:
     column_id: str
     evals_triggered: int
     status: str
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -234,29 +243,35 @@ class GetEvalTemplatesInput:
 class GetEvalTemplatesOutput:
     """Output with eval template IDs."""
 
-    eval_template_ids: List[str]
+    eval_template_ids: list[str]
 
 
 @dataclass
 class ProcessBatchEvalInput:
     """Input for processing a batch of rows for a single eval template."""
 
-    row_ids: List[str]  # Batch of row IDs
+    row_ids: list[str]  # Batch of row IDs
     column_id: str
     dataset_id: str
     experiment_id: str
     eval_template_id: str
+    http_context: dict | None = None
+    # Rerun evaluations hand every row to one activity. With a batch size,
+    # it sends the rows in batches and stops between them once the
+    # experiment is cancelled, keeping results already paid for. None keeps
+    # one call for all the rows (the per-batch and per-row callers).
+    rows_per_batch: int | None = None
 
 
 @dataclass
 class ProcessBatchEvalOutput:
     """Output from batch eval processing."""
 
-    row_ids: List[str]
+    row_ids: list[str]
     column_id: str
     eval_template_id: str
     status: str
-    error: Optional[str] = None
+    error: str | None = None
 
 
 # =============================================================================
@@ -277,12 +292,14 @@ class MarkExperimentRunningOutput:
 
     experiment_id: str
     dataset_id: str
-    eval_template_ids: List[str]
+    eval_template_ids: list[str]
     status: str
-    prompt_configs: List[str] = field(default_factory=list)
-    agent_configs: List[str] = field(default_factory=list)
-    error: Optional[str] = None
+    prompt_configs: list[str] = field(default_factory=list)
+    agent_configs: list[str] = field(default_factory=list)
+    error: str | None = None
     has_base_column: bool = True
+
+    http_sources: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -292,8 +309,9 @@ class SetupPromptV2Input:
     experiment_id: str
     dataset_id: str
     experiment_prompt_config_id: str  # ExperimentPromptConfig.id
-    rerun_row_ids: List[str] = field(default_factory=list)  # Empty = all rows
+    rerun_row_ids: list[str] = field(default_factory=list)  # Empty = all rows
     failed_only: bool = False  # If true, only rerun ERROR cells
+    native_context: dict | None = None
 
 
 @dataclass
@@ -304,14 +322,14 @@ class SetupPromptV2Output:
     experiment_prompt_config_id: str
     column_id: str
     experiment_dataset_id: str
-    row_ids: List[str]
+    row_ids: list[str]
     messages: list
     model_name: str
     model_config: dict
-    output_format: Optional[str]
-    run_prompt_config: Optional[dict]
+    output_format: str | None
+    run_prompt_config: dict | None
     status: str
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -321,8 +339,9 @@ class SetupAgentInput:
     experiment_id: str
     dataset_id: str
     experiment_agent_config_id: str  # ExperimentAgentConfig.id
-    rerun_row_ids: List[str] = field(default_factory=list)  # Empty = all rows
+    rerun_row_ids: list[str] = field(default_factory=list)  # Empty = all rows
     failed_only: bool = False  # If true, only rerun ERROR cells
+    native_context: dict | None = None
 
 
 @dataclass
@@ -333,11 +352,12 @@ class SetupAgentOutput:
     experiment_agent_config_id: str
     experiment_dataset_id: str
     graph_version_id: str
-    node_column_mapping: Dict[str, str]  # node_id -> column_id
-    row_ids: List[str]
+    node_column_mapping: dict[str, str]  # node_id -> column_id
+    row_ids: list[str]
     status: str
-    terminal_column_ids: List[str] = field(default_factory=list)
-    error: Optional[str] = None
+    terminal_column_ids: list[str] = field(default_factory=list)
+    error: str | None = None
+    terminal_completed_rows: int = 0
 
 
 @dataclass
@@ -348,6 +368,8 @@ class PrepareAgentRowInput:
     dataset_id: str
     experiment_id: str
     graph_version_id: str
+    experiment_agent_config_id: str = ""
+    native_context: dict | None = None
 
 
 @dataclass
@@ -356,9 +378,9 @@ class PrepareAgentRowOutput:
 
     row_id: str
     graph_execution_id: str
-    input_payload: Dict[str, Any]
+    input_payload: dict[str, Any]
     status: str  # "READY" or "FAILED"
-    error: Optional[str] = None
+    error: str | None = None
 
 
 # =============================================================================
@@ -373,13 +395,14 @@ class ProcessPromptV2WorkflowInput:
     experiment_id: str
     dataset_id: str
     experiment_prompt_config_id: str  # ExperimentPromptConfig.id
-    eval_template_ids: List[str] = field(
+    eval_template_ids: list[str] = field(
         default_factory=list
     )  # Dependent eval IDs (need output)
     max_concurrent_rows: int = 10
     task_queue: str = "tasks_l"
-    rerun_row_ids: List[str] = field(default_factory=list)  # Empty = all rows
+    rerun_row_ids: list[str] = field(default_factory=list)  # Empty = all rows
     failed_only: bool = False
+    native_context: dict | None = None
 
 
 @dataclass
@@ -402,13 +425,14 @@ class ProcessAgentWorkflowInput:
     experiment_id: str
     dataset_id: str
     experiment_agent_config_id: str  # ExperimentAgentConfig.id
-    eval_template_ids: List[str] = field(
+    eval_template_ids: list[str] = field(
         default_factory=list
     )  # Dependent eval IDs (need output)
     max_concurrent_rows: int = 10
     task_queue: str = "tasks_l"
-    rerun_row_ids: List[str] = field(default_factory=list)  # Empty = all rows
+    rerun_row_ids: list[str] = field(default_factory=list)  # Empty = all rows
     failed_only: bool = False
+    native_context: dict | None = None
 
 
 @dataclass
@@ -428,15 +452,15 @@ class AnalyzeDependenciesInput:
     """Input for analyzing eval template dependencies."""
 
     experiment_id: str
-    eval_template_ids: List[str]
+    eval_template_ids: list[str]
 
 
 @dataclass
 class AnalyzeDependenciesOutput:
     """Output from dependency analysis — splits evals into independent vs dependent."""
 
-    independent_eval_ids: List[str]  # Evals that only reference base columns/KBs
-    dependent_eval_ids: List[str]  # Evals that reference 'output' or 'prompt_chain'
+    independent_eval_ids: list[str]  # Evals that only reference base columns/KBs
+    dependent_eval_ids: list[str]  # Evals that reference 'output' or 'prompt_chain'
 
 
 @dataclass
@@ -444,15 +468,15 @@ class ResolveEdtColumnsInput:
     """Input for resolving EDT output columns (eval-only re-run)."""
 
     experiment_id: str
-    edt_ids: List[str] = field(default_factory=list)  # Filter to specific EDTs
+    edt_ids: list[str] = field(default_factory=list)  # Filter to specific EDTs
 
 
 @dataclass
 class ResolveEdtColumnsOutput:
     """EDT output column IDs + row IDs for scheduling per-EDT evals."""
 
-    edt_column_ids: List[str]  # Output column IDs (one per EDT)
-    row_ids: List[str]
+    edt_column_ids: list[str]  # Output column IDs (one per EDT)
+    row_ids: list[str]
     dataset_id: str
 
 
@@ -463,20 +487,23 @@ class RerunCellsV2WorkflowInput:
     - prompt_config_ids / agent_config_ids: which configs to rerun
     - row_ids: empty = all rows; non-empty = only those rows
     - failed_only: if true, only rerun cells in ERROR status
+    - native_runs: committed plan-bound contexts. Their rows live in the
+      persisted execution plan (resolved before any reset), never here.
     """
 
     experiment_id: str
     dataset_id: str
-    prompt_config_ids: List[str] = field(default_factory=list)  # EPC IDs
-    agent_config_ids: List[str] = field(default_factory=list)  # EAC IDs
-    row_ids: List[str] = field(default_factory=list)  # Empty = all rows
+    prompt_config_ids: list[str] = field(default_factory=list)  # EPC IDs
+    agent_config_ids: list[str] = field(default_factory=list)  # EAC IDs
+    row_ids: list[str] = field(default_factory=list)  # Empty = all rows
     failed_only: bool = False
-    eval_template_ids: List[str] = field(default_factory=list)
+    eval_template_ids: list[str] = field(default_factory=list)
     max_concurrent_rows: int = 10
     task_queue: str = "tasks_l"
     eval_only: bool = False
-    edt_ids: List[str] = field(default_factory=list)  # Filter EDT columns for eval-only
+    edt_ids: list[str] = field(default_factory=list)  # Filter EDT columns for eval-only
     base_eval_only: bool = False  # Skip per-EDT evals, only run base evals
+    native_runs: dict[str, dict] = field(default_factory=dict)  # Plan-bound subset
 
 
 @dataclass
@@ -487,7 +514,7 @@ class RerunCellsV2WorkflowOutput:
     status: str
     total_rows_processed: int
     failed_rows: int
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -496,6 +523,8 @@ class StopExperimentCleanupInput:
 
     experiment_id: str
     stop_message: str = "Execution was stopped by user"
+    native_runs: dict[str, dict] = field(default_factory=dict)
+    http_admission_id: str = ""
 
 
 @dataclass
@@ -505,19 +534,20 @@ class StopExperimentCleanupOutput:
     experiment_id: str
     cells_cleaned: int
     status: str
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
 class CreateErrorEvalCellsInput:
     """Input for creating eval cells in ERROR state when upstream prompt failed."""
 
-    failed_row_ids: List[str]
+    failed_row_ids: list[str]
     column_id: str  # Output/prompt column ID
     dataset_id: str
     experiment_id: str
-    eval_template_ids: List[str]
+    eval_template_ids: list[str]
     error_message: str = "Evaluation skipped: upstream prompt failed"
+    http_context: dict | None = None
 
 
 @dataclass
@@ -526,7 +556,7 @@ class CreateErrorEvalCellsOutput:
 
     cells_created: int
     status: str
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -536,8 +566,10 @@ class CreateErrorAgentCellsInput:
     row_id: str
     dataset_id: str
     experiment_id: str
-    node_column_mapping: Dict[str, str]  # node_id -> column_id
+    node_column_mapping: dict[str, str]  # node_id -> column_id
     error_message: str = "Agent execution failed"
+    experiment_agent_config_id: str = ""
+    native_context: dict | None = None
 
 
 @dataclass
@@ -546,7 +578,8 @@ class CreateErrorAgentCellsOutput:
 
     cells_created: int
     status: str
-    error: Optional[str] = None
+    error: str | None = None
+    row_status: str | None = None
 
 
 __all__ = [
@@ -605,3 +638,22 @@ __all__ = [
     "CreateErrorAgentCellsInput",
     "CreateErrorAgentCellsOutput",
 ]
+
+
+@dataclass
+class HttpSourceInput:
+    experiment_id: str
+    source_id: str
+    admission_id: str
+
+
+@dataclass
+class HttpRowInput(HttpSourceInput):
+    row_id: str
+
+
+@dataclass
+class HttpSourceWorkflowInput(HttpSourceInput):
+    eval_template_ids: list[str] = field(default_factory=list)
+    max_concurrent_rows: int = 10
+    task_queue: str = "tasks_l"

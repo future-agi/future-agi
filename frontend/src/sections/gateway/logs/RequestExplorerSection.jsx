@@ -1,376 +1,918 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
-import {
-  Box,
-  Stack,
-  Button,
-  Tabs,
-  Tab,
-  TextField,
-  Badge,
-  InputAdornment,
-  Chip,
-  Menu,
-  MenuItem,
-  ListItemIcon,
-  ListItemText,
-} from "@mui/material";
-import Iconify from "src/components/iconify";
-import SectionHeader from "../components/SectionHeader";
-import { GATEWAY_ICONS } from "../constants/gatewayIcons";
+import React, {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import PropTypes from "prop-types";
+import { Navigate, useLocation, useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
+import { enqueueSnackbar } from "notistack";
+import Alert from "@mui/material/Alert";
+import Badge from "@mui/material/Badge";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
+import Dialog from "@mui/material/Dialog";
+import DialogActions from "@mui/material/DialogActions";
+import DialogContent from "@mui/material/DialogContent";
+import DialogTitle from "@mui/material/DialogTitle";
+import Divider from "@mui/material/Divider";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import IconButton from "@mui/material/IconButton";
+import ListItemText from "@mui/material/ListItemText";
+import Menu from "@mui/material/Menu";
+import MenuItem from "@mui/material/MenuItem";
+import Stack from "@mui/material/Stack";
+import Switch from "@mui/material/Switch";
+import TextField from "@mui/material/TextField";
+import Tooltip from "@mui/material/Tooltip";
+import Typography from "@mui/material/Typography";
+
+import { paths } from "src/routes/paths";
 import axiosInstance, { endpoints } from "src/utils/axios";
+
+import ConfirmDialog from "../components/ConfirmDialog";
+import { GatewayFilterBar, GatewayPageFrame } from "../components/frame";
+import { GatewayIcon } from "../shell/gateway-icons";
 import useFilters from "./hooks/useFilters";
 import RequestTable from "./RequestTable";
+import RequestVolumeStrip from "./RequestVolumeStrip";
 import RequestDetailDrawer from "./RequestDetailDrawer";
 import FilterPanel from "./FilterPanel";
-import SessionExplorer from "./SessionExplorer";
 import useRequestColumns from "./columns/useRequestColumns";
 import ColumnsPickerPopover from "./columns/ColumnsPickerPopover";
 import { COLUMNS_POPOVER_ID } from "./columns/columnModel";
+import {
+  QUICK_FILTERS,
+  activeQuickFilter,
+  appliedFilterChips,
+  hiddenQuickFilters,
+  withQuickFilter,
+} from "./filterChips";
+import { GatewayContext } from "../context/GatewayContext";
+import { useGatewayConfig } from "../providers/hooks/useGatewayConfig";
+import {
+  EXPORT_ROW_CAP,
+  downloadLogExport,
+  exportErrorMessage,
+} from "./exportLogs";
+import { requestLogQueryParams } from "./hooks/useRequestLogs";
+import { useManagedModelsStatus } from "../models/hooks/useManagedModels";
+import { isManagedMode } from "../utils/providerLabel";
+import { localZoneName } from "./logDates";
+import {
+  REQUEST_TIME_WINDOWS,
+  activeTimeWindow,
+  withTimeWindow,
+} from "./explorerFilters";
+import {
+  cleanQuery,
+  deleteSavedView,
+  loadSavedViews,
+  saveView,
+} from "./savedViews";
 
-// ---------------------------------------------------------------------------
-// Quick filter definitions
-// ---------------------------------------------------------------------------
-const QUICK_FILTERS = [
-  { label: "All", key: "all" },
-  { label: "Errors", key: "errors", params: { isError: "true" } },
-  { label: "Slow (>1s latency)", key: "slow", params: { minLatency: "1000" } },
-  { label: "Cache Hits", key: "cache", params: { cache_hit: "true" } },
-  {
-    label: "Guardrails",
-    key: "guardrails",
-    params: { guardrailTriggered: "true" },
-  },
-];
+// The Logs page: every request through the gateway, newest first, in one
+// dense grid. Filters live in the URL (so a filtered view is a link), the
+// open request too (?log=<id>). Auto-refresh polls the newest page; there is
+// no streaming endpoint, so it is named for what it does.
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+const AUTO_REFRESH_KEY = "gateway-logs:auto-refresh";
+const AUTO_REFRESH_MS = 10000;
 
-/** Return the key of the currently-active quick filter, or "all". */
-function activeQuickFilter(filters) {
-  if (filters.isError === "true") return "errors";
-  if (filters.minLatency === "1000") return "slow";
-  if (filters.cacheHit === "true") return "cache";
-  if (filters.guardrailTriggered === "true") return "guardrails";
-  return "all";
+function readAutoRefresh() {
+  try {
+    return window.localStorage.getItem(AUTO_REFRESH_KEY) === "on";
+  } catch {
+    return false;
+  }
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
+function writeAutoRefresh(on) {
+  try {
+    window.localStorage.setItem(AUTO_REFRESH_KEY, on ? "on" : "off");
+  } catch {
+    // A preference that cannot be kept is not an error.
+  }
+}
+
+// A toolbar button's label never breaks onto a second line.
+const TOOLBAR_BUTTON_SX = { whiteSpace: "nowrap", flexShrink: 0 };
+
+function SavedFilters({ query, onApply }) {
+  const [anchor, setAnchor] = useState(null);
+  const [views, setViews] = useState(loadSavedViews);
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState("");
+  // The saved filter a Delete asked to delete, until the user confirms.
+  const [deleting, setDeleting] = useState(null);
+  const [replacing, setReplacing] = useState(null);
+  // Failed edits are visit-only overlays, never a snapshot to write back over
+  // another tab's saved filters. A null query is a visit-only deletion.
+  const [pendingChanges, setPendingChanges] = useState([]);
+  const notSaved = pendingChanges.length > 0;
+  const current = cleanQuery(query);
+
+  const close = () => setAnchor(null);
+  const withPendingChanges = (storedViews, changes = pendingChanges) => {
+    const next = new Map(storedViews.map((view) => [view.name, view]));
+    changes.forEach((change) => {
+      if (change.query === null) next.delete(change.name);
+      else next.set(change.name, change);
+    });
+    return [...next.values()];
+  };
+  const applyReceipt = (receipt, change) => {
+    const pending = pendingChanges.filter((view) => view.name !== change.name);
+    if (!receipt.persisted) pending.push(change);
+    setPendingChanges(pending);
+    setViews(withPendingChanges(receipt.views, pending));
+    return receipt.persisted;
+  };
+  const persist = (entry, confirmed = false) => {
+    // Read when Save/Enter or Replace is clicked, not when a dialog opened.
+    const latest = loadSavedViews();
+    const visible = withPendingChanges(latest);
+    setViews(visible);
+    if (
+      !confirmed &&
+      [...latest, ...visible].some((view) => view.name === entry.name)
+    ) {
+      setReplacing(entry);
+      return;
+    }
+    if (applyReceipt(saveView(entry.name, entry.query, latest), entry)) {
+      enqueueSnackbar(`Saved "${entry.name}" in this browser`, {
+        variant: "success",
+      });
+    }
+    setReplacing(null);
+  };
+  const save = () => {
+    const entry = { name: name.trim(), query: current };
+    if (!entry.name) return;
+    setNaming(false);
+    setName("");
+    persist(entry);
+  };
+
+  return (
+    <>
+      <Button
+        variant="outlined"
+        size="small"
+        startIcon={<GatewayIcon name="bookmark" size={16} />}
+        onClick={(event) => {
+          setViews(withPendingChanges(loadSavedViews()));
+          setAnchor(event.currentTarget);
+        }}
+        aria-label="Saved filters"
+        aria-haspopup="menu"
+        aria-expanded={Boolean(anchor)}
+        sx={TOOLBAR_BUTTON_SX}
+      >
+        {/* On a phone the three toolbar buttons share one row. */}
+        <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
+          Saved filters
+        </Box>
+        <Box component="span" sx={{ display: { xs: "inline", sm: "none" } }}>
+          Saved
+        </Box>
+      </Button>
+      <Menu
+        anchorEl={anchor}
+        open={Boolean(anchor)}
+        onClose={close}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+        MenuListProps={{ dense: true, sx: { minWidth: 260 } }}
+      >
+        <Typography
+          typography="s2"
+          color="text.secondary"
+          sx={{ px: 2, py: 0.75, display: "block" }}
+        >
+          {notSaved ? "Filters for this visit" : "Saved in this browser"}
+        </Typography>
+        {views.length === 0 && (
+          <Typography
+            typography="s2"
+            color="text.disabled"
+            sx={{ px: 2, pb: 1, display: "block" }}
+          >
+            No saved filters
+          </Typography>
+        )}
+        {views.map((view) => (
+          <MenuItem
+            key={view.name}
+            onClick={() => {
+              onApply(view.query);
+              close();
+            }}
+            selected={view.query === current && current !== ""}
+          >
+            <ListItemText primary={view.name} />
+            <IconButton
+              size="small"
+              edge="end"
+              aria-label={`Delete saved filter ${view.name}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                close();
+                setDeleting(view.name);
+              }}
+            >
+              <GatewayIcon name="trash" size={14} />
+            </IconButton>
+          </MenuItem>
+        ))}
+        <Divider />
+        <MenuItem
+          disabled={current === ""}
+          onClick={() => {
+            close();
+            setNaming(true);
+          }}
+        >
+          <ListItemText primary="Save current filters" />
+        </MenuItem>
+      </Menu>
+      <Dialog
+        open={naming}
+        onClose={() => setNaming(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Save filters</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            fullWidth
+            size="small"
+            label="Name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && name.trim()) save();
+            }}
+            helperText="Kept in this browser only."
+            sx={{ mt: 1 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setNaming(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="primary"
+            disabled={!name.trim()}
+            onClick={save}
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+      {notSaved && (
+        <Alert severity="warning" sx={{ flexBasis: "100%" }}>
+          Not saved in this browser. These changes are available only for this
+          visit; reloading may restore the previous filters. Apply a view and
+          use Copy view link to keep its filters.
+        </Alert>
+      )}
+      <ConfirmDialog
+        open={replacing !== null}
+        onClose={() => setReplacing(null)}
+        title={`Replace saved filter ${replacing?.name || ""}?`}
+        message="This name already exists. Replace its filters in this browser?"
+        confirmLabel="Replace"
+        confirmColor="primary"
+        onConfirm={() => persist(replacing, true)}
+      />
+      <ConfirmDialog
+        open={deleting !== null}
+        onClose={() => setDeleting(null)}
+        title={`Delete saved filter ${deleting ?? ""}?`}
+        message="It is removed from this browser. The requests it matched are not changed."
+        confirmLabel="Delete filter"
+        confirmColor="error"
+        onConfirm={() => {
+          applyReceipt(deleteSavedView(deleting), {
+            name: deleting,
+            query: null,
+          });
+          setDeleting(null);
+        }}
+      />
+    </>
+  );
+}
+
+SavedFilters.propTypes = {
+  query: PropTypes.string.isRequired,
+  onApply: PropTypes.func.isRequired,
+};
+
+// URL keys that shape the table without filtering it.
+const NON_FILTER_KEYS = new Set(["view", "page", "pageSize", "sort"]);
+
+function hasFilters(filters) {
+  return Object.entries(filters).some(([key, value]) => {
+    if (NON_FILTER_KEYS.has(key) || value === undefined || value === "") {
+      return false;
+    }
+    return key === "search" ? String(value).trim().length >= 2 : true;
+  });
+}
+
+const formatCount = (n) => Number(n).toLocaleString("en-US");
+
+function countSentence(count) {
+  if (count.state === "loading") return "Counting the matching requests...";
+  if (count.state === "error") {
+    return `The matching requests could not be counted (${count.message}). The download stops at ${formatCount(EXPORT_ROW_CAP)} rows.`;
+  }
+  if (count.n === 0) {
+    return "No requests match these filters, so there is nothing to export.";
+  }
+  if (count.n > EXPORT_ROW_CAP) {
+    return `${formatCount(count.n)} requests match. An export holds at most ${formatCount(EXPORT_ROW_CAP)} rows, so this one holds the first ${formatCount(EXPORT_ROW_CAP)} in the table's order. Narrow the filters (a date range, for example) to export the rest.`;
+  }
+  return count.n === 1
+    ? "1 request will be exported."
+    : `${formatCount(count.n)} requests will be exported.`;
+}
+
+// Counts what the table's query matches (the list's count, one row), states
+// the scope and the cap, then downloads exactly the table's query: its
+// filters, search and order. A refusal shows the server's message here.
+function ExportDialog({ format, filters, onClose }) {
+  const open = Boolean(format);
+  // Keyed by value: the page passes a new filters object on every render,
+  // and the count should run once per query, not once per render.
+  const paramsKey = JSON.stringify(requestLogQueryParams(filters));
+  const params = useMemo(() => JSON.parse(paramsKey), [paramsKey]);
+  const [count, setCount] = useState({ state: "loading" });
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!open) return undefined;
+    let cancelled = false;
+    setCount({ state: "loading" });
+    setError("");
+    axiosInstance
+      .get(endpoints.gateway.requestLogs, {
+        params: { ...params, page: 1, limit: 1 },
+      })
+      .then((res) => {
+        if (cancelled) return;
+        const n = Number(res?.data?.result?.count ?? res?.data?.count);
+        setCount(
+          Number.isFinite(n)
+            ? { state: "ok", n }
+            : { state: "error", message: "the server sent no count" },
+        );
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setCount({
+          state: "error",
+          message: err?.message || "the request failed",
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, params]);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    setError("");
+    try {
+      await downloadLogExport(filters, format);
+      onClose();
+    } catch (err) {
+      setError(await exportErrorMessage(err));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const filtered = hasFilters(filters);
+  const order =
+    (filters.sort || "-started_at") === "-started_at"
+      ? "newest first"
+      : "in the table's order";
+  const nothingToExport = count.state === "ok" && count.n === 0;
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>Export {String(format || "").toUpperCase()}</DialogTitle>
+      <DialogContent>
+        <Stack spacing={1.5}>
+          <Typography variant="body2">
+            {filtered
+              ? "The export holds the requests that match the table's filters and search, in the table's order."
+              : `No filters are set: the export holds every request the table lists, ${order}.`}
+          </Typography>
+          <Typography variant="body2" fontWeight={500}>
+            {countSentence(count)}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Times in the file are in UTC.
+          </Typography>
+          {error && <Alert severity="error">{error}</Alert>}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button
+          variant="contained"
+          color="primary"
+          onClick={handleDownload}
+          disabled={count.state === "loading" || nothingToExport || downloading}
+        >
+          {downloading ? "Downloading..." : "Download"}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+ExportDialog.propTypes = {
+  format: PropTypes.oneOf(["csv", "json", null]),
+  filters: PropTypes.object.isRequired,
+  onClose: PropTypes.func.isRequired,
+};
+
+// Export: the menu picks the format; the dialog says what the file will
+// hold before anything downloads.
+function ExportMenu({ filters }) {
+  const [anchor, setAnchor] = useState(null);
+  const [format, setFormat] = useState(null);
+  const pick = (next) => {
+    setAnchor(null);
+    setFormat(next);
+  };
+  return (
+    <>
+      <Button
+        variant="outlined"
+        size="small"
+        startIcon={<GatewayIcon name="download" size={16} />}
+        onClick={(event) => setAnchor(event.currentTarget)}
+        aria-haspopup="menu"
+      >
+        Export
+      </Button>
+      <Menu
+        anchorEl={anchor}
+        open={Boolean(anchor)}
+        onClose={() => setAnchor(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+        MenuListProps={{ dense: true }}
+      >
+        <MenuItem onClick={() => pick("csv")}>Export CSV</MenuItem>
+        <MenuItem onClick={() => pick("json")}>Export JSON</MenuItem>
+      </Menu>
+      <ExportDialog
+        format={format}
+        filters={filters}
+        onClose={() => setFormat(null)}
+      />
+    </>
+  );
+}
+
+ExportMenu.propTypes = { filters: PropTypes.object.isRequired };
 
 const RequestExplorerSection = () => {
-  // --- URL-synced filters ---------------------------------------------------
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { filters, setFilter, setFilters, clearFilters, activeFilterCount } =
     useFilters();
+  const queryClient = useQueryClient();
 
-  // --- Local UI state -------------------------------------------------------
-  const [selectedLogId, setSelectedLogId] = useState(null);
+  // The open request is in the URL, not a filter of the list.
+  const { log: openLogId, ...listFilters } = filters;
+
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
-  const [searchValue, setSearchValue] = useState(filters.search || "");
-  const [exportAnchor, setExportAnchor] = useState(null);
-  const [isExporting, setIsExporting] = useState(false);
+  // Guardrails and Cache hits are offered only where the gateway runs them.
+  const gatewayConfig = useGatewayConfig(
+    useContext(GatewayContext)?.gatewayId,
+    { meta: { errorHandled: true } },
+  );
+  const hiddenQuick = hiddenQuickFilters(gatewayConfig);
+  // Whether this deployment offers managed models, for the Filters panel's
+  // Provider and Billing mode fields and the Columns picker's managed-only
+  // columns (the AI Gateway rail has usually read it already), and false
+  // until it says so.
+  const managedStatus = useManagedModelsStatus();
+  const managedOffered = managedStatus.data?.available === true;
+  // Whether a row the table lists is a managed call (its billing mode, as the
+  // Provider cell names it "Future AGI managed"): the panel then offers that
+  // provider even where managed models are not offered.
+  const [managedLogged, setManagedLogged] = useState(false);
+  const [pageRows, setPageRows] = useState({ ids: [], ready: false });
+  const handleResults = useCallback((results, state) => {
+    setManagedLogged(
+      Array.isArray(results) &&
+        results.some((row) => isManagedMode(row?.billing_mode)),
+    );
+    setPageRows({
+      ...state,
+      ids: Array.isArray(results)
+        ? results.filter((row) => row?.id != null).map((row) => String(row.id))
+        : [],
+    });
+  }, []);
+  const pageReady =
+    pageRows.ready && pageRows.queryKey === JSON.stringify(listFilters);
+  const selectedIndex = pageReady
+    ? pageRows.ids.indexOf(String(openLogId))
+    : -1;
+  const navigation = {
+    ready: Boolean(pageReady),
+    position: selectedIndex >= 0 ? selectedIndex + 1 : null,
+    count: pageRows.ids.length,
+    previousId: selectedIndex > 0 ? pageRows.ids[selectedIndex - 1] : null,
+    nextId: selectedIndex >= 0 ? pageRows.ids[selectedIndex + 1] || null : null,
+  };
   const [columnsAnchor, setColumnsAnchor] = useState(null);
+  const [searchValue, setSearchValue] = useState(filters.search || "");
+  const [autoRefresh, setAutoRefresh] = useState(readAutoRefresh);
 
-  // --- Debounced search -----------------------------------------------------
+  // Credential type is offered only while this deployment makes managed
+  // models available. Historical rows do not enable it.
+  const requestColumns = useRequestColumns({
+    enabled: true,
+    managed: managedOffered,
+  });
+
+  // Debounced search into the URL.
   useEffect(() => {
     const timer = setTimeout(() => {
       if (searchValue !== (filters.search || "")) {
-        setFilter("search", searchValue || undefined);
+        setFilters({
+          ...filters,
+          search: searchValue || undefined,
+          page: undefined,
+        });
       }
     }, 300);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchValue]);
+  }, [searchValue, filters, setFilters]);
 
-  // Keep the controlled input in sync when the URL changes externally
-  // (e.g. browser back/forward or clearing filters).
   useEffect(() => {
     setSearchValue(filters.search || "");
   }, [filters.search]);
 
-  // --- View tab -------------------------------------------------------------
-  const currentView = filters.view || "requests";
+  const quick = activeQuickFilter(listFilters);
+  const timeWindow = activeTimeWindow(listFilters);
+  const chips = useMemo(() => appliedFilterChips(listFilters), [listFilters]);
 
-  // --- Configurable columns --------------------------------------
-  const requestColumns = useRequestColumns({
-    enabled: currentView === "requests",
-  });
+  const page = parseInt(listFilters.page, 10) || 1;
+  const newestFirst = !listFilters.sort || listFilters.sort === "-started_at";
+  const canAutoRefresh =
+    page === 1 && newestFirst && filters.view !== "sessions";
+  const [refreshTick, setRefreshTick] = useState(0);
+  const matchingKey = JSON.stringify(requestLogQueryParams(listFilters));
+  // A query change or the single refresh tick deliberately samples the clock.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const volumeNow = useMemo(() => Date.now(), [refreshTick, matchingKey]);
+  const fixedVolumeEnd = Boolean(listFilters.startedBefore);
+  const refresh = useCallback(() => {
+    // Coalesce ticks while the current reads run. Advancing the volume key or
+    // restarting a list read every 10 seconds would starve slower responses.
+    // Inactive queries from previous filters must not hold up this view.
+    if (queryClient.isFetching({ queryKey: ["requestLogs"], type: "active" })) {
+      return;
+    }
+    setRefreshTick((tick) => tick + 1);
+    // Unbounded volume gets a new clock/key on this same tick. Do not also
+    // refetch its previous window. Fixed snapshots refetch their existing key.
+    queryClient.invalidateQueries(
+      {
+        queryKey: ["requestLogs"],
+        predicate: (query) => query.queryKey[1] !== "volume" || fixedVolumeEnd,
+      },
+      { cancelRefetch: false },
+    );
+  }, [queryClient, fixedVolumeEnd]);
+  useEffect(() => {
+    if (!autoRefresh || !canAutoRefresh) return undefined;
+    const timer = setInterval(() => {
+      if (document.visibilityState !== "hidden") refresh();
+    }, AUTO_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [autoRefresh, canAutoRefresh, refresh]);
 
-  const handleViewChange = useCallback(
-    (_event, newValue) => {
-      setFilter("view", newValue === "requests" ? undefined : newValue);
-    },
-    [setFilter],
+  const copyView = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        `${window.location.origin}${location.pathname}${location.search}`,
+      );
+      enqueueSnackbar("View link copied", { variant: "success" });
+    } catch {
+      enqueueSnackbar(
+        "Could not copy the link. Copy the address from your browser.",
+        { variant: "warning" },
+      );
+    }
+  };
+
+  // Each quick filter swaps only the quick-filter keys; All removes them and
+  // keeps the rest of the view (a key or session, search, time range). Clear
+  // all is the full reset.
+  const handleQuick = useCallback(
+    (q) => setFilters(withQuickFilter(listFilters, q)),
+    [listFilters, setFilters],
   );
 
-  // --- Quick filters --------------------------------------------------------
-  const activeQF = useMemo(() => activeQuickFilter(filters), [filters]);
-
-  const handleQuickFilter = useCallback(
-    (qf) => {
-      if (qf.key === "all") {
-        clearFilters();
-        return;
-      }
-      // Clear conflicting boolean/range params, then apply this quick filter
-      const cleaned = { view: filters.view, search: filters.search };
-      Object.entries(qf.params).forEach(([k, v]) => {
-        cleaned[k] = v;
-      });
-      setFilters(cleaned);
-    },
-    [filters.view, filters.search, clearFilters, setFilters],
-  );
-
-  // --- Export ---------------------------------------------------------------
-  const handleExportOpen = (event) => setExportAnchor(event.currentTarget);
-  const handleExportClose = () => setExportAnchor(null);
-
-  const handleExport = useCallback(
-    async (format) => {
-      setExportAnchor(null);
-      setIsExporting(true);
-      try {
-        const params = {};
-        if (filters.search) params.search = filters.search;
-        if (filters.model) params.model = filters.model;
-        if (filters.provider) params.provider = filters.provider;
-        if (filters.application) params.application = filters.application;
-        if (filters.service) params.service = filters.service;
-        if (filters.tags) params.tags = filters.tags;
-        if (filters.startedAfter) params.started_after = filters.startedAfter;
-        if (filters.startedBefore)
-          params.started_before = filters.startedBefore;
-        if (filters.isError) params.is_error = filters.isError;
-        if (filters.cacheHit) params.cache_hit = filters.cacheHit;
-        if (filters.guardrailTriggered)
-          params.guardrail_triggered = filters.guardrailTriggered;
-        if (filters.minLatency) params.min_latency = filters.minLatency;
-        if (filters.maxLatency) params.max_latency = filters.maxLatency;
-        if (filters.minCost) params.min_cost = filters.minCost;
-        if (filters.maxCost) params.max_cost = filters.maxCost;
-        if (filters.userId) params.user_id = filters.userId;
-        if (filters.sessionId) params.session_id = filters.sessionId;
-        if (filters.gatewayId) params.gateway_id = filters.gatewayId;
-        if (filters.apiKeyId) params.api_key_id = filters.apiKeyId;
-        if (filters.requestId) params.request_id = filters.requestId;
-        if (filters.isStream) params.is_stream = filters.isStream;
-        if (filters.minTokens) params.min_tokens = filters.minTokens;
-        if (filters.maxTokens) params.max_tokens = filters.maxTokens;
-        if (filters.fallbackUsed) params.fallback_used = filters.fallbackUsed;
-        if (filters.sort) params.ordering = filters.sort;
-        if (filters.statusCode) params.status_code = filters.statusCode;
-        if (filters.statusCodeMin)
-          params.min_status_code = filters.statusCodeMin;
-        if (filters.statusCodeMax)
-          params.max_status_code = filters.statusCodeMax;
-
-        params.export_format = format;
-
-        const response = await axiosInstance.get(
-          endpoints.gateway.requestLogExport,
-          { params, responseType: "blob" },
-        );
-
-        const dateStr = new Date().toISOString().split("T")[0];
-        const filename = `agentcc-logs-${dateStr}.${format}`;
-        const blobUrl = URL.createObjectURL(response.data);
-        const link = document.createElement("a");
-        link.href = blobUrl;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(blobUrl);
-      } catch {
-        // Silently handle -- could add a snackbar notification in the future
-      } finally {
-        setIsExporting(false);
-      }
-    },
-    [filters],
-  );
-
-  // --- Filter panel apply ---------------------------------------------------
   const handleApplyFilters = useCallback(
-    (newFilters) => {
-      setFilters(newFilters);
+    (next) => {
+      setFilters(next);
       setFilterPanelOpen(false);
     },
     [setFilters],
   );
 
-  // =========================================================================
-  // Render
-  // =========================================================================
+  const openLog = useCallback(
+    (id) => setFilter("log", id || undefined),
+    [setFilter],
+  );
+
+  // The page's first Tab stop jumps over the toolbar to the first log row
+  //.
+  const gridApi = useRef(null);
+  const onGridReady = useCallback((event) => {
+    gridApi.current = event.api;
+  }, []);
+  const focusFirstRow = useCallback(() => {
+    const api = gridApi.current;
+    const [first] = api?.getAllDisplayedColumns?.() || [];
+    if (!first || !api.getDisplayedRowCount()) return;
+    api.ensureIndexVisible(0);
+    api.setFocusedCell(0, first);
+  }, []);
+
+  if (filters.view === "sessions") {
+    // The old Requests | Sessions tab: sessions have their own page.
+    return <Navigate to={paths.dashboard.gateway.sessions} replace />;
+  }
+
   return (
-    <Box p={3}>
-      {/* ---- Header ---- */}
-      <SectionHeader
-        icon={GATEWAY_ICONS.logs}
-        title="Request Logs"
-        subtitle="Search and inspect individual gateway requests"
+    <GatewayPageFrame
+      title="Request logs"
+      skipLink={{
+        label: "Skip to the request list",
+        onActivate: focusFirstRow,
+      }}
+      description={`Every request through the gateway, newest first. Times are in ${localZoneName()}.`}
+      actions={
+        <>
+          <Tooltip
+            title={
+              !canAutoRefresh
+                ? "Auto-refresh follows the newest requests: page 1, newest first"
+                : fixedVolumeEnd
+                  ? "Reloads this time range every 10 seconds. The range has a fixed end, so newer requests do not appear. Remove the To filter to follow new requests."
+                  : "Reloads the newest requests every 10 seconds"
+            }
+          >
+            <FormControlLabel
+              sx={{
+                mr: 0.5,
+                "& .MuiFormControlLabel-label": { typography: "s1" },
+              }}
+              control={
+                <Switch
+                  size="small"
+                  checked={autoRefresh && canAutoRefresh}
+                  disabled={!canAutoRefresh}
+                  onChange={(event) => {
+                    setAutoRefresh(event.target.checked);
+                    writeAutoRefresh(event.target.checked);
+                  }}
+                  inputProps={{
+                    role: "switch",
+                    "aria-label": "Auto-refresh every 10 seconds",
+                  }}
+                />
+              }
+              label="Auto-refresh"
+            />
+          </Tooltip>
+          <Tooltip title="Refresh">
+            <IconButton size="small" aria-label="Refresh" onClick={refresh}>
+              <GatewayIcon name="refresh" size={16} />
+            </IconButton>
+          </Tooltip>
+          <Button size="small" onClick={copyView}>
+            Copy view link
+          </Button>
+          <ExportMenu filters={listFilters} />
+        </>
+      }
+    >
+      <GatewayFilterBar
+        search={searchValue}
+        onSearchChange={setSearchValue}
+        searchPlaceholder="Search model, provider, request id, error"
+        actions={
+          <>
+            <SavedFilters
+              query={searchParams.toString()}
+              onApply={(query) => setSearchParams(new URLSearchParams(query))}
+            />
+            <Badge badgeContent={activeFilterCount} color="primary">
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<GatewayIcon name="filter" size={16} />}
+                onClick={() => setFilterPanelOpen(true)}
+                sx={TOOLBAR_BUTTON_SX}
+              >
+                Filters
+              </Button>
+            </Badge>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<GatewayIcon name="columns" size={16} />}
+              onClick={(event) => setColumnsAnchor(event.currentTarget)}
+              // Edits need the user/org storage key to be saved.
+              disabled={!requestColumns.storageKey}
+              aria-haspopup="dialog"
+              aria-expanded={Boolean(columnsAnchor)}
+              aria-controls={columnsAnchor ? COLUMNS_POPOVER_ID : undefined}
+              sx={TOOLBAR_BUTTON_SX}
+            >
+              Columns
+            </Button>
+          </>
+        }
       >
-        <Button
-          variant="outlined"
-          size="small"
-          startIcon={<Iconify icon="mdi:download-outline" width={20} />}
-          onClick={handleExportOpen}
-          disabled={isExporting}
+        <Box
+          sx={{ display: "flex", gap: 0.75, flexWrap: "wrap" }}
+          role="group"
+          aria-label="Quick filters"
         >
-          {isExporting ? "Exporting..." : "Export"}
-        </Button>
-
-        <Menu
-          anchorEl={exportAnchor}
-          open={Boolean(exportAnchor)}
-          onClose={handleExportClose}
-          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-          transformOrigin={{ vertical: "top", horizontal: "right" }}
-        >
-          <MenuItem onClick={() => handleExport("csv")}>
-            <ListItemIcon>
-              <Iconify icon="mdi:file-document-outline" width={18} />
-            </ListItemIcon>
-            <ListItemText>Export CSV</ListItemText>
-          </MenuItem>
-          <MenuItem onClick={() => handleExport("json")}>
-            <ListItemIcon>
-              <Iconify icon="mdi:code-json" width={18} />
-            </ListItemIcon>
-            <ListItemText>Export JSON</ListItemText>
-          </MenuItem>
-        </Menu>
-      </SectionHeader>
-
-      {/* ---- Search + Filters button ---- */}
-      <Stack direction="row" spacing={2} alignItems="center" mb={2}>
-        <TextField
-          placeholder="Search model, provider, request ID..."
-          size="small"
-          fullWidth
-          value={searchValue}
-          onChange={(e) => setSearchValue(e.target.value)}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <Iconify icon="eva:search-outline" width={18} />
-              </InputAdornment>
-            ),
+          {QUICK_FILTERS.filter((q) => !hiddenQuick.has(q.key)).map((q) => (
+            <Chip
+              key={q.key}
+              label={q.label}
+              size="small"
+              variant={quick === q.key ? "filled" : "outlined"}
+              color={quick === q.key ? "primary" : "default"}
+              onClick={() => handleQuick(q)}
+              component="button"
+              aria-pressed={quick === q.key}
+            />
+          ))}
+        </Box>
+        <Box
+          role="group"
+          aria-label="Time range"
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: 0.75,
           }}
-        />
-        <Badge badgeContent={activeFilterCount} color="primary">
-          <Button
-            variant="outlined"
-            startIcon={<Iconify icon="mdi:filter-outline" width={20} />}
-            onClick={() => setFilterPanelOpen(true)}
-            sx={{ whiteSpace: "nowrap" }}
-          >
-            Filters
+        >
+          <Typography typography="s2" color="text.secondary">
+            Time range
+          </Typography>
+          {REQUEST_TIME_WINDOWS.map(({ label, minutes }) => (
+            <Tooltip
+              key={minutes}
+              title="Applies a fixed time window ending now"
+              describeChild
+            >
+              <Chip
+                component="button"
+                size="small"
+                variant={timeWindow === minutes ? "filled" : "outlined"}
+                color={timeWindow === minutes ? "primary" : "default"}
+                label={label}
+                onClick={() => setFilters(withTimeWindow(filters, minutes))}
+                aria-pressed={timeWindow === minutes}
+              />
+            </Tooltip>
+          ))}
+          <Button size="small" onClick={() => setFilterPanelOpen(true)}>
+            Custom
           </Button>
-        </Badge>
-        {currentView === "requests" && (
-          <Button
-            variant="outlined"
-            startIcon={<Iconify icon="mdi:view-column-outline" width={20} />}
-            onClick={(event) => setColumnsAnchor(event.currentTarget)}
-            // Edits need the user/org storage key to be saved.
-            disabled={!requestColumns.storageKey}
-            aria-haspopup="dialog"
-            aria-expanded={Boolean(columnsAnchor)}
-            aria-controls={columnsAnchor ? COLUMNS_POPOVER_ID : undefined}
-            sx={{ whiteSpace: "nowrap" }}
-          >
-            Columns
-          </Button>
-        )}
-      </Stack>
+        </Box>
+      </GatewayFilterBar>
 
-      {currentView === "requests" && (
-        <ColumnsPickerPopover
-          anchorEl={columnsAnchor}
-          open={Boolean(columnsAnchor)}
-          onClose={() => setColumnsAnchor(null)}
-          entries={requestColumns.pickerEntries}
-          stale={requestColumns.stale}
-          visibleCount={requestColumns.visibleCount}
-          totalCount={requestColumns.totalCount}
-          atCap={requestColumns.atCap}
-          declarationStatus={requestColumns.declarationStatus}
-          declarationsAvailable={requestColumns.declarationsAvailable}
-          declarationsFetching={requestColumns.declarationsFetching}
-          reservedDeclared={requestColumns.reservedDeclared}
-          unavailableCustomCount={requestColumns.unavailableCustomCount}
-          onToggle={requestColumns.toggle}
-          onMove={requestColumns.move}
-          onRemove={requestColumns.remove}
-          onReset={requestColumns.reset}
-          onRetryDeclarations={requestColumns.retryDeclarations}
-        />
+      {chips.length > 0 && (
+        <Box
+          component="ul"
+          aria-label="Applied filters"
+          sx={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 0.75,
+            m: 0,
+            p: 0,
+            listStyle: "none",
+            alignItems: "center",
+          }}
+        >
+          {chips.map((chip) => (
+            <Box component="li" key={chip.key}>
+              <Chip
+                size="small"
+                variant="outlined"
+                label={chip.label}
+                onDelete={() =>
+                  setFilters({
+                    ...listFilters,
+                    [chip.key]: undefined,
+                    page: undefined,
+                  })
+                }
+                deleteIcon={
+                  <Box
+                    component="span"
+                    role="button"
+                    aria-label={`Remove ${chip.label}`}
+                    sx={{ display: "inline-flex" }}
+                  >
+                    <GatewayIcon name="close" size={12} />
+                  </Box>
+                }
+              />
+            </Box>
+          ))}
+          <Box component="li">
+            <Button size="small" onClick={clearFilters}>
+              Clear all
+            </Button>
+          </Box>
+        </Box>
       )}
 
-      {/* ---- Quick filter chips ---- */}
-      <Stack
-        direction="row"
-        spacing={1}
-        mb={2}
-        sx={{ overflowX: "auto", pb: 0.5 }}
-      >
-        {QUICK_FILTERS.map((qf) => (
-          <Chip
-            key={qf.key}
-            label={qf.label}
-            size="medium"
-            variant={activeQF === qf.key ? "filled" : "outlined"}
-            color={activeQF === qf.key ? "primary" : "default"}
-            onClick={() => handleQuickFilter(qf)}
-          />
-        ))}
-      </Stack>
+      <RequestVolumeStrip filters={listFilters} now={volumeNow} />
 
-      {/* ---- Tabs: Requests | Sessions ---- */}
-      <Tabs
-        value={currentView}
-        onChange={handleViewChange}
-        variant="standard"
-        sx={{ mb: 2 }}
-      >
-        <Tab label="Requests" value="requests" />
-        <Tab label="Sessions" value="sessions" />
-      </Tabs>
-
-      {/* ---- Main content ---- */}
-      {currentView === "requests" ? (
-        <RequestTable
-          filters={filters}
-          setFilter={setFilter}
-          setFilters={setFilters}
-          onSelectLog={setSelectedLogId}
-          columns={requestColumns.columns}
-        />
-      ) : (
-        <SessionExplorer
-          filters={filters}
-          onRequestClick={(logId) => setSelectedLogId(logId)}
-        />
-      )}
-
-      {/* ---- Detail drawer ---- */}
-      <RequestDetailDrawer
-        logId={selectedLogId}
-        open={Boolean(selectedLogId)}
-        onClose={() => setSelectedLogId(null)}
+      <ColumnsPickerPopover
+        anchorEl={columnsAnchor}
+        open={Boolean(columnsAnchor)}
+        onClose={() => setColumnsAnchor(null)}
+        entries={requestColumns.pickerEntries}
+        stale={requestColumns.stale}
+        visibleCount={requestColumns.visibleCount}
+        totalCount={requestColumns.totalCount}
+        atCap={requestColumns.atCap}
+        declarationStatus={requestColumns.declarationStatus}
+        declarationsAvailable={requestColumns.declarationsAvailable}
+        declarationsFetching={requestColumns.declarationsFetching}
+        reservedDeclared={requestColumns.reservedDeclared}
+        unavailableCustomCount={requestColumns.unavailableCustomCount}
+        onToggle={requestColumns.toggle}
+        onMove={requestColumns.move}
+        onRemove={requestColumns.remove}
+        onReset={requestColumns.reset}
+        onRetryDeclarations={requestColumns.retryDeclarations}
       />
 
-      {/* ---- Filter panel drawer ---- */}
+      <RequestTable
+        filters={listFilters}
+        setFilter={setFilter}
+        setFilters={setFilters}
+        onSelectLog={openLog}
+        onClearFilters={clearFilters}
+        columns={requestColumns.columns}
+        onGridReady={onGridReady}
+        onResults={handleResults}
+        refetchInterval={false}
+      />
+
+      <RequestDetailDrawer
+        logId={openLogId || null}
+        open={Boolean(openLogId)}
+        onClose={() => openLog(null)}
+        navigation={navigation}
+        onNavigate={openLog}
+      />
+
       <FilterPanel
         open={filterPanelOpen}
         onClose={() => setFilterPanelOpen(false)}
-        filters={filters}
+        filters={listFilters}
         onApply={handleApplyFilters}
+        managedOffered={managedOffered}
+        managedLogged={managedLogged}
+        hideCacheHits={hiddenQuick.has("cache")}
+        hideGuardrails={hiddenQuick.has("guardrails")}
       />
-    </Box>
+    </GatewayPageFrame>
   );
 };
 

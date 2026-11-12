@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import { groupFlattenedMessageAttrs } from "./flattenedMessageAttrs";
 
 /**
@@ -24,7 +25,7 @@ export function getObservationType(obj) {
  * Supports both camelCase and snake_case keys.
  */
 export function getProviderLogo(obj) {
-  return obj?.provider_logo || obj?.providerLogo;
+  return localProviderLogo(obj);
 }
 
 /**
@@ -101,6 +102,29 @@ export const isJson = (v) => {
   }
 };
 
+// One part of a multi-part message: `message.contents.N.message_content.<key>`
+// (or bare `contents.N.<key>`), where <key> is e.g. type, text or image.url.
+const CONTENT_PART_PROPERTY = /^(?:message\.)?contents?\.(\d+)(?:\.(.+))?$/;
+// One tool call of a message: `message.tool_calls.N.tool_call.<field>`.
+const TOOL_CALL_PROPERTY =
+  /^(?:message\.)?tool_calls\.(\d+)\.(?:tool_call\.)?(.+)$/;
+
+const byNumericKey = (a, b) => parseInt(a) - parseInt(b);
+
+// `function.name` / `function.arguments` become nested keys, like the
+// OpenAI tool_calls shape the chat view already renders.
+function setToolCallField(toolCall, field, value) {
+  const [head, ...rest] = field.split(".");
+  if (!rest.length) {
+    toolCall[head] = value;
+    return;
+  }
+  if (typeof toolCall[head] !== "object" || toolCall[head] === null) {
+    toolCall[head] = {};
+  }
+  toolCall[head][rest.join(".")] = value;
+}
+
 function extractMessages(evalAttributes = {}, type = "input") {
   const messageObj = [];
   const tempMessages = {};
@@ -117,6 +141,26 @@ function extractMessages(evalAttributes = {}, type = "input") {
         }
 
         if (
+          property === "message.tool_call_id" ||
+          property === "tool_call_id"
+        ) {
+          tempMessages[index].tool_call_id = value;
+        }
+
+        if (property === "message.name" || property === "name") {
+          tempMessages[index].name = value;
+        }
+
+        const toolCall = property.match(TOOL_CALL_PROPERTY);
+        if (toolCall) {
+          const [, callIndex, field] = toolCall;
+          const calls = tempMessages[index].toolCalls || {};
+          tempMessages[index].toolCalls = calls;
+          calls[callIndex] = calls[callIndex] || {};
+          setToolCallField(calls[callIndex], field, value);
+        }
+
+        if (
           property.startsWith("message.content") ||
           property.startsWith("content")
         ) {
@@ -127,17 +171,16 @@ function extractMessages(evalAttributes = {}, type = "input") {
           }
 
           // property already excludes the message index (no `.splice(1)` needed).
-          const contentParts = property
-            .replace("message.content.", "")
-            .replace("message.contents.", "")
-            .replace("content.", "")
-            .replace("contents.", "")
-            .split(".");
+          // Anchored match: the `content.` inside `message_content.` must not be
+          // stripped, or every text part loses its keys and shows as {}.
+          const part = property.match(CONTENT_PART_PROPERTY);
+          const parsedIndex = part?.[1];
+          const isMultipleContent = Boolean(part);
 
-          const parsedIndex = contentParts?.[0];
-          const isMultipleContent = !isNaN(parseInt(parsedIndex));
-
-          const contentProperty = contentParts.slice(2).join(".");
+          const contentProperty = (part?.[2] || "").replace(
+            /^message_content\./,
+            "",
+          );
 
           if (!tempMessages[index].content) {
             tempMessages[index].content = [];
@@ -175,10 +218,19 @@ function extractMessages(evalAttributes = {}, type = "input") {
   Object.keys(tempMessages)
     .sort((a, b) => parseInt(a) - parseInt(b))
     .forEach((key) => {
-      if (tempMessages[key].role && tempMessages[key].content) {
+      const { role, content, toolCalls, tool_call_id, name } =
+        tempMessages[key];
+      const tool_calls = Object.keys(toolCalls || {})
+        .sort(byNumericKey)
+        .map((callIndex) => toolCalls[callIndex]);
+      // An assistant turn may carry only tool calls; keep it so the call shows.
+      if (role && (content || tool_calls.length)) {
         messageObj.push({
-          role: tempMessages[key].role,
-          content: tempMessages[key].content,
+          role,
+          content: content || [],
+          ...(tool_calls.length ? { tool_calls } : {}),
+          ...(tool_call_id != null ? { tool_call_id } : {}),
+          ...(name != null ? { name } : {}),
         });
       }
     });

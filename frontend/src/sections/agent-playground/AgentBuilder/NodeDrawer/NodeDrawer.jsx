@@ -416,15 +416,13 @@ export default function NodeDrawer({
                       <span>
                         <IconButton
                           size="small"
+                          aria-label="Delete node"
                           onClick={() => setShowDeleteDialog(true)}
                           disabled={isWorkflowRunning}
                           sx={{
-                            color: "red.500",
+                            color: "status.danger.fg",
                             "&:hover": {
-                              bgcolor: (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "rgba(255,70,70,0.08)"
-                                  : "red.50",
+                              bgcolor: "status.danger.bg",
                             },
                           }}
                         >
@@ -444,6 +442,7 @@ export default function NodeDrawer({
                 )}
                 <IconButton
                   size="small"
+                  aria-label="Close"
                   onClick={handleClose}
                   sx={{ color: "text.primary" }}
                 >
@@ -504,7 +503,6 @@ export default function NodeDrawer({
             variant="contained"
             color="error"
             onClick={handleDiscard}
-            sx={{ paddingX: "24px" }}
           >
             Discard
           </Button>
@@ -523,7 +521,6 @@ export default function NodeDrawer({
             variant="contained"
             color="error"
             onClick={handleDeleteNode}
-            sx={{ paddingX: "24px" }}
           >
             Delete
           </Button>

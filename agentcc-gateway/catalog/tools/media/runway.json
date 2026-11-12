@@ -1,0 +1,26 @@
+{
+  "vendor": "runway",
+  "capability": "media",
+  "skus": [
+    {
+      "sku": "runway.gen4_turbo_second",
+      "unit": "second",
+      "usd_per_unit": 0.05,
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "unconfirmed",
+  "resale_terms_ref": "",
+  "terms_url": "https://runwayml.com/terms-of-use",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": false,
+  "trains_on_input": "yes",
+  "improvement_license": false,
+  "regions": [],
+  "results_retention": "full",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}

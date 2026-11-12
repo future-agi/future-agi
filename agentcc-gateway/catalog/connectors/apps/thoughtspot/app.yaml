@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: thoughtspot
+version: 1.0.0
+name: ThoughtSpot
+description: "Ask Spotter about your ThoughtSpot data: answers, forecasts and Liveboards."
+vendor:
+  name: ThoughtSpot
+  domains: [thoughtspot.com]
+eeCategory: data
+group: other
+categories: [data, analytics]
+tags: [analytics, business-intelligence]
+docsUrl: https://developers.thoughtspot.com/docs/custom-chatbot-integration-mcp
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.thoughtspot.com/docs/custom-chatbot-integration-mcp
+    fetchedAt: 2026-10-21

@@ -1,0 +1,50 @@
+{
+  "data": {
+    "id": "anthropic/claude-sonnet-5.5",
+    "name": "Anthropic: Claude Sonnet 5.5",
+    "architecture": {
+      "modality": "text+image->text",
+      "input_modalities": ["text", "image"],
+      "output_modalities": ["text"],
+      "tokenizer": "Claude",
+      "instruct_type": null
+    },
+    "endpoints": [
+      {
+        "name": "Anthropic | anthropic/claude-sonnet-5.5",
+        "provider_name": "Anthropic",
+        "tag": "anthropic",
+        "quantization": null,
+        "region": null,
+        "context_length": 1000000,
+        "max_completion_tokens": 64000,
+        "pricing": {
+          "prompt": "0.000003",
+          "completion": "0.000015",
+          "input_cache_read": "0.0000003",
+          "input_cache_write": "0.00000375",
+          "request": "0",
+          "image": "0.0048",
+          "web_search": "0",
+          "internal_reasoning": "0"
+        },
+        "supported_parameters": [
+          "max_tokens",
+          "temperature",
+          "tools",
+          "tool_choice",
+          "reasoning"
+        ],
+        "status": 0,
+        "uptime_last_30m": 99.6,
+        "latency_last_30m": { "p50": 640, "p90": 1510 },
+        "throughput_last_30m": { "p50": 71.4 },
+        "zdr": true,
+        "data_collection": "deny",
+        "health_source": "upstream",
+        "source": "openrouter",
+        "upstream_fee_bps": 550
+      }
+    ]
+  }
+}

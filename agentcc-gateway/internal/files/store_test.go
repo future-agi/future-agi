@@ -119,3 +119,47 @@ func TestStore_Count(t *testing.T) {
 		t.Errorf("Count = %d, want 2", s.Count())
 	}
 }
+
+// An org id of "" is the no-org tenant (single-tenant or ops keys), not a
+// wildcard: it reaches only files that have no org, and an org never reaches
+// another org's files or the no-org ones.
+func TestStore_OrgScopeIsStrict(t *testing.T) {
+	s := NewStore()
+	ids := map[string]string{}
+	for _, org := range []string{"org-a", "org-b", ""} {
+		ids[org] = s.Upload(org, org+".txt", "batch", []byte(org)).ID
+	}
+
+	for _, org := range []string{"org-a", "org-b", ""} {
+		files := s.List(org, "")
+		if len(files) != 1 || files[0].ID != ids[org] {
+			t.Errorf("List(%q) returned %d files, want only %s", org, len(files), ids[org])
+		}
+	}
+
+	cases := []struct {
+		owner, caller string
+		ok            bool
+	}{
+		{"org-a", "org-a", true},
+		{"", "", true},
+		{"org-a", "org-b", false},
+		{"org-a", "", false},
+		{"", "org-a", false},
+	}
+	for _, tc := range cases {
+		id := ids[tc.owner]
+		if got := s.Get(id, tc.caller); (got != nil) != tc.ok {
+			t.Errorf("Get(%s owned by %q, caller %q) found=%v, want %v", id, tc.owner, tc.caller, got != nil, tc.ok)
+		}
+		if !tc.ok && s.Delete(id, tc.caller) {
+			t.Errorf("Delete(%s owned by %q, caller %q) succeeded, want refused", id, tc.owner, tc.caller)
+		}
+	}
+	if s.Count() != 3 {
+		t.Errorf("Count = %d after refused deletes, want 3", s.Count())
+	}
+	if !s.Delete(ids[""], "") || !s.Delete(ids["org-a"], "org-a") {
+		t.Error("owners could not delete their own files")
+	}
+}

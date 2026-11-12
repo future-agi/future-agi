@@ -38,3 +38,99 @@ export function getMCPServerStatusColor(server) {
   if (status === "configured") return "info";
   return "default";
 }
+
+// A server's stored upstream credential is write-only in the console: a page
+// may say whether one is set, and must never show or send back its value.
+// `auth` is the legacy inline form (token or key); `credential` is the vault
+// reference that replaces it (org config `mcp` v2), whose `secret` is
+// push-only and never meant to reach the browser.
+export function hasStoredCredential(serverConfig) {
+  const auth = serverConfig?.auth || {};
+  if (auth.token || auth.key) return true;
+
+  const credential = serverConfig?.credential;
+  if (!credential || typeof credential !== "object") return false;
+  if (credential.secret) return true;
+  if (!credential.mode || credential.mode === "none") return false;
+  return (credential.state ?? "active") === "active";
+}
+
+// A copy of a stored server config with every secret value removed.
+export function stripSecrets(serverConfig) {
+  const safe = { ...serverConfig };
+  if (safe.auth) {
+    safe.auth = { ...safe.auth };
+    delete safe.auth.token;
+    delete safe.auth.key;
+  }
+  if (safe.credential) {
+    safe.credential = { ...safe.credential };
+    delete safe.credential.secret;
+  }
+  return safe;
+}
+
+// MCP counts as enabled only when the status API says `enabled: true`. A
+// missing, null or non-boolean flag is not enabled.
+export function isMCPEnabled(status) {
+  return status?.enabled === true;
+}
+
+// Django's status `reason` and error `code` when the deployment runs with MCP
+// off: the gateway has no MCP routes and answers every MCP read with 404.
+export const MCP_OFF_CODE = "gateway_mcp_disabled";
+
+// MCP is turned off for the whole deployment (not an outage, not an org with
+// no servers): the status says so with its reason.
+export function isMCPTurnedOff(status) {
+  return status?.enabled !== true && status?.reason === MCP_OFF_CODE;
+}
+
+// A read Django refused because the deployment runs with MCP off.
+export function isMCPOffError(error) {
+  return error?.code === MCP_OFF_CODE;
+}
+
+// The line an MCP list shows when it has no row: that the read failed, that
+// there is nothing to list, or that the filters match nothing.
+export function emptyListText(isError, items, noun, noneText, noMatchText) {
+  if (isError) return `MCP ${noun} could not be loaded from the gateway.`;
+  return items.length === 0 ? noneText : noMatchText;
+}
+
+// A server's health as a gateway status chip tone and label: the status
+// API's verdict, or "Disabled" for a server the org config turns off.
+export function serverHealth(health, serverConfig) {
+  if (serverConfig?.enabled === false) {
+    return { tone: "neutral", label: "Disabled" };
+  }
+  if (!health) return { tone: "neutral", label: "Not connected" };
+  const tones = {
+    success: "healthy",
+    error: "error",
+    info: "pending",
+    default: "neutral",
+  };
+  return {
+    tone: tones[getMCPServerStatusColor(health)] || "neutral",
+    label: getMCPServerStatusLabel(health),
+  };
+}
+
+// The host of a server URL, for a compact card; the URL itself when it
+// does not parse.
+export function urlHost(url) {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    return `${parsed.host}${parsed.pathname === "/" ? "" : parsed.pathname}`;
+  } catch {
+    return String(url);
+  }
+}
+
+/** "1 prompt", "2 prompts", "0 tools": a count and its word. */
+export function plural(value, word) {
+  const count = Number(value || 0);
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}

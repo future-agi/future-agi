@@ -1,7 +1,8 @@
 /* eslint-disable react/prop-types */
 import React from "react";
 import { Box, Typography, Stack, Chip, Divider } from "@mui/material";
-import { formatDateTime } from "../utils/formatters";
+import { EMPTY, formatDateTime } from "../utils/formatters";
+import { GATEWAY_MONO } from "../utils/fonts";
 
 const SideBySideViewer = ({ result, sourceModel, shadowModel }) => {
   const r = result;
@@ -20,7 +21,7 @@ const SideBySideViewer = ({ result, sourceModel, shadowModel }) => {
   return (
     <Box
       sx={{
-        borderRadius: 1.5,
+        borderRadius: "8px",
         border: "1px solid",
         borderColor: "divider",
         overflow: "hidden",
@@ -40,7 +41,7 @@ const SideBySideViewer = ({ result, sourceModel, shadowModel }) => {
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ fontFamily: "monospace" }}
+            sx={{ fontFamily: GATEWAY_MONO }}
           >
             {requestId.substring(0, 12)}...
           </Typography>
@@ -60,7 +61,7 @@ const SideBySideViewer = ({ result, sourceModel, shadowModel }) => {
         divider={<Divider orientation="vertical" flexItem />}
       >
         {/* Production panel */}
-        <Box sx={{ flex: 1, bgcolor: "#EFF6FF08" }}>
+        <Box sx={{ flex: 1 }}>
           <Stack
             direction="row"
             spacing={1}
@@ -89,7 +90,7 @@ const SideBySideViewer = ({ result, sourceModel, shadowModel }) => {
               py: 1.5,
               maxHeight: 400,
               overflow: "auto",
-              fontFamily: isJSON(sourceResponse) ? "monospace" : "inherit",
+              fontFamily: isJSON(sourceResponse) ? GATEWAY_MONO : "inherit",
               fontSize: "0.8125rem",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
@@ -109,7 +110,7 @@ const SideBySideViewer = ({ result, sourceModel, shadowModel }) => {
         </Box>
 
         {/* Shadow panel */}
-        <Box sx={{ flex: 1, bgcolor: "#F5F3FF08" }}>
+        <Box sx={{ flex: 1 }}>
           <Stack
             direction="row"
             spacing={1}
@@ -138,7 +139,7 @@ const SideBySideViewer = ({ result, sourceModel, shadowModel }) => {
               py: 1.5,
               maxHeight: 400,
               overflow: "auto",
-              fontFamily: isJSON(shadowResponse) ? "monospace" : "inherit",
+              fontFamily: isJSON(shadowResponse) ? GATEWAY_MONO : "inherit",
               fontSize: "0.8125rem",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
@@ -173,14 +174,12 @@ const StatusChip = ({ code, error }) => {
   const ok = code === 200 && !error;
   return (
     <Chip
-      label={code || "N/A"}
+      variant="outlined"
+      label={code || EMPTY}
       size="small"
       sx={{
-        height: 18,
-        fontSize: "0.7rem",
-        bgcolor: ok ? "#22C55E20" : "#EF444420",
-        color: ok ? "#22C55E" : "#EF4444",
-        fontWeight: 600,
+        bgcolor: ok ? "status.success.bg" : "status.danger.bg",
+        color: ok ? "status.success.fg" : "status.danger.fg",
       }}
     />
   );

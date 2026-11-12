@@ -20,9 +20,9 @@ const existingChannels = [
 ];
 
 async function fillAndSubmit(user, name, url) {
-  await user.type(screen.getByLabelText(/Channel Name/), name);
+  await user.type(screen.getByLabelText(/Channel name/), name);
   await user.type(screen.getByLabelText(/URL/), url);
-  await user.click(screen.getByRole("button", { name: "Add Channel" }));
+  await user.click(screen.getByRole("button", { name: "Add channel" }));
   return mockUpdateMutate.mock.calls[0][0];
 }
 
@@ -42,7 +42,11 @@ describe("CreateChannelDialog", () => {
       />,
     );
 
-    const payload = await fillAndSubmit(user, "oncall", "https://hooks.example/oncall");
+    const payload = await fillAndSubmit(
+      user,
+      "oncall",
+      "https://hooks.example/oncall",
+    );
 
     expect(payload.config.alerting.channels).toEqual([
       existingChannels[0],
@@ -50,7 +54,7 @@ describe("CreateChannelDialog", () => {
     ]);
   });
 
-  it("replaces a channel of the same name rather than duplicating it", async () => {
+  it("rejects a trimmed duplicate name without retargeting existing alert rules", async () => {
     const user = userEvent.setup();
     render(
       <CreateChannelDialog
@@ -61,11 +65,21 @@ describe("CreateChannelDialog", () => {
       />,
     );
 
-    const payload = await fillAndSubmit(user, "ops", "https://hooks.example/new");
+    await user.type(screen.getByLabelText(/Channel name/), " ops ");
+    await user.type(screen.getByLabelText(/URL/), "https://hooks.example/new");
+    expect(
+      screen.getByText(/A channel with this name already exists/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add channel" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Add channel" }));
+    expect(mockUpdateMutate).not.toHaveBeenCalled();
 
-    expect(payload.config.alerting.channels).toEqual([
-      { name: "ops", type: "webhook", url: "https://hooks.example/new" },
-    ]);
+    await user.clear(screen.getByLabelText(/Channel name/));
+    await user.type(screen.getByLabelText(/Channel name/), "new-ops");
+    expect(screen.getByRole("button", { name: "Add channel" })).toBeEnabled();
+    expect(
+      screen.queryByText(/A channel with this name already exists/),
+    ).not.toBeInTheDocument();
   });
 
   it("offers only the channel types the gateway can deliver to", async () => {

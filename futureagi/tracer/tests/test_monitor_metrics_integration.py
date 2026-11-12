@@ -10,9 +10,9 @@ rows are isolated; the test ClickHouse is ephemeral so no cleanup is needed
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pytest
 
@@ -22,12 +22,12 @@ from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.v2.query_builders.monitor_metrics import (
     MonitorMetricsQueryBuilderV2,
 )
-from tracer.utils.monitor import _get_historical_stats, _get_metric_value
+from tracer.utils.monitor import _get_metric_value, get_previous_period_baseline
 
 pytestmark = pytest.mark.integration
 
 # Whole-second, tz-naive: CH DateTime64 and the builder's _parse_dt both want naive.
-NOW = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+NOW = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
 WINDOW_START = NOW - timedelta(minutes=30)
 WINDOW_END = NOW + timedelta(minutes=1)
 
@@ -59,35 +59,35 @@ def project_id() -> str:
     return str(uuid.uuid4())
 
 
-def _span(project_id: str, **kw: Any) -> Dict[str, Any]:
-    row = dict(
-        id=str(uuid.uuid4()),
-        trace_id=str(uuid.uuid4()),
-        project_id=project_id,
-        name="s",
-        observation_type="llm",
-        status="OK",
-        start_time=NOW,
-        created_at=NOW,
-        total_tokens=0,
-        latency_ms=0,
-        is_deleted=0,
-        trace_session_id=None,
-        provider="",
-        attrs_string={},
-    )
+def _span(project_id: str, **kw: Any) -> dict[str, Any]:
+    row = {
+        "id": str(uuid.uuid4()),
+        "trace_id": str(uuid.uuid4()),
+        "project_id": project_id,
+        "name": "s",
+        "observation_type": "llm",
+        "status": "OK",
+        "start_time": NOW,
+        "created_at": NOW,
+        "total_tokens": 0,
+        "latency_ms": 0,
+        "is_deleted": 0,
+        "trace_session_id": None,
+        "provider": "",
+        "attrs_string": {},
+    }
     row.update(kw)
     return row
 
 
-def _seed_spans(ch, rows: List[Dict[str, Any]]) -> None:
+def _seed_spans(ch, rows: list[dict[str, Any]]) -> None:
     ch.execute(
-        "INSERT INTO spans (%s) VALUES" % ",".join(_SPAN_COLS),
+        f"INSERT INTO spans ({','.join(_SPAN_COLS)}) VALUES",
         [{c: r[c] for c in _SPAN_COLS} for r in rows],
     )
 
 
-def _seed_evals(ch, config_id: str, evals: List[Dict[str, Any]]) -> None:
+def _seed_evals(ch, config_id: str, evals: list[dict[str, Any]]) -> None:
     table, _ = eval_logger_source()
     # id is part of the ReplacingMergeTree sort key — must be unique per row or
     # FINAL collapses distinct evals of the same config.
@@ -116,24 +116,25 @@ def _seed_evals(ch, config_id: str, evals: List[Dict[str, Any]]) -> None:
                 "created_at": ev.get("created_at", NOW),
             }
         )
-    ch.execute("INSERT INTO %s (%s) VALUES" % (table, ",".join(cols)), rows)
+    ch.execute(f"INSERT INTO {table} ({','.join(cols)}) VALUES", rows)
 
 
 def _monitor(project_id: str, metric_type: str, **kw: Any) -> SimpleNamespace:
-    base = dict(
-        id=uuid.uuid4(),
-        metric_type=metric_type,
-        project_id=project_id,
-        filters=None,
-        metric=None,
-        threshold_metric_value=None,
-        alert_frequency=60,
-    )
+    base = {
+        "id": uuid.uuid4(),
+        "metric_type": metric_type,
+        "project_id": project_id,
+        "filters": None,
+        "metric": None,
+        "threshold_metric_value": None,
+        "alert_frequency": 60,
+        "threshold_rule": "current",
+    }
     base.update(kw)
     return SimpleNamespace(**base)
 
 
-def _value(project_id: str, metric_type: str, **kw: Any) -> Optional[float]:
+def _value(project_id: str, metric_type: str, **kw: Any) -> float | None:
     return _get_metric_value(
         _monitor(project_id, metric_type, **kw), WINDOW_START, WINDOW_END
     )
@@ -293,28 +294,69 @@ def test_observation_type_filter(ch, project_id):
     assert val == 2
 
 
-# --- Historical stats ---------------------------------------------------------
+# --- Previous-period baseline -------------------------------------------------
+
+# A clock hour three hours back: windows at half-past straddle the next hour.
+HOUR = NOW.replace(minute=0, second=0) - timedelta(hours=3)
 
 
-def test_historical_stats_count_of_errors(ch, project_id):
-    # Two hourly buckets: 4 errors then 2 errors -> mean 3, sample stddev sqrt(2).
-    b1 = NOW - timedelta(hours=2)
-    b2 = NOW - timedelta(hours=1)
-    rows = [
-        _span(project_id, status="ERROR", start_time=b1, created_at=b1)
-        for _ in range(4)
-    ]
-    rows += [
-        _span(project_id, status="ERROR", start_time=b2, created_at=b2)
-        for _ in range(2)
-    ]
-    _seed_spans(ch, rows)
+def _errors_at(project_id: str, *times: datetime, status: str = "ERROR") -> list:
+    return [_span(project_id, status=status, start_time=t, created_at=t) for t in times]
+
+
+def test_previous_period_baseline_count_of_errors_per_period(ch, project_id):
+    # Three hours of history for an hourly monitor: 4 errors, then 2, then an
+    # hour with no spans at all -> 6 errors over 3 periods = 2 per period.
+    _seed_spans(
+        ch,
+        _errors_at(project_id, *[HOUR + timedelta(minutes=10)] * 4)
+        + _errors_at(project_id, *[HOUR + timedelta(minutes=70)] * 2),
+    )
     m = _monitor(
         project_id, MonitorMetricTypeChoices.COUNT_OF_ERRORS, alert_frequency=60
     )
-    mean, stddev = _get_historical_stats(m, NOW - timedelta(hours=3), NOW)
-    assert mean == pytest.approx(3.0)
-    assert stddev == pytest.approx(2.0**0.5, rel=1e-6)
+    baseline = get_previous_period_baseline(m, HOUR, HOUR + timedelta(hours=3))
+    assert baseline == pytest.approx(2.0)
+
+
+def test_previous_period_baseline_straddling_an_hour_is_that_hours_count(
+    ch, project_id
+):
+    # Four errors an hour; the worker's previous hour runs half-past to
+    # half-past, so two errors fall on each side of the clock hour. The
+    # baseline is the 4 errors of that hour, not the mean of the two partial
+    # clock hours (2), which made a flat 4 read critical.
+    _seed_spans(
+        ch,
+        _errors_at(
+            project_id,
+            *(HOUR + timedelta(minutes=minute) for minute in (40, 50, 70, 80)),
+        ),
+    )
+    m = _monitor(
+        project_id, MonitorMetricTypeChoices.COUNT_OF_ERRORS, alert_frequency=60
+    )
+    baseline = get_previous_period_baseline(
+        m, HOUR + timedelta(minutes=30), HOUR + timedelta(minutes=90)
+    )
+    assert baseline == pytest.approx(4.0)
+
+
+def test_previous_period_baseline_without_spans_is_none(ch, project_id):
+    # (a) No spans at all: not enough history.
+    m = _monitor(
+        project_id, MonitorMetricTypeChoices.COUNT_OF_ERRORS, alert_frequency=60
+    )
+    assert get_previous_period_baseline(m, HOUR, HOUR + timedelta(hours=1)) is None
+
+
+def test_previous_period_baseline_with_spans_but_no_errors_is_zero(ch, project_id):
+    # (b) Spans but no errors: a real zero.
+    _seed_spans(ch, _errors_at(project_id, HOUR + timedelta(minutes=10), status="OK"))
+    m = _monitor(
+        project_id, MonitorMetricTypeChoices.COUNT_OF_ERRORS, alert_frequency=60
+    )
+    assert get_previous_period_baseline(m, HOUR, HOUR + timedelta(hours=1)) == 0.0
 
 
 # --- Evaluation metrics (eval-logger table) -----------------------------------
@@ -430,7 +472,7 @@ def test_daily_tokens_spent_uses_trailing_day(ch, project_id):
     assert _value(project_id, MonitorMetricTypeChoices.DAILY_TOKENS_SPENT) == 60
 
 
-def test_historical_stats_token_usage(ch, project_id):
+def test_previous_period_baseline_token_usage(ch, project_id):
     b1 = NOW - timedelta(hours=2)
     b2 = NOW - timedelta(hours=1)
     _seed_spans(
@@ -439,9 +481,16 @@ def test_historical_stats_token_usage(ch, project_id):
         + [_span(project_id, total_tokens=30, start_time=b2, created_at=b2)],
     )
     m = _monitor(project_id, MonitorMetricTypeChoices.TOKEN_USAGE, alert_frequency=60)
-    mean, stddev = _get_historical_stats(m, NOW - timedelta(hours=3), NOW)
-    assert mean == pytest.approx(20.0)  # buckets [10, 30]
-    assert stddev == pytest.approx(200.0**0.5, rel=1e-6)  # sample stddev
+    baseline = get_previous_period_baseline(m, NOW - timedelta(hours=3), NOW)
+    assert baseline == pytest.approx(40.0 / 3)  # 40 tokens over 3 hourly periods
+
+
+def test_previous_period_baseline_token_usage_without_tokens_is_none(ch, project_id):
+    # Spans with no tokens are no token data, as in the value query.
+    t = NOW - timedelta(hours=1)
+    _seed_spans(ch, [_span(project_id, total_tokens=0, start_time=t, created_at=t)])
+    m = _monitor(project_id, MonitorMetricTypeChoices.TOKEN_USAGE, alert_frequency=60)
+    assert get_previous_period_baseline(m, NOW - timedelta(hours=3), NOW) is None
 
 
 # --- End-to-end: real monitor row -> real alert log ---------------------------
@@ -477,8 +526,8 @@ def test_end_to_end_percentage_change_fires(ch, observe_project):
     from tracer.utils.monitor import process_monitor_task
 
     pid = str(observe_project.id)
-    # Historical (calendar-hour buckets, within the 1-week baseline): 1 then 3
-    # errors -> mean 2, stddev ~1.41 -> critical threshold ~3.41.
+    # History (the 1-week default): 1 then 3 errors -> 4 over 168 hourly
+    # periods, a baseline far below the 10 errors now.
     h1, h2 = NOW - timedelta(hours=4), NOW - timedelta(hours=3)
     _seed_spans(
         ch,
@@ -501,6 +550,65 @@ def test_end_to_end_percentage_change_fires(ch, observe_project):
         str(monitor.id), (NOW + timedelta(seconds=30)).isoformat()
     )
     assert UserAlertMonitorLog.objects.get(alert=monitor).type == "critical"
+
+
+def _hourly_pct_monitor(observe_project, name: str):
+    from tracer.models.monitor import UserAlertMonitor
+
+    # The walk's setup: compared with the hour before, 20% / 10% higher.
+    return UserAlertMonitor.objects.create(
+        organization=observe_project.organization,
+        project=observe_project,
+        name=name,
+        metric_type="count_of_errors",
+        threshold_operator="greater_than",
+        threshold_type="percentage_change",
+        critical_threshold_value=20,
+        warning_threshold_value=10,
+        alert_frequency=60,
+        auto_threshold_time_window=60,
+    )
+
+
+def _four_errors_an_hour(pid: str) -> list:
+    # :01, :16, :31 and :46 of each of the three hours from HOUR.
+    return _errors_at(pid, *(HOUR + timedelta(minutes=1 + 15 * i) for i in range(12)))
+
+
+@pytest.mark.django_db
+def test_end_to_end_flat_errors_across_an_hour_boundary_do_not_alert(
+    ch, observe_project
+):
+    from tracer.models.monitor import UserAlertMonitorLog
+    from tracer.utils.monitor import process_monitor_task
+
+    pid = str(observe_project.id)
+    _seed_spans(ch, _four_errors_an_hour(pid))
+    monitor = _hourly_pct_monitor(observe_project, "E2E flat errors")
+    # At HOUR+2:30 the worker compares 1:30-2:30 (4 errors) with 0:30-1:30
+    # (4 errors, two each side of HOUR+1:00): flat, so no alert.
+    process_monitor_task._original_func(
+        str(monitor.id), (HOUR + timedelta(minutes=150)).isoformat()
+    )
+    assert not UserAlertMonitorLog.objects.filter(alert=monitor).exists()
+
+
+@pytest.mark.django_db
+def test_end_to_end_jump_fires_and_names_the_previous_hour(ch, observe_project):
+    from tracer.models.monitor import UserAlertMonitorLog
+    from tracer.utils.monitor import process_monitor_task
+
+    pid = str(observe_project.id)
+    # Eight more errors in the third hour: 12 against the 4 of the hour before.
+    jump = HOUR + timedelta(minutes=125)
+    _seed_spans(ch, _four_errors_an_hour(pid) + _errors_at(pid, *[jump] * 8))
+    monitor = _hourly_pct_monitor(observe_project, "E2E error jump")
+    process_monitor_task._original_func(
+        str(monitor.id), (HOUR + timedelta(hours=3)).isoformat()
+    )
+    log = UserAlertMonitorLog.objects.get(alert=monitor)
+    assert log.type == "critical"
+    assert "(greater_than 4.80): up from 4 in the previous period." in log.message
 
 
 @pytest.mark.django_db
@@ -564,6 +672,7 @@ def test_end_to_end_eval_fraction_threshold_fires(ch, observe_project):
     # metric queries emit (PG parity). This pins the scale contract end to
     # end: an accidental x100 on either side breaks this test loudly.
     from model_hub.models.evals_metric import EvalTemplate
+
     from tracer.models.custom_eval_config import CustomEvalConfig
     from tracer.models.monitor import UserAlertMonitor, UserAlertMonitorLog
     from tracer.utils.monitor import process_monitor_task

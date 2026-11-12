@@ -29,16 +29,35 @@ export const TONE_OPTIONS = [
 export const STYLE_OPTIONS = ["concise", "verbose", "formal", "casual", "chatty", "terse"];
 export const ACCENT_OPTIONS = ["US", "UK", "IN", "BR", "AE", "JP", "other"];
 export const LANGUAGE_OPTIONS = ["English", "Spanish", "Portuguese", "Hindi", "Japanese", "Arabic"];
+// The server matches a text field (Scenario, Situation) against the whole value, so a text
+// row works with Equals and Not equals only; Search is the way to match part of a name.
+// Contains, Starts with and Does not contain stay in the operator list, turned off, with
+// the reason under each.
+const WHOLE_TEXT_OPERATORS = ["equals", "not_equals"];
+const NOT_IN_RELEASE = "Not available in this release";
+const PART_TEXT_OPERATORS = {
+  contains: NOT_IN_RELEASE,
+  starts_with: NOT_IN_RELEASE,
+  not_contains: NOT_IN_RELEASE,
+};
+
 // The server lists noise on/off as "present" and "quiet line"; a scenario stores them as true/false.
 // Fields whose values the server names in `level_labels`: noise beds, sub-goals and coverage levels.
 export const withServedLabels = (fields = [], levelLabels = {}) =>
-  fields.map((field) =>
-    field.value === "background_noise" ||
-    field.value === "sub_goals" ||
-    String(field.value).startsWith("coverage.")
+  fields.map((field) => {
+    if (field.type === "string") {
+      return {
+        ...field,
+        operators: field.operators ?? WHOLE_TEXT_OPERATORS,
+        unavailableOperators: field.unavailableOperators ?? PART_TEXT_OPERATORS,
+      };
+    }
+    return field.value === "background_noise" ||
+      field.value === "sub_goals" ||
+      String(field.value).startsWith("coverage.")
       ? { ...field, choiceLabels: levelLabels }
-      : field,
-  );
+      : field;
+  });
 
 export const noiseKey = (value) => {
   if (typeof value === "string") return value;

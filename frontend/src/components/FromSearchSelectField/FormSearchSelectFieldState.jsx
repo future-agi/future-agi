@@ -216,21 +216,27 @@ const FormSearchSelectFieldState = React.forwardRef(
             },
             // ✅ Add these for hover and focus border color
             "& .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline": {
-              borderColor: rest?.error ? "red.500" : "action.hover", // Or any color you want
+              borderColor: rest?.error
+                ? "status.danger.border"
+                : "action.hover", // Or any color you want
             },
             "& .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline":
               {
-                borderColor: rest?.error ? "red.500" : "action.hover", // Or any color you want
+                borderColor: rest?.error
+                  ? "status.danger.border"
+                  : "action.hover", // Or any color you want
               },
             ...sx,
           }}
           InputLabelProps={{
             ...rest.InputLabelProps,
             shrink: true,
+            // The theme sets the label above the field, outside the border, so
+            // it needs no background. A painted one showed as a dark bar in
+            // dialogs and drawers, whose surface is not --bg-paper.
             style: {
               paddingLeft: 1,
               paddingRight: 2,
-              background: "var(--bg-paper)",
             },
           }}
           InputProps={{
@@ -238,7 +244,7 @@ const FormSearchSelectFieldState = React.forwardRef(
               <InputAdornment position="end">
                 {openDropdown && searchedValue && showClear ? (
                   <Iconify
-                    icon="mdi:close"
+                    icon="solar:close-linear"
                     sx={{
                       cursor: "pointer",
                       color: "text.primary",
@@ -253,7 +259,7 @@ const FormSearchSelectFieldState = React.forwardRef(
                   !rest.disabled &&
                   showClear ? (
                   <Iconify
-                    icon="mdi:close"
+                    icon="solar:close-linear"
                     sx={{
                       cursor: "pointer",
                       color: "text.primary",
@@ -267,14 +273,14 @@ const FormSearchSelectFieldState = React.forwardRef(
                   />
                 ) : (
                   <Iconify
-                    icon="eva:arrow-ios-upward-fill"
+                    icon="solar:alt-arrow-up-linear"
                     sx={{
                       cursor: rest?.disabled ? "not-allowed" : "pointer",
                       color: "text.primary",
                       width: 20,
                       height: 20,
                       transform: `rotateX(${openDropdown ? 0 : -180}deg)`,
-                      transition: "transform 0.5s",
+                      transition: "transform 0.2s",
                     }}
                     onClick={handleDropdownIconClick}
                   />

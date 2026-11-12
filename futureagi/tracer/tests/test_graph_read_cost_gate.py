@@ -852,7 +852,7 @@ def test_measured_dev_voice_windows_still_run_inline(
 
 EVAL_CONFIG_ID = "7c1e2d3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f"
 MEMBERSHIP_NAMESPACES = {
-    "eval": "observe-eval-graph",
+    "eval": "observe-eval-graph-nk20-v1",
     "annotation": "observe-annotation-graph",
 }
 

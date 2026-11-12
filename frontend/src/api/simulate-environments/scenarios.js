@@ -1,4 +1,5 @@
 import axios from "src/utils/axios";
+import { importWithRecovery } from "src/utils/chunkRecovery";
 import { apiPath } from "src/api/contracts/api-surface";
 import { isScenarioSampleMode } from "./scenariosSampleMode";
 
@@ -10,7 +11,8 @@ import { isScenarioSampleMode } from "./scenariosSampleMode";
 const SAMPLE_LATENCY_MS = 250;
 const withSampleLatency = (value) =>
   new Promise((resolve) => setTimeout(() => resolve(value), SAMPLE_LATENCY_MS));
-const sampleEmulator = () => import("./_fixtures/scenariosFixtures");
+const sampleEmulator = () =>
+  importWithRecovery(() => import("./_fixtures/scenariosFixtures"));
 
 /**
  * The scenarios resource for one harness job — list, coverage and amend.

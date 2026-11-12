@@ -729,11 +729,13 @@ class TestPostRemovalState:
 
     def test_org_membership_deactivated(self, auth_client, member_user, organization):
         self._remove(auth_client, member_user)
-        org_mem = OrganizationMembership.objects.get(
+        org_mem = OrganizationMembership.all_objects.get(
             user=member_user,
             organization=organization,
         )
         assert org_mem.is_active is False
+        assert org_mem.deleted is True
+        assert org_mem.deleted_at is not None
 
     def test_ws_memberships_cascade_deactivated(
         self, auth_client, member_user, organization, workspace

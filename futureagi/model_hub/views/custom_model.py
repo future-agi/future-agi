@@ -39,6 +39,12 @@ from model_hub.serializers.custom_models import (
 )
 from model_hub.utils.azure_endpoints import normalize_azure_custom_model_config
 from model_hub.utils.clickhouse import get_model_volume
+from model_hub.utils.model_endpoints import (
+    CustomModelConfigError,
+    assert_model_config_endpoints_allowed,
+    normalize_custom_model_config,
+    whitelist_model_config,
+)
 from model_hub.utils.utils import validate_model_working
 from model_hub.utils.workspace_scope import request_workspace, request_workspace_filter
 from tfc.utils.api_contracts import validated_request
@@ -46,6 +52,7 @@ from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tfc.utils.ssrf_guard import SsrfBlocked
 
 logger = structlog.get_logger(__name__)
 
@@ -60,9 +67,22 @@ def _vertex_sdk_missing(provider, model_name) -> bool:
     )
 
 
-def _restore_plain_key_config_for_save(ai_model):
-    if ai_model.key_config:
-        ai_model.key_config = ai_model.actual_json
+def _checked_config(provider, config_json):
+    """``config_json`` as it may be saved for ``provider``: a ``custom``
+    configuration normalized to its one endpoint, an openai, azure, bedrock
+    or sagemaker one cut down to the keys that provider needs (any other key
+    would reach litellm as an argument: extra_headers, an endpoint
+    override), and every base URL in it allowed by the deployment's address
+    policy. Checked whatever validation path runs, since a key-only
+    validation never looks at config_json. Raises CustomModelConfigError or
+    SsrfBlocked, whose text is for the user.
+    """
+    if config_json and str(provider).strip().lower() == "custom":
+        config_json = normalize_custom_model_config(config_json)
+    elif config_json:
+        config_json = whitelist_model_config(provider, config_json)
+    assert_model_config_endpoints_allowed(config_json, allow_unresolvable=True)
+    return config_json
 
 
 def _custom_ai_model_queryset(request):
@@ -269,6 +289,11 @@ class CustomAIModelCreateView(APIView):
                 if config_json.get("api_base"):
                     api_key_params.update({"api_base": config_json["api_base"]})
 
+            # The URLs saved below are checked whichever path validated.
+            try:
+                config_json = _checked_config(model_provider, config_json)
+            except (CustomModelConfigError, SsrfBlocked) as e:
+                return self._gm.bad_request(str(e))
             config_copy = config_json.copy()
             res = validate_model_working(
                 model_name=model_name, api_key=api_key_params, provider=model_provider
@@ -359,7 +384,6 @@ class CustomAIModelDetailsView(APIView):
                 ai_model.output_token_cost = output_token_cost
             if new_model_name:
                 ai_model.user_model_id = new_model_name
-            _restore_plain_key_config_for_save(ai_model)
             ai_model.save()
 
             ai_model_serializer = CustomAIModelSerializer(ai_model)
@@ -404,7 +428,6 @@ class UpdateMetricCustomAIModelView(APIView):
                 .get()
             )
             ai_model.default_metric = new_metrics
-            _restore_plain_key_config_for_save(ai_model)
             ai_model.save()
 
             return Response(
@@ -441,7 +464,6 @@ class UpdateBaselineDatasetCustomAIModelView(APIView):
             ai_model = _custom_ai_model_queryset(request).get(id=ai_model_id)
             ai_model.baseline_model_environment = environment
             ai_model.baseline_model_version = version
-            _restore_plain_key_config_for_save(ai_model)
             ai_model.save()
 
             return Response(
@@ -548,7 +570,7 @@ class EditCustomModel(APIView):
             )
             if api_keys:
                 keys = api_keys.masked_actual_key
-                data.update({"key" if api_keys.actual_key else "config_json": keys})
+                data.update({"key" if api_keys.key else "config_json": keys})
             return self._gm.success_response(data)
 
         except CustomAIModel.DoesNotExist:
@@ -584,6 +606,13 @@ class EditCustomModel(APIView):
                 model_name = model.user_model_id
             if (key or config_json) and _vertex_sdk_missing(model.provider, model_name):
                 return self._gm.bad_request(VERTEX_SDK_MISSING_MESSAGE)
+            if config_json:
+                # Checked before, and whatever, validation runs: with a key the
+                # validation never looks at config_json, which is still saved.
+                try:
+                    config_json = _checked_config(model.provider, config_json)
+                except (CustomModelConfigError, SsrfBlocked) as e:
+                    return self._gm.bad_request(str(e))
             if key or config_json:
                 try:
                     if key:
@@ -624,8 +653,6 @@ class EditCustomModel(APIView):
                 model.key_config = config_json
             elif key:
                 model.key_config = {"key": key}
-            else:
-                _restore_plain_key_config_for_save(model)
             model.save()
 
             return self._gm.success_response("Model updated Successfully")

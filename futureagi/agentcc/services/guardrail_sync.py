@@ -8,18 +8,21 @@ from django.db import transaction
 
 from agentcc.models import AgentccOrgConfig
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
+from agentcc.services.config_push import MCPCredentialPlacementRefused
+from agentcc.services.org_config_writer import lock_org
 
 logger = structlog.get_logger(__name__)
 
 
-def sync_guardrail_policies(org, user=None):
-    """
-    Collect all active guardrail policies for the org, merge their checks
-    into a single guardrail config, create a new org config version, and
-    push to the gateway.
+def policy_guardrails(org):
+    """The guardrails section a policy sync writes for ``org``, and the number
+    of policies it merged: the checks of the org's active global policies,
+    by priority, the last policy winning per check name, as a checks list
+    whose entries name their policy (``_policy``).
 
-    Returns:
-        True on successful gateway push, False on failure or skip.
+    The Guardrails page's switch and edit on such a section write the version
+    they save with this section too (guardrail_policy_checks), so a later
+    sync keeps what they changed.
     """
     # Gather only SCOPE_GLOBAL active policies ordered by priority
     policies = list(
@@ -45,12 +48,33 @@ def sync_guardrail_policies(org, user=None):
                     "_scope": policy.scope,
                 }
 
-    merged_guardrails = {
-        "enabled": len(merged_checks) > 0,
-        "checks": list(merged_checks.values()),
-    }
+    # With no check left in any active global policy, the section is an empty
+    # checks list, which the push sends as an empty section, so the gateway
+    # stops running the checks it had. Earlier releases stored
+    # {"enabled": false, "checks": []} here, a push the gateway contract
+    # refused (release round 6B, fix (a)).
+    merged_guardrails = {"checks": list(merged_checks.values())}
+    if merged_checks:
+        merged_guardrails = {"enabled": True, **merged_guardrails}
+    return merged_guardrails, len(policies)
 
+
+def sync_guardrail_policies(org, user=None):
+    """
+    Collect all active guardrail policies for the org, merge their checks
+    into a single guardrail config, write it into the active org config
+    version, and push to the gateway.
+
+    Returns:
+        True on successful gateway push, False on failure or skip.
+    Raises:
+        MCPCredentialPlacementRefused before commit; callers that also edit a
+        policy keep that edit in the same outer transaction.
+    """
     with transaction.atomic():
+        # Serialize policy edits and version writers before reading either.
+        lock_org(org.pk)
+        merged_guardrails, policy_count = policy_guardrails(org)
         # Get current active org config with lock
         active_config = (
             AgentccOrgConfig.no_workspace_objects.select_for_update()
@@ -76,15 +100,24 @@ def sync_guardrail_policies(org, user=None):
         active_config.guardrails = merged_guardrails
         active_config.save(update_fields=["guardrails", "updated_at"])
 
-    # Push to gateway
-    from agentcc.services.config_push import push_org_config
+        from agentcc.services.config_push import push_org_config
 
-    synced = push_org_config(str(org.id), active_config)
+        # A placement refusal unwinds this save and the caller's policy edit.
+        # Other push failures keep the save; a savepoint also contains a failed
+        # database operation inside a push before we report it as unsynced.
+        try:
+            with transaction.atomic():
+                synced = push_org_config(str(org.id), active_config)
+        except MCPCredentialPlacementRefused:
+            raise
+        except Exception:
+            logger.exception("guardrail_policy_sync_failed", org_id=str(org.pk))
+            synced = False
     if synced:
         logger.info(
             "guardrail_sync_success",
             org_id=str(org.id),
             version=active_config.version,
-            policy_count=len(policies),
+            policy_count=policy_count,
         )
     return synced

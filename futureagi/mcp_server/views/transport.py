@@ -5,6 +5,7 @@ import time
 
 import structlog
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -20,6 +21,7 @@ from mcp_server.serializers.contracts import (
     MCPToolListResponseSerializer,
 )
 from mcp_server.usage_helpers import (
+    get_connection,
     get_enabled_tools,
     get_or_create_connection,
     get_or_create_session,
@@ -55,10 +57,12 @@ class MCPToolCallView(APIView):
         session_id = request.validated_data.get("session_id")
 
         user = request.user
-        organization = getattr(request, "organization", None) or getattr(
-            user, "organization", None
-        )
+        organization = getattr(request, "organization", None)
         workspace = getattr(request, "workspace", None)
+        if workspace is None:
+            raise PermissionDenied(
+                "Workspace context is required", code="workspace_required"
+            )
 
         if not organization:
             return Response(
@@ -196,10 +200,12 @@ class MCPToolListView(APIView):
     )
     def get(self, request):
         user = request.user
-        organization = getattr(request, "organization", None) or getattr(
-            user, "organization", None
-        )
+        organization = getattr(request, "organization", None)
         workspace = getattr(request, "workspace", None)
+        if workspace is None:
+            raise PermissionDenied(
+                "Workspace context is required", code="workspace_required"
+            )
 
         if not organization:
             return Response(
@@ -207,7 +213,7 @@ class MCPToolListView(APIView):
                 status=403,
             )
 
-        connection = get_or_create_connection(user, organization, workspace)
+        connection = get_connection(user, organization, workspace)
         enabled_tools = get_enabled_tools(connection)
 
         tools = []

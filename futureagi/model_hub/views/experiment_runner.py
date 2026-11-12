@@ -6,7 +6,6 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import close_old_connections
 from django.db.models import Count, Q
 
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from model_hub.models.choices import (
     CellStatus,
@@ -20,16 +19,41 @@ from model_hub.models.experiments import (
     ExperimentsTable,
     PendingRowTask,
 )
-from model_hub.models.openai_tools import Tools
 from model_hub.models.run_prompt import UserResponseSchema
 from model_hub.models.tts_voices import TTSVoice
 from model_hub.services.column_service import create_experiment_column
+from model_hub.services.experiment_tools import experiment_tools
 from model_hub.services.experiment_utils import is_experiment_cancelled
 from model_hub.utils.utils import remove_empty_text_from_messages
 from model_hub.views.eval_runner import EvaluationRunner, bulk_update_or_create_cells
 from model_hub.views.run_prompt import populate_placeholders
 from tfc.temporal import temporal_activity
-from tfc.utils.error_codes import get_error_message
+
+logger = structlog.get_logger(__name__)
+
+
+def _experiment_response_format(value, dataset):
+    """Resolve UUIDs in the run's tenant; an inaccessible schema fails the row."""
+    if not value or isinstance(value, dict):
+        return value
+    try:
+        uuid.UUID(str(value))
+    except ValueError:
+        return value
+    workspace = dataset.workspace
+    scope = Q(workspace=workspace) if workspace else Q()
+    if workspace and workspace.is_default:
+        scope |= Q(workspace__isnull=True) | Q(workspace__is_default=True)
+    schema = (
+        UserResponseSchema.no_workspace_objects.filter(
+            scope, id=value, organization_id=dataset.organization_id, deleted=False
+        ).first()
+        if dataset.organization_id
+        else None
+    )
+    if schema is None:
+        raise ValueError("Response schema is not accessible to this experiment")
+    return schema.schema
 
 
 def _get_or_create_eval_column(
@@ -53,8 +77,20 @@ def _get_or_create_eval_column(
         dataset_obj = Dataset.no_workspace_objects.select_for_update().get(
             id=dataset.id
         )
+        http_source = (
+            getattr(experiment_dataset, "legacy_prompt_config", None) or {}
+        ).get("target_type") == "http"
+        lookup = column_config
+        if http_source:
+            lookup = {
+                "dataset": column_config["dataset"],
+                "source": column_config["source"],
+                "source_id": column_config["source_id"],
+                "deleted": False,
+                "defaults": {key: column_config[key] for key in ("name", "data_type")},
+            }
         try:
-            column, created = Column.objects.get_or_create(**column_config)
+            column, created = Column.objects.get_or_create(**lookup)
         except Exception:
             column = Column.objects.get(
                 dataset=column_config["dataset"],
@@ -63,6 +99,17 @@ def _get_or_create_eval_column(
                 deleted=False,
             )
             created = False
+
+        # A renamed HTTP output does not replace its composite score column.
+        # Resolving metadata must not reset any selected or unselected cells.
+        if http_source:
+            changed_fields = []
+            for field in ("name", "data_type"):
+                if getattr(column, field) != column_config[field]:
+                    setattr(column, field, column_config[field])
+                    changed_fields.append(field)
+            if changed_fields:
+                column.save(update_fields=changed_fields)
 
         if created:
             if experiment_dataset:
@@ -183,14 +230,36 @@ def check_and_update_column_status(column_id: uuid.UUID):
                 SourceChoices.EXPERIMENT_EVALUATION.value,
                 SourceChoices.EVALUATION_REASON.value,
             ]:
-                # This is an evaluation column - source_id has pattern "{experiment_dataset.id}-sourceid-{eval_metric_id}"
+                # Evaluation columns: "<table>-<output>-sourceid-<metric>", or
+                # "<table>-sourceid-<metric>" for earlier tables. Reason columns:
+                # "<evaluation or output column>-sourceid-<metric>".
                 if column.source_id and "-sourceid-" in str(column.source_id):
                     try:
                         # Extract experiment_dataset_id from source_id
                         experiment_dataset_id_str = str(column.source_id).split(
                             "-sourceid-"
                         )[0]
-                        experiment_dataset_id = uuid.UUID(experiment_dataset_id_str)
+                        linked_tables = []
+                        if column.source == SourceChoices.EVALUATION_REASON.value:
+                            # The runner links a reason column to its table.
+                            linked_tables = list(
+                                column.experiments_dataset_column.values_list(
+                                    "id", flat=True
+                                )[:2]
+                            )
+                        if len(linked_tables) == 1:
+                            experiment_dataset_id = linked_tables[0]
+                        elif (
+                            len(experiment_dataset_id_str) == 73
+                            and experiment_dataset_id_str[36] == "-"
+                        ):
+                            # "<table>-<output>": the table id comes first.
+                            uuid.UUID(experiment_dataset_id_str[37:])
+                            experiment_dataset_id = uuid.UUID(
+                                experiment_dataset_id_str[:36]
+                            )
+                        else:
+                            experiment_dataset_id = uuid.UUID(experiment_dataset_id_str)
                         # Check if experiment_dataset is complete
                         check_and_update_experiment_dataset_status(
                             experiment_dataset_id
@@ -248,8 +317,6 @@ def _trigger_row_wise_evaluations(
 
         if not eval_templates:
             return
-
-        dataset = column.dataset
 
         # Process each eval template
         for eval_template in eval_templates:
@@ -328,21 +395,54 @@ def check_and_update_experiment_dataset_status(experiment_dataset_id: uuid.UUID)
         if not experiment_dataset:
             return False
 
+        from model_hub.models.develop_dataset import Dataset
+        from tfc.utils.tenant_scope import workspace_scope_q
+
         current_status = experiment_dataset.status
+        experiment = experiment_dataset.experiment
+        if experiment is None:
+            # Legacy tables use the M2M. An ambiguous owner cannot define a scope.
+            owners = list(experiment_dataset.experiments_datasets_created.all()[:2])
+            if len(owners) != 1:
+                return False
+            experiment = owners[0]
+        if (
+            experiment.deleted
+            or experiment.dataset.deleted
+            or not experiment.dataset.organization_id
+        ):
+            return False
+        dataset = Dataset.objects.filter(
+            workspace_scope_q(experiment.dataset.workspace),
+            organization_id=experiment.dataset.organization_id,
+            id=experiment.snapshot_dataset_id or experiment.dataset_id,
+        ).first()
+        if dataset is None:
+            return False
+        if (experiment_dataset.legacy_prompt_config or {}).get("target_type") == "http":
+            execution = (
+                experiment_dataset.legacy_prompt_config.get("_http_execution") or {}
+            )
+            if (
+                experiment.status == StatusType.CANCELLED.value
+                or execution.get("phase") != "finished"
+            ):
+                return False
+        columns = Column.objects.filter(dataset=dataset, deleted=False)
 
-        # Get result columns (source_id = experiment_dataset.id)
+        # Result and evaluation identifiers are meaningful only in this
+        # experiment's snapshot (or its own dataset when it has no snapshot).
         result_column_ids = list(
-            Column.objects.filter(
-                source_id=str(experiment_dataset_id), deleted=False
-            ).values_list("id", flat=True)
+            columns.filter(source_id=str(experiment_dataset_id)).values_list(
+                "id", flat=True
+            )
         )
-
-        # CRITICAL FIX: Also get evaluation columns for this experiment_dataset
-        # Eval columns have source_id like "{experiment_dataset.id}-sourceid-{eval_metric_id}"
+        # Evaluation columns: "<table>-<output>-sourceid-<metric>", or
+        # "<table>-sourceid-<metric>" for earlier tables and tag columns.
         eval_column_ids = list(
-            Column.objects.filter(
-                source_id__startswith=f"{experiment_dataset_id}-sourceid-",
-                deleted=False,
+            columns.filter(
+                source_id__startswith=f"{experiment_dataset_id}-",
+                source_id__contains="-sourceid-",
             ).values_list("id", flat=True)
         )
 
@@ -444,6 +544,12 @@ def check_and_update_experiment_status(experiment_id: uuid.UUID):
             return False
 
         current_status = experiment.status
+        if current_status == StatusType.CANCELLED.value:
+            return False
+        from model_hub.services.http_experiment_source import http_sources_finished
+
+        if not http_sources_finished(experiment):
+            return False  # No empty-column/unscheduled-HTTP success.
 
         # Already completed - nothing to do
         if current_status == StatusType.COMPLETED.value:
@@ -716,6 +822,14 @@ class ExperimentRunner:
         self.experiment = None
         self.dataset = None
         self.cancel_event = cancel_event
+
+    def process_http_row(self, *, source_id, row_id, admission_id):
+        """Execute exactly one scoped immutable HTTP snapshot row."""
+        from model_hub.services.http_experiment_source import run_http_snapshot_row
+
+        return run_http_snapshot_row(
+            str(self.experiment_id), source_id, row_id, admission_id
+        )
 
     def load_experiment(self):
         """Load experiment and related dataset (uses snapshot_dataset for V2)"""
@@ -1036,7 +1150,10 @@ class ExperimentRunner:
                 graph_version=eac.graph_version,
                 deleted=False,
             )
-            .filter(Q(node_template__name="llm_prompt") | Q(type=NodeType.SUBGRAPH))
+            .filter(
+                Q(node_template__name__in=("llm_prompt", "deterministic_text"))
+                | Q(type=NodeType.SUBGRAPH)
+            )
             .select_related("node_template")
         )
 
@@ -1273,25 +1390,21 @@ class ExperimentRunner:
 
         try:
             close_old_connections()
-            unsupported_exception = False
-            tools_config = []
-            if model_config.get("tools"):
-                tools = Tools.objects.filter(id__in=model_config.get("tools")).all()
-                for tool in tools:
-                    tools_config.append(tool.as_openai_tool())
+            tools_config = experiment_tools(
+                model_config.get("tools"), self.experiment.dataset
+            )
 
-            rf = model_config.get("response_format")
-            if rf and not isinstance(rf, dict):
-                try:
-                    uuid.UUID(str(rf))
-                    rf = UserResponseSchema.objects.get(id=rf)
-                    rf = rf.schema
-                except Exception:
-                    pass
+            rf = _experiment_response_format(
+                model_config.get("response_format"), self.experiment.dataset
+            )
 
             try:
                 messages = populate_placeholders(
-                    messages, self.dataset.id, row.id, column.id, model_name=model,
+                    messages,
+                    self.dataset.id,
+                    row.id,
+                    column.id,
+                    model_name=model,
                     template_format=model_config.get("template_format"),
                 )
                 if output_format != "audio":
@@ -1299,7 +1412,6 @@ class ExperimentRunner:
                 # logger.info(f"messages: {messages}")
 
             except ValueError as e:
-                unsupported_exception = True
                 raise e
 
             run_prompt = RunPrompt(
@@ -1490,6 +1602,10 @@ class ExperimentRunner:
     def run(self):
         """Main method to run the experiment - spawns Celery tasks"""
         self.load_experiment()
+        from model_hub.services.http_experiment_source import http_source_ids
+
+        if http_source_ids(self.experiment):
+            raise ValueError("HTTP sources require the admitted V2 HTTP workflow.")
         self._cleanup_incomplete_columns()
         self.experiment.status = StatusType.RUNNING.value
         self.experiment.save()
@@ -1530,6 +1646,1361 @@ class ExperimentRunner:
 
 
 # Standalone functions for Celery tasks
+def _native_dispatch(
+    experiment_id,
+    context,
+    *,
+    dataset_id=None,
+    column_id=None,
+    row_id=None,
+    full_plan=False,
+):
+    """Resolve only the admitted native context; no latest-run guessing.
+
+    The persisted execution plan is re-read at every entry. A row entry must be
+    one of that plan's rows; setup and acknowledgement (full_plan) additionally
+    re-derive the plan target from the canonical bound run.
+    """
+    from django.db import transaction
+
+    from model_hub.services.experiment_run_writes import RunWriteError, _digest
+    from model_hub.services.experiment_submit import validate_execution_plan
+    from model_hub.services.native_run_recording import _bound_run
+    from tfc.routers import force_primary
+
+    with force_primary(), transaction.atomic():
+        experiment = ExperimentsTable.no_workspace_objects.select_related(
+            "dataset"
+        ).get(
+            pk=experiment_id,
+            deleted=False,
+        )
+        if not isinstance(context, dict) or not context.get("run_id"):
+            raise RunWriteError("native dispatch context is missing")
+        dataset, run, binding = _bound_run(experiment.dataset, context["run_id"])
+        if (
+            str(binding.snapshot.experiment_id) != str(experiment_id)
+            or str(binding.execution_id) != context.get("execution_id")
+            or str(binding.native_config_id) != context.get("config_id")
+            or (
+                dataset_id is not None
+                and str(binding.snapshot.snapshot_dataset_id) != str(dataset_id)
+            )
+            or (
+                column_id is not None
+                and str(binding.output_column_id) != str(column_id)
+            )
+            or (run.metadata or {}).get("native_dispatch_hash") != _digest(context)
+        ):
+            raise RunWriteError("native dispatch does not match the admitted execution")
+        validate_execution_plan(
+            experiment, context, run, binding, row_id=row_id, full=full_plan
+        )
+        return dataset, run, binding
+
+
+_NATIVE_GRAPH_NO_ROW = object()
+
+
+def _native_graph_dispatch(
+    experiment_id, dataset_id, config_id, context, *, row_id=_NATIVE_GRAPH_NO_ROW
+):
+    """Validate the full graph target before graph/Cell/attempt writes."""
+    from model_hub.services.experiment_run_writes import RunWriteError, _digest
+    from model_hub.services.experiment_submit import native_graph_plan
+    from model_hub.services.experiment_target_admission import (
+        ensure_agent_worker_admitted,
+    )
+    from model_hub.services.native_run_binding import native_workspace
+
+    dataset, run, binding = _native_dispatch(
+        experiment_id,
+        context,
+        dataset_id=dataset_id,
+        row_id=None if row_id is _NATIVE_GRAPH_NO_ROW else row_id,
+        full_plan=True,
+    )
+    if (
+        run.task_kind != "graph"
+        or context.get("execution_mode") != "graph"
+        or str(binding.native_config_id) != str(config_id)
+    ):
+        raise RunWriteError("native graph configuration does not match dispatch")
+    native = ensure_agent_worker_admitted(
+        experiment_id=experiment_id,
+        dataset_id=dataset_id,
+        experiment_agent_config_id=config_id,
+        graph_version_id=str(run.agent_version_id),
+        **({} if row_id is _NATIVE_GRAPH_NO_ROW else {"row_id": row_id}),
+    )
+    identity = run.metadata["native_identity"]
+    plan = identity.get("graph_plan")
+    if not plan:
+        raise RunWriteError("native graph definition is not pinned")
+    scope = native_workspace(dataset, identity.get("authorization_workspace_id"))
+    if native_graph_plan(native, binding.snapshot, workspace=scope) != plan or _digest(
+        run.experiment.run_policy or {}
+    ) != identity.get("policy_hash"):
+        raise RunWriteError(
+            "native graph definition or execution policy changed after admission"
+        )
+    return dataset, run, binding, plan
+
+
+def _prepare_native_graph_row(experiment_id, dataset_id, config_id, row_id, context):
+    """Retry-stable graph identity and pinned inputs; no live Cell read.
+
+    The child uses this exact identity and the recorder validates it again before
+    any effect. Completed attempts replay without allocating another graph.
+    """
+    from copy import deepcopy
+
+    from django.db import transaction
+
+    from agent_playground.models import GraphExecution
+    from agent_playground.models.choices import GraphExecutionStatus
+    from model_hub.services.experiment_row_budget import bind_graph_budget
+    from model_hub.services.experiment_run_writes import RunWriteError
+    from model_hub.services.native_run_recording import start_attempt
+    from tfc.routers import force_primary
+
+    with force_primary(), transaction.atomic():
+        dataset, run, binding, _ = _native_graph_dispatch(
+            experiment_id, dataset_id, config_id, context, row_id=row_id
+        )
+        if run.status in {"draft", "cancelled"} or is_experiment_cancelled(
+            experiment_id
+        ):
+            raise RunWriteError("native graph execution is not admitted or was stopped")
+        item = start_attempt(
+            dataset=dataset,
+            run_id=run.id,
+            snapshot_row_id=row_id,
+            attempt_key=f"native:{binding.execution_id}:{row_id}:1",
+        )
+        if item.status in {"completed", "failed", "skipped"}:
+            return {
+                "row_id": str(row_id),
+                "graph_execution_id": "",
+                "input_payload": {},
+                "status": "TERMINAL",
+                "error": None
+                if item.status == "completed"
+                else "Native graph attempt failed",
+            }
+        payload = {
+            column["name"]: deepcopy(item.input["values"].get(column["source_id"]))
+            for column in context["columns"]
+        }
+        execution_id = uuid.uuid5(
+            uuid.NAMESPACE_URL, f"futureagi:native-graph:{run.id}:{item.example_id}:1"
+        )
+        execution, created = GraphExecution.no_workspace_objects.get_or_create(
+            pk=execution_id,
+            defaults={
+                "graph_version_id": run.agent_version_id,
+                "status": GraphExecutionStatus.PENDING,
+                "input_payload": payload,
+            },
+        )
+        if (
+            execution.deleted
+            or execution.graph_version_id != run.agent_version_id
+            or execution.parent_node_execution_id is not None
+            or execution.input_payload != payload
+        ):
+            raise RunWriteError(
+                "native graph allocation conflicts with its immutable identity"
+            )
+        if created:
+            bind_graph_budget(
+                experiment_id, row_id, str(binding.native_config_id), str(execution_id)
+            )
+        return {
+            "row_id": str(row_id),
+            "graph_execution_id": str(execution_id),
+            "input_payload": payload,
+            "status": "READY",
+        }
+
+
+class _NativeGraphRecorder:
+    """Durable, plan-fenced execution of one graph row; never infer results from Cells.
+
+    Atomic-node effects are at-most-once across uncertain delivery: a durable
+    RUNNING checkpoint without a result is an interrupted outcome, not permission
+    to invoke a paid provider again. Modules resume their stable child identity.
+    Every write rechecks the admission and a delivery fence, including eval writes.
+    """
+
+    def __init__(self, experiment_id, dataset_id, row_id, context):
+        self.experiment_id, self.dataset_id, self.row_id = (
+            experiment_id,
+            dataset_id,
+            row_id,
+        )
+        self.context, self.owner = context, None
+        self.key = f"native:{context['execution_id']}:{row_id}:1"
+
+    def locked(self):
+        from contextlib import contextmanager
+        from copy import deepcopy
+
+        from django.db import transaction
+
+        from model_hub.services.experiment_run_writes import RunWriteError
+        from model_hub.services.native_run_recording import start_attempt
+        from tfc.routers import force_primary
+
+        @contextmanager
+        def lock():
+            with force_primary(), transaction.atomic():
+                dataset, run, binding, plan = _native_graph_dispatch(
+                    self.experiment_id,
+                    self.dataset_id,
+                    self.context["config_id"],
+                    self.context,
+                    row_id=self.row_id,
+                )
+                if run.status in {"draft", "cancelled"} or is_experiment_cancelled(
+                    run.experiment_id
+                ):
+                    raise RunWriteError("Native graph was not admitted or was stopped")
+                item = start_attempt(
+                    dataset=dataset,
+                    run_id=run.id,
+                    snapshot_row_id=self.row_id,
+                    attempt_key=self.key,
+                )
+                state = deepcopy((item.metadata or {}).get("native_graph", {}))
+                expected = {
+                    "plan_id": self.context["plan_id"],
+                    "plan_hash": self.context["plan_hash"],
+                    "run_id": str(run.id),
+                    "example_id": str(item.example_id),
+                    "trial_number": 1,
+                }
+                if state and (
+                    not isinstance(state, dict)
+                    or any(state.get(k) != v for k, v in expected.items())
+                ):
+                    raise RunWriteError(
+                        "Native graph checkpoint does not match its canonical identity"
+                    )
+                if self.owner is not None and (
+                    state.get("owner") != self.owner
+                    or item.status in {"completed", "failed", "skipped"}
+                ):
+                    raise RunWriteError(
+                        "Native graph delivery was superseded or sealed"
+                    )
+                self.dataset, self.run, self.binding, self.plan = (
+                    dataset,
+                    run,
+                    binding,
+                    plan,
+                )
+                self.item, self.state = item, state
+                yield
+
+        return lock()
+
+    def save(self):
+        self.item.metadata = {**self.item.metadata, "native_graph": self.state}
+        self.item.save(update_fields=["metadata", "updated_at"])
+
+    def guard(self):
+        from model_hub.services.experiment_run_writes import RunWriteError
+
+        with self.locked():
+            if self.item.status in {"completed", "failed", "skipped"}:
+                raise RunWriteError("Native graph attempt is already terminal")
+
+    def begin(self):
+        with self.locked():
+            if self.item.status in {"completed", "failed", "skipped"}:
+                return False
+            self.owner = str(uuid.uuid4())
+            self.state = {
+                **self.state,
+                "owner": self.owner,
+                "plan_id": self.context["plan_id"],
+                "plan_hash": self.context["plan_hash"],
+                "run_id": str(self.run.id),
+                "example_id": str(self.item.example_id),
+                "trial_number": 1,
+                "graph_execution_id": str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"futureagi:native-graph:{self.run.id}:{self.item.example_id}:1",
+                    )
+                ),
+            }
+            self.state.setdefault("node_results", {})
+            self.state.setdefault("child_results", {})
+            self.state.setdefault("evaluator_results", {})
+            self.save()
+            return True
+
+    def graph_state(self, execution_id):
+        if str(execution_id) == self.state["graph_execution_id"]:
+            return self.state
+        return self.state["child_results"].setdefault(
+            str(execution_id), {"node_results": {}}
+        )
+
+    def execute_graph(self, execution_id, version_id, payload, parent=None):
+        from django.utils import timezone
+
+        from agent_playground.models import GraphExecution
+        from agent_playground.services.engine import (
+            GraphAnalyzer,
+            collect_graph_outputs,
+            inject_graph_inputs,
+        )
+        from model_hub.services.experiment_run_writes import RunWriteError
+
+        with self.locked():
+            if str(version_id) not in self.plan["definition_hashes"]:
+                raise RunWriteError(
+                    "Graph child is outside the pinned definition closure"
+                )
+            execution, _ = GraphExecution.no_workspace_objects.get_or_create(
+                pk=execution_id,
+                defaults={
+                    "graph_version_id": version_id,
+                    "parent_node_execution": parent,
+                    "input_payload": payload,
+                    "status": "pending",
+                },
+            )
+            if (
+                execution.deleted
+                or str(execution.graph_version_id) != str(version_id)
+                or execution.parent_node_execution_id != getattr(parent, "pk", None)
+                or execution.input_payload != payload
+            ):
+                raise RunWriteError("Native graph execution identity conflicts")
+            state = self.graph_state(execution_id)
+            if "result" in state:
+                return state["result"]
+            topology = GraphAnalyzer.analyze(uuid.UUID(str(version_id)))
+            if not state.get("injected"):
+                inject_graph_inputs(
+                    graph_execution_id=execution.pk,
+                    topology=topology,
+                    input_payload=payload,
+                )
+                execution.started_at, execution.status = timezone.now(), "running"
+                execution.save(update_fields=["started_at", "status"])
+                state["injected"] = True
+                self.save()
+        for node_id in topology.topological_order:
+            self.execute_node(execution_id, topology, node_id)
+        with self.locked():
+            state = self.graph_state(execution_id)
+            if set(state["node_results"]) != {str(n) for n in topology.nodes}:
+                raise RunWriteError("Native graph node census is incomplete")
+            failed = any(
+                n["status"] != "SUCCESS" for n in state["node_results"].values()
+            )
+            result = {
+                "graph_execution_id": str(execution_id),
+                "status": "FAILED" if failed else "SUCCESS",
+                "output_payload": collect_graph_outputs(
+                    graph_execution_id=execution.pk, topology=topology
+                ),
+                "error": "One or more graph nodes failed" if failed else None,
+            }
+            state["result"] = result
+            GraphExecution.no_workspace_objects.filter(pk=execution.pk).update(
+                status=result["status"].lower(),
+                output_payload=result["output_payload"],
+                error_message=result["error"],
+                completed_at=timezone.now(),
+            )
+            self.save()
+            return result
+
+    def save_prompt_messages(self, execution_id, node_id, node_execution_id, messages):
+        """Checkpoint the actual runner-rendered prompt before its paid effect."""
+        from copy import deepcopy
+
+        from model_hub.services.experiment_run_writes import RunWriteError
+
+        with self.locked():
+            node = self.graph_state(execution_id)["node_results"].get(str(node_id), {})
+            if (
+                node.get("status") != "RUNNING"
+                or node.get("node_execution_id") != str(node_execution_id)
+                or node.get("graph_execution_id") != str(execution_id)
+                or not isinstance(messages, list)
+                or ("prompt_messages" in node and node["prompt_messages"] != messages)
+            ):
+                raise RunWriteError(
+                    "Native graph prompt evidence does not match its node execution"
+                )
+            node["prompt_messages"] = deepcopy(messages)
+            self.save()
+
+    def execute_node(self, execution_id, topology, node_id):
+        from django.db import DatabaseError
+        from django.utils import timezone
+        from opentelemetry import trace
+
+        from agent_playground.models import NodeExecution
+        from agent_playground.services.engine import (
+            collect_node_inputs,
+            get_runner,
+            route_node_outputs,
+            store_node_inputs,
+        )
+        from agent_playground.services.engine.readiness import check_node_readiness
+        from model_hub.services.experiment_run_writes import RunWriteError
+        from tfc.temporal.experiments.provider_policy import run_graph_node
+
+        node = topology.nodes[node_id]
+        with self.locked():
+            results = self.graph_state(execution_id)["node_results"]
+            previous = results.get(str(node_id))
+            if previous and previous["status"] in {"SUCCESS", "FAILED", "SKIPPED"}:
+                return previous
+            # A module has no paid effect of its own; it can resume its children.
+            interrupted = bool(previous and not node.ref_graph_version_id)
+            readiness = check_node_readiness(
+                node_id=node_id,
+                topology=topology,
+                graph_execution_id=uuid.UUID(str(execution_id)),
+            )
+            inputs = collect_node_inputs(
+                node_id=node_id,
+                topology=topology,
+                graph_execution_id=uuid.UUID(str(execution_id)),
+            )
+            execution, _ = NodeExecution.no_workspace_objects.get_or_create(
+                graph_execution_id=execution_id, node_id=node_id, deleted=False
+            )
+            execution.status, execution.started_at = (
+                "running",
+                execution.started_at or timezone.now(),
+            )
+            execution.save(update_fields=["status", "started_at"])
+            store_node_inputs(
+                node_id=node_id,
+                node_execution=execution,
+                topology=topology,
+                inputs=inputs,
+            )
+            results[str(node_id)] = {
+                "status": "RUNNING",
+                "outputs": {},
+                "graph_execution_id": str(execution_id),
+                "node_execution_id": str(execution.id),
+            }
+            self.save()
+        outputs, error = {}, None
+        if interrupted:
+            status, error = (
+                "FAILED",
+                "Interrupted node effect; automatic provider replay refused",
+            )
+        elif not readiness.is_ready and not previous:
+            status, error = "SKIPPED", "Upstream input is unavailable or invalid"
+        else:
+            self.guard()
+            if node.ref_graph_version_id:
+                # Persistence failures in recursive execution must escape, never
+                # be disguised as an ordinary failed provider response.
+                result, outputs = self.execute_module(
+                    execution_id, topology, node, execution, inputs
+                )
+                status, error = result["status"], result["error"]
+            else:
+                try:
+                    with trace.get_tracer(__name__).start_as_current_span(
+                        "native.graph.node",
+                        attributes={
+                            "fi.graph.execution_id": str(execution_id),
+                            "fi.graph.node_id": str(node_id),
+                        },
+                    ):
+                        runner = get_runner(
+                            node.node_template.name if node.node_template_id else ""
+                        )
+                        outputs = run_graph_node(
+                            runner,
+                            node.config or {},
+                            inputs,
+                            {
+                                "organization_id": str(self.dataset.organization_id),
+                                "workspace_id": str(
+                                    node.graph_version.graph.workspace_id
+                                )
+                                if node.graph_version.graph.workspace_id
+                                else None,
+                                "node_id": str(node_id),
+                                "_native_prompt_evidence": lambda messages: (
+                                    self.save_prompt_messages(
+                                        execution_id, node_id, execution.id, messages
+                                    )
+                                ),
+                            },
+                            str(execution_id),
+                        )
+                    status = "SUCCESS"
+                except (DatabaseError, RunWriteError):
+                    raise
+                except Exception:
+                    status, error = "FAILED", "Native graph node execution failed"
+        if not node.ref_graph_version_id and not interrupted and status != "SKIPPED":
+            self.guard()
+            from tfc.temporal.agent_playground.activities import _call_sinks_safe
+
+            _call_sinks_safe(
+                (node.config or {}).get("_output_sinks", []),
+                node_id=str(node_id),
+                node_name=node.name,
+                template_name=node.node_template.name if node.node_template_id else "",
+                inputs=inputs,
+                outputs=outputs,
+                status=status,
+                metadata={
+                    "graph_execution_id": str(execution_id),
+                    **({"error": error} if error else {}),
+                },
+            )
+        with self.locked():
+            if status == "SUCCESS":
+                routed = route_node_outputs(
+                    node_id=node_id,
+                    node_execution=execution,
+                    topology=topology,
+                    outputs=outputs,
+                )
+                if not routed.all_valid:
+                    status, error = (
+                        "FAILED",
+                        "Native graph output schema validation failed",
+                    )
+            result = {
+                "status": status,
+                "outputs": outputs,
+                "error": error,
+                "node_execution_id": str(execution.id),
+                "graph_execution_id": str(execution_id),
+            }
+            checkpoint = self.graph_state(execution_id)["node_results"][str(node_id)]
+            if "prompt_messages" in checkpoint:
+                result["prompt_messages"] = checkpoint["prompt_messages"]
+            self.graph_state(execution_id)["node_results"][str(node_id)] = result
+            execution.status, execution.error_message, execution.completed_at = (
+                status.lower(),
+                error,
+                timezone.now(),
+            )
+            execution.save(update_fields=["status", "error_message", "completed_at"])
+            self.save()
+            return result
+
+    def execute_module(self, execution_id, topology, node, execution, inputs):
+        from agent_playground.services.engine import GraphAnalyzer
+        from model_hub.services.experiment_run_writes import RunWriteError
+
+        child_topology = GraphAnalyzer.analyze(node.ref_graph_version_id)
+        payload = {}
+        for port in topology.node_input_ports.get(node.id, []):
+            if port.routing_key not in inputs:
+                continue
+            target = (
+                child_topology.ports.get(port.ref_port_id) if port.ref_port_id else port
+            )
+            if target is None:
+                raise RunWriteError(
+                    "Native module input refers outside the child definition"
+                )
+            payload[target.routing_key] = inputs[port.routing_key]
+        child_id = uuid.uuid5(uuid.UUID(str(execution_id)), str(node.id))
+        result = self.execute_graph(
+            child_id, node.ref_graph_version_id, payload, parent=execution
+        )
+        with self.locked():
+            child = self.graph_state(child_id)
+            outputs = {}
+            for port in topology.node_output_ports.get(node.id, []):
+                if port.ref_port_id:
+                    target = child_topology.ports.get(port.ref_port_id)
+                    if target is None:
+                        raise RunWriteError(
+                            "Native module output refers outside the child definition"
+                        )
+                    values = (
+                        child["node_results"]
+                        .get(str(target.node_id), {})
+                        .get("outputs", {})
+                    )
+                    if target.routing_key in values:
+                        outputs[port.routing_key] = values[target.routing_key]
+                elif port.routing_key in result["output_payload"]:
+                    outputs[port.routing_key] = result["output_payload"][
+                        port.routing_key
+                    ]
+            return result, outputs
+
+    def save_evaluation(self, key, pair, outcome):
+        # Called inside the evaluator's cell-write transaction. The result/reason
+        # and this actual outcome either commit together or all roll back.
+        with self.locked():
+            self.state["evaluator_results"][key] = {**outcome, **pair}
+            self.save()
+
+    def evaluate(self, graph_failed):
+        from django.db import DatabaseError
+
+        from model_hub.services.experiment_run_writes import RunWriteError
+        from model_hub.views.eval_runner import NativeEvaluationRunner
+
+        for column_id in self.plan["terminal_column_ids"]:
+            node_id = next(
+                n for n, c in self.plan["node_column_mapping"].items() if c == column_id
+            )
+            for pin in self.run.evaluator_versions:
+                key = f"{column_id}:{pin['metric_id']}"
+                with self.locked():
+                    saved = self.state["evaluator_results"].get(key)
+                    if saved and saved.get("status") != "RUNNING":
+                        continue
+                    pair = {
+                        "metric_id": pin["metric_id"],
+                        "evaluator_version_id": pin["evaluator_version_id"],
+                        "output_column_id": column_id,
+                    }
+                    evaluator = NativeEvaluationRunner(
+                        dataset=self.dataset,
+                        run=self.run,
+                        binding=self.binding,
+                        pin=pin,
+                        output_column_id=column_id,
+                        native_guard=self.locked,
+                        native_outcome=lambda outcome, key=key, pair=pair: (
+                            self.save_evaluation(key, pair, outcome)
+                        ),
+                    )
+                    node = self.state["node_results"].get(node_id, {})
+                    output = next(iter(node.get("outputs", {}).values()), "")
+                    # Module/deterministic terminals have no direct prompt.
+                    # None means unavailable, unlike an actually executed [].
+                    messages = node.get("prompt_messages")
+                    values = self.item.input["values"]
+                    self.state["evaluator_results"][key] = {"status": "RUNNING"}
+                    self.save()
+                pair = {
+                    "metric_id": pin["metric_id"],
+                    "evaluator_version_id": pin["evaluator_version_id"],
+                    "output_column_id": column_id,
+                }
+                if graph_failed:
+                    evaluator.record_upstream_failure(self.row_id)
+                    from model_hub.services.experiment_utils import is_user_eval_stopped
+
+                    stopped = is_user_eval_stopped(pin["metric_id"])
+                    zero = (
+                        not stopped
+                        and (self.run.experiment.run_policy or {}).get("error_policy")
+                        == "zero"
+                    )
+                    outcome = {
+                        **pair,
+                        "status": "assessed" if zero else "not_assessed",
+                        "reason": "evaluator_stopped"
+                        if stopped
+                        else "upstream_error_policy_zero"
+                        if zero
+                        else "execution_failed",
+                        **({"value": 0, "provenance": "error_policy"} if zero else {}),
+                    }
+                elif saved:
+                    # Never bill twice after an uncertain evaluator activity.
+                    outcome = {
+                        **evaluator.record_execution_failure(self.row_id),
+                        **pair,
+                    }
+                else:
+                    try:
+                        outcome = {
+                            **evaluator.evaluate_native_row(
+                                self.row_id,
+                                values=values,
+                                columns=self.context["columns"],
+                                output=output,
+                                messages=messages,
+                            ),
+                            **pair,
+                        }
+                    except (RunWriteError, DatabaseError):
+                        raise
+                    except Exception:
+                        outcome = {
+                            **evaluator.record_execution_failure(self.row_id),
+                            **pair,
+                        }
+                with self.locked():
+                    self.state["evaluator_results"][key] = outcome
+                    self.save()
+
+    def seal(self, refusal=False):
+        from django.utils import timezone
+
+        from agent_playground.models import GraphExecution
+        from model_hub.services.experiment_run_writes import RunWriteError
+        from model_hub.services.native_run_recording import record_attempt
+
+        with self.locked():
+            if self.item.status in {"completed", "failed", "skipped"}:
+                return self.result()
+            result = self.state.get("result")
+            if result is None:
+                if not refusal:
+                    raise RunWriteError(
+                        "Native graph execution has no recorded child result"
+                    )
+                result = {
+                    "graph_execution_id": self.state["graph_execution_id"],
+                    "status": "FAILED",
+                    "output_payload": {},
+                    "error": "Graph preparation or child execution refused",
+                }
+                self.state["result"] = result
+                # A refusal owes an explicit non-execution/interruption record
+                # for every planned root node; never leave a sealed RUNNING node.
+                from agent_playground.models import NodeExecution
+
+                for node_id in self.plan["node_ids"]:
+                    prior = self.state["node_results"].get(node_id, {})
+                    if prior.get("status") not in {"SUCCESS", "FAILED", "SKIPPED"}:
+                        self.state["node_results"][node_id] = {
+                            **prior,
+                            "status": "FAILED" if prior else "SKIPPED",
+                            "outputs": {},
+                            "error": "Execution interrupted"
+                            if prior
+                            else "Child was not executed",
+                        }
+                for graph_id, graph in [
+                    (self.state["graph_execution_id"], self.state),
+                    *self.state["child_results"].items(),
+                ]:
+                    for node_id, node in graph["node_results"].items():
+                        if node.get("status") == "RUNNING":
+                            node.update(
+                                status="FAILED",
+                                error="Execution interrupted",
+                                outputs={},
+                            )
+                        if node["status"] != "SUCCESS":
+                            NodeExecution.no_workspace_objects.filter(
+                                graph_execution_id=graph_id,
+                                node_id=node_id,
+                                deleted=False,
+                                status__in=["running", "pending"],
+                            ).update(
+                                status=node["status"].lower(),
+                                error_message=node.get("error"),
+                                completed_at=timezone.now(),
+                            )
+                    if (
+                        graph_id != self.state["graph_execution_id"]
+                        and "result" not in graph
+                    ):
+                        graph["result"] = {
+                            "graph_execution_id": graph_id,
+                            "status": "FAILED",
+                            "output_payload": {},
+                            "error": "Child execution interrupted",
+                        }
+                        GraphExecution.no_workspace_objects.filter(pk=graph_id).update(
+                            status="failed",
+                            completed_at=timezone.now(),
+                            error_message="Child execution interrupted",
+                        )
+                self.save()
+        failed = result["status"] != "SUCCESS"
+        self.evaluate(failed)
+        with self.locked():
+            refs = []
+            for pin in self.run.evaluator_versions:
+                outcomes = [
+                    self.state["evaluator_results"][f"{column}:{pin['metric_id']}"]
+                    for column in self.plan["terminal_column_ids"]
+                ]
+                if any(outcome["status"] == "RUNNING" for outcome in outcomes):
+                    raise RunWriteError(
+                        "Native graph terminal evaluator census is incomplete"
+                    )
+                # Do not invent an aggregate across distinct output branches.
+                refs.append(
+                    outcomes[0]
+                    if len(outcomes) == 1
+                    else {
+                        "metric_id": pin["metric_id"],
+                        "evaluator_version_id": pin["evaluator_version_id"],
+                        "status": "not_assessed",
+                        "reason": "per_terminal_outcomes",
+                        "terminal_results": outcomes,
+                    }
+                )
+            for node_id, column_id in self.plan["node_column_mapping"].items():
+                node = self.state["node_results"].get(node_id, {})
+                success = node.get("status") == "SUCCESS"
+                value = (
+                    next(iter(node.get("outputs", {}).values()), "")
+                    if success
+                    else "Native graph execution failed"
+                )
+                if not isinstance(value, str):
+                    value = json.dumps(value)
+                Cell.no_workspace_objects.update_or_create(
+                    dataset_id=self.dataset_id,
+                    row_id=self.row_id,
+                    column_id=column_id,
+                    defaults={
+                        "value": value,
+                        "deleted": False,
+                        "status": CellStatus.PASS.value
+                        if success
+                        else CellStatus.ERROR.value,
+                        "value_infos": json.dumps(
+                            {
+                                "graph_execution_id": self.state["graph_execution_id"],
+                                **(
+                                    {}
+                                    if success
+                                    else {"reason": "Native graph execution failed"}
+                                ),
+                            }
+                        ),
+                    },
+                )
+            expected_input = {
+                column["name"]: self.item.input["values"].get(column["source_id"])
+                for column in self.context["columns"]
+            }
+            allocation = GraphExecution.no_workspace_objects.filter(
+                pk=self.state["graph_execution_id"],
+                graph_version_id=self.run.agent_version_id,
+                parent_node_execution__isnull=True,
+                input_payload=expected_input,
+                deleted=False,
+            )
+            self.state["graph_execution_allocated"] = allocation.exists()
+            self.state["child_execution_observed"] = bool(self.state.get("injected"))
+            if not failed and not self.state["graph_execution_allocated"]:
+                raise RunWriteError(
+                    "Successful graph receipt requires its actual matching allocation"
+                )
+            self.state["sealed"] = True
+            self.save()
+            # Same transaction as every output cell: persistence cannot leave an
+            # admissible receipt after an output write failed. Evaluator writes
+            # are durable checkpoints and are never reset or paid again on retry.
+            record_attempt(
+                dataset=self.dataset,
+                run_id=self.run.id,
+                snapshot_row_id=self.row_id,
+                attempt_key=self.key,
+                status="failed" if failed else "completed",
+                output=result["output_payload"],
+                error={"type": "GraphExecutionFailure", "message": result["error"]}
+                if failed
+                else None,
+                trace_id=self.state.get("trace_id"),
+                root_span_id=self.state.get("root_span_id"),
+                score_refs=refs,
+            )
+            allocation.update(
+                status=result["status"].lower(),
+                output_payload=result["output_payload"],
+                error_message=result["error"],
+                completed_at=timezone.now(),
+            )
+            return result
+
+    def result(self):
+        return {
+            "graph_execution_id": (self.item.metadata or {})
+            .get("native_graph", {})
+            .get("graph_execution_id", ""),
+            "status": "SUCCESS" if self.item.status == "completed" else "FAILED",
+            "output_payload": self.item.output or {},
+            "error": None
+            if self.item.status == "completed"
+            else "Native graph attempt failed",
+        }
+
+
+def _run_native_graph_row(
+    experiment_id,
+    dataset_id,
+    row_id,
+    context,
+    *,
+    graph_execution_id=None,
+    graph_version_id=None,
+    input_payload=None,
+    refusal=False,
+):
+    """Actual native graph execution root, encompassing node/evaluator effects."""
+    from opentelemetry import trace
+    from opentelemetry.context import Context
+
+    from model_hub.services.experiment_run_writes import RunWriteError
+    from model_hub.services.native_run_recording import trace_context
+
+    if not refusal:
+        # Validate untrusted child transport before even claiming an attempt.
+        from model_hub.services.native_run_recording import _example
+
+        _, checked_run, checked_binding, _ = _native_graph_dispatch(
+            experiment_id, dataset_id, context["config_id"], context, row_id=row_id
+        )
+        link = _example(checked_binding, checked_run, row_id, 1)
+        expected_id = uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"futureagi:native-graph:{checked_run.id}:{link.version_item.example_id}:1",
+        )
+        expected_input = {
+            c["name"]: link.version_item.input["values"].get(c["source_id"])
+            for c in context["columns"]
+        }
+        if (
+            str(graph_execution_id) != str(expected_id)
+            or str(graph_version_id) != str(checked_run.agent_version_id)
+            or input_payload != expected_input
+        ):
+            raise RunWriteError(
+                "Graph child transport does not match the pinned attempt"
+            )
+    recorder = _NativeGraphRecorder(experiment_id, dataset_id, row_id, context)
+    if not recorder.begin():
+        return recorder.result()
+    payload = {
+        c["name"]: recorder.item.input["values"].get(c["source_id"])
+        for c in context["columns"]
+    }
+    if not refusal and (
+        str(graph_execution_id) != recorder.state["graph_execution_id"]
+        or str(graph_version_id) != str(recorder.run.agent_version_id)
+        or input_payload != payload
+    ):
+        raise RunWriteError("Graph child transport does not match the pinned attempt")
+    parent = Context()
+    if recorder.state.get("trace_id") and recorder.state.get("root_span_id"):
+        parent = trace.set_span_in_context(
+            trace.NonRecordingSpan(
+                trace.SpanContext(
+                    trace_id=int(recorder.state["trace_id"], 16),
+                    span_id=int(recorder.state["root_span_id"], 16),
+                    is_remote=True,
+                    trace_flags=trace.TraceFlags(trace.TraceFlags.SAMPLED),
+                )
+            ),
+            parent,
+        )
+    attributes = trace_context(
+        dataset=recorder.dataset, run_id=recorder.run.id, snapshot_row_id=row_id
+    )
+    with trace.get_tracer(__name__).start_as_current_span(
+        "native.graph.refusal" if refusal else "native.graph.trial",
+        context=parent,
+        attributes=attributes,
+    ) as span:
+        with recorder.locked():
+            span_context = span.get_span_context()
+            executed_before = recorder.state.get("injected") or bool(
+                recorder.state.get("node_results")
+            )
+            if (
+                not executed_before
+                and not recorder.state.get("trace_id")
+                and span.is_recording()
+                and span_context.is_valid
+            ):
+                recorder.state.update(
+                    trace_id=format(span_context.trace_id, "032x"),
+                    root_span_id=format(span_context.span_id, "016x"),
+                )
+                recorder.save()
+        if not refusal:
+            recorder.execute_graph(
+                uuid.UUID(str(graph_execution_id)), graph_version_id, payload
+            )
+        return recorder.seal(refusal=refusal)
+
+
+def _render_native_messages(messages, values, columns, model, template_format):
+    """Reuse the existing pure message/media renderers with pinned inputs."""
+    from model_hub.utils.json_path_resolver import parse_json_safely
+    from model_hub.views.run_prompt import (
+        JsonStr,
+        process_list_content,
+        process_string_content,
+    )
+    from model_hub.views.utils.utils import sanitize_uuid_for_jinja
+
+    context, column_info = {}, {}
+    for column in columns:
+        source = column["source_id"]
+        if source not in values:
+            continue
+        raw = values[source] if values[source] is not None else ""
+        value = raw
+        if isinstance(raw, str) and raw:
+            parsed, valid = parse_json_safely(raw)
+            if valid and isinstance(parsed, dict):
+                value = JsonStr(parsed, raw)
+            elif (
+                valid
+                and isinstance(parsed, list)
+                and template_format in ("jinja", "jinja2")
+            ):
+                value = parsed
+        current = context
+        parts = column["name"].split(".")
+        for part in parts[:-1]:
+            current = current.setdefault(part, {})
+        current[parts[-1]] = value
+        # Version messages can use original UUIDs; inline remapped messages can
+        # use snapshot UUIDs. Both resolve to the same immutable source value.
+        for identifier in (source, column["snapshot_id"]):
+            context[sanitize_uuid_for_jinja(identifier)] = value
+            column_info[identifier] = {
+                "name": column["name"],
+                "data_type": column["data_type"],
+                "value": raw,
+            }
+    rendered = []
+    for message in messages:
+        content = message.get("content")
+        render = (
+            process_list_content
+            if isinstance(content, list)
+            else process_string_content
+        )
+        processed = (
+            render(
+                content, column_info, context, 0, model, template_format=template_format
+            )
+            if isinstance(content, (list, str))
+            else []
+        )
+        if not processed:
+            processed = (
+                [{"type": "text", "text": content}]
+                if isinstance(content, str)
+                else content
+            )
+        rendered.append({**message, "content": processed})
+    return rendered
+
+
+def _native_prompt_usage(value_info):
+    """Allowlist recorded telemetry; missing usage and fallback prices stay null."""
+    import math
+
+    metadata = value_info.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    usage = metadata.get("usage")
+    usage = (
+        {
+            key: value
+            for key, value in usage.items()
+            if key
+            in {
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+                "cached_input_tokens",
+            }
+            and type(value) is int
+            and value >= 0
+        }
+        if isinstance(usage, dict)
+        else {}
+    )
+    cost = metadata.get("cost")
+    # A catalog price or a custom model's saved price is a known price.
+    known = {"available_models", "custom_model"}
+    amount = (
+        cost.get("total_cost")
+        if isinstance(cost, dict) and cost.get("pricing_source") in known
+        else None
+    )
+    if type(amount) not in (int, float) or amount < 0:
+        amount = None
+    else:
+        try:
+            if not math.isfinite(amount):
+                amount = None
+        except OverflowError:
+            amount = None
+    return usage or None, amount
+
+
+def _process_native_prompt_row(row_id, column_id, dataset_id, experiment_id, context):
+    """Actual one-trial execution. Never reconstruct evidence from mutable Cells.
+
+    A provider failure is this logical trial's failure, not an invisible second
+    trial. Persistence/transport failures may retry the same receipt; terminal
+    redelivery returns the existing result without invoking the provider again.
+    """
+    import time
+
+    from django.db import transaction
+    from opentelemetry import trace
+    from opentelemetry.context import Context
+
+    from model_hub.services.experiment_run_writes import RunWriteError, _digest
+    from model_hub.services.native_run_recording import (
+        evaluation_output,
+        prompt_execution_config,
+        record_attempt,
+        start_attempt,
+        trace_context,
+    )
+    from tfc.routers import force_primary
+    from tfc.temporal.experiments.provider_policy import prompt_response
+
+    dataset, run, binding = _native_dispatch(
+        experiment_id,
+        context,
+        dataset_id=dataset_id,
+        column_id=column_id,
+        row_id=row_id,
+    )
+    if run.status == "cancelled":
+        raise RunWriteError("native execution was cancelled")
+    # Freeze/validate evaluator configuration before claiming or paying for a
+    # prompt. This is deliberately not a cancellation/read-side requirement.
+    from model_hub.views.eval_runner import NativeEvaluationRunner
+
+    evaluators = {
+        pin["metric_id"]: NativeEvaluationRunner(
+            dataset=dataset, run=run, binding=binding, pin=pin
+        )
+        for pin in run.evaluator_versions
+    }
+    eval_only = run.metadata["native_identity"].get("execution_mode") == "eval_only"
+    source = (
+        evaluation_output(dataset=dataset, run_id=run.id, snapshot_row_id=row_id)
+        if eval_only
+        else None
+    )
+    key = f"native:{binding.execution_id}:{row_id}:1"
+    item = start_attempt(
+        dataset=dataset, run_id=run.id, snapshot_row_id=row_id, attempt_key=key
+    )
+    if item.status in {"completed", "failed", "skipped"}:
+        return {"status": "COMPLETED" if item.status == "completed" else "FAILED"}
+    experiment = run.experiment
+    started = time.monotonic()
+    output, error, trace_id, root_span_id = None, None, None, None
+    value_info = {}
+    response = ""
+    messages = []
+    try:
+        config = prompt_execution_config(dataset=dataset, run_id=run.id)
+        if (
+            _digest(experiment.run_policy or {})
+            != run.metadata["native_identity"]["policy_hash"]
+        ):
+            raise RunWriteError("native execution policy changed after admission")
+        raw_messages = config["messages"]
+        if isinstance(raw_messages, dict):
+            raw_messages = raw_messages.get("messages", [])
+        configuration = config["configuration"]
+        messages = _render_native_messages(
+            raw_messages,
+            item.input["values"],
+            context["columns"],
+            config["model"],
+            configuration.get("template_format"),
+        )
+        if config["output_format"] != "audio":
+            messages = remove_empty_text_from_messages(messages)
+        if eval_only:
+            output = source["output"]
+            error = source["error"] if source["status"] != "completed" else None
+            if source["status"] != "completed" and error is None:
+                error = {
+                    "type": "SourceOutputUnavailable",
+                    "message": "Source output was not completed",
+                }
+            response = output
+        else:
+            # Same target/tool authorization and same row-budget provider path as
+            # classic execution. No provider runs while a binding transaction holds.
+            provider = RunPrompt(
+                model=config["model"],
+                messages=messages,
+                organization_id=dataset.organization_id,
+                output_format=config["output_format"],
+                temperature=configuration.get("temperature"),
+                frequency_penalty=configuration.get("frequency_penalty"),
+                presence_penalty=configuration.get("presence_penalty"),
+                max_tokens=configuration.get("max_tokens"),
+                top_p=configuration.get("top_p"),
+                response_format=_experiment_response_format(
+                    configuration.get("response_format"), dataset
+                ),
+                tool_choice=configuration.get("tool_choice"),
+                tools=experiment_tools(configuration.get("tools"), dataset),
+                run_prompt_config={**config["model_config"], **config["model_params"]},
+                workspace_id=dataset.workspace_id,
+            )
+            attributes = trace_context(
+                dataset=dataset, run_id=run.id, snapshot_row_id=row_id
+            )
+            with trace.get_tracer(__name__).start_as_current_span(
+                "native.prompt.trial",
+                context=Context(),
+                attributes=attributes,
+            ) as span:
+                span_context = span.get_span_context()
+                if span.is_recording() and span_context.is_valid:
+                    trace_id = format(span_context.trace_id, "032x")
+                    root_span_id = format(span_context.span_id, "016x")
+                response, value_info = prompt_response(
+                    provider, experiment, row_id, column_id
+                )
+            value_info = dict(value_info or {})
+            value_info["reason"] = value_info.get("data", {}).get("response")
+            output = response
+            if value_info.get("failure"):
+                error = {
+                    "type": "ProviderFailure",
+                    "message": "Native prompt provider reported failure",
+                }
+    except Exception as exc:
+        # Canonical errors are bounded and do not copy provider credentials or
+        # request payloads. The existing classic cell keeps its error shape.
+        error = {
+            "type": type(exc).__name__,
+            "message": "Native prompt execution failed",
+        }
+        response, value_info = str(exc), {"reason": str(exc)}
+    # Assemble every evaluator outcome BEFORE sealing this row. Native paths
+    # never schedule a second unreceipted classic evaluator activity.
+    score_refs = []
+    selected = (
+        run.metadata["native_identity"].get("evaluator_rows", {}).get(str(row_id))
+    )
+    for pin in run.evaluator_versions:
+        pair = {
+            "metric_id": pin["metric_id"],
+            "evaluator_version_id": pin["evaluator_version_id"],
+        }
+        if selected is not None and pin["metric_id"] not in selected:
+            score_refs.append(
+                {**pair, "status": "not_assessed", "reason": "not_selected"}
+            )
+            continue
+        if error is not None:
+            evaluators[pin["metric_id"]].record_upstream_failure(row_id)
+            if (experiment.run_policy or {}).get("error_policy") == "zero":
+                score_refs.append(
+                    {
+                        **pair,
+                        "status": "assessed",
+                        "value": 0,
+                        "reason": "upstream_error_policy_zero",
+                        "provenance": "error_policy",
+                        "explanation": "Upstream output failed; requested error policy assigns zero. Evaluator was not run.",
+                    }
+                )
+            else:
+                score_refs.append(
+                    {
+                        **pair,
+                        "status": "not_assessed",
+                        "reason": "execution_failed",
+                        "explanation": "Upstream output failed; evaluator was not run.",
+                    }
+                )
+            continue
+        _native_dispatch(
+            experiment_id,
+            context,
+            dataset_id=dataset_id,
+            column_id=column_id,
+            row_id=row_id,
+        )
+        try:
+            score_refs.append(
+                evaluators[pin["metric_id"]].evaluate_native_row(
+                    row_id,
+                    values=item.input["values"],
+                    columns=context["columns"],
+                    output=output,
+                    messages=messages,
+                )
+            )
+        except RunWriteError:
+            raise  # Identity/cancellation failures are not evaluator successes.
+        except Exception:
+            # Adapter refusals outside its preflight still owe both classic
+            # cells a terminal write before canonical evidence can be sealed.
+            # Persistence errors must escape, never become a receipt by itself.
+            score_refs.append(
+                evaluators[pin["metric_id"]].record_execution_failure(row_id)
+            )
+    latency = (time.monotonic() - started) * 1000
+    # Record the prompt provider's reported usage and known price even when
+    # evaluators are attached. Evaluator billing is separate, not a reason to
+    # discard this execution evidence or invent a combined trial total.
+    # Eval-only runs have no provider metadata and retain null usage/cost.
+    token_usage, cost = _native_prompt_usage(value_info)
+    # Persist real evidence and the ordinary output cell atomically. If either
+    # write fails, no immutable terminal receipt claims the other succeeded.
+    with force_primary(), transaction.atomic():
+        locked_dataset, current, checked = _native_dispatch(
+            experiment_id,
+            context,
+            dataset_id=dataset_id,
+            column_id=column_id,
+            row_id=row_id,
+        )
+        if current.status == "cancelled" or is_experiment_cancelled(experiment_id):
+            raise RunWriteError("native execution was cancelled before recording")
+        record_attempt(
+            dataset=locked_dataset,
+            run_id=run.id,
+            snapshot_row_id=row_id,
+            attempt_key=key,
+            status="failed" if error else "completed",
+            output=output,
+            error=error,
+            latency_ms=latency,
+            trace_id=trace_id,
+            root_span_id=root_span_id,
+            token_usage=token_usage,
+            cost=cost,
+            score_refs=score_refs,
+        )
+        if not eval_only:
+            Cell.no_workspace_objects.update_or_create(
+                dataset_id=dataset_id,
+                column_id=checked.output_column_id,
+                row_id=row_id,
+                defaults={
+                    "value_infos": json.dumps(value_info),
+                    "value": str(response),
+                    "status": CellStatus.ERROR.value
+                    if error
+                    else CellStatus.PASS.value,
+                },
+            )
+    return {"status": "FAILED" if error else "COMPLETED"}
+
+
 def _process_row_impl(
     row_id: uuid.UUID,
     column_id: uuid.UUID,
@@ -1541,43 +3012,46 @@ def _process_row_impl(
     output_format: str = None,
     run_prompt_config: dict = None,
     skip_celery_evals: bool = False,
+    native_context: dict | None = None,
 ):
     """Implementation of process_row that can be called as a standalone function"""
+    if native_context is not None:
+        return _process_native_prompt_row(
+            row_id,
+            column_id,
+            dataset_id,
+            experiment_id,
+            native_context,
+        )
+    context_ready = False
     try:
         close_old_connections()
         row = Row.objects.get(id=row_id, deleted=False)
         column = Column.objects.get(id=column_id, deleted=False)
         dataset = column.dataset
         experiment = ExperimentsTable.objects.get(id=experiment_id, deleted=False)
+        context_ready = True
 
         status = CellStatus.PASS.value
-        unsupported_exception = False
-        tools_config = []
+        tools_config = experiment_tools(model_config.get("tools"), experiment.dataset)
 
-        if model_config.get("tools"):
-            tools = Tools.objects.filter(id__in=model_config.get("tools")).all()
-            for tool in tools:
-                tools_config.append(tool.as_openai_tool())
-
-        rf = model_config.get("response_format")
-        if rf and not isinstance(rf, dict):
-            try:
-                uuid.UUID(str(rf))
-                rf = UserResponseSchema.objects.get(id=rf)
-                rf = rf.schema
-            except Exception:
-                pass
+        rf = _experiment_response_format(
+            model_config.get("response_format"), experiment.dataset
+        )
 
         try:
             messages = populate_placeholders(
-                messages, dataset_id, row_id, column_id, model_name=model,
+                messages,
+                dataset_id,
+                row_id,
+                column_id,
+                model_name=model,
                 template_format=model_config.get("template_format"),
             )
             if output_format != "audio":
                 messages = remove_empty_text_from_messages(messages)
 
         except ValueError as e:
-            unsupported_exception = True
             raise e
 
         run_prompt = RunPrompt(
@@ -1601,10 +3075,18 @@ def _process_row_impl(
             ),
         )
 
-        response, value_info = run_prompt.litellm_response()
+        from tfc.temporal.experiments.provider_policy import prompt_response
+
+        response, value_info = prompt_response(
+            run_prompt, experiment, row_id, column_id
+        )
         value_info["reason"] = value_info.get("data", {}).get("response")
 
     except Exception as e:
+        if not context_ready:
+            # No result can be persisted until every row-context lookup succeeds.
+            close_old_connections()
+            raise
         # Expected, handled validation failure (empty messages) is user
         # misconfiguration; the row is persisted as a failed cell below.
         # Downgrade only that case to warning so real failures stay errors.

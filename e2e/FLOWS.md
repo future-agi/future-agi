@@ -6,8 +6,10 @@
 
 ### AGENT-E2E-001 — Observe voice Call Logs show and filter the newest evaluation count
 
-**Goal:** Read and filter the newest completed evaluation on a voice call in Observe Call Logs, then inspect its explanation.  
-**Spec:** `flows/agents/call-log-eval-columns.spec.ts:56`  
+**Goal:** Read and filter the newest completed evaluation on a voice call in Observe Call Logs, then inspect its explanation.
+
+**Spec:** `flows/agents/call-log-eval-columns.spec.ts:56`
+
 **Tags:** —
 
 **User steps:**
@@ -32,8 +34,10 @@
 
 ### ALERT-E2E-001 — a fired alert opens the traces from that fire’s own window
 
-**Goal:** An on-call engineer opens a fired alert and lands on the traces from that fire’s own time window  
-**Spec:** `flows/alerts/view-trace-scoping.spec.ts:45`  
+**Goal:** An on-call engineer opens a fired alert and lands on the traces from that fire’s own time window
+
+**Spec:** `flows/alerts/view-trace-scoping.spec.ts:45`
+
 **Tags:** —
 
 **User steps:**
@@ -60,8 +64,10 @@
 
 ### ALERT-E2E-002 — a scoring-eval alert measures the score while a labelled eval alerts on a chosen label
 
-**Goal:** A user sets up an alert on a scoring evaluation and it measures the score itself, while a labelled evaluation still alerts on a chosen label  
-**Spec:** `flows/alerts/scoring-eval-alert.spec.ts:26`  
+**Goal:** A user sets up an alert on a scoring evaluation and it measures the score itself, while a labelled evaluation still alerts on a chosen label
+
+**Spec:** `flows/alerts/scoring-eval-alert.spec.ts:26`
+
 **Tags:** —
 
 **User steps:**
@@ -86,8 +92,10 @@
 
 ### ANNOT-E2E-001 — workspace annotation choices follow UI edits without scores
 
-**Goal:** Create a projectless annotation label and discover its current choices in a workspace filter  
-**Spec:** `flows/annotations/label-catalog.spec.ts:25`  
+**Goal:** Create a projectless annotation label and discover its current choices in a workspace filter
+
+**Spec:** `flows/annotations/label-catalog.spec.ts:25`
+
 **Tags:** —
 
 **User steps:**
@@ -105,8 +113,10 @@
 
 ### ANNOT-E2E-002 — corrected trace annotations change exact filter matches
 
-**Goal:** Submit and correct typed human trace annotations and find only traces with the current score  
-**Spec:** `flows/annotations/catalog-score-lifecycle.spec.ts:34`  
+**Goal:** Submit and correct typed human trace annotations and find only traces with the current score
+
+**Spec:** `flows/annotations/catalog-score-lifecycle.spec.ts:34`
+
 **Tags:** —
 
 **User steps:**
@@ -127,8 +137,10 @@
 
 ### ANNOT-E2E-003 — corrected span annotations change exact filter matches
 
-**Goal:** Submit and correct typed human span annotations and find only spans with the current score  
-**Spec:** `flows/annotations/catalog-score-lifecycle.spec.ts:34`  
+**Goal:** Submit and correct typed human span annotations and find only spans with the current score
+
+**Spec:** `flows/annotations/catalog-score-lifecycle.spec.ts:34`
+
 **Tags:** —
 
 **User steps:**
@@ -149,8 +161,10 @@
 
 ### ANNOT-E2E-004 — corrected session annotations match only current authorized sessions
 
-**Goal:** Submit and correct all six native session annotations, then find only sessions with current, authorized scores  
-**Spec:** `flows/annotations/session-score-lifecycle.spec.ts:42`  
+**Goal:** Submit and correct all six native session annotations, then find only sessions with current, authorized scores
+
+**Spec:** `flows/annotations/session-score-lifecycle.spec.ts:42`
+
 **Tags:** —
 
 **User steps:**
@@ -176,8 +190,10 @@
 
 ### AUTH-E2E-001 — user signs in with email and password
 
-**Goal:** A new user signs in with email and password and is routed to organization setup  
-**Spec:** `flows/auth/login.spec.ts:10`  
+**Goal:** A new user signs in with email and password and is routed to organization setup
+
+**Spec:** `flows/auth/login.spec.ts:10`
+
 **Tags:** @smoke
 
 **User steps:**
@@ -194,8 +210,10 @@
 
 ### AUTH-E2E-002 — workspace switching updates implicit scope without replacing the signed-in session
 
-**Goal:** Switch workspaces and continue seeing the selected workspace after refresh, while explicitly scoped requests still reach the requested authorized workspace  
-**Spec:** `flows/auth/default-workspace-switch.spec.ts:44`  
+**Goal:** Switch workspaces and continue seeing the selected workspace after refresh, while explicitly scoped requests still reach the requested authorized workspace
+
+**Spec:** `flows/auth/default-workspace-switch.spec.ts:44`
+
 **Tags:** —
 
 **User steps:**
@@ -215,8 +233,10 @@
 
 ### AUTH-E2E-003 — first-run setup sends an existing owner to sign in
 
-**Goal:** An operator whose install already created the owner account runs the first-run checks at /setup and is sent to sign in with that account instead of signing up again  
-**Spec:** `flows/auth/first-run-existing-account.spec.ts:30`  
+**Goal:** An operator whose install already created the owner account runs the first-run checks at /setup and is sent to sign in with that account instead of signing up again
+
+**Spec:** `flows/auth/first-run-existing-account.spec.ts:30`
+
 **Tags:** —
 
 **User steps:**
@@ -235,10 +255,76 @@
 - Continue routes to /auth/jwt/login, not /auth/jwt/register
 - signing in as the owner returns a token pair from POST /accounts/token/ and moves on to organization setup
 
+### AUTH-E2E-004 — fresh signup seeds demo traces visible in Observe
+
+**Goal:** A new user signs up with their own password and can inspect the seeded demo trace in Observe
+
+**Spec:** `flows/auth/signup-demo-traces.spec.ts:28`
+
+**Tags:** —
+
+**User steps:**
+
+1. complete first-run checks if required
+2. sign up with a unique email and a user-supplied password
+3. complete role and organization onboarding
+4. see both demo datasets
+5. open the Observe demo project
+6. open its single demo trace and inspect the span tree
+
+**Backend state verified:**
+
+- the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
+- ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
+
+### AUTH-E2E-005 — workspace landing stays within the current organization and authorized workspaces
+
+**Goal:** Sign in as a multi-workspace SAML member, self-serve owner or invited member and land only in the workspace selected by the current organization access policy
+
+**Spec:** `flows/auth/workspace-landing.spec.ts:63`
+
+**Tags:** @workspace-landing
+
+**User steps:**
+
+1. mint two synthetic tenants and seed each deterministic landing case with the existing landing fixture
+2. switch to then revoke an existing local preference; persist the other organization before SAML; read config, rosters and memberships back
+3. require equal membership timestamps for the UUID tiebreak; unequal timestamps are a fixture blocker, not a product failure
+4. sign in through the password form or complete the local signed SAML round trip in a fresh browser context
+5. read the first unscoped user-info response and the exact visible workspace label
+6. read the resolved workspace and accessible set again without a workspace selector, then reload the landing page
+7. restore each owned fixture and attach only digests, status codes and named assertion outcomes
+8. exercise saved, legacy, configured and inactive preferences with named V2 roles and independent exact membership readbacks
+9. bracket real no-membership login and reload with unfiltered all-row membership snapshots
+10. run invite-link, invite-deadline-expired-pending, invite-cancelled and invite-missing-authority as separate fresh-session tests on the same fixed local mail socket
+
+**Backend state verified:**
+
+- reversed-uuid: browser and independent user-info resolve the expected workspace (or null), product workspace/member APIs confirm its access, and the foreign workspace is never the current-org landing
+- membership-order: browser and independent user-info resolve the expected workspace (or null), product workspace/member APIs confirm its access, and the foreign workspace is never the current-org landing
+- is-default: browser and independent user-info resolve the expected workspace (or null), product workspace/member APIs confirm its access, and the foreign workspace is never the current-org landing
+- stale-preference: browser and independent user-info resolve the expected workspace (or null), product workspace/member APIs confirm its access, and the foreign workspace is never the current-org landing
+- cross-org-preference: browser and independent user-info resolve the expected workspace (or null), product workspace/member APIs confirm its access, and the foreign workspace is never the current-org landing
+- saml-scoped-default: browser and independent user-info resolve the expected workspace (or null), product workspace/member APIs confirm its access, and the foreign workspace is never the current-org landing
+- owner-without-membership: browser and independent user-info resolve the expected workspace (or null), product workspace/member APIs confirm its access, and the foreign workspace is never the current-org landing
+- member-without-membership: browser and independent user-info resolve the expected workspace (or null), product workspace/member APIs confirm its access, and the foreign workspace is never the current-org landing
+- SAML resolves the signing organization while both persisted organization selectors still point to the other accessible tenant
+- a persisted preference for an existing local workspace with revoked membership loses to a separate authorized default
+- saved-preference: first unscoped SPA response, independent APIs, exact active grants, visible label and reload agree with the fixed named-role oracle
+- legacy-current: first unscoped SPA response, independent APIs, exact active grants, visible label and reload agree with the fixed named-role oracle
+- configured-default: first unscoped SPA response, independent APIs, exact active grants, visible label and reload agree with the fixed named-role oracle
+- inactive-preference: first unscoped SPA response, independent APIs, exact active grants, visible label and reload agree with the fixed named-role oracle
+- member-without-membership: all-row membership equality after login, reload and before cleanup; separate inactive-row login/reload fault controls
+- invite-link: real delivered-link UI acceptance, exact two grants, fixed default versus first grant/UUID, reload, read-only preview and no-write accepted-link replay; explicit Expired uses another fresh session
+- invite-deadline-expired-pending, invite-cancelled, invite-missing-authority: real preview GET and crafted browser POST each refuse with separate exact DB/cache no-write brackets
+- all five test identities and seventeen scenario receipts per browser must pass the Chromium/Firefox aggregate; source only until the shared runtime gates clear
+
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
-**Goal:** A member signs in through the tenant IdP and receives one scoped session  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:183`  
+**Goal:** A member signs in through the tenant IdP and receives one scoped session
+
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:183`
+
 **Tags:** @saml
 
 **User steps:**
@@ -256,8 +342,10 @@
 
 ### SAML-E2E-002 — another browser cannot consume the initiating browser candidate
 
-**Goal:** The browser that initiated SSO can complete after another browser posts first  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:232`  
+**Goal:** The browser that initiated SSO can complete after another browser posts first
+
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:232`
+
 **Tags:** @saml
 
 **User steps:**
@@ -274,8 +362,10 @@
 
 ### SAML-E2E-003 — the cross-site ACS post omits the binder and completion carries it
 
-**Goal:** A real cross-site IdP POST does not leak the browser binding cookie  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:293`  
+**Goal:** A real cross-site IdP POST does not leak the browser binding cookie
+
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:293`
+
 **Tags:** @saml
 
 **User steps:**
@@ -291,8 +381,10 @@
 
 ### SAML-E2E-004 — safe next survives the binding while external next values do not
 
-**Goal:** A SAML user returns to the approved deep page and cannot be redirected off-site  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:316`  
+**Goal:** A SAML user returns to the approved deep page and cannot be redirected off-site
+
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:316`
+
 **Tags:** @saml
 
 **User steps:**
@@ -308,8 +400,10 @@
 
 ### SAML-E2E-005 — a SAML landing resolves the authenticated organization without configuration writes
 
-**Goal:** A SAML session lands in the organization that signed the assertion  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:348`  
+**Goal:** A SAML session lands in the organization that signed the assertion
+
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:348`
+
 **Tags:** @saml
 
 **User steps:**
@@ -325,8 +419,10 @@
 
 ### SAML-E2E-006 — SAML replaces a live password session before any stale scope is sent
 
-**Goal:** A SAML callback replaces a live session without using its stale organization scope  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:379`  
+**Goal:** A SAML callback replaces a live session without using its stale organization scope
+
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:379`
+
 **Tags:** @saml
 
 **User steps:**
@@ -346,8 +442,10 @@
 
 ### DASH-E2E-001 — an imported numeric dataset column works in a saved widget
 
-**Goal:** Select a newly imported numeric dataset column and see its correct aggregate in a saved dashboard widget  
-**Spec:** `flows/dashboards/dataset-catalog-widget.spec.ts:27`  
+**Goal:** Select a newly imported numeric dataset column and see its correct aggregate in a saved dashboard widget
+
+**Spec:** `flows/dashboards/dataset-catalog-widget.spec.ts:30`
+
 **Tags:** —
 
 **User steps:**
@@ -366,8 +464,10 @@
 
 ### DASH-E2E-002 — a saved trace-metric widget preserves its project, cohort and model results
 
-**Goal:** A developer saves a trace-metric widget for one project and cohort and sees the same exact model results after reopening it  
-**Spec:** `flows/dashboards/catalog-source-parity.spec.ts:48`  
+**Goal:** A developer saves a trace-metric widget for one project and cohort and sees the same exact model results after reopening it
+
+**Spec:** `flows/dashboards/catalog-source-parity.spec.ts:48`
+
 **Tags:** —
 
 **User steps:**
@@ -386,8 +486,10 @@
 
 ### DASH-E2E-003 — a metric-specific Model filter changes only that metric after save and reopen
 
-**Goal:** A metric-specific Model filter changes only that metric after save and reopen.  
-**Spec:** `flows/dashboards/trace-metric-local-filter.spec.ts:54`  
+**Goal:** A metric-specific Model filter changes only that metric after save and reopen.
+
+**Spec:** `flows/dashboards/trace-metric-local-filter.spec.ts:54`
+
 **Tags:** —
 
 **User steps:**
@@ -406,8 +508,10 @@
 
 ### DASH-E2E-004 — a saved numeric attribute widget preserves numeric filtering and groups
 
-**Goal:** A saved numeric attribute widget preserves numeric filtering and groups.  
-**Spec:** `flows/dashboards/numeric-attribute-widget.spec.ts:54`  
+**Goal:** A saved numeric attribute widget preserves numeric filtering and groups.
+
+**Spec:** `flows/dashboards/numeric-attribute-widget.spec.ts:54`
+
 **Tags:** —
 
 **User steps:**
@@ -426,8 +530,10 @@
 
 ### DASH-E2E-005 — a saved widget keeps boolean scope distinct from same-spelled text
 
-**Goal:** A saved widget keeps boolean scope distinct from same-spelled text.  
-**Spec:** `flows/dashboards/boolean-attribute-widget.spec.ts:56`  
+**Goal:** A saved widget keeps boolean scope distinct from same-spelled text.
+
+**Spec:** `flows/dashboards/boolean-attribute-widget.spec.ts:56`
+
 **Tags:** —
 
 **User steps:**
@@ -446,8 +552,10 @@
 
 ### DASH-E2E-006 — a saved widget retains native array membership through popup edits
 
-**Goal:** A saved widget retains array membership without treating arrays as scalar metrics.  
-**Spec:** `flows/dashboards/array-membership-widget.spec.ts:51`  
+**Goal:** A saved widget retains array membership without treating arrays as scalar metrics.
+
+**Spec:** `flows/dashboards/array-membership-widget.spec.ts:51`
+
 **Tags:** —
 
 **User steps:**
@@ -467,8 +575,10 @@
 
 ### DASH-E2E-007 — a saved Session widget counts only the selected project session traces
 
-**Goal:** A saved Session widget counts only the selected project's session traces.  
-**Spec:** `flows/dashboards/trace-backed-session-widget.spec.ts:54`  
+**Goal:** A saved Session widget counts only the selected project's session traces.
+
+**Spec:** `flows/dashboards/trace-backed-session-widget.spec.ts:54`
+
 **Tags:** —
 
 **User steps:**
@@ -491,8 +601,10 @@
 
 ### DASH-E2E-008 — a saved User widget keeps project and identifier-type scope
 
-**Goal:** A saved User widget keeps project and identifier-type scope.  
-**Spec:** `flows/dashboards/trace-backed-user-widget.spec.ts:61`  
+**Goal:** A saved User widget keeps project and identifier-type scope.
+
+**Spec:** `flows/dashboards/trace-backed-user-widget.spec.ts:61`
+
 **Tags:** —
 
 **User steps:**
@@ -515,8 +627,10 @@
 
 ### DASH-E2E-009 — a saved conversation widget excludes child-model call-metric decoys
 
-**Goal:** A saved conversation widget excludes child-model call-metric decoys.  
-**Spec:** `flows/dashboards/conversation-attribute-widget.spec.ts:54`  
+**Goal:** A saved conversation widget excludes child-model call-metric decoys.
+
+**Spec:** `flows/dashboards/conversation-attribute-widget.spec.ts:54`
+
 **Tags:** —
 
 **User steps:**
@@ -538,8 +652,10 @@
 
 ### DASH-E2E-010 — a saved trace annotation widget retains numeric scores
 
-**Goal:** A saved trace annotation widget retains numeric scores.  
-**Spec:** `flows/dashboards/trace-numeric-annotation-widget.spec.ts:56`  
+**Goal:** A saved trace annotation widget retains numeric scores.
+
+**Spec:** `flows/dashboards/trace-numeric-annotation-widget.spec.ts:56`
+
 **Tags:** —
 
 **User steps:**
@@ -561,8 +677,10 @@
 
 ### DASH-E2E-011 — a saved trace annotation widget retains star ratings
 
-**Goal:** A saved trace annotation widget retains star ratings.  
-**Spec:** `flows/dashboards/trace-star-annotation-widget.spec.ts:57`  
+**Goal:** A saved trace annotation widget retains star ratings.
+
+**Spec:** `flows/dashboards/trace-star-annotation-widget.spec.ts:57`
+
 **Tags:** —
 
 **User steps:**
@@ -584,8 +702,10 @@
 
 ### DASH-E2E-012 — a saved trace annotation widget retains exact text membership
 
-**Goal:** A saved trace annotation widget retains exact text membership.  
-**Spec:** `flows/dashboards/trace-text-annotation-widget.spec.ts:60`  
+**Goal:** A saved trace annotation widget retains exact text membership.
+
+**Spec:** `flows/dashboards/trace-text-annotation-widget.spec.ts:60`
+
 **Tags:** —
 
 **User steps:**
@@ -607,8 +727,10 @@
 
 ### DASH-E2E-013 — widget y-axis fits its data unless a bound is typed
 
-**Goal:** A user reading a dashboard widget gets a y-axis sized to the data, and can override it by typing a Threshold Bound  
-**Spec:** `flows/dashboards/widget-y-axis.spec.ts:450`  
+**Goal:** A user reading a dashboard widget gets a y-axis sized to the data, and can override it by typing a Threshold Bound
+
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:450`
+
 **Tags:** —
 
 **User steps:**
@@ -626,8 +748,10 @@
 
 ### DASH-E2E-014 — Out of Bounds decides whether a typed bound clips the data
 
-**Goal:** A user who typed a Threshold Bound tighter than their data chooses whether the chart widens to keep every point visible or clips at the bound  
-**Spec:** `flows/dashboards/widget-y-axis.spec.ts:531`  
+**Goal:** A user who typed a Threshold Bound tighter than their data chooses whether the chart widens to keep every point visible or clips at the bound
+
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:531`
+
 **Tags:** —
 
 **User steps:**
@@ -645,8 +769,10 @@
 
 ### DASH-E2E-015 — a dual-axis widget keeps one scale per side and keeps it when a series is hidden
 
-**Goal:** A user plotting a large and a small metric together assigns one of them to the right axis, reads both off their own scale, and keeps that layout after hiding a series  
-**Spec:** `flows/dashboards/widget-y-axis.spec.ts:612`  
+**Goal:** A user plotting a large and a small metric together assigns one of them to the right axis, reads both off their own scale, and keeps that layout after hiding a series
+
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:612`
+
 **Tags:** —
 
 **User steps:**
@@ -664,8 +790,10 @@
 
 ### DASH-E2E-016 — a column widget keeps its bars proportional while a line widget fits the band
 
-**Goal:** A user switching a widget to columns reads bar heights that are true to their values, while the same data on a line widget still gets the tight fitted axis  
-**Spec:** `flows/dashboards/widget-y-axis.spec.ts:715`  
+**Goal:** A user switching a widget to columns reads bar heights that are true to their values, while the same data on a line widget still gets the tight fitted axis
+
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:715`
+
 **Tags:** —
 
 **User steps:**
@@ -684,8 +812,10 @@
 
 ### DATA-E2E-001 — uploaded dataset values can be discovered and filtered
 
-**Goal:** Upload a dataset and select a real column value to narrow its rows  
-**Spec:** `flows/datasets/uploaded-catalog-values.spec.ts:12`  
+**Goal:** Upload a dataset and select a real column value to narrow its rows
+
+**Spec:** `flows/datasets/uploaded-catalog-values.spec.ts:15`
+
 **Tags:** —
 
 **User steps:**
@@ -705,8 +835,10 @@
 
 ### DATA-E2E-002 — dataset discovery follows cell edits and column deletion
 
-**Goal:** Edit dataset cells and columns and discover only their current authorized values without manual catalog repair  
-**Spec:** `flows/datasets/catalog-column-lifecycle.spec.ts:18`  
+**Goal:** Edit dataset cells and columns and discover only their current authorized values without manual catalog repair
+
+**Spec:** `flows/datasets/catalog-column-lifecycle.spec.ts:21`
+
 **Tags:** —
 
 **User steps:**
@@ -724,12 +856,705 @@
 - current property label, value choices and filtered UI/API rows agree after editing
 - removed columns and datasets cannot be rediscovered through metadata or value requests
 
+### DATA-E2E-003 — a committed dataset cell edit is written exactly once
+
+**Goal:** Edit a dataset cell, move on with Tab or Enter, and have each edit saved exactly once
+
+**Spec:** `flows/datasets/cell-write-once.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. upload a synthetic CSV through New dataset > Upload a file
+2. double-click a text cell, type a new value and press Tab
+3. keep the next cell editor open after the save is acknowledged
+4. press Escape, then edit the same cell again and commit it with Enter
+5. reload the dataset and read the final value
+
+**Backend state verified:**
+
+- the uploaded dataset, its columns and the edited row belong to the actor scope
+- each commit sends exactly one update_cell_value request with the exact payload, also while the editor Tab opened stays open
+- get-dataset-table and Postgres hold the exact committed value for the edited row and column after each commit
+
+### DATA-E2E-004 — dataset settings persist from the list and header within their tenant
+
+**Goal:** Edit dataset details from either entry point and retain them without exposing another workspace or organization
+
+**Spec:** `flows/datasets/dataset-settings.spec.ts:16`
+
+**Tags:** —
+
+**User steps:**
+
+1. create synthetic datasets in two organizations and 101 newer datasets ahead of the target
+2. find the target in the list and edit its name, description and tags
+3. open its header settings, cancel an edit, then clear description and tags
+4. reload the dataset and reopen settings to read the cleared details
+5. try the same detail reads and writes from another organization and a sibling workspace
+
+**Backend state verified:**
+
+- confirmed list edits persist exact name, description and tags in the scoped Postgres dataset row
+- detail and list API readback agree after header clear and reload, even outside the first 100 list items
+- foreign organization and sibling workspace reads and writes are refused and both tenants retain their own details
+
+### DATA-E2E-005 — download all current dataset rows from the grid and list
+
+**Goal:** Download all current dataset rows as CSV or JSON without exposing unbacked scopes or another tenant’s data
+
+**Spec:** `flows/datasets/dataset-export.spec.ts:14`
+
+**Tags:** —
+
+**User steps:**
+
+1. create uniquely marked datasets in two organizations through public APIs
+2. open grid More and download every current row as CSV
+3. open the dataset list row menu and download every current row as JSON
+4. confirm version, split and filtered export choices are absent
+
+**Backend state verified:**
+
+- stored dataset scope and API cell values exactly match the seeded identities and values
+- browser downloads contain exactly every seeded row and value, and use unfiltered real table requests
+- foreign organization and wrong-workspace exports are refused while each owner can read its own dataset
+
+### DATA-E2E-006 — personal dataset stars persist and filter without widening access
+
+**Goal:** Star datasets for myself, find them again after reload, and unstar without changing anyone else’s favorites
+
+**Spec:** `flows/datasets/dataset-stars.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. create synthetic datasets in two organizations and newer unstarred alternatives
+2. star a dataset in the list and reload its persisted state
+3. select Starred and compare the exact UI and API results with pagination and search
+4. star and unstar as a second user in the same workspace without changing the first user’s star
+5. refuse foreign organization and sibling workspace star writes
+6. unstar through the row menu and confirm the filtered list is empty after reload
+
+**Backend state verified:**
+
+- the browser star write persists exactly one personal dataset-star row and repeated POSTs are idempotent
+- the Starred list filters before pagination, preserves search and matches the exact browser row set
+- a same-workspace viewer has independent star state and cannot remove the owner’s personal star
+- foreign organization and sibling workspace star writes are refused without changing either tenant’s stars
+- browser unstar deletes the personal row and the Starred API remains empty after reload
+
+### DATA-E2E-007 — blank grids retain named typed columns and roles after reopening
+
+**Goal:** Create a blank dataset with named, typed columns and roles and reopen it without losing its schema
+
+**Spec:** `flows/datasets/blank-grid.spec.ts:95`
+
+**Tags:** —
+
+**User steps:**
+
+1. open New dataset and configure a named blank grid in each of two independent organizations
+2. choose text, integer and JSON columns with Input, Expected and Metadata roles and confirm creation
+3. reload each dataset and inspect its exact schema and blank rows
+4. reject invalid schemas without partial datasets and refuse foreign-organization and sibling-workspace access
+
+**Backend state verified:**
+
+- exact ordered column names, types and roles persist under the submitting organization and workspace
+- the table API and reloaded grid expose the same columns and blank row identities
+- invalid schemas leave no dataset and cross-scope reads and writes are refused without mutations
+
+### DATA-E2E-008 — persist row splits and export current training examples
+
+**Goal:** Organize current rows into persisted splits, filter them, and download a training set without requiring dataset versions
+
+**Spec:** `flows/datasets/dataset-splits.spec.ts:14`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed distinct datasets in two synthetic organizations with unique input and expected-answer values
+2. create a train split in Manage splits and assign one row through the row drawer
+3. reload and filter to that split, requiring only the assigned row
+4. map input and expected-answer columns and download the current training set
+5. refuse cross-tenant and wrong-workspace membership writes and reads without changing stored membership
+6. replace persisted membership and reopen training export without reloading the page
+
+**Backend state verified:**
+
+- created split and membership are stored against the owner dataset and row in PostgreSQL
+- real table filtering and row-membership API readback contain exactly the selected row and split
+- downloaded JSONL contains exactly the seeded user and assistant values and makes no version request
+- foreign-tenant and wrong-workspace operations are refused and the original membership is unchanged
+- reopened training export rereads current membership and downloads only the replacement row
+
+### DATA-E2E-009 — rerun only failed or changed generated cells without rewriting other rows
+
+**Goal:** Repair failed generated cells or refresh changed inputs while preserving every other output
+
+**Spec:** `flows/datasets/selective-rerun.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. create two isolated datasets and generate JSON extraction outputs with one invalid input
+2. repair that input, open Configure Dynamic Column, choose Only failed cells and Save
+3. change a different input, choose Only rows whose inputs changed and Save
+4. save the changed scope again when no inputs changed
+
+**Backend state verified:**
+
+- generated outputs and input fingerprints persist under the owning dataset and match API readback
+- failed and changed Save requests contain the selected scope and leave unselected output values, metadata and timestamps unchanged
+- a no-change rerun performs no output writes and foreign-tenant and wrong-workspace reruns are refused without writes
+
+### DATA-E2E-010 — the dataset switcher searches and opens only authorized datasets
+
+**Goal:** Find another dataset in the header and open its persisted rows without exposing another tenant or workspace
+
+**Spec:** `flows/datasets/dataset-switcher.spec.ts:18`
+
+**Tags:** —
+
+**User steps:**
+
+1. create distinct source and destination datasets in two organizations and a sibling workspace
+2. open the source header, search for the destination and compare the exact menu and API result
+3. switch datasets, read the destination rows and reload the same destination
+4. search for absent and foreign names and see no choices
+5. repeat switching as the second organization and reject direct cross-tenant and sibling-workspace reads
+
+**Backend state verified:**
+
+- the real names requests and exact picker choices match only the requested search in the active tenant and workspace
+- switching and reload read the selected dataset table while the exact persisted dataset identities remain unchanged
+- foreign organization and sibling workspace table reads are refused while each owner can still read its own rows
+
+### DATA-E2E-011 — rerun only changed Run Prompt rows through the real prompt runner
+
+**Goal:** Refresh Run Prompt outputs for changed inputs only while every other generated output stays as it was
+
+**Spec:** `flows/datasets/selective-prompt-rerun.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. create two isolated datasets and a Run Prompt column answered by the labelled loopback model STANDIN
+2. open Configure Run, keep Re-run all rows and choose Update and Run
+3. change one input, open Configure Run, choose Only rows whose inputs changed and choose Update and Run
+4. save the changed scope again when no inputs changed
+
+**Backend state verified:**
+
+- prompt outputs and input fingerprints persist under the owning dataset through the real prompt queue and runner and match API readback
+- the changed Save request carries its scope, recomputes only the changed row and leaves the other output value, metadata and timestamp unchanged
+- a no-change Save performs no output writes, and foreign-tenant and wrong-workspace edits are refused without writes
+
+### DATA-E2E-012 — a file upload persists exact rows within its organization and workspace
+
+**Goal:** Create datasets from a local CSV, JSON and JSONL file, reopen exactly the previewed rows and keep them private to their workspace
+
+**Spec:** `flows/datasets/create-upload.spec.ts:199`
+
+**Tags:** —
+
+**User steps:**
+
+1. open New dataset and upload the synthetic CSV, JSON and JSONL files in each of two independent organizations
+2. check each file preview, including the JSONL line that cannot be read, before importing
+3. wait for the real file worker to finish and inspect the imported columns and rows
+4. reload every dataset page and read the same exact values
+5. attempt to read the other organization and a sibling workspace through the real API
+
+**Backend state verified:**
+
+- every completed upload persists the previewed columns, column order, data types and exact cells under its submitting organization and workspace
+- JSON strings stay text, JSON numbers and booleans keep their JSON spelling, nested values stay JSON and the unreadable JSONL line is skipped
+- the public table API and refreshed browser show exactly the persisted row identities and values
+- foreign-organization and sibling-workspace progress/table reads are refused while owner reads still succeed
+
+### DATA-E2E-014 — Hugging Face create and add preserve the selected revision
+
+**Goal:** Create a dataset and add rows from chosen Hugging Face revisions without changing another workspace
+
+**Spec:** `flows/datasets/huggingface-revision.spec.ts:54`
+
+**Tags:** —
+
+**User steps:**
+
+1. in each of two synthetic organizations, choose a Hub dataset and revision v1 and create it
+2. wait for the real worker to fill the imported cells and reload the grid
+3. open Add rows and choose Hugging Face revision v2, then confirm Add rows
+4. reload and verify both revisions persist, reject invalid revisions and cross-scope destinations
+
+**Backend state verified:**
+
+- configuration resolves the selected Hub ref and create and add requests carry its immutable commit
+- the ml-enabled worker persists exact revision-specific values with PASS status and table API identities agree
+- datasets belong to their creating organization and workspace
+- invalid revisions and foreign-organization or sibling-workspace writes are refused without changing cells
+
+### DATA-E2E-015 — declared schemas reject invalid dataset writes without partial persistence
+
+**Goal:** Declare and enforce a dataset schema without accepting invalid edits or partially importing rows, while keeping other tenants isolated
+
+**Spec:** `flows/datasets/dataset-schema.spec.ts:16`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two synthetic organizations and populate three rows with a uniquely named categorical value through public APIs
+2. open Schema, declare inferred fields, choose Reject and confirm
+3. reload the saved declaration and reject invalid edits, additions and imports without partial persistence
+4. persist valid cell edits, added rows and CSV imports
+5. refuse foreign-tenant, wrong-workspace and viewer writes without changing owner data
+
+**Backend state verified:**
+
+- UI-confirmed schema and enforcement persist in the scoped dataset and real table response
+- rejected cell edits and mixed-validity additions/imports preserve exact rows, cells and columns, while valid writes persist
+- foreign-tenant, wrong-workspace and viewer write attempts are refused without changing owner data
+
+### DATA-E2E-016 — generated rows append safely and reuse the saved configuration
+
+**Goal:** Generate and save rows, then append another batch using the same saved configuration without replacing existing data
+
+**Spec:** `flows/datasets/generate-rows.spec.ts:59`
+
+**Tags:** —
+
+**User steps:**
+
+1. configure a labelled loopback LLM STANDIN in each of two synthetic organizations and create an owned dataset
+2. open Add rows and Generate rows, enter a description and confirm Generate and save
+3. reload, reopen and confirm Re-generate with saved configuration
+4. read exact persisted rows and configuration and refuse cross-organization and sibling-workspace requests
+5. generate from a request that omits or blanks the dataset name, then replay its saved configuration
+
+**Backend state verified:**
+
+- exact generated values and row identities agree in API, PostgreSQL and reloaded UI
+- saved configuration survives reload and regeneration preserves existing rows and columns
+- foreign organization and sibling workspace requests are refused without writes
+- a configuration saved without a dataset name is read back under the dataset's own name and replays
+
+### DATA-E2E-020 — workspace folders organize datasets without widening access
+
+**Goal:** Organize datasets into persistent folders by selection or drag and keep other workspaces private
+
+**Spec:** `flows/datasets/dataset-folders.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. create datasets in two synthetic organizations and create an empty nested folder in the browser
+2. move a selected dataset through Organize and compare the folder filter with persisted API state
+3. drag another dataset into the folder and reload
+4. rename the folder and move its parent while preserving dataset membership
+5. refuse viewer writes and foreign organization or sibling workspace targets
+6. remove the folder subtree while retaining every dataset
+
+**Backend state verified:**
+
+- empty nested folders persist with the caller organization and workspace
+- Organize writes the folder foreign key and folder filtering matches the exact UI and API set before pagination
+- drag writes the second dataset membership and survives reload
+- rename and parent move preserve folder identities and relocate the entire subtree
+- viewer and cross-scope mutations are refused without partial writes or metadata and agent activation
+- folder removal clears memberships but never deletes datasets
+
+### DATA-E2E-021 — stop one experiment run and resume without repeating completed work
+
+**Goal:** Stop one run while its sibling finishes, then resume the stopped run without repeating completed results.
+
+**Spec:** `flows/datasets/run-control.spec.ts:14`
+
+**Tags:** —
+
+**User steps:**
+
+1. create two synthetic organizations and an experiment backed by a labelled local LLM STANDIN
+2. open the classic experiment page and stop only the selected run in Manage runs
+3. wait for current work to drain and the sibling to finish, then reload the stopped state
+4. refuse foreign organization and sibling workspace reads and writes
+5. resume the selected run through the same dialog and read the completed result
+
+**Backend state verified:**
+
+- actual UI stop and resume requests select exactly one run and agree with persisted states
+- completed output and evaluation cells and the sibling remain unchanged, and execution identities are stable through resume
+- both runs complete every row with exactly one STANDIN call per output and no repeated completed work
+- cross-organization and cross-workspace control requests are refused without changing the owned executions
+
+### DATA-E2E-024 — dataset metadata columns and updated sorting retain the authorized rows
+
+**Goal:** Inspect dataset owners and sources and keep my Updated sort after reload without seeing another tenant’s data
+
+**Spec:** `flows/datasets/dataset-list-columns.spec.ts:16`
+
+**Tags:** —
+
+**User steps:**
+
+1. create two datasets per organization and one in a sibling workspace, then update the older datasets
+2. open View columns and show Owner, Source and Updated while deferred experiment and version columns remain absent
+3. sort Updated ascending and descending and compare the exact visible rows with the list API and stored metadata
+4. reload and retain the selected columns and Updated order in each organization
+5. refuse foreign dataset reads and exclude foreign and sibling-workspace rows from list searches
+
+**Backend state verified:**
+
+- both tenants list exactly their own persisted dataset owners, sources and update timestamps and the UI cells match
+- Updated sorting is sent to the real list endpoint, orders before pagination and survives reload without modifying dataset state
+- foreign organization and sibling workspace reads are refused and their rows never enter the list response
+
+### DATA-E2E-033 — Observe selections become persisted dataset rows within their workspace
+
+**Goal:** Create a dataset and add mapped Observe traces, spans and session traces without importing another workspace’s data
+
+**Spec:** `flows/datasets/production-import.spec.ts:43`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest recent and old traces in two organizations and run an evaluation with a labelled loopback judge STANDIN
+2. open From production through New dataset and the palette, verify last-week failures, select a session and map its traces into a new dataset
+3. add a selected child span through Add rows and a second trace through the production deep link
+4. reload the rows and refuse foreign sources and destinations without partial changes
+
+**Backend state verified:**
+
+- the source preview returns exactly the recent traces of the failed session and excludes unevaluated sessions and old traces
+- the asynchronous worker persists exact mapped cells; the table API and reloaded browser agree with stored row identities
+- datasets retain the submitting organization and workspace
+- foreign source, foreign destination and sibling-workspace requests fail without creating datasets, columns or cells
+
+### DATA-E2E-037 — selected examples generate persisted knowledge-grounded rows
+
+**Goal:** Generate and persist rows like selected examples, optionally grounded in an owned knowledge base, without including other rows or changing existing data
+
+**Spec:** `flows/datasets/synthetic-more.spec.ts:99`
+
+**Tags:** —
+
+**User steps:**
+
+1. provision two synthetic organizations and upload each knowledge base through the public API
+2. select one saved row, open Generate more like these, choose an owned knowledge base and confirm Generate and save
+3. reload and regenerate with the saved source IDs, then read exact persisted rows and citations
+4. reject foreign dataset, row and knowledge-base IDs and sibling workspace requests
+
+**Backend state verified:**
+
+- only selected examples and scoped indexed passages reach the model
+- generated rows and exact source citations agree in API, PostgreSQL and reloaded UI; saved source IDs replay
+- foreign organization and sibling workspace references are refused without writes
+
+### DATA-E2E-046 — datasets copy into another workspace after a write-free preview, and moves are refused
+
+**Goal:** Copy a dataset into another workspace I can add datasets to, checking first what will happen
+
+**Spec:** `flows/datasets/dataset-transfer.spec.ts:16`
+
+**Tags:** —
+
+**User steps:**
+
+1. create synthetic datasets in two organizations and record a cell value
+2. open Duplicate from the list row, choose the sibling workspace and check the copy first
+3. copy the dataset under a new name and compare the persisted copy with its source
+4. open Duplicate for a second dataset and find no Move choice, then ask the API to move it
+5. refuse foreign organization, sibling scope and viewer transfers
+
+**Backend state verified:**
+
+- the copy preview returns the exact plan and writes nothing
+- the copy persists in the target workspace with the same rows, input columns and cell values while the source stays put
+- a move preview and a move are refused with 409 and leave the dataset, its rows and its workspace unchanged
+- foreign organization, sibling scope and viewer transfers are refused without writes
+
+### DATA-E2E-048 — failed evaluation filters preserve the exact row navigation scope
+
+**Goal:** Find rows with failed stored evaluations and inspect only those rows without crossing tenant boundaries
+
+**Spec:** `flows/datasets/failed-evaluation-filters.spec.ts:20`
+
+**Tags:** —
+
+**User steps:**
+
+1. create four uniquely named rows and two pass/fail evaluations through real APIs using a labelled external LLM STANDIN
+2. turn on Failed only and read the exact failed row set
+3. select one evaluator and open a filtered row
+4. navigate to the next failed row and reload the same filtered view
+5. turn the filter off and verify every row returns
+
+**Backend state verified:**
+
+- the dataset and completed evaluation cells persist with exact row IDs and organization/workspace scope
+- table counts and filtered row sets agree with stored evaluation verdicts, including overlapping failures
+- the row reader receives the selected evaluation filter and returns only matching adjacency after reload
+- foreign organization/workspace dataset reads and foreign or invalid filter-column IDs are refused
+
+### DATA-E2E-049 — save and restore private and shared grid configurations
+
+**Goal:** Save a grid configuration and restore its filters, sort, columns and density without exposing private views or another tenant’s data
+
+**Spec:** `flows/datasets/saved-grid-views.spec.ts:16`
+
+**Tags:** —
+
+**User steps:**
+
+1. create synthetic datasets in two organizations and open a linked filtered and sorted grid layout
+2. save a private view through the dialog and reopen it in a fresh browser context
+3. apply the saved view and verify exact filtered row order, hidden column and density
+4. save a shared copy and inspect it as another workspace member
+5. delete the private view and use Undo to restore the same record
+
+**Backend state verified:**
+
+- UI-created views and delete/restore retain exact configuration, author and dataset organization/workspace in Postgres and the real API
+- restored UI and real table requests return exactly the filtered rows in saved order with the saved layout and density
+- private views are excluded for other members and foreign organization/workspace and unauthorized shared writes are refused
+
+### DATA-E2E-083 — copy a row API path from Row view and read the row through it
+
+**Goal:** Copy the public API path and API call of a dataset row from Row view and read exactly that row through it
+
+**Spec:** `flows/datasets/row-api-path.spec.ts:124`
+
+**Tags:** —
+
+**User steps:**
+
+1. send two traces to the real collector and import their roots into a dataset, then open an imported row in Row view
+2. right-click the row id chip and copy its API path
+3. call the copied method and path with the signed-in session
+4. copy the row as an API call and check the personal key environment names and Keys page pointer, with no session authentication
+
+**Backend state verified:**
+
+- collector spans have the minted root names and IO; copied GET and get-row-data agree with those cells and exact RowSource kind, project, trace, span, organization and workspace in Postgres
+- another organization, also with the first organization’s headers, gets 404 with no cell values or source identifiers
+
+### DATA-E2E-084 — a deleted or foreign row is refused, and Row view keeps id and link copy
+
+**Goal:** Read a dataset row through its public path until it is deleted, without another organization or workspace reaching it
+
+**Spec:** `flows/datasets/row-api-path.spec.ts:198`
+
+**Tags:** —
+
+**User steps:**
+
+1. send two traces to the real collector and import their roots into a dataset
+2. read a row through its public path, then delete it and read again
+3. open another row in Row view and copy its id and link from the id chip
+
+**Backend state verified:**
+
+- the owner read equals get-row-data and the collector IO, persisted cells and RowSource identity, then returns 404 after Postgres records deletion
+- another organization, also with the first organization’s headers, and another workspace get 404 with no cell values or source identifiers
+
+**Browser observations:**
+
+- the id chip copies the row id and its link; its API items follow the build’s dataset.rowApiPath claim
+
+### DATA-E2E-095 — a row imported from a trace opens its trajectory and the same trace
+
+**Goal:** Open the trace a dataset row was imported from, read in its own project, without another organization reaching it
+
+**Spec:** `flows/datasets/row-source-tabs.spec.ts:145`
+
+**Tags:** —
+
+**User steps:**
+
+1. send a trace to the collector with the owner credential and import it into a new dataset
+2. open the row in Row view and its Trajectory tab
+3. open the original trace from the tab
+4. open the same row as another organization
+
+**Backend state verified:**
+
+- the stored row source names the import kind, project, trace and span the collector wrote, in the owner organization and workspace
+- get-row-data and the row read return the source and exact IO from its project, not the competing project sharing the span id
+- another organization cannot read the row, original trace or source span
+
+### DATA-E2E-096 — a row imported from a session shows its turns, then the saved copy once the session is gone
+
+**Goal:** Read the conversation a session-imported row came from, and keep its saved copy after the session is deleted
+
+**Spec:** `flows/datasets/row-source-tabs.spec.ts:235`
+
+**Tags:** —
+
+**User steps:**
+
+1. send 51 distinct turns of one session to the collector and import the session into a new dataset
+2. open a row in Row view and its Conversation tab
+3. delete the session in Observe and reopen the row
+4. open the same row as another organization
+
+**Backend state verified:**
+
+- the stored row source is a session source naming the session the collector wrote
+- the session query pages and Conversation render all 51 persisted turns in order
+- get-row-data reports expiry after deletion and retains the exact saved values without a source request
+- another organization cannot read the row or source session
+
+### DATA-E2E-097 — a row with no source shows neither source tab, and a source deep link lands on Row
+
+**Goal:** Open a dataset row that was not imported from Observe without source tabs or doors
+
+**Spec:** `flows/datasets/row-source-tabs.spec.ts:306`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a synthetic dataset in each of two organizations
+2. open a row with a Trajectory deep link
+3. open the same row as another organization
+
+**Backend state verified:**
+
+- get-row-data returns no row_meta.source and no source is stored for the row
+- another organization gets 404 for the row
+
+### DATA-E2E-099 — an experiment evaluation column reads back its own evaluation config, and nothing for a copy of its id
+
+**Goal:** Read the configuration of an experiment evaluation column from the signed-in app, and get nothing for a column elsewhere that only carries its ids
+
+**Spec:** `flows/datasets/evaluation-column-config.spec.ts:44`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two organizations; in the first, a dataset with one column and no rows, a code evaluation, a saved prompt version and an experiment that uses the evaluation
+2. seed one dataset in each organization with a column that carries the experiment evaluation column's source id
+3. open the first organization's dataset page and request the experiment evaluation column's config from the signed-in page
+4. open the other organization's dataset page and request the same config and its own column's config
+5. request the config of the first organization's unrelated column that carries the id
+
+**Backend state verified:**
+
+- the experiment evaluation column is stored with the source id "<table>-<output column>-sourceid-<evaluation>"
+- its config answers 200 with the evaluation template, template config, description, mapping config and status and the experiment table name and stored prompt config, equal to the stored rows
+- the other organization gets 404 for the column and for its own column carrying the id, with no field of the first organization's evaluation or table
+- the first organization's unrelated column carrying the id gets 404
+- no request changes the evaluation, the experiment table or any of the columns
+
+### DATA-E2E-176 — copy the real request id from a cross-origin dataset error and retry
+
+**Goal:** Copy an API error request id for support, then retry without changing my saved datasets
+
+**Spec:** `flows/datasets/error-request-id.spec.ts:26`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a uniquely named dataset in each of two synthetic organizations through the public API
+2. open Datasets while a request-method perturbation makes the real list endpoint return 405
+3. copy its request id and paste it into the native Search datasets input
+4. restore GET, clear search and retry to read the original dataset
+5. repeat in the second organization, verify foreign dataset refusals and read back both saved datasets
+
+**Backend state verified:**
+
+- the real cross-origin error exposes a unique X-Request-ID that the error-state copy action places on the clipboard exactly
+- both tenants can read their own saved datasets and each receives 404 when requesting the other tenant dataset evaluations
+- retry returns each original dataset and API plus Postgres readback retain both exact saved names and tenant identities
+
+### DATA-E2E-177 — an unclaimed error does not expose or show a request id
+
+**Goal:** Retry a dataset error without activating the hidden request-id surface
+
+**Spec:** `flows/datasets/error-request-id-off.spec.ts:12`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Datasets in each of two synthetic organizations with the setting OFF and the claim absent
+2. change only the real list request method to produce a Django 405 error
+3. verify the wire still has a request id but browser JavaScript cannot read it and no Request id row renders
+4. restore GET and retry successfully without any dataset writes
+
+**Backend state verified:**
+
+- both direct cross-origin callers receive 405 with a wire X-Request-ID and no Access-Control-Expose-Headers
+- browser fetch sees no X-Request-ID while credentials and allowed-origin CORS continue working
+- retry returns 200 for each tenant and creates no dataset
+
+### EXP-E2E-005 — run a selected subset with saved limits and error scoring
+
+**Goal:** Run picked or seeded sample rows with a time limit and a chosen error scoring, and trust the saved selection.
+
+**Spec:** `flows/datasets/experiment-scope.spec.ts:14`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two synthetic organizations and a prompt backed by a labelled local LLM STANDIN
+2. submit picked rows through the wizard with Count as 0, after a refused messages limit is cleared for a time limit
+3. submit a seeded sample with Leave out and the same time limit
+4. read the server receipt, persisted output and evaluation cells, and the classic result grid
+5. submit a seeded sample after a refused tokens limit is cleared and verify one provider call per row
+6. refuse a foreign row, a token limit and a foreign experiment read without creating a snapshot
+
+**Backend state verified:**
+
+- wizard POST bodies and persisted scope contain exactly the picked or deterministically sampled source rows, the chosen error policy, the time limit and the entered metadata
+- token, message and cost limits are refused on the run card and by the API without a write
+- execution persists the STANDIN output and the time limit under the bounded policy
+- foreign-row create and foreign-organization detail read are refused without writes
+
+### EXP-E2E-006 — run only the live members of a dataset split
+
+**Goal:** Choose a dataset split in New experiment and run exactly its saved member rows.
+
+**Spec:** `flows/datasets/experiment-split-scope.spec.ts:14`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a six-row dataset, prompt and evaluation with a labelled loopback LLM STANDIN
+2. create and assign a three-row split through the real split APIs
+3. open New experiment, select that split, and submit the wizard
+4. read the server scope receipt and verify the exact persisted snapshot and completed output rows
+5. refuse foreign, wrong-workspace and deleted split identifiers before any experiment or snapshot writes
+
+**Backend state verified:**
+
+- the live split API and wizard count report exactly the three selected source rows
+- the wizard POST and persisted scope retain the split id and exactly its member ids
+- the snapshot copies exactly the member source values and completed output and score rows have that cardinality
+- foreign, wrong-workspace and deleted split requests return 400 without changing experiment, dataset, row or cell counts
+
 ## error-feed
 
 ### ERR-E2E-001 — connect Slack and notify only for matching Error Feed issues
 
-**Goal:** A developer connects Slack, creates an Error Feed rule, and receives only matching issue notifications  
-**Spec:** `flows/error-feed/slack-alert.spec.ts:22`  
+**Goal:** A developer connects Slack, creates an Error Feed rule, and receives only matching issue notifications
+
+**Spec:** `flows/error-feed/slack-alert.spec.ts:22`
+
 **Tags:** —
 
 **User steps:**
@@ -748,8 +1573,10 @@
 
 ### ERR-E2E-002 — every issue trigger sends only after its selected transition
 
-**Goal:** A developer chooses each issue trigger and receives a Slack alert when its condition occurs  
-**Spec:** `flows/error-feed/trigger-matrix.spec.ts:30`  
+**Goal:** A developer chooses each issue trigger and receives a Slack alert when its condition occurs
+
+**Spec:** `flows/error-feed/trigger-matrix.spec.ts:30`
+
 **Tags:** —
 
 **User steps:**
@@ -767,8 +1594,10 @@
 
 ### ERR-E2E-003 — failed Slack reconnect can recover and the connection can be removed
 
-**Goal:** A developer can recover from a denied Slack reconnect and disconnect the integration  
-**Spec:** `flows/error-feed/slack-integration-management.spec.ts:17`  
+**Goal:** A developer can recover from a denied Slack reconnect and disconnect the integration
+
+**Spec:** `flows/error-feed/slack-integration-management.spec.ts:17`
+
 **Tags:** —
 
 **User steps:**
@@ -786,8 +1615,10 @@
 
 ### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV
 
-**Goal:** A developer downloads an issue's traces from the issue page and uploads the file unchanged as a dataset (overview response stubbed)  
-**Spec:** `flows/error-feed/export-traces-csv.spec.ts:33`  
+**Goal:** A developer downloads an issue's traces from the issue page and uploads the file unchanged as a dataset (overview response stubbed)
+
+**Spec:** `flows/error-feed/export-traces-csv.spec.ts:33`
+
 **Tags:** —
 
 **User steps:**
@@ -812,8 +1643,10 @@
 
 ### ERR-E2E-005 — a shared issue opens read-only for someone who is not signed in
 
-**Goal:** Someone who is not signed in opens a shared Error Feed issue and reads it without being able to change it  
-**Spec:** `flows/error-feed/shared-issue.spec.ts:28`  
+**Goal:** Someone who is not signed in opens a shared Error Feed issue and reads it without being able to change it
+
+**Spec:** `flows/error-feed/shared-issue.spec.ts:28`
+
 **Tags:** —
 
 **User steps:**
@@ -835,8 +1668,10 @@
 
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
-**Goal:** A saved link to a retired issue opens its surviving issue  
-**Spec:** `flows/error-feed/retired-issue-redirect.spec.ts:7`  
+**Goal:** A saved link to a retired issue opens its surviving issue
+
+**Spec:** `flows/error-feed/retired-issue-redirect.spec.ts:7`
+
 **Tags:** —
 
 **User steps:**
@@ -853,8 +1688,10 @@
 
 ### EVAL-E2E-001 — eval task runs over ingested spans via the mock LLM
 
-**Goal:** A developer runs an LLM eval over ingested spans and reads the results  
-**Spec:** `flows/evals/eval-task.spec.ts:34`  
+**Goal:** A developer runs an LLM eval over ingested spans and reads the results
+
+**Spec:** `flows/evals/eval-task.spec.ts:34`
+
 **Tags:** —
 
 **User steps:**
@@ -875,8 +1712,10 @@
 
 ### EVAL-E2E-002 — configured evaluator choices stay current in the bound project
 
-**Goal:** Create and edit a choice evaluator through the UI and discover only its current choices in its bound Observe project  
-**Spec:** `flows/evals/choice-catalog.spec.ts:32`  
+**Goal:** Create and edit a choice evaluator through the UI and discover only its current choices in its bound Observe project
+
+**Spec:** `flows/evals/choice-catalog.spec.ts:32`
+
 **Tags:** —
 
 **User steps:**
@@ -897,8 +1736,10 @@
 
 ### EVAL-E2E-003 — typed executed evaluations retain exact native results and reject invalid output
 
-**Goal:** Read typed evaluations on real spans, find exactly their matching traces and reject invalid judge output visibly  
-**Spec:** `flows/evals/catalog-result-types.spec.ts:137`  
+**Goal:** Read typed evaluations on real spans, find exactly their matching traces and reject invalid judge output visibly
+
+**Spec:** `flows/evals/catalog-result-types.spec.ts:137`
+
 **Tags:** —
 
 **User steps:**
@@ -919,8 +1760,10 @@
 
 ### EVAL-E2E-004 — executed dataset evaluations retain typed cells, exact filters and a saved numeric widget
 
-**Goal:** Evaluate new dataset rows and use their actual results in dataset filters and a saved dashboard widget  
-**Spec:** `flows/evals/dataset-catalog-results.spec.ts:86`  
+**Goal:** Evaluate new dataset rows and use their actual results in dataset filters and a saved dashboard widget
+
+**Spec:** `flows/evals/dataset-catalog-results.spec.ts:89`
+
 **Tags:** —
 
 **User steps:**
@@ -940,8 +1783,10 @@
 
 ### EVAL-E2E-005 — browser task submit retains a custom attribute predicate and excludes other spans
 
-**Goal:** Create an evaluation task from the browser for exactly the selected custom attribute value  
-**Spec:** `flows/evals/task-filter-submit.spec.ts:33`  
+**Goal:** Create an evaluation task from the browser for exactly the selected custom attribute value
+
+**Spec:** `flows/evals/task-filter-submit.spec.ts:33`
+
 **Tags:** —
 
 **User steps:**
@@ -961,32 +1806,549 @@
 
 ### EVAL-E2E-006 — a task run opens its trace in a drawer from the Usage tab
 
-**Goal:** Open the trace behind an eval task result without leaving the task Usage tab  
-**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:25`  
+**Goal:** Open the trace behind an eval task result without leaving the task Usage tab
+
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:36`
+
 **Tags:** —
 
 **User steps:**
 
-1. seed a trace and run an eval task over it through the mock judge
-2. open the task Usage tab and click its run
-3. read the run panel Trace ID and Span ID
-4. click Open trace and read the drawer
-5. press Esc to close the drawer, then Esc again to close the run panel
+1. seed the same native two-span trace and run the same eval task via the managed mock judge
+2. verify the task and exact PG child/root outcomes
+3. wait for the completed child's exact CDC mirror row, then verify its run/task/span identity and unique verdict
+4. open Usage and click the exact successful run
+5. read the seeded Trace ID and Span ID in the run panel
+6. open the trace drawer on the evaluated child and its Evals tab
+7. press Esc to close only the drawer, then Esc to close the run panel
 
 **Backend state verified:**
 
 - the task completes with exactly two PG results: the evaluated child completed, the unmapped root errored
+- the completed evaluation's exact run, task, span and verdict reach the ClickHouse mirror before drawer navigation
 - the Usage runs response carries only the completed run, with the seeded trace and span IDs
 - the run panel shows the seeded trace and span IDs
 - the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open
 - the first Esc closes only the drawer and the second closes the run panel
 
+### EVAL-E2E-007 — choosing a Jev model without a TypeSafe key opens the keys drawer on TypeSafe
+
+**Goal:** Choose a Jev evaluator model before saving a TypeSafe key and land in the keys drawer on TypeSafe
+
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:269`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the evaluator create page on the LLM-As-A-Judge tab and open the model picker
+2. choose Jev latest
+3. type into the TypeSafe API key field without adding it
+
+**Backend state verified:**
+
+- the provider-status API reports no TypeSafe key before and after, and the drawer sent no API-key write
+
+**Browser observations:**
+
+- both Jev rows are enabled and prompt for a TypeSafe API key
+- choosing Jev latest closes the picker and opens the keys drawer with TypeSafe as its first provider
+- the drawer takes input (Add enables) and the evaluator model stays unselected
+
+### EVAL-E2E-008 — a Jev pass/fail evaluator keeps its model, output type and criteria after reload
+
+**Goal:** Author a Jev pass/fail evaluator in the UI and find its model, output type and criteria intact after reload (TypeSafe key faked in the browser)
+
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:340`
+
+**Tags:** —
+
+**User steps:**
+
+1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+2. author an LLM-As-A-Judge evaluator and choose Jev latest
+3. keep Pass/fail and describe a pass and a fail
+4. save the evaluation
+5. reload its detail page
+
+**Backend state verified:**
+
+- PG keeps the validated noul mapping with both criteria, Pass/Fail output, org/workspace scope, model jev-latest and an identical V1 snapshot
+
+**Browser observations:**
+
+- the publish request carries jev-latest, pass_fail and both criteria
+- after reload the pill reads Jev latest, Pass/fail is selected and both criteria are filled
+
+### EVAL-E2E-009 — a Jev choices evaluator keeps its authored label order and scores after reload
+
+**Goal:** Author a Jev choices evaluator whose labels are not shortest-first and find their order and scores intact after reload (TypeSafe key faked in the browser)
+
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:395`
+
+**Tags:** —
+
+**User steps:**
+
+1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+2. author an LLM-As-A-Judge evaluator and choose Jev latest
+3. choose Choices and enter Resolved (Pass), Escalated (Neutral), No (Fail), describing Escalated
+4. save the evaluation
+5. reload its detail page
+
+**Backend state verified:**
+
+- PG choice_scores holds the three scores with jsonb keys shortest-first, while choices and the validated mapping keep Resolved, Escalated, No with the Escalated description; V1 snapshot identical
+
+**Browser observations:**
+
+- the publish request carries jev-latest, deterministic and the labels in authored order
+- after reload the rows read Resolved, Escalated, No as Pass, Neutral, Fail and the description is kept
+
+### EVAL-E2E-010 — a Jev scoring evaluator keeps its four ordered levels after reload
+
+**Goal:** Author a Jev scoring evaluator with four ordered rubric levels and find them intact after reload (TypeSafe key faked in the browser)
+
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:474`
+
+**Tags:** —
+
+**User steps:**
+
+1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+2. author an LLM-As-A-Judge evaluator and choose Jev latest
+3. choose Scoring and add four ordered levels
+4. save the evaluation
+5. reload its detail page
+
+**Backend state verified:**
+
+- PG keeps the validated score mapping with the four levels in order, no choice scores and an identical V1 snapshot
+
+**Browser observations:**
+
+- the publish request carries jev-latest, percentage and the four levels
+- after reload Scoring is selected and the four levels read back in order
+
+### EVAL-E2E-011 — Jev models are listed and saved on a Community stack without a licence
+
+**Goal:** See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install
+
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:171`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the evaluator create page on the LLM-As-A-Judge tab
+2. open the model picker and read the Jev group
+3. read each Jev row's plan tooltip label
+4. save a Turing-model evaluator through the create API, then switch it to jev-latest through the update API
+5. create a Jev evaluator through the create API
+
+**Backend state verified:**
+
+- the capabilities API allows jev_models and still denies turing_models for the actor org
+- the provider-status API lists TypeSafe with no key
+- the update to jev-latest answers 200 and the PG template row holds jev-latest in model and config with the validated noul mapping
+- create-v2 with jev-latest answers 200 and stores one row with model jev-latest
+
+**Browser observations:**
+
+- the picker lists exactly Jev 1.13 (pinned) then Jev latest, below FutureAGI Models
+- both Jev rows are enabled, prompt for a TypeSafe API key and carry an empty plan tooltip (a locked row carries "Not included in your plan")
+
+### EVAL-E2E-012 — inspect stored judge agreement with human labels without rescoring
+
+**Goal:** Compare my saved dataset evaluation results with human labels and inspect disagreements without running the judge again
+
+**Spec:** `flows/evals/stored-agreement.spec.ts:26`
+
+**Tags:** —
+
+**User steps:**
+
+1. save synthetic evaluation results and two human label sources through public APIs in each organization
+2. open Agreement and select each human label source
+3. read exact agreement and disagreement rows, edit notes on an older vote in another queue, then refresh
+4. verify saved values in PostgreSQL and deny foreign template, dataset, label and source requests
+
+**Backend state verified:**
+
+- the browser agreement response and scoped API readback compute the known statistics from the saved label source
+- PostgreSQL retains the exact submitted judge choices and human labels without a judge execution request
+- notes-only edits persist without moving the value timestamp or changing the latest reviewer vote and displayed report
+- foreign template, dataset, label and source identifiers return 404 without foreign names or stored changes
+
+### EVAL-E2E-013 — create an eval group, remove its members and keep it inside my organization
+
+**Goal:** Group my evaluations on the Groups page, remove members from a group and delete it with its last member, without reaching another organization or workspace
+
+**Spec:** `flows/evals/eval-groups.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. through the public API, create three evaluations in each of two organizations
+2. open Groups, create a group with a name, a description and two of the evaluations, and land on its page
+3. remove one member on the group page, then reload it
+4. as the other organization and from another workspace, open the group link and try to read, rename, edit and delete the group and to group the other organization's evaluations
+5. remove the last member, confirm that this deletes the group, and return to Groups
+
+**Backend state verified:**
+
+- the create request carries exactly the chosen evaluations; PostgreSQL stores the group, its two members and two ADD history rows under the actor organization and workspace
+- after the removal the group API and PostgreSQL list exactly the remaining member, with a DELETE history row
+- another organization and another workspace of the same organization get 400 for read, rename, member edit and delete, never list the group, cannot group foreign evaluations, and change nothing
+- removing the last member soft-deletes the group, clears its members and keeps all three evaluations
+
+### EVAL-E2E-015 — each create form offers Pass/fail, Scoring and Choices, and the Pass/fail and Scoring types chosen there reach judged dataset cells
+
+**Goal:** Choose an evaluation's output type (Pass/fail, Scoring or Choices) and pass threshold when I create it on the Create page or from a dataset's Create New Eval, run it on a dataset and read each row's judged result, for my organization only
+
+**Spec:** `flows/evals/eval-create-output-type.spec.ts:34`
+
+**Tags:** —
+
+**User steps:**
+
+1. in each of two organizations, register the loopback judge STANDIN model and a dataset with verdict and score inputs on two rows
+2. on the Create page, see the offered output types Pass/fail, Scoring and Choices, save a Pass/fail evaluation and attach it to the dataset through the public API
+3. from the dataset's Evaluate drawer, choose Create New Eval, see the same offered output types, pick Scoring, remove the seeded score-mapping row, move the pass threshold to 60% and choose Save & Add Evaluation
+4. run both evaluations from the Evaluate drawer and read their cells from the public dataset table and PostgreSQL
+5. as the other organization, try to read either evaluation, run it on the first organization's dataset and read that dataset's table
+
+**Backend state verified:**
+
+- each publish request carries the chosen output type and pass threshold; PostgreSQL stores them, with no choice mapping, under the actor organization and workspace
+- the drawer's eval list reports the 60% pass rule for the Scoring evaluation
+- each native run completes: the Pass/fail cells read Passed and Failed and the Scoring cells hold the judged numbers, with the judge reasons beside them
+- the other organization cannot read or run either evaluation or read the dataset table, and nothing changes
+
+### EVAL-E2E-017 — the pass threshold set in a dataset evaluation editor is saved on that evaluation and keeps its version
+
+**Goal:** Set the pass threshold of an evaluation saved on my dataset, see it as the pass rule the dataset applies and keep its recorded version, for my organization only
+
+**Spec:** `flows/evals/dataset-eval-pass-threshold.spec.ts:30`
+
+**Tags:** —
+
+**User steps:**
+
+1. through the public API, give each of two organizations a dataset, a Scoring evaluation with two saved versions and that evaluation saved on the dataset pinned to its first version
+2. open the dataset Evaluate drawer, read the pass rule, open the evaluation editor and move the pass threshold from 50% to 70%
+3. choose Update Evaluation and read the saved evaluation through the public API and PostgreSQL
+4. read the pass rule in the drawer, reopen the editor and verify Update Evaluation is disabled without changes and sends no update request
+5. as the other organization, try to read the first organization's dataset evaluations and versions and to change its pass threshold
+
+**Backend state verified:**
+
+- the update request carries the selected version and the 0.7 threshold under the actor organization and workspace
+- PostgreSQL stores 0.7 in the saved evaluation's run settings, the pin stays on the first version, no version is added and the default version and evaluation threshold are unchanged
+- the dataset eval list reports a 0.70 pass rule on the pinned version, and the reopened editor shows 70% with Update disabled, no POST and the complete stored binding, threshold and pin unchanged
+- the other organization is refused and nothing of the first organization changes
+
+### EVAL-E2E-018 — the evaluation editor header names the saved version being configured
+
+**Goal:** See which saved version of an evaluation I am configuring on my dataset, and whether I have unsaved changes, for my organization only
+
+**Spec:** `flows/evals/eval-editor-header.spec.ts:25`
+
+**Tags:** —
+
+**User steps:**
+
+1. through the public API, give each of two organizations a dataset and an evaluation with two saved versions, saved on the dataset pinned to the first
+2. open the evaluation editor from the dataset Evaluate drawer and read its header
+3. verify the version selector is absent and the stored version label remains, then move the pass threshold without saving
+4. reopen the editor, verify the version selector is absent and save a new version, then reopen it again
+5. as the other organization, try to read the first organization's evaluation, its versions and to save a version of it
+
+**Backend state verified:**
+
+- the header names the evaluation and its type and shows the stored saved version, else the evaluation's current version from the detail read
+- unsaved changes show as Edited and change nothing; the binding stays pinned to the first version
+- Save version stores a third, default version under the actor organization and workspace; the header shows it and the detail read reports it as current
+- the other organization is refused and nothing of the first organization changes
+
+### EVAL-E2E-068 — save and run a scoped composite jury with step judges and a stored check
+
+**Goal:** Configure several judges and a stored check, then inspect their saved verdicts without rescoring
+
+**Spec:** `flows/evals/composite-jury.spec.ts:13`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a child evaluator and composite in an isolated organization
+2. add two judges, make the second judge evaluate each LLM step, and add a stored check
+3. save the jury and reload its settings
+4. run mapped input through the loopback LLM STANDIN
+5. read the saved jury verdicts
+6. refuse access from another organization and workspace
+
+**Backend state verified:**
+
+- the UI save persists exactly three seats and the step reducer
+- real evaluator calls produce persisted Pass, Pass, Fail verdicts and their report
+- foreign organization and workspace reads, writes and executions are refused
+
+### EVAL-E2E-072 — author, validate, test and run a scoped decision tree and read the paths it took
+
+**Goal:** Build a decision tree of checks, see which path an output takes, and compare the paths across a dataset
+
+**Spec:** `flows/evals/decision-tree.spec.ts:59`
+
+**Tags:** —
+
+**User steps:**
+
+1. author a check with two scores in the decision tree editor and save it
+2. add a judged first question through the API and refuse cyclic or too-deep trees
+3. test one output in the browser through the loopback LLM STANDIN and read the path
+4. run the saved tree on an uploaded dataset from the browser
+5. read the stored paths in the browser and through the API
+6. refuse the tree, its runs and its tests to another organization and workspace
+
+**Backend state verified:**
+
+- the browser save persists exactly the authored check tree in the creating workspace
+- cyclic and too-deep definitions are refused with nothing written
+- the judged question reaches the loopback model and its verdict decides the path
+- a run stores one result per dataset row and the paths report counts them
+- foreign organization and workspace reads, writes, runs and tests are refused
+
+### EVAL-E2E-073 — child eval and tool inputs reach decision-tree tests and precise stored scores
+
+**Goal:** Author a tree using an existing eval and a tool-call check, then test and run it with every input and an exact score
+
+**Spec:** `flows/evals/decision-tree-inputs.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. select an existing eval in the editor and connect a tool-call check and scores
+2. save and reload the definition with its required inputs
+3. test typed expected and tool-call inputs through the loopback LLM STANDIN
+4. map dataset columns, run, and inspect precise stored paths
+5. refuse missing inputs and cross-tenant child resolution and execution
+
+**Backend state verified:**
+
+- saved definitions resolve the child eval required keys in the current workspace
+- typed expected and tool-call values reach the evaluator and choose the tool-called path
+- dataset runs store 0.499 unchanged with a failing verdict in both score and pass/fail modes
+- missing inputs and foreign organization or workspace access are refused without extra runs
+
+### EVAL-E2E-074 — bind a saved jury to dataset rows and inspect disagreement
+
+**Goal:** Run a saved jury on dataset steps and checks, then inspect agreement and navigate the rows where judges disagree
+
+**Spec:** `flows/evals/dataset-jury.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two synthetic rows and a composite with a step judge, stored check and API-pinned jury version
+2. open the dataset evaluation drawer and map steps and checks to real columns
+3. verify the stored version label with no selector, save, reopen after live changes, and run through the native dataset action
+4. inspect pairwise agreement and open the disagreement row in the saved report
+5. reject foreign organization and workspace reads, writes and version references
+6. seed a summary pin and then the original pin through the scoped API, preserve each through the locked picker, and rerun through the native dataset action
+
+**Backend state verified:**
+
+- the browser mapping save and reopen preserve the API-seeded pin and selected evidence columns after live jury changes
+- the stored historical jury runs after live aggregation changes and persists both seats with a numeric result column
+- the run report aggregates two stored rows with exact pairwise agreement and disagreement navigation
+- foreign organization and workspace requests cannot read or change the jury binding or report
+- each API-seeded pin survives a no-op browser reopen and reruns into the same single result column with the stored version type and values
+
+### EVAL-E2E-075 — the dataset eval list says which version runs, its pass rule and a newer saved version
+
+**Goal:** See, in a dataset's eval list, which eval version each evaluation runs, the pass rule it applies and when a newer version is saved, for my organization only
+
+**Spec:** `flows/evals/dataset-eval-version-notice.spec.ts:53`
+
+**Tags:** —
+
+**User steps:**
+
+1. through the public API, create in each of two organizations a dataset with two saved evaluations of one score eval
+2. through the public API, save one evaluation's edited config in the first organization, then a new eval version with a stricter pass threshold
+3. open the dataset, open Evaluate and read each evaluation's version line and newer-version notice
+4. set the previous version as the default through the public API and watch the open list change without a reload
+5. reload the dataset, open Evaluate and read the list again
+6. as the second organization, read its own dataset's list, then try to read and change the first organization's evals through the API
+
+**Backend state verified:**
+
+- each organization's template versions, default flag, thresholds and binding pins are persisted under that organization
+- the list endpoint the drawer polls reports the version that runs, the pin, the newest version and the pass threshold of that version
+- the drawer shows exactly those values per evaluation, follows a default change and keeps them after a reload
+- the second organization cannot list, read the versions of, re-default or pin the first organization's evals, and its own list shows only its own
+
+### EVAL-E2E-076 — preview the saved inputs an evaluation reads without executing it
+
+**Goal:** Inspect the saved sample inputs for a new experiment evaluation without running the evaluation or reading another tenant's data
+
+**Spec:** `flows/evals/mapping-preview.spec.ts:28`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a uniquely named dataset, saved row and evaluation through the public API in each of two organizations
+2. open New experiment, choose Evaluations and add the saved evaluation through its picker
+3. choose Data and inspect the saved question and the not-yet-available run output
+4. repeat the read-only request as each tenant and reject foreign datasets, rows, columns and evaluations
+5. read the original saved row again and confirm previewing created no evaluation bindings or results
+
+**Backend state verified:**
+
+- the actual browser preview request carries the current dataset, saved row and evaluation and returns the persisted question exactly
+- each tenant can preview its own saved input while foreign dataset, row, column and template identifiers are refused
+- the public row readback and persisted source cells are unchanged, no evaluation bindings or result cells are created and the browser never posts an execution request
+
+### EVAL-E2E-077 — the glossary explains only the words of features this build shows
+
+**Goal:** Look up what a word on my screen means and find only terms for features I can use, in my own organization
+
+**Spec:** `flows/evals/glossary-shown-terms.spec.ts:58`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a uniquely named dataset in each of two synthetic organizations through the public API
+2. open Datasets and read the organization's own saved dataset from the real list
+3. open the saved dataset, focus a control inside its grid and open the command palette, find the Wrap lines term and no term for a hidden results word
+4. open Glossary: what the words mean and read the listed terms and the search hint
+5. search the glossary for a hidden results word, then for a shown one
+6. repeat in the second organization, verify foreign dataset refusals and read back both saved datasets
+
+**Backend state verified:**
+
+- each organization's Datasets page reads exactly its own saved dataset through the real list endpoint with its own scope headers
+- both tenants can read their own dataset evaluations and each receives 404 for the other tenant's dataset, and Postgres keeps both datasets with their exact names and tenant identities
+
+**Browser observations:**
+
+- the glossary command, the palette results and the Glossary tab list exactly the terms of shown features and none of the hidden results terms
+- the glossary search hint names only listed terms, and a hidden results word finds no term
+- in a separate Matrix-only build, Matrix terms are present but pairwise and blind review terms are absent from the palette and sheet
+
+### EVAL-E2E-078 — stored dataset pins survive the locked picker and execute the historical choice score
+
+**Goal:** Keep my dataset evaluation on its stored version when saving settings in the locked picker and run its historical definition without changing another organization
+
+**Spec:** `flows/evals/dataset-eval-version-pin.spec.ts:25`
+
+**Tags:** —
+
+**User steps:**
+
+1. create synthetic inputs and two saved choice-evaluation versions in each of two organizations
+2. seed V1, latest and default pins through the scoped API, then display each with no-op Update disabled and no version selector
+3. reopen each stored pin without creating versions, then explicitly save one new version through Save version
+4. restore V1 through the scoped API, verify the locked picker preserves it, and use the native Run action
+5. read the historical score from the public dataset table and PostgreSQL, then refuse foreign versions and datasets
+
+**Backend state verified:**
+
+- real browser mutations and scoped API/PostgreSQL readback retain API-seeded pins without extra versions; only explicit Save version creates one
+- native execution with a labelled loopback judge STANDIN persists the historical choice score and original input for each tenant
+- foreign version and dataset requests are refused without changing either tenant binding
+
+### EVAL-E2E-079 — a missing or another organization's dataset link opens a not-found page that leads only to Datasets
+
+**Goal:** Open a dataset link I cannot use and get a clear not-found page that leads me back to my own datasets, without seeing another organization's data
+
+**Spec:** `flows/evals/not-found-pages.spec.ts:40`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a uniquely named dataset in each of two synthetic organizations through the public API
+2. open the other organization's dataset link and read the not-found page and its one action
+3. choose Back to Datasets and read the organization's own saved dataset from the real list
+4. open a dataset link whose id does not exist and read the same not-found page
+5. open the organization's own dataset link and see its dataset page instead of the not-found page
+6. open an unknown experiment link, require the classic page to read its scoped API and show Experiment not found, then return through All datasets
+7. repeat in the second organization, verify the refusals through the API and read back both saved datasets
+
+**Backend state verified:**
+
+- the browser's own read of a foreign or unknown dataset carries the organization's scope headers and the real backend answers 400 DATASET_NOT_FOUND without the foreign dataset's name
+- each tenant reads its own dataset table and receives 400 DATASET_NOT_FOUND for the other tenant's dataset, an unknown experiment id answers 404, and Postgres keeps both datasets unchanged with their exact names and tenant identities
+
+**Browser observations:**
+
+- the not-found page shows its title and sentence with exactly one action, Back to Datasets, and never the foreign dataset's name
+- the organization's own dataset opens its page; classic experiment routes remain visible, and an unknown id shows Experiment not found after its scoped 404 rather than hiding the page
+
+## experiments
+
+### EXP-E2E-001 — saved prompt settings reach both provider legs unchanged
+
+**Goal:** Create experiments from saved prompt versions and run exactly their saved settings without exposing another organization's version
+
+**Spec:** `flows/experiments/saved-version-parameters.spec.ts:71`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two organizations, one-row data, a deterministic evaluation and two saved prompt versions
+2. open each saved prompt in the real experiment wizard and inspect its parameters
+3. select the evaluation and Run experiment without editing those parameters
+4. read each run-scoped Anthropic Messages or Gemini request receipt
+5. try to create an experiment using the other organization's saved version
+
+**Backend state verified:**
+
+- the UI request and persisted run reference the selected scoped version with temperature=0 and max_tokens=64
+- each actual provider receipt has a valid canonical digest and exactly temperature=0 and token limit=64, with no substituted defaults
+- a foreign prompt version is refused and creates no experiment row or provider request
+
+### EXP-E2E-007 — re-saving and removing experiment evaluations changes only that experiment
+
+**Goal:** Re-save one evaluation of an experiment and remove another, and leave every other dataset, in this and in another organization, exactly as it was
+
+**Spec:** `flows/experiments/evaluation-column-scope.spec.ts:53`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two organizations; in the first, a one-row dataset, two evaluations, a saved prompt version and an experiment that uses both evaluations
+2. seed one dataset in each organization whose evaluation and reason columns carry the experiment's evaluation ids in their source id
+3. open both datasets in the browser and read the columns the page loads and shows
+4. try to re-save the second evaluation and to remove the first as the other organization
+5. re-save the second evaluation of the experiment, then remove the first together with its columns
+6. reopen both datasets in the browser and read the columns again
+
+**Backend state verified:**
+
+- the other organization's requests are refused and change no evaluation, column or cell
+- the other organization's dataset keeps every column, cell value, column order and column config, in the API, in Postgres and on its page
+- the unrelated dataset of the same organization keeps every column, cell value, column order and column config, in the API, in Postgres and on its page
+- the experiment snapshot loses exactly the removed evaluation's columns from its table, column order and column config, and keeps the other evaluation
+- re-saving creates no reason column outside the experiment snapshot
+
 ## gateway
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it
 
-**Goal:** A platform engineer finds the gateway requests one application made, out of everything the org sent  
-**Spec:** `flows/gateway/request-log-tags.spec.ts:44`  
+**Goal:** A platform engineer finds the gateway requests one application made, out of everything the org sent
+
+**Spec:** `flows/gateway/request-log-tags.spec.ts:50`
+
 **Tags:** —
 
 **User steps:**
@@ -994,8 +2356,9 @@
 1. mint a gateway API key from the app
 2. deliver three gateway requests on the logs webhook, each tagged with an application, a service and a team
 3. open Request Logs
-4. pick one application in the Filters panel and apply it
-5. read the filtered table
+4. show the Application column from Columns
+5. pick one application in the Filters panel and apply it
+6. read the filtered table
 
 **Backend state verified:**
 
@@ -1009,14 +2372,16 @@
 
 ### GW-E2E-002 — custom provider keeps an explicitly empty API path prefix
 
-**Goal:** A user configures a custom OpenAI-compatible provider without an API version prefix  
-**Spec:** `flows/gateway/provider-path-prefix.spec.ts:30`  
+**Goal:** A user configures a custom OpenAI-compatible provider without an API version prefix
+
+**Spec:** `flows/gateway/provider-path-prefix.spec.ts:40`
+
 **Tags:** @smoke
 
 **User steps:**
 
 1. seed a custom provider for the current organization
-2. open Gateway provider configuration
+2. open Gateway Providers
 3. edit the provider and clear its API path prefix
 4. save and reopen the provider
 5. see that the empty prefix was preserved
@@ -1029,48 +2394,2301 @@
 
 ### GW-E2E-003 — a platform engineer adds a declared custom property as a Request Logs column
 
-**Goal:** A platform engineer shows a declared custom property beside the built-in Request Logs columns, keeps that choice across reloads in this browser, and never sees it under another organization  
-**Spec:** `flows/gateway/request-log-columns.spec.ts:83`  
+**Goal:** A platform engineer shows a declared custom property beside the built-in Request Logs columns, keeps that choice across reloads in this browser, and never sees it under another organization
+
+**Spec:** `flows/gateway/request-log-columns.spec.ts:147`
+
 **Tags:** —
 
 **User steps:**
 
-1. declare a custom property with a minted `tenant_<suffix>` name in an organization of its own
-2. mint a gateway API key and deliver four gateway requests on the logs webhook, three carrying tenant metadata, one longer than the 80-character cell preview
-3. open Request Logs, Tab to Columns and press Enter to open the picker
-4. by keyboard only, Space hides `Provider`, Enter moves `Model` down twice and `Tokens` to the end of the built-ins and back, Space checks the tenant column, Escape closes the picker
-5. Tab to the truncated tenant value
-6. reload the page
-7. reset to default, then check the tenant column again
-8. hide `Provider`, then reload while the browser fails every declaration list GET with a 500 through page.route, React Query’s automatic retry included
-9. let the declaration list through again and press Retry
-10. open Request Logs as a second identity, in its own organization and browser context, holding a copy of the first preference record
-11. delete the declaration, reopen the picker and remove the entry listed as no longer declared
+1. read whether the deployment offers managed models
+2. declare a custom property with a minted `tenant_<suffix>` name in an organization of its own
+3. mint a gateway API key and deliver four gateway requests on the logs webhook, three carrying tenant metadata, one longer than the 80-character cell preview
+4. in a second organization, mint a gateway API key and deliver one request whose metadata carries the same, undeclared, tenant property
+5. open Request Logs, Tab to Columns and press Enter to open the picker
+6. by keyboard only, Space hides `Provider`, Enter moves `Model` down twice and `Tokens` to the end of the built-ins and back, Space checks the tenant column, Escape closes the picker
+7. Tab to the truncated tenant value
+8. reload the page
+9. reset to default, then check the tenant column again
+10. hide `Provider`, then reload while the browser fails every declaration list GET with a 500 through page.route, React Query’s automatic retry included
+11. let the declaration list through again and press Retry
+12. open Request Logs as a second identity, in its own organization and browser context, holding a copy of the first preference record
+13. delete the declaration, reopen the picker and remove the entry listed as no longer declared
 
 **Backend state verified:**
 
 - the declaration is stored in PG agentcc_custom_property_schema under the flow’s organization and is its only declaration
-- the table renders the tenant value per row and `-` where the row carries none
+- the table renders the tenant value per row and an em dash where the row carries none
 - selecting and reordering columns issues no per-row request-log detail call and at most one declaration list call
 - the selection and order survive a reload for the same user, org and browser
-- reset restores the ten default headers, renders no tenant cell and removes only this preference record
+- reset restores the default headers (seven shown; Application, Service and Session ID listed but hidden), renders no tenant cell and removes only this preference record
 - while the browser-injected 500 answers every declaration list attempt, the saved built-in columns render and stay usable, no saved custom column name reaches the page and the saved record is unchanged
 - Retry is answered by the real API and restores the tenant column and its row values, leaving the saved record byte-identical
-- the second org never sees the first org’s tenant column, declaration or saved record
+- the second org never sees the first org’s tenant column, declaration or saved record: its own request lists under the default columns, without the tenant column its metadata carries
 - after the declaration is deleted the saved column is listed as no longer declared and is not rendered
 - Remove drops the stale tenant id from the saved record and keeps the rest of it
 
 **Browser observations:**
 
 - the picker opens, toggles, reorders and closes by keyboard alone: focus stays on the pressed Move button, moves to the opposite Move button when the column reaches the end of its group, and returns to Columns on Escape
+- the picker lists the Agent & billing group between the built-ins and the custom properties, with Credential type only where the deployment offers managed models, and no Upstream cost or Markup column
 - a tenant value longer than 80 characters shows its preview in the cell, and Tab to it shows the full value in a tooltip
+
+### GW-E2E-004 — Request Logs show how each gateway request was billed and every upstream attempt behind it
+
+**Goal:** A platform engineer sees, for each gateway request, how it was billed and every upstream attempt behind it
+
+**Spec:** `flows/gateway/request-attempts.spec.ts:95`
+
+**Tags:** —
+
+**User steps:**
+
+1. read whether the deployment offers managed models
+2. mint a gateway API key in an organization of its own
+3. deliver two gateway requests on the logs webhook: a managed request whose first attempt was rate limited and fell back, and a BYOK request served on its first attempt
+4. open Request Logs, open Columns and tick Billing mode and Attempts
+5. read the two rows' billing cells
+6. open the managed request, open its attempt details in the detail drawer and read its attempts
+
+**Backend state verified:**
+
+- each request is stored in PG agentcc_request_log under the key's organization with the billing mode, upstream cost, markup and attempt count the gateway reported
+- PG agentcc_request_attempt holds exactly the managed request's two attempts in index order, error then success, and the BYOK request's one
+- the request-log detail endpoint returns those attempts in order and no landed cost
+- the table shows exactly Future AGI credits and Own key with each row's attempt count and one cost: the charged amount on credits, the provider price on an own key; no Upstream cost or Markup column is offered
+- where the deployment offers no Future AGI models, the Columns picker offers no Credential type, with a managed request listed
+- the drawer lists the two attempts in order, rate-limited primary then the auto fallback that was billed, and the landed cost appears nowhere on the page
+
+### GW-E2E-005 — a saved auto routing preference and price caps reach the gateway and survive a reload
+
+**Goal:** A platform engineer tunes how model "auto" picks a model, and the gateway serves with the saved tuning
+
+**Spec:** `flows/gateway/auto-routing.spec.ts:39`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Models, then Auto routing from the AI Gateway rail
+2. choose the Quality preference and type a maximum input and output price
+3. save changes
+4. reload the page and see the saved preference and caps
+5. clear the output cap and save again
+
+**Backend state verified:**
+
+- the save sends one update-config patch carrying only routing.auto with the preference and both caps
+- the org's active PG agentcc_org_config version holds routing.auto with the Quality preference and both caps
+- the gateway's own copy of the org config carries the same routing.auto
+- after a reload the page shows the saved preference and caps
+- clearing a cap deletes that key in a new active version, keeps the rest, and reaches the gateway
+
+### GW-E2E-006 — the Models page lists the gateway managed catalog at provider price plus the managed markup
+
+**Goal:** A developer browses the managed model catalog and sees what each model will be billed before using it
+
+**Spec:** `flows/gateway/managed-catalog.spec.ts:107`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Models
+2. read the neutral managed-OFF notice, absence of enable controls and the catalog's model count
+3. search the catalog for one model id
+4. open that model's page from its row and read its Pricing
+5. go back, clear the search and tick that model's provider in the Provider filter
+
+**Backend state verified:**
+
+- the managed-models status API reports managed models available and off for this org, at the gateway's 5% markup
+- the loaded Models page shows the neutral organization-OFF notice with no credits switch, enable dialog or balance statistic
+- the console's catalog API serves the gateway's own catalog: the same model ids as the gateway admin catalog, each list price billed at provider price plus 5%
+- the page counts exactly the catalog API's models, lists every one as a grid row, and says the prices come from the bundled list
+- a search for one model id leaves exactly that model's row, linked to its page, with its billed input and output prices
+- the model page's Pricing table shows one price per row, that model's billed price on Future AGI credits, never the provider price or a markup beside it
+- the Provider filter leaves exactly the API's model count for that vendor
+
+### GW-E2E-007 — an org admin distinguishes credits OFF from an enabled organization with no credit
+
+**Goal:** An org admin distinguishes managed credits being off from an enabled organization having no credit, and reads the corresponding refusal in the console; API enablement is fixture setup, not a console opt-in journey
+
+**Spec:** `flows/gateway/managed-optin-credits.spec.ts:77`
+
+**Tags:** @new-org-default-off
+
+**User steps:**
+
+1. mint a gateway API key in an organization of its own
+2. call a managed catalog model with the key before opting in
+3. open Models and read the neutral OFF notice with no enable control
+4. enable managed models through the real organization-config API as fixture setup, then reload Models
+5. read the card: Enabled, the credit balance and the out-of-credit warning
+6. call the same managed model again
+7. open Request Logs and the refused request
+
+**Backend state verified:**
+
+- before opt-in the gateway refuses the managed model for this org's key as Future AGI credits off, not as a 402
+- the API fixture save persists managed_models.enabled true in the org's active PG agentcc_org_config version and creates the org's managed-credit account at zero in PG usage_managedcreditaccount
+- before API enablement the loaded Models page has the neutral OFF notice and no credits enable control
+- the card shows Enabled, a $0.00 balance and the out-of-credit warning naming HTTP 402
+- the managed-models status API reports enabled with a zero balance at the gateway markup, and the credit summary reports billing_available false on Standalone
+- after opt-in the gateway answers the same call with 402 managed_credits_exhausted from the agentcc_credits limit, so the zero account was pushed to it
+- the refused call is logged under the org as a managed 402 with the gateway's reason, and Request Logs show exactly that row and reason
+
+### GW-E2E-008 — a stored org-config alert channel credential URL is write-only: masked to every reader, encrypted at rest, still sent to the gateway
+
+**Goal:** An org admin stores an alert channel whose webhook URL carries a credential; no member can read it back, and the gateway still gets it
+
+**Spec:** `flows/gateway/org-config-secrets.spec.ts:61`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Gateway Settings, then Org Config, and open the config editor
+2. on the Alerting tab enable per-org alerting, add a webhook channel and type its URL, which carries a token
+3. save and activate
+4. reopen the editor and see the stored URL as dots with a Replace action
+5. add a second channel with a plain URL and save again
+6. as a view-only member, search the Full Config view for the URL
+
+**Backend state verified:**
+
+- the first save sends one update-config patch carrying the typed channel and its URL
+- the active PG agentcc_org_config version stores the URL as enc:: ciphertext, never the typed value
+- the gateway's own copy of the org config carries the typed URL in clear
+- a view-only member reads the URL on org-configs/active and gateways/default/config only as the read mask, listed in secrets_set
+- the second save's patch carries the stored URL only as its read mask, never the URL; the new active version keeps the same ciphertext and the gateway keeps the URL
+
+**Browser observations:**
+
+- the reopened editor shows the stored URL as read-only dots with Replace, never the value or the mask
+- the view-only member's Full Config search finds the URL's pointer once and its value nowhere
+
+### GW-E2E-009 — a console batch job runs as the organization: served by its own provider, logged and announced as its, refused to a member, hidden from another organization
+
+**Goal:** An org admin runs a console batch job that is served by the organization's own provider, logged and announced as the organization's, while a member can only watch: in the console Submit Batch Job and Health Check are an Owner or Admin's, and the member's own health check request re-pushes nothing; another organization cannot see or cancel it. Narrowing (REL-R7 E2E plan, round 1 Q1): the row's "trace id" clause is not proven here; GW-E2E-018 carries it on the r7alt profile, the only one whose request log keeps request headers
+
+**Spec:** `flows/gateway/batch-jobs-as-org.spec.ts:104`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed the org's own provider on the mock, an org key, and a webhook subscribed to batch.completed
+2. as a member, open Gateway Settings, then Batch Jobs, and see Submit Batch Job and Health Check disabled, Owner or Admin only
+3. as the member, wait until the gateway's copy of the org config carries no push stamp, then send the member's own health check request and reload Settings
+4. as the admin, open Batch Jobs, click Submit Batch Job, replace the JSON with two requests for the org's model, submit, and watch the job reach completed
+5. open View Details
+6. leave Batch Jobs for Settings
+7. as another organization's owner, try to read and cancel the batch; read it twice more as the admin
+
+**Backend state verified:**
+
+- a Member's submit-batch POST is refused with 403
+- the Member's refusal leaves no agentcc_batch_job row and no console-batch key for the org
+- the Member's health check pushes no org config to the gateway: it answers org_configs_pushed false and the gateway's copy of the org config gains no push stamp
+- the Admin's batch is recorded under the org with both items and reaches completed
+- each item is one request log row under the org, under the batch's minted key, with the request id the batch result names, served by the org provider
+- the org provider was called with the org's own credential for each item
+- another org cannot read or cancel the batch: the gateway answers 404 for that org's id on get and cancel, and Django answers 404 to that org
+- the org's webhook receives batch.completed exactly once, for this batch, as the org, even after the batch is read again
+- the batch's minted key is revoked in Django and at the gateway once the batch finished
+
+**Browser observations:**
+
+- the Member sees Submit Batch Job disabled with "Owner or Admin only" and the Member empty state
+- the Member sees Health Check disabled with "Owner or Admin only"
+- after the Member's own health check request, a reloaded Settings shows Last Health Check ending "(healthy)"
+- the Admin's job row shows completed
+- Batch Details shows Total 2, Completed 2, Failed 0 and both items' echoes
+
+### GW-E2E-010 — Gateway Settings show what this gateway runs, and Org Config notes only the org sections it does not enforce
+
+**Goal:** An org admin reads what this gateway actually runs (timeouts, logging, batch limits and health), distinguishes stored settings from enforcement, and saves Cache settings even while node caching is off. All org tabs remain visible; A2A/Audit and effective Mode/Fail Open are read-only. Stock shows the Cache activation note, r7alt does not; the unchanged IP ACL note replaces controls the node cannot apply. This is a save/display proof, not node-enable-after-save or TTL expiry coverage.
+
+**Spec:** `flows/gateway/settings-enforcement.spec.ts:219`
+
+**Tags:** —
+
+**User steps:**
+
+1. read the gateway config the Settings page reads, before opening any page
+2. open Gateway Settings and read the Server Configuration, Gateway Info and Logging cards
+3. click Health Check
+4. open the Batch Jobs tab with a full navigation and read the Batch API card
+5. open Org Config with a full navigation, read all tabs, the Rate Limiting, Cache, Budgets, Security and Alerting notes, and the unchanged IP ACL line
+6. inspect read-only effective Mode/Fail Open and empty A2A/Audit tabs; enable Response Cache, set TTL 37s and Save & Activate
+7. read the saved active config, reopen Cache to verify its controls rehydrate, and save an unchanged read-only tab without sending another mutation
+
+**Backend state verified:**
+
+- the config read reports the gateway's own server, logging and batch settings and the org sections it enforces and does not, exactly as this node runs them
+- a health check is recorded for the org: no check is recorded before the click, and after it the config read names one, status healthy
+- the sole update-config request contains only cache enabled=true and default_ttl=37s, never A2A/Audit or effective node policy
+- the active org config stores cache enabled=true and TTL 37 seconds; A2A/Audit stay empty, and an unchanged read-only save sends no request
+
+**Browser observations:**
+
+- the Server Configuration, Logging and Gateway Info cards show exactly the profile's values (Last Health Check aside), guardrails among the enforced sections
+- after the Health Check, Last Health Check ends "(healthy)"
+- the Batch API card shows memory storage, "10 when a submission sets none" and "10 MiB"
+- the Org Config editor shows the same exact twelve tabs on every profile; Cache is editable and only cache-off nodes show its two-sentence activation note inside the tab
+- A2A/Audit show exact read-only notices and empty states with no edit controls; effective Mode/Fail Open match the declared fixture policy and resist typing
+- per Org Config tab the enforcement notes are exactly IP ACL only, on both profiles, with its reason and no "saved but not applied"
+- the Security tab shows "IP access control is off on this gateway: client IP unknown (trusted_proxies not set)." and no IP access control panel or Enable IP ACL switch
+
+### GW-E2E-011 — org rate limits set in the console refuse the first request past each limit, across the organization's keys, naming the limit
+
+**Goal:** An org admin sets organization-wide, per-model and per-key token rate limits in the console, and the gateway refuses the first request past each limit, counting every key of the organization together where the limit says so, and names the limit that refused it
+
+**Spec:** `flows/gateway/org-rate-limits.spec.ts:84`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed the org's own provider on the mock serving three models, and two org keys A and B
+2. open Org Config, open the config editor, Rate Limiting: switch on per-org rate limiting, set Requests per Minute (RPM) to 1, Save & Activate
+3. in a fresh minute of the gateway's clock, call model 1 with key A, then with key B
+4. Rate Limiting: clear RPM, set RPM per Model to 1, save; in a fresh minute call model 2 with A, model 2 with B, model 3 with B
+5. Rate Limiting: clear RPM per Model, set TPM per Key to 10, save; in a fresh minute call model 1 with A twice and with B once, each with max_tokens 5
+6. open Request Logs
+
+**Backend state verified:**
+
+- each save reaches the gateway: before each pair the gateway's copy of the org config carries the rate limits that save sent
+- with global_rpm 1 the org's second request in the minute is refused even from another key: A 200, B 429 rate_limit_exceeded naming global_rpm, with Retry-After
+- with per_model_rpm 1 a model's second request is refused from any key while another model passes: model 2 by A 200, model 2 by B 429 naming per_model_rpm, model 3 by B 200
+- with per_key_tpm 10 a key's request once its tokens this minute reached the limit is refused while another key passes: A 200, A 429 naming per_key_tpm, B 200
+- the three saves sent exactly these merge patches: rate limiting on with global_rpm 1; global_rpm 0 and per_model_rpm 1; per_model_rpm 0 and per_key_tpm 10
+- the org's request log holds every call in order, the three refusals as 429 rows whose message names global_rpm, per_model_rpm and per_key_tpm
+
+**Browser observations:**
+
+- the Rate Limiting tab shows "This gateway enforces these limits." on the stock node
+- Request Logs shows exactly the eight calls, Status newest first 200 429 200 200 429 200 429 200
+
+### GW-E2E-012 — a key budget and an organization budget refuse past their limits, Block then Throttle, and each level is announced once by email and webhook
+
+**Goal:** An org admin sets a budget on one API key and an organization budget that first blocks and then throttles spending past its limit, and is told once per budget level in this period, by email and by webhook, that the budget was exceeded. Narrowing (REL-R7 E2E plan, round 1 Q6): "once per level per period" is proven for two levels (key, org) within one period; a second period needs clock control
+
+**Spec:** `flows/gateway/budget-block-throttle.spec.ts:137`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed the org's own provider on the mock serving gpt-4o-mini, org keys A and B, a webhook and an SMTP email alert subscribed to Budget Exceeded; read key B's name back from the gateway
+2. open Org Config, open the config editor, Budgets: enable per-org budgets, add a Key Budget for key B with Limit (USD) 0.000001, Save & Activate
+3. call with key B three times, then with key A once
+4. open Budgets, Set budget: Organization, Limit 0.000015, When Limit Exceeded Block, Save
+5. call with key A three times
+6. Set budget again: Organization, Limit 0.000015, Throttle, Requests per minute 1, Save
+7. in a fresh minute of the gateway's clock, call with key A twice
+8. wait out the returned Retry-After plus 1 s, then call with key A once
+9. open Budgets and read the budgets grid, then Webhooks > deliveries
+
+**Backend state verified:**
+
+- the key budget save reaches the gateway: per-org budgets on, key B's limit as sent
+- past its key budget a key is refused while the org's other key passes: B 200, 429 org_budget_exceeded, 429 org_budget_exceeded; A 200
+- the key level is announced once though it refused twice: one budget.exceeded webhook for level key:<B>, action block, and one Budget Exceeded email
+- the Block save reaches the gateway as the org budget, beside the key budget: org_limit and action as the dialog sent
+- past the org limit Block refuses: A 200, then 429 org_budget_exceeded twice
+- the Throttle save reaches the gateway: action throttle with throttle_rpm as sent
+- past the limit Throttle admits one request in the gateway's minute and refuses the next with budget_throttled, whose Retry-After is the seconds left in that minute
+- once that minute is over, Throttle admits the next request
+- every refusal is logged under the org with K1, oldest first: key level twice, org Block twice, org Throttle once, all monthly from this month's start
+- each level is announced to the webhook exactly once in the period: two budget.exceeded deliveries, key level then org level, and two event rows
+- each level is emailed exactly once in the period: two Budget Exceeded emails, and the alert holds two budget keys with nothing pending
+- the saves sent exactly the console's bodies: the key budget patch, org_limit 0.000015 block with alert threshold 80, then the same with throttle and throttle_rpm 1
+
+**Browser observations:**
+
+- the Budgets grid shows exactly the Organization budget (limit $0.000015, Period Monthly, Alert at 80%, Throttles 1 requests a minute per gateway replica past the limit) and key B's budget (limit $0.000001, Period Monthly, Blocks)
+- the deliveries tab lists exactly two Budget exceeded deliveries, both Delivered
+
+### GW-E2E-013 — the gateway's background schedules are registered and running on a fresh install, so a refused webhook delivery is retried on its own
+
+**Goal:** On a fresh install, the gateway's background jobs (alert evaluation, webhook delivery retries and console batch reporting) are scheduled and running without anyone opening the console, so a webhook delivery that failed is retried on its own
+
+**Spec:** `flows/gateway/background-schedules.spec.ts:73`
+
+**Tags:** —
+
+**User steps:**
+
+1. on a freshly booted stack, before anyone opens the console, look the gateway's schedules up in Temporal
+2. seed an org provider on the echo mock, an org key, and a webhook subscribed to Request Completed whose receiver refuses its first delivery
+3. send one request through the gateway with the org key
+4. open Webhooks, then the deliveries tab, and open the delivery
+
+**Backend state verified:**
+
+- the three gateway schedules are registered in Temporal: agentcc-alerts-evaluator, agentcc-webhook-delivery and agentcc-batches
+- each runs its activity on its interval on the default queue: evaluator 60 s, webhook delivery 30 s, batches 60 s
+- none is paused and each has started at least one run since the boot
+- a webhook delivery the receiver refused is delivered by the delivery schedule with no one acting: the event ends delivered on its second attempt of the five allowed, and the receiver saw exactly a refused then an accepted request for it
+
+**Browser observations:**
+
+- the deliveries tab lists the one Request completed delivery, Delivered on attempt 2 with response 200 and no error, and its drawer offers no Mark for retry
+
+### GW-E2E-014 — an org Model Database override prices the organization's own-key calls, refuses more output than its limit, fills the limit when none is asked, and refuses tools it turned off
+
+**Goal:** An org admin overrides a model's price, output limit and tool use in the organization's Model Database, and calls made through the organization's own provider are priced by that override, refused when they ask for more output than the limit (and sent with the limit when they name none), and refused tools. Narrowing (REL-R7 E2E plan, round 1 Q9; orchestrator ruling 2026-10-22): "clamp/refuse" is proven as the source does it, refuse or fill: an over-limit max_tokens is refused (400), an unset one is filled with the limit
+
+**Spec:** `flows/gateway/org-model-database.spec.ts:83`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed the org's own provider on the mock serving a minted model, and an org key
+2. open Org Config, open the config editor, Model Database: add an override for the model with Input per Token 0.001, Output per Token 0.002, Max Output Tokens 50 and Function Calling Off, Save & Activate
+3. call the model with max_tokens 100, then with a tool, then with no max_tokens
+4. open Request Logs
+
+**Backend state verified:**
+
+- the save reaches the gateway: its copy of the org's Model Database holds the override as sent
+- a request asking for more output than the override allows is refused 400 max_tokens_exceeds_limit on max_tokens, naming 50, and never reaches the provider
+- a request with tools is refused 400 model_capability_error naming function_calling, and never reaches the provider
+- a request that sets no max_tokens is sent to the provider with max_tokens 50
+- that call is priced by the override: 7 input and 7 output tokens at 0.001 and 0.002 cost 0.021 in the request log
+- the save sent exactly the override as one merge patch of model_database
+
+**Browser observations:**
+
+- Request Logs shows exactly the three calls, Status newest first 200 400 400, and Cost $0.021 $0.00 $0.00
+
+### GW-E2E-015 — an agent's deadline ends the call with the gateway's timeout answer by the deadline, when the provider is slower and when the organization's retry would wait past it
+
+**Goal:** An agent developer gives a call a deadline and gets the gateway's timeout answer by that deadline, both when the organization's provider is slower than the deadline and when the organization's retry would wait past it. Narrowing (REL-R7 E2E plan, round 1 Q10; orchestrator ruling 2026-10-22): the answer for a deadline that cuts a running attempt is 504 gateway_timeout with x-agentcc-deadline-exceeded: true, which is what this flow asserts, as the code does; the row's "504 deadline_exceeded" wording is corrected to that
+
+**Spec:** `flows/gateway/agent-deadline.spec.ts:81`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two org providers on the mock, one answering after 400 ms for model 1 and one answering 503 for model 2, and an org key
+2. open Org Config, open the config editor, Routing: Enable Retries, Max Retries 1, Initial Delay 10s, Max Delay 10s, Multiplier 1, retry on 503, Save & Activate
+3. call model 1 with x-agentcc-deadline-ms 50
+4. call model 2 with x-agentcc-deadline-ms 150
+5. open Request Logs
+
+**Backend state verified:**
+
+- the retry settings reach the gateway as saved
+- with a 50 ms deadline against a 400 ms provider the gateway answers 504 gateway_timeout with x-agentcc-deadline-exceeded: true, before the provider would have answered
+- the gateway's own record of that request ends within about 100 ms of its start (latency_ms under 150)
+- a retry whose backoff would outlive a 150 ms deadline never holds the answer past it (answered as the gateway's 502 within 500 ms), and no provider call is sent past it
+
+**Browser observations:**
+
+- Request Logs shows exactly the two calls, Status newest first 502 504
+
+### GW-E2E-016 — a customer key's retry, failover, circuit breaker and model map run on the organization's own providers only
+
+**Goal:** An org admin who runs two providers for a model sets failover on 503, retries and a circuit breaker, and maps an alias to a third provider, and the organization's API key is retried, failed over, cut off from a failing provider and routed by the alias, always on the organization's own providers. Narrowing (REL-R7 E2E plan, round 1 F10 and Q13): "never the operator's provider" is carried by the attempt rows, which name no provider outside the organization's, because the operator's node provider is the mock's default route, which the upstream recorder does not record; and an upstream 503 matches a [503] list by the upstream status only, the gateway's own status being 502
+
+**Spec:** `flows/gateway/org-provider-failover.spec.ts:106`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed providers A (the mock answering 503) and B (echo) serving one model, provider C (echo) serving exactly one other model, and an org key
+2. open Providers > Routing: Failover on, Max Attempts 2, Failover on Status Codes 503, Save Routing Config
+3. open Org Config, the config editor, Routing: Enable Retries, Max Retries 1, Initial Delay 1ms, Max Delay 2ms, Multiplier 1, retry on 503; Model Map: the alias to C; Save & Activate
+4. call the model (request 1), then the alias
+5. Org Config, Routing: Enable Circuit Breaker, Failure Threshold 1, Success Threshold 1, Cooldown 60s, on 503, Save & Activate
+6. call the model twice more (requests 2 and 3)
+7. open Request Logs, then request 1's detail
+
+**Backend state verified:**
+
+- the failover, retry and model map saves reach the gateway as sent
+- an upstream 503 on the first provider matches the [503] lists (the gateway's own status for it, 502, is what the attempt rows record): it is retried once, then failed over to the second provider, which answers (200; A called twice, B once; attempts A primary error 502, A retry error 502, B failover success)
+- only the organization's providers are ever called, each with its own credential: no foreign (scenario, authorization) pair at the mock and no attempt naming another provider
+- the alias is routed to the mapped provider and sent as its one model
+- once the breaker opens on the failing provider, the next request makes no call to it: A's calls for requests 2 and 3 are [2, 0], B's [1, 1], both answered 200
+- the three saves sent exactly the console's merge patches
+
+**Browser observations:**
+
+- Request Logs shows exactly the four calls, all 200
+- request 1's drawer lists three attempts, data-outcome error, error, success
+
+### GW-E2E-017 — a critical alert rule fires once per cooldown with its severity, across a config change, and shows Active only once per-org alerting is on
+
+**Goal:** An org admin creates a critical alert rule with a cooldown on a webhook channel and gets exactly one critical alert while the condition holds within the cooldown, even across a config change, and the console shows the rule active once per-org alerting is on and only while the gateway reports it enforces alerting. Narrowing (REL-R7 E2E plan, round 1 Q14): no real "not installed" node is reachable end to end; the chip's dependence on the reported list is proven by a route rewrite of the console's config read
+
+**Spec:** `flows/gateway/alert-rule-severity.spec.ts:85`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed the org's own provider on the mock and an org key
+2. open Org Config, open the config editor, Alerting: switch on per-org alerting, add a webhook channel to the sink, add rule critical (Request Count >= 1, window 1m, cooldown 1h, Critical, on the channel) and rule every (the same with cooldown 0s, Info), switch per-org alerting off again, Save & Activate
+3. open Monitoring > Alert Rules with a full navigation
+4. Alerting: switch per-org alerting on, Save & Activate; open Alert Rules again with a full navigation
+5. call the gateway with the org key once
+6. call it twice more
+7. Rate Limiting: switch on per-org rate limiting, Requests per Minute (RPM) 1000, Save & Activate
+8. call it a fourth time
+9. open Alert Rules again with a full navigation
+
+**Backend state verified:**
+
+- the saves reach the gateway: per-org alerting on, both rules with their severity and cooldown, the channel URL in clear
+- the critical rule's first alert is one webhook naming the rule, severity critical and metric request_count
+- inside its cooldown the critical rule sends nothing more, across more requests and a config push, while the 0s rule fires on every request: critical 1, every 4
+- the saves sent exactly the console's patches: the alerting draft with enabled false, then alerting enabled true, then rate limiting on with global_rpm 1000
+
+**Browser observations:**
+
+- before per-org alerting is on both rules' Status chips read "Alerting off"; after, both read "Active"
+- the Severity cells read critical and info, the Cooldown cells 1h and 0s
+
+### GW-E2E-018 — a console batch job's items share one trace id in the request log, the batch's, carried by no other request
+
+**Goal:** An org admin who runs a console batch job on a gateway that logs request headers can find both of its items in the request log under one trace id that no other request carries. Narrowings (REL-R7 E2E plan, round 1 Q1 and recheck RC1): proven on the r7alt gateway profile only, because the trace id reaches the request log only inside request_headers, which a stock gateway does not send; and "the batch's trace id" is proven as one well-formed id carried once by both items, distinct from each item's request id and from an independent request's trace id, because no surface exposes the batch's own trace id
+
+**Spec:** `flows/gateway/batch-trace-id.spec.ts:63`
+
+**Tags:** @gw-profile-r7alt
+
+**User steps:**
+
+1. seed the org's own provider on the mock and an org key
+2. send one independent request with the org key and keep its trace id and request id
+3. as the admin, open Batch Jobs, submit two requests for the org's model, and watch the job reach completed
+4. wait until the request log holds the batch's two rows besides the independent one
+
+**Backend state verified:**
+
+- both batch items are logged under one trace id, the batch's: present on both rows, carried once on each, well formed, the same on both, not either item's request id, and not the trace id of an independent request
+
+**Browser observations:**
+
+- the admin's job row shows completed
+
+### GW-E2E-019 — Try it on a model page streams the answer of a model the organization's own provider serves, with the sampling parameters set, and Stop ends a slow one
+
+**Goal:** A developer tries a model their own provider key serves from its model page, with managed models offered or not, with a temperature, a token limit and a top P, reads the answer as it streams in, and stops an answer that is taking too long
+
+**Spec:** `flows/gateway/try-it-stream.spec.ts:111`
+
+**Tags:** —
+
+**User steps:**
+
+1. read whether the deployment offers managed models, and its catalog
+2. seed two own providers on the echo mock, the second one slow to answer: with managed models offered, each named after a catalog vendor and listing one of its chat models; with none, each with a minted id and model
+3. open the first model's page on its Try it tab
+4. set Temperature 0.3, Max tokens 64 and Top P 0.9, type a minted prompt and Run with Stream the answer on
+5. read the streamed answer and its request id
+6. open the second model's Try it tab, Run, and press Stop once its provider has the request
+
+**Backend state verified:**
+
+- where no managed models are offered, the catalog answers available false with no providers and no models
+- the browser sends test-playground-stream exactly the prompt, the model (as the provider lists it with managed models offered, else the page id naming the provider) and the three parameters
+- the answer arrives as server-sent events: meta, then one delta per word of the mock's echo that join to exactly the echo, then done
+- the first provider received exactly one chat completion, streamed, with the prompt and the three parameters
+- the gateway logged the request under the organization: the request id the page shows, the model Try it sent, status 200
+- the second provider received the request before Stop, and Stop aborted the browser's stream
+
+**Browser observations:**
+
+- the answer box shows exactly the mock's echo of the prompt, and the page shows the request id the gateway sent
+- after Stop the page offers Run again with no answer and no error
+
+### GW-E2E-020 — an engineer reconciles filtered Logs counts and Models Cache hits for the same requests
+
+**Goal:** A platform engineer reconciles the same requests across filtered Logs and Models: volume counts follow every table filter including Future AGI, and Models retains selected-period Cache hits even when node response caching is off
+
+**Spec:** `flows/gateway/request-volume-strip.spec.ts:75`
+
+**Tags:** —
+
+**User steps:**
+
+1. read whether the deployment offers managed models
+2. deliver six gateway requests on the logs webhook in an organization of its own: four from one application (one of them a 500), two from another (one of them managed)
+3. open Request Logs and read the volume strip
+4. pick the first application in the Filters panel and apply it
+5. open the Filters panel again and open the Provider picker, then close the panel
+6. clear the filters, pick Future AGI as the provider and apply it
+7. open Analytics Models for the same six requests and read Cache hits, including on a cache-off node
+
+**Backend state verified:**
+
+- the six requests are stored under the organization, the managed one with billing mode managed
+- the strip asks the volume API with the table's own filters each time, and its answer sums to 6 requests and 1 error, then 4 and 1, then 1 and 0
+- the list API with each filter returns as many rows as the volume API counts for it
+- the Models API counts the same six requests; Cache hits cells match its percentages, while the node report and tooltip independently match the declared profile's cache state
+
+**Browser observations:**
+
+- the strip reads 6 requests and 1 error, then 4 and 1, then 1 and 0, and the table lists exactly 6, then 4, then 1 rows
+- with the first application applied (no managed call listed), the Provider picker offers Future AGI where managed models are offered and lists no option where they are not
+- with every request listed (the managed one among them), the Provider picker offers Future AGI in both shapes
+- the managed request's Provider cell reads Future AGI
+- Models retains its Cache hits column on stock and r7alt; only cache-off nodes show the selected-period tooltip
+
+### GW-E2E-021 — hidden gateway pages redirect to the nearest working page and leave the rail
+
+**Goal:** An organization owner never lands on a gateway page or control that cannot work, with managed models offered or not: old capability and policy links redirect, Integrations and MCP tools remain available, Catalog is absent where no managed models are offered
+
+**Spec:** `flows/gateway/hidden-pages.spec.ts:56`
+
+**Tags:** —
+
+**User steps:**
+
+1. read whether the deployment offers managed models
+2. open the capability matrix, policies and a policies tab by URL, each with a query and a hash
+3. read the AI Gateway rail and the fresh OFF organization's Add a provider onboarding link
+4. open Models and check catalogue availability
+
+**Backend state verified:**
+
+- where no managed models are offered, the console sends no request to /agentcc/managed-models/catalog/ either
+
+**Browser observations:**
+
+- each hidden URL lands on its redirect target with the query and hash kept: capabilities on Models (the gateway overview where no managed models are offered), policies on Guardrails
+- the rail lists Integrations and MCP tools next to Providers, with no Policies or unavailable Catalog
+- no Future AGI credits model strip where no Future AGI models are offered
+- an available but OFF organization has the neutral credits notice and no credits switch
+- fresh OFF onboarding links Add a provider to /dashboard/gateway/providers, not Open the catalog or a credits opt-in offer
+
+### GW-E2E-022 — an admin browses and connects an API-key app, whose read-only tools work and writes wait for an approval
+
+**Goal:** An organization admin browses and connects an API-key app, uses its read-only tools and cannot run its write tools without an approval
+
+**Spec:** `flows/gateway/connectors/browse.spec.ts:97`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Gateway Integrations
+2. on a gateway profile whose gateway runs with MCP off (stock, r7alt), read that no app can be connected, and stop
+3. on the mcp gateway profile, search for each listed app by name, then for a word no app has, and clear the filters
+4. pick the first app's category and see exactly the apps in it
+5. switch to Connected and back to All
+6. open the app and read its access control
+7. connect the local fixture app by entering its API key in the drawer
+8. call its read-only echo tool with a minted marker, then try its destructive tool
+
+**Backend state verified:**
+
+- the console MCP status agrees with the declared gateway profile: reason gateway_mcp_disabled where the gateway runs with MCP off, no reason where it serves MCP (the mcp profile)
+- the connector catalog API lists at least one app for the organization, and every provider it lists can be added on this build: no key, or one shared key sent in a header
+- no catalog API response carries a secret field
+- the browser add lists exactly the three fixture tools: echo and get_weather allowed, delete_file allowed after an approval (approval_required)
+- the active org config and encrypted vault row retain exactly the added app, its include of all three tools and its approval policy for delete_file (listed, once), with no deny rule
+- an org key sees all three tools at the app endpoint, echo returns the minted marker, and delete_file is refused in band before the upstream: approval_required with a pending approval id where the gateway keeps approvals (E2E_GATEWAY_REPLICAS=2), else policy_unavailable
+
+**Browser observations:**
+
+- with MCP off, the page shows the MCP off state and no grid, search box or Custom MCP server action
+- the page shows the five categories, the search box and the Custom MCP server action
+- the grid holds exactly as many apps as the API lists, finds each of them, and the Connected count is the API's
+- no text offers a sign-in or coming-soon app
+
+### GW-E2E-023 — an org admin connects and configures an MCP server, with write-only credentials and storage-only guardrails
+
+**Goal:** An organization admin connects and configures the organization's own MCP server: credentials remain write-only, tools stay org-scoped, Resources/Prompts remain visibly disabled without fetching on their pages, and stored MCP guardrails can be added and edited without claiming runtime enforcement
+
+**Spec:** `flows/gateway/mcp/servers.spec.ts:112`
+
+**Tags:** @gw-profile-mcp
+
+**User steps:**
+
+1. open MCP tools, Servers, and click Add server
+2. type a server id, the server's URL, pick Bearer token and type the token
+3. click Test connection and read the result, then click Save server
+4. click Turn on MCP on the banner that says MCP is off for this organization
+5. read the server card and the Tools grid
+6. verify the agent has no default access, then grant a read-only default virtual server through the org-config API
+7. leave Servers for a fresh selected Overview, then observe disabled Resources/Prompts query/path links, reloads and Guardrails edits; no list fetch occurs within that window
+8. open Guardrails with missing and API-seeded empty stored settings, add disabled stored settings, then reopen by path and edit them without implying enforcement
+
+**Backend state verified:**
+
+- before the save, the console MCP status names no reason: the gateway serves MCP on this profile
+- Django's copy of the org config holds the server's URL and a shared vault credential reference, and no response the console reads carries the token
+- the vault lists exactly one active shared bearer credential for the server, with a value and without it
+- PG agentcc_mcp_credential holds the credential for the org and server, and the token appears in none of its columns
+- the gateway's copy of the org config carries the server with its shared credential assembled at push and shown only as the mask
+- the MCP tools API lists exactly the upstream's three tools; an org key initially gets none on /mcp, then exactly echo and get_weather after a read-only default virtual server is bound
+- a second organization that saves the same server id and URL without the token lists none of those tools, through the API or on /mcp
+- zero attempted mcp-resources or mcp-prompts requests after the post-Servers Overview selection through disabled deep links, reloads and stored-settings edits; server setup/drawer reads are outside this window
+- each real update-mcp-guardrails body contains only config with enabled=false and the minted blocked-tool marker, and the config API reads back exactly those stored settings
+
+**Browser observations:**
+
+- Test connection reports Test passed with the upstream's three tools
+- the card reads the server as Healthy and the Tools grid shows exactly the three tool names
+- the token appears nowhere on the page after the save
+- Resources/Prompts remain visible but disabled with the exact accessible notice; Guardrails remains enabled for missing, empty and disabled stored settings
+- Guardrails explains storage-only behavior, and its add/edit dialog rehydrates the saved disabled flag and marker
+
+### GW-E2E-024 — an org admin publishes a virtual MCP server, and an agent there gets exactly the tools it picked
+
+**Goal:** An organization admin gives an agent one MCP endpoint that offers only the tools picked for it, out of everything the organization's servers serve
+
+**Spec:** `flows/gateway/mcp/virtual-servers.spec.ts:98`
+
+**Tags:** @gw-profile-mcp
+
+**User steps:**
+
+1. seed the organization's MCP server with its bearer token and MCP on, and explicitly allow its compatibility view as the wider baseline
+2. open MCP tools, Virtual servers, and click New virtual server
+3. type a title and a slug, tick the server, and keep only its echo tool
+4. read the preview, click Create, and read the virtual servers grid
+
+**Backend state verified:**
+
+- before the seed, the console MCP status names no reason: the gateway serves MCP on this profile
+- Django's copy of the org config holds the virtual server under its slug with the server as its one member, prefixed naming and the echo pattern
+- the gateway's copy of the org config carries the same virtual server
+- an agent key of the org gets exactly `<server>__echo` on /mcp/v/<slug>, where the org's /mcp offers more of the server's tools
+- an agent key of another organization gets none of the server's tools at that endpoint
+
+**Browser observations:**
+
+- the preview says the virtual server exposes 1 tool, `<server>__echo`
+- the grid lists exactly the new slug with 1 tool
+
+### GW-E2E-025 — each tool call an agent makes through the organization's MCP endpoints leaves exactly one record, the served read-only call and the denied write alike, listed in Tool calls
+
+**Goal:** A platform engineer finds the record of each tool call an agent made through the organization's MCP endpoints: one record per call, with the tool, the server, the outcome and the key that made it, a write the gateway refused shown as denied
+
+**Spec:** `flows/gateway/mcp/tool-calls.spec.ts:126`
+
+**Tags:** @gw-profile-mcp @mcp-subfeature-W14
+
+**User steps:**
+
+1. seed the organization's MCP server with its bearer token and MCP on, as GW-E2E-023 saves them, a virtual server over it whose access rule denies the destructive delete_file tool, as a catalogue add denies write tools, and mint a gateway key
+2. as the agent, open an MCP session on /mcp with the key and call the server's read-only echo tool with a minted text
+3. as the agent, open an MCP session on the virtual server's /mcp/v/<slug> and call delete_file by name
+4. open MCP tools, Tool calls, and read the grid
+5. open the denied call and read its Call and Error sections, then the echo call and its Call section
+
+**Backend state verified:**
+
+- before the seed, the console MCP status names no reason: the gateway serves MCP on this profile
+- status explicitly reports the explorer and download capabilities ON
+- the echo call answers the upstream's echo of the minted text
+- the virtual server offers the agent exactly the echo tool, and the delete_file call is refused in band with tool_denied by access.rules[0]
+- PG agentcc_tool_call holds exactly two rows for the organization and server, both made by the minted key: echo with outcome success, and delete_file with outcome denied, error code tool_denied, under the virtual server's id
+- the tool-call list API returns exactly those two records for the server, and the denied record's detail names the same tool, server, outcome and error code
+- both CSV and NDJSON exports return 200 with their expected content types and include the two calls
+- another organization's tool-call list has no record of the server
+
+**Browser observations:**
+
+- the Tool calls grid shows exactly two rows for the server: delete_file Denied and echo Success
+- the denied call's drawer shows Denied, names delete_file and the server, and its Error section the code tool_denied
+- the echo call's drawer names the echo tool and the server
+
+### GW-E2E-026 — a streamed chat answer that the organization's blocking answer check blocks never reaches the client, and a passing one streams in full
+
+**Goal:** An org admin switches on a check on the model's answer in block mode in the console; a developer streaming chat through the gateway then gets a passing answer in full, and for an answer the check blocks gets none of its text, only the guardrail's error, and the request log records the block
+
+**Spec:** `flows/gateway/stream-answer-check.spec.ts:97`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed the org's own provider on the mock and an org key
+2. open Org Config, open the config editor, Guardrails: switch on Data Leakage Prevention (block, the switch's default), Save & Activate
+3. stream a chat answer that carries no leak
+4. stream a chat answer that echoes a minted table name in a DROP TABLE statement next to /etc/passwd
+5. open Request Logs
+
+**Backend state verified:**
+
+- the check reaches the gateway as saved: the gateway's copy of the org config has data-leakage-prevention enabled in block mode
+- a passing answer streams in full: its deltas join to the whole echo, with no error event, and the stream ends [DONE]
+- a blocked answer: no frame carries the minted table name, and the stream is only the guardrail's error event (guardrail_error content_blocked, naming data-leakage-prevention), then [DONE]
+- the provider streamed both answers, so the gateway withheld the blocked one rather than skipping the call
+- the request log records the blocked stream as 403 with guardrail_triggered and metadata guardrail_action blocked, and the passing one as 200 with neither
+
+**Browser observations:**
+
+- the Data Leakage Prevention card shows "Action: block" once switched on
+- Request Logs shows exactly the two calls, Status newest first 403 200
+
+### GW-E2E-027 — a new organization calls Future AGI models from two vendors with one key, billed at provider price plus 5%
+
+**Goal:** A developer in a new organization calls models from two vendors with one Future AGI key, by the names their SDKs send, and sees each call billed at the provider price plus 5%
+
+**Spec:** `flows/gateway/one-key-future-agi-models.spec.ts:103`
+
+**Tags:** @new-org-default
+
+**User steps:**
+
+1. create the organization's first gateway API key, with no provider added and no switch turned
+2. call gpt-4o on chat completions with the key while the organization has no Future AGI credit
+3. seed Future AGI credit for the organization at the gateway
+4. call gpt-4o on chat completions and a dated Claude id on /v1/messages with the same key
+5. open Request Logs, tick Billing mode, and read the rows
+6. open Models and read the Future AGI credits card
+
+**Backend state verified:**
+
+- before the key the organization has no PG agentcc_org_config row; creating the key writes exactly one version, active, with managed_models.enabled true, and its managed-credit account at zero in PG usage_managedcreditaccount
+- with no credit the key's gpt-4o call is refused with 402 managed_credits_exhausted and operator-grant or BYOK guidance, from the agentcc_credits limit, not as a model the key may not use; the credit summary reports billing_available false on Standalone
+- with credit gpt-4o on chat and the dated Claude id on /v1/messages both answer 200 in their own API's format with the mock's echo, served by the Future AGI provider, chat as openai/gpt-4o
+- each served call is stored in PG agentcc_request_log under the organization as billing mode managed, its upstream cost the catalogue price of openai/gpt-4o or anthropic/claude-fable-5.1 times the mock's usage, its cost the upstream cost times 1.05 and its markup the difference, equal to the x-agentcc-cost the call returned
+- the request-logs API the table reads returns exactly the refused calls and the two served calls, and the organization's balance fell by exactly what they were billed
+- Request Logs show exactly those rows, each with Future AGI credits billing and one cost, the billed amount, with no Upstream cost or Markup column
+- the Models page shows the Future AGI credits switch on for the organization
+
+### GW-E2E-028 — an owner reads Future AGI credits in central Billing while a member cannot read the ledger
+
+**Goal:** An organization owner reads its granted balance, history and statement only when managed credits are enabled for that organization, while a member cannot read its ledger.
+
+**Spec:** `flows/gateway/credits-served.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. enable owner A through the real organization-config API as fixture setup, then seed its uniquely identified 1.23 grant
+2. open Settings > Billing and read the exact available balance, grant row and monthly statement
+3. verify the enabled wallet stays readable without purchases and Add credits follows the purchase capability
+4. open Gateway settings and follow Open Billing & credits
+5. open a legacy checkout return and keep its query and hash at central Billing
+6. open Billing as a member and see the access refusal without a ledger request
+7. explicitly disable owner B through the real config API and grant it 2.34 without enabling managed credits
+8. read B's successful OFF summary, then verify its new wallet and settings link stay absent without hiding existing cloud platform Billing
+
+**Backend state verified:**
+
+- C1: the real config save, active PG config and summary agree on A's enabled true
+- C2: summary, exact entries and monthly statement agree on A's uniquely identified 1.23 grant and closing balance
+- C3: the enabled owner sees exactly 1.23 Available, one 1.23 grant row and 1.23 monthly closing balance
+- C4: the enabled wallet is readable even when billing_available is false; only Add credits follows that capability
+- C5: the settings link and legacy return reach central Billing with the exact href, query and hash
+- C6: a member sends no managed-credits request while viewing BillingNoAccess
+- C7: B retains its exact 2.34 grant with managed disabled in PG and summary, but has no wallet, credit link or browser entries/statement reads
+
+### GW-E2E-029 — a tool the organization's MCP server changes or adds is held for review, and an Owner's acceptance serves it again
+
+**Goal:** An Owner trusts that when an MCP server the organization uses changes a tool or adds one, agents cannot use it until an admin has seen what changed and accepted it, while the server's other tools keep working
+
+**Spec:** `flows/gateway/mcp/tool-review.spec.ts:63`
+
+**Tags:** @gw-profile-mcp
+
+**User steps:**
+
+1. seed the organization's MCP server with its bearer token and MCP on, as GW-E2E-023 saves them, a virtual server over it, and mint a gateway key
+2. as the agent, list the virtual server's tools
+3. as the Owner, open the tool revisions, which accepts the server's tools as its baseline
+4. as the Owner, point the server at its next release, where echo changed and lookup_order is new
+5. as the agent, list the tools again and call echo
+6. as the Owner, review the held revisions; as a Member, try to accept one
+7. as the Owner, accept echo's revision; as the agent, list and call echo again
+
+**Backend state verified:**
+
+- before review the agent is offered the server's three tools, and the Owner's revision list writes exactly those three as the organization's pins, which reach the gateway
+- after the release the agent is offered get_weather and delete_file only: changed echo and new lookup_order are held, and a call to echo is refused in band with tool_quarantined, reason changed
+- the pending revisions are exactly echo (changed, its description before and after) and lookup_order (new), and another organization sees none of them
+- a Member cannot accept a revision
+- once the Owner accepts echo's revision, the agent is offered echo with its new description and its call is answered, while lookup_order stays held
+
+### GW-E2E-030 — a keyboard user reaches the Gateway API-key grid from the top bar
+
+**Goal:** Reach the Gateway API-key grid using only forward Tab and Enter from the top bar.
+
+**Spec:** `flows/gateway/navigation-focus.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed one uniquely named API key through the signed-in actor API
+2. open Gateway overview and focus the first top-bar control once
+3. use forward Tab to reach API keys without a nested or repeated nav stop
+4. press Enter on API keys, then Tab into the grid and read the seeded name
+
+**Backend state verified:**
+
+- the scoped API-key list contains the exact seeded id and name immediately after acknowledged creation
+
+### GW-E2E-031 — an agent on a virtual MCP server in search mode finds a tool with search_tools and runs it with call_tool, recorded once as that tool
+
+**Goal:** A platform engineer puts a virtual MCP server in search mode so an agent is offered three meta-tools instead of every tool, and the agent finds the tool it needs and runs it, with the same rules and record as a direct call
+
+**Spec:** `flows/gateway/mcp/tool-search.spec.ts:103`
+
+**Tags:** @gw-profile-mcp @mcp-subfeature-W14
+
+**User steps:**
+
+1. seed the organization's MCP server with its bearer token and MCP on, as GW-E2E-023 saves them, a virtual server in search mode over its echo and get_weather tools, and mint a gateway key
+2. open MCP tools, Virtual servers, and read the virtual server's row
+3. as the agent, open an MCP session on the virtual server and list its tools
+4. as the agent, search for a weather tool, then run the tool search returns with call_tool
+5. as the agent, search for the delete tool the virtual server leaves out, and try to run it with call_tool
+
+**Backend state verified:**
+
+- the virtual server lists exactly search_tools, describe_tool and call_tool, and says it offers them in place of its two tools
+- search_tools for "weather" returns the virtual server's get_weather tool first, and for "delete" no tool
+- call_tool on get_weather answers the upstream's canned weather
+- call_tool on delete_file, which the virtual server leaves out, is refused as an unknown tool and never reaches the upstream
+- PG agentcc_tool_call holds exactly one row for the organization and server: get_weather, success, made via call_tool by the minted key, and the list API returns the same one
+
+**Browser observations:**
+
+- the Virtual servers grid lists the virtual server with nothing in Not enforced: search mode is applied
+
+### GW-E2E-032 — console per-key and per-user request limits isolate keys, users and organizations
+
+**Goal:** An owner sets per-key and per-user request limits in the console and only the exhausted counter is refused; other keys, users and organizations keep working
+
+**Spec:** `flows/gateway/org-request-rate-limits.spec.ts:53`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two organizations with mock providers, keys A1/A2 in A and key B in B; B has the same limits as an isolation control
+2. in A open Org Config, Rate Limiting, enable per-org rate limiting, set RPM per Key to 2 and Save & Activate
+3. in one fresh gateway window call A1 three times, A2 once and B once
+4. in A clear RPM per Key, set RPM per User to 1 and Save & Activate
+5. in one fresh gateway window call u1 on A1, u1 on A2, u2 on A1 and the same u1 in B
+6. open A Request Logs and read exactly the seven calls, newest first
+
+**Backend state verified:**
+
+- both console POSTs send the exact rate-limit patches, each creates one new active org config version with gateway_synced true, and the gateway carries that version and its limits
+- per_key_rpm 2 admits A1 twice then refuses A1 with 429 rate_limit_exceeded naming per_key_rpm and Retry-After, while A2 and B each return 200
+- per_key_rpm 0 and per_user_rpm 1 admit u1 once and refuse u1 on another key with 429 naming per_user_rpm and Retry-After, while u2 on the exhausted key and the same u1 in B return 200
+- both organizations request logs contain exactly their calls in order with the minted model, request and key IDs; only A1 per_key_rpm and A2 u1 per_user_rpm are 429 rows, each naming its limit
+
+**Browser observations:**
+
+- the Rate Limiting tab reports enforcement, and A Request Logs shows the minted model on all seven rows with statuses newest first 200 429 200 200 429 200 200
+
+### GW-E2E-033 — an admin browses the real connector catalogue: every app this build can add is listed and found, and no other
+
+**Goal:** An organization admin browses the connector catalogue this build ships and finds every app it can add, and none it cannot
+
+**Spec:** `flows/gateway/connectors/browse-real-catalog.spec.ts:85`
+
+**Tags:** @gw-profile-mcp-catalog
+
+**User steps:**
+
+1. open Gateway Integrations on the mcp-catalog gateway profile (the real catalogue, MCP served)
+2. read the page header, the five categories, the search box and the Custom MCP server action
+3. search for each listed app by name and find it
+4. search for each app the catalogue ships but this build cannot add, and find no row for it
+5. open the first app and read its access control, then close it
+
+**Backend state verified:**
+
+- the console MCP status names no reason: the gateway serves MCP
+- the app container mounts nothing over the catalogue it bundles, and the catalog API names exactly that catalogue (sha256, version, source commit)
+- every provider the catalog API lists can be added on this build: no key, one shared key sent in a header, or a sign-in its card says is served
+- no catalog API response carries a secret field
+
+**Browser observations:**
+
+- the grid holds exactly as many apps as the API lists, finds each of them, and the Connected count is the API's
+- a search for an app the API leaves out shows only listed apps that match it, or the one empty state
+- no text offers a sign-in or coming-soon app
+- the browser sends no request outside the local stack: none to a FutureAGI host, a provider's server or an app's icon
+
+### GW-E2E-034 — an MCP client given a virtual server's URL signs a person in, and gets a 15-minute token for that server only
+
+**Goal:** A person pastes a virtual MCP server's URL into an MCP client, signs in once, approves the client for their organization, and the client gets a short-lived token for that server
+
+**Spec:** `flows/gateway/mcp/client-sign-in.spec.ts:135`
+
+**Tags:** @gw-profile-mcp-signin
+
+**User steps:**
+
+1. an org admin seeds an MCP server and a virtual server over it
+2. the MCP client calls the virtual server's URL with no credential and follows the answer to the authorization server
+3. the MCP client discovers the authorization server, registers itself and starts the sign-in with PKCE S256 and the virtual server's URL as the resource
+4. the signed-in person opens the consent request, sees the client, the organization and the scopes, and approves
+5. the client exchanges the code, opens an MCP session at the virtual server's URL with the access token, lists its tools and calls one
+6. the client refreshes once, and the replayed refresh token is refused
+
+**Backend state verified:**
+
+- with no credential the virtual server's URL answers 401 whose challenge names its protected-resource metadata, which names that URL as the resource and this issuer as its only authorization server
+- the metadata names this issuer, S256 only, iss in the redirect, registration and the client ID metadata document
+- dynamic registration answers a public native client with no secret
+- a person of another organization cannot open a request for this virtual server
+- the redirect carries the code, the state and iss
+- the access token verifies against the published keys with aud = the virtual server's URL, sub = the person, org_id = their organization, and lives 900 seconds
+- with the access token the client opens an MCP session at the virtual server's URL, is offered exactly the server's three tools and its echo call answers the minted text
+- the same access token opens neither another virtual server of the organization nor the model API
+- refresh rotates the refresh token; the old one is refused and takes its successor down with it
+- the person sees the consent and revoking it stops refresh
+
+### GW-E2E-035 — W09 keeps tool revision review absent with the release switch OFF
+
+**Goal:** The release does not advertise or fetch an unapproved tool-revision screen
+
+**Spec:** `flows/gateway/mcp/tool-revision-ui.spec.ts:53`
+
+**Tags:** @gw-profile-mcp-signin
+
+**User steps:**
+
+1. open the MCP page with a tool-review deep link on the OFF build
+2. verify the link returns to Overview and no review requests occur
+3. repeat the exact served-tab and hidden-link checks through the J14 helper; Resources/Prompts stay disabled and Guardrails remains enabled
+
+**Backend state verified:**
+
+- no MCP revision API request is sent by the hidden screen
+- the J14 helper sees a successful MCP status and zero attempted Resources/Prompts list requests while preserving the trust redirect
+
+### GW-E2E-036 — W09 steps 5-6 review, approve, reject and manage tool pins on an explicitly ON build
+
+**Goal:** An Admin reviews held tool changes, approves echo and rejects lookup_order, and verifies what agents can list and call before and after each pin decision
+
+**Spec:** `flows/gateway/mcp/tool-revision-ui.spec.ts:107`
+
+**Tags:** @gw-profile-mcp-signin
+
+**User steps:**
+
+1. seed one mock MCP server, a virtual server, a person-owned gateway key and the accepted baseline; Admin moves the server to the mock next release
+2. W09 step 5: agents cannot list echo or lookup_order and calls return tool_quarantined without reaching the next-release mock; an unchanged tool still works
+3. W09 step 6: Admin reads description/schema differences and approves echo and rejects lookup_order in the UI; Member approval gets 403; agents can list and call only the approved tool
+4. unpin echo and re-pin its recorded accepted definition through the UI; confirm other pins are unchanged
+5. open the same screen as another organization and verify no server revisions or pins leak
+
+**Backend state verified:**
+
+- the baseline has exactly three server pins and offered tools; the next release has pending echo and lookup_order
+- held echo and lookup_order are absent from tools/list and tools/call returns tool_quarantined with changed/new reasons; neither call reaches the actual next-release mock
+- approve and reject requests are empty-body POSTs from the Admin UI to the selected revision IDs
+- approved echo is offered with its new description and answered upstream; rejected lookup_order remains absent and refused; unpin and re-pin also change agent-visible state
+- the gateway applies the exact approved echo hash; the rejected new tool is not pinned
+- unpin deletes only echo, re-pin restores its accepted hash, and the gateway receives both config versions
+- a Member approval returns 403 and another organization receives no revisions for the seeded server
+
+### GW-E2E-037 — tool-call switches OFF refuse reads and downloads while legacy MCP stays visible
+
+**Goal:** Keep static MCP and the playground available while the new call explorer and downloads are off
+
+**Spec:** `flows/gateway/mcp/tool-calls.spec.ts:348`
+
+**Tags:** @gw-profile-mcp @mcp-subfeature-W07
+
+**User steps:**
+
+1. open the Tool calls deep link on the W07 OFF stack
+
+**Backend state verified:**
+
+- status reports both capabilities false; list, detail and both download formats return the typed explorer-disabled 404
+
+**Browser observations:**
+
+- the deep link opens the disabled Tool calls tab, which says Not available in this deployment, without tool-call requests; Servers and Try a tool remain enabled
+
+## integrations
+
+### INT-E2E-001 — gateway request logs export to a self-hosted PostHog
+
+**Goal:** An admin connects a self-hosted PostHog and finds the organization's gateway requests there as events
+
+**Spec:** `flows/integrations/posthog-export.spec.ts:61`
+
+**Tags:** —
+
+**User steps:**
+
+1. deliver three gateway request logs, one of them a 500, on the gateway logs webhook
+2. open Settings > Integrations and pick PostHog
+3. switch to self-hosted PostHog, enter its host URL and a project API key PostHog refuses, and Validate & Continue: read the refusal
+4. enter the project API key, and Validate & Continue
+5. keep "Export the last 24 hours" and Connect Integration
+6. open the connection and read its Sync History
+7. go Back to Integrations and read the connection's card under Connections, then its page header
+8. open Edit and Cancel it; Edit it again: rename it, enter a second PostHog host and pick "Every 15 minutes", and Save Changes
+9. Pause it, then Resume it
+10. deliver one more request log, wait out the 60 s Sync now cooldown and press Sync Now
+11. delete the connection from its page, cancelling once first
+12. open the deleted connection's page by its address, read why it cannot be shown, and go Back to Integrations
+
+**Backend state verified:**
+
+- the managed stack is the attested mock stack with the export sinks declared
+- the refused key reached the PostHog host's /decide/ once and was answered 401, and no create was sent
+- the connection check reached the PostHog host twice more (the validate step and the create), at /decide/
+- the first sync finished success in PG integrations_sync_log with the count of request logs it sent
+- the events PostHog received at /batch/ are exactly the org's request logs in the sync window, the three minted ones among them
+- each batch carries the project API key, and each minted request arrived as an agentcc_request event with its model, provider, status, tokens and time
+- the sync-logs API and the connection detail agree: one success row with that count, the connection active
+- the connection is stored with the PostHog address entered and no FutureAGI project, and its card and page header show that address, its name and its exported count
+- the second host was checked at its /decide/ before the edit was stored (display name, host, 900 s interval), and the page shows all three
+- Pause and Resume each change the stored status, and the page badge follows
+- Sync Now runs a second sync that sends exactly the request logs of its window, the new one among them, to the second host and nothing more to the first, and the page lists both syncs
+- deleting it soft-deletes it in PG and drops it from the connections API
+- the deleted connection's detail read answers 404 and its page says so once, inline, with no toast
+
+### INT-E2E-002 — gateway request logs and metrics export to Datadog
+
+**Goal:** An admin connects Datadog and finds the organization's gateway requests there as logs, with their request and error metrics
+
+**Spec:** `flows/integrations/datadog-export.spec.ts:60`
+
+**Tags:** —
+
+**User steps:**
+
+1. deliver three gateway request logs, one of them a 500, and one 20 hours old, on the gateway logs webhook
+2. open Settings > Integrations and pick Datadog
+3. pick the EU1 site, enter an API key Datadog refuses, and Validate & Continue: read the refusal
+4. enter the API key, and Validate & Continue
+5. pick "Export from a specific date" 20 hours back and Connect Integration: read why it is refused
+6. go back to "Export the last 18 hours": the note is gone; Connect Integration, then Done
+7. open the connection and read its Sync History
+8. go Back to Integrations and read the connection's card under Connections, then its page header
+9. Datadog revokes the API key; deliver one more request log, wait out the minute and press Sync Now
+10. read the connection's Error badge, its reason and Retry
+11. Edit it with an API key Datadog refuses: read the refusal, then Edit it with a second API key
+12. wait out the minute and press Sync Now
+13. delete the connection from its page, cancelling once first
+
+**Backend state verified:**
+
+- the managed stack is the attested mock stack, its API and worker sending Datadog only to the declared sink
+- the refused key reached Datadog's validate endpoint once and was answered 403, and no create was sent
+- the API key reached Datadog's validate endpoint twice (the validate step and the create); the refused start sent no create
+- the first sync finished success in PG integrations_sync_log with the count of logs and of metric series it sent, over the last 18 hours
+- the logs Datadog received at /api/v2/logs are exactly the org's request logs in the sync window, the three minted ones among them, and none older than 18 hours (the 20-hour-old one never sent)
+- each minted request arrived with its tags and attributes, the 500 as status error with error:true
+- the series at /api/v2/series count the window's requests and its errors for the org
+- the sync-logs API and the connection detail agree: one success row with that count, the connection active
+- the connection is stored with the EU1 site's API host and no FutureAGI project, and its card and page header show that host, its name and its exported count
+- with the key revoked, Sync Now runs a sync whose logs the intake refuses (403): it fails in PG integrations_sync_log and the sync-logs API with error_details exactly { kind: credentials_refused, type: HTTPError, http_status: 403, vendor_code: null } and the plain reason, and the connection is in Error with that reason
+- the Edit with the refused key answers 400 with Datadog's refusal and leaves the stored credentials as they were
+- the Edit with the second key is checked at validate before it is stored: the stored credentials change and the connection is active with no reason
+- the next sync sends exactly the rows ingested after the prior delivery watermark within the intake age, including a late-completed request; no request ID is delivered twice and the cumulative total equals unique delivered IDs, to the log intake with the second key only
+- deleting it soft-deletes it in PG and drops it from the connections API
+
+### INT-E2E-003 — gateway request logs export to Mixpanel
+
+**Goal:** An admin connects Mixpanel and finds the organization's gateway requests there as events
+
+**Spec:** `flows/integrations/mixpanel-export.spec.ts:64`
+
+**Tags:** —
+
+**User steps:**
+
+1. deliver three gateway request logs, one of them a 500, on the gateway logs webhook
+2. open Settings > Integrations and pick Mixpanel
+3. enter a project token Mixpanel refuses, and Validate & Continue: read the refusal
+4. enter a project token, and Validate & Continue
+5. pick "Export from a specific date" 6 days back and Connect Integration: read the 5-day limit
+6. start it 3 hours back instead and Connect Integration
+7. open the connection and read its Sync History
+8. go Back to Integrations and read the connection's card under Connections, then its page header
+9. Mixpanel revokes the token; deliver one more request log, wait out the minute and press Sync Now
+10. read the connection's Error badge, its reason and Retry
+11. Edit it with a second project token
+12. wait out the minute and press Sync Now
+13. delete the connection from its page, cancelling once first
+
+**Backend state verified:**
+
+- the managed stack is the attested mock stack, its API and worker sending Mixpanel only to the declared sink
+- the refused token reached /track once as a connection-test event and was answered 0, and no create was sent
+- the token reached /track twice as a connection-test event (the validate step and the create), and the 6-day start was never sent
+- the first sync started at the chosen time and finished success in PG integrations_sync_log with the count of request logs it sent
+- the agentcc_request events Mixpanel received at /track are exactly the org's request logs in the sync window, the three minted ones among them
+- each minted request arrived with the token, its $insert_id, model, provider, status, tokens and time
+- the sync-logs API and the connection detail agree: one success row with that count, the connection active
+- the connection is stored with https://api.mixpanel.com and no FutureAGI project, and its card and page header show it, its name and its exported count
+- with the token revoked, Sync Now runs a sync whose /track answers 0: it fails in PG integrations_sync_log and the sync-logs API with error_details exactly { kind: events_refused, type: MixpanelRejected, http_status: null, vendor_code: null } and the plain reason, counts nothing exported (traces_fetched 0, the connection's exported total unchanged), and the connection is in Error with that reason
+- the Edit with the second token is checked with /track before it is stored: the stored credentials change and the connection is active with no reason
+- the next sync sends exactly the rows ingested after the prior delivery watermark, including a late-completed request; no request ID is delivered twice and the cumulative total equals unique delivered IDs, to /track with the second token only, each batch answered 1
+- deleting it soft-deletes it in PG and drops it from the connections API
+
+### INT-E2E-004 — gateway request logs export to Amazon S3
+
+**Goal:** An admin connects an S3 bucket and finds the organization's gateway requests archived there as JSON Lines
+
+**Spec:** `flows/integrations/s3-export.spec.ts:49`
+
+**Tags:** —
+
+**User steps:**
+
+1. deliver three gateway request logs, one of them a 500, on the gateway logs webhook
+2. open Settings > Integrations and pick Cloud Storage, which offers Amazon S3
+3. enter the bucket, the access key with a wrong secret, and Validate & Continue: read the refusal
+4. enter the right secret, pick the eu-west-1 region, enter a key prefix, and Validate & Continue
+5. pick "Every 30 minutes", keep "Export the last 24 hours" and Connect Integration, then View Integration
+6. read the connection's Sync History
+7. go Back to Integrations and read the connection's card under Connections, then its page header
+8. Edit it with the access key and a wrong secret: read the refusal
+9. Edit it with a second storage user's key pair, allowed only under the prefix
+10. deliver one more request log, wait out the minute and press Sync Now
+11. remove that user from the storage, deliver one more request log, wait out the minute and press Sync Now: read the refusal
+12. delete the connection from its page, cancelling once first
+
+**Backend state verified:**
+
+- the managed stack is the attested mock stack, its API and worker writing S3 only to the declared storage sink
+- the first sync finished success in PG integrations_sync_log with the count of request logs it sent
+- the objects under the prefix are exactly the batch objects, gzip JSON Lines at the dated key layout, the connection test object removed
+- their records are exactly the org's request logs in the sync window, the three minted ones among them, each with every export field
+- the minted 500 arrived as is_error with its error message
+- the sync-logs API and the connection detail agree: one success row with that count, the connection active
+- the connection is stored with the bucket's address in its region under the prefix, an 1800 s interval and no FutureAGI project, and its card and page header show s3://<bucket>/<prefix> in <region>, its name, its interval and its exported count
+- the Edit with a wrong secret answers 400 with S3's SignatureDoesNotMatch and leaves the stored credentials as they were
+- the Edit with the second user's key pair is checked with S3 before it is stored: the stored credentials change
+- the next sync writes exactly the rows ingested after the prior delivery watermark, including a late-completed request; no request ID is delivered twice and the cumulative total equals unique delivered IDs, as new batch objects under the prefix
+- with that user removed (the sink's own keys still valid), the next sync fails in PG integrations_sync_log and the sync-logs API with error_details exactly { kind: credentials_refused, type: ClientError, http_status: 403, vendor_code: InvalidAccessKeyId }: the connection was delivering with the second key pair
+- the second user and its policy are gone from the storage sink
+- deleting it soft-deletes it in PG and drops it from the connections API
+
+### INT-E2E-005 — gateway request logs import into Mixpanel with the API secret
+
+**Goal:** An admin connects Mixpanel with the project's API secret and finds the organization's gateway requests imported there as events
+
+**Spec:** `flows/integrations/mixpanel-export.spec.ts:64`
+
+**Tags:** —
+
+**User steps:**
+
+1. deliver three gateway request logs, one of them a 500, on the gateway logs webhook
+2. open Settings > Integrations and pick Mixpanel
+3. enter a project token and the API secret, and Validate & Continue
+4. keep "Export the last 24 hours" and Connect Integration
+5. open the connection and read its Sync History
+6. go Back to Integrations and read the connection's card under Connections, then its page header
+7. delete the connection from its page, cancelling once first
+
+**Backend state verified:**
+
+- the managed stack is the attested mock stack, its API and worker sending Mixpanel only to the declared sink
+- the connection check reached /import?strict=1 twice (the validate step and the create) with the secret as Basic auth
+- the first sync finished success in PG integrations_sync_log with the count of request logs it sent
+- the agentcc_request events Mixpanel received at /import?strict=1, with the secret as Basic auth, are exactly the org's request logs in the sync window, the three minted ones among them
+- each minted request arrived with the token, its $insert_id, model, provider, status, tokens and time
+- the sync-logs API and the connection detail agree: one success row with that count, the connection active
+- the connection is stored with https://api.mixpanel.com and no FutureAGI project, and its card and page header show it, its name and its exported count
+- deleting it soft-deletes it in PG and drops it from the connections API
+
+### INT-E2E-006 — Settings > Integrations offers only what connects
+
+**Goal:** An admin reads Settings > Integrations and finds only platforms that connect, each asking for what it uses; a Member reads it without write controls; a workspace Admin finds it in the Settings menu and manages it
+
+**Spec:** `flows/integrations/catalog-walk.spec.ts:62`
+
+**Tags:** —
+
+**User steps:**
+
+1. an Owner opens Settings > Integrations from the Settings menu, with nothing connected
+2. open Add Integration and read the platforms it offers
+3. open each export platform's credentials step, read its fields and choices, Validate & Continue empty, and go Back
+4. open Linear's step, read its field, Connect Linear empty, and go Back
+5. close the wizard, and open it again from the empty page's Add Integration
+6. connect Slack from the Add Integration wizard, then Disconnect it from its card
+7. connect Slack from its card on the page, then Disconnect it from its card
+8. open the workspace's own Settings > Integrations page
+9. with a PostHog connection in the current workspace, open another workspace's Integrations page and connect PostHog there
+10. a Member opens Settings > Integrations
+11. a workspace Admin opens Settings > Integrations from the Settings menu
+
+**Backend state verified:**
+
+- the deployment's capabilities allow Error Feed, so Linear is offered
+- another workspace's page reads and creates that workspace's connections: its list and create requests name it (X-Workspace-Id), its new connection is listed by the API in that workspace only, and the current workspace's connection is not shown there
+- each Slack entry point stores one Slack connection for the workspace, and Disconnect removes it from the connections API
+
+**Browser observations:**
+
+- the page grid and the wizard list exactly Datadog, PostHog, Mixpanel, Cloud Storage, Slack and Linear with their descriptions, and no Langfuse, PagerDuty, Message Queue, Azure, GCS or "Coming soon"
+- the empty state says what the page does: export, alerts and issues
+- before a platform is picked the stepper names only Platform and Credentials, no Project step
+- Datadog offers its six sites and an API key, and no Application Key; PostHog its two regions or a self-hosted address; Mixpanel a token and an optional API secret with its 5-day note; Cloud Storage only Amazon S3, its nine regions, keys and prefix; Linear an API key
+- the empty page's Add Integration opens the same wizard
+- each empty Validate & Continue names the missing fields and sends nothing: no integrations request leaves the browser and the organization has no connection
+- after each Slack authorization the page says "Slack workspace connected successfully." and lists the workspace under Connections; after Disconnect it is gone
+- the workspace's Integrations page has one Integrations heading and offers the same platforms with the same descriptions
+- another workspace's page shows that workspace's connections only: none at first, then the one connected there
+- a Member sees Add Integration and every platform card disabled with "Owner or Admin only", and no Integrations entry in the Settings menu
+- a workspace Admin (an organization Member) finds Integrations in the Settings menu, and Add Integration and every platform card enabled
+
+### INT-E2E-007 — an Error Feed issue becomes a Linear issue
+
+**Goal:** An admin connects Linear from Settings > Integrations and files an Error Feed issue in a Linear team
+
+**Spec:** `flows/integrations/linear-issues.spec.ts:51`
+
+**Tags:** —
+
+**User steps:**
+
+1. send a trace and seed an Error Feed issue in its project
+2. open the issue: its Linear row says Not connected; press Connect
+3. a Viewer of the workspace opens the issue and presses Connect, then opens Settings > Integrations by its URL
+4. on Settings > Integrations pick Linear, Connect Linear empty, then enter an API key and Connect Linear, and press Done
+5. read the Linear card under Connections
+6. pick Linear again, enter a second key and Connect Linear: read why it is refused
+7. open the issue again, press Create issue and pick the Linear team
+8. reload the issue and read its Linear row
+9. a Viewer opens a second issue and presses Create issue
+10. open the Linear card, read the Manage dialog, and Disconnect
+
+**Backend state verified:**
+
+- the managed stack is the attested mock stack, its API and worker sending Linear only to the declared sink
+- the empty Connect Linear sent nothing, and the API key reached Linear's /graphql twice with the teams and viewer query (the connect check and the create)
+- one Linear connection is stored for the workspace with https://api.linear.app, and its card shows it
+- the second key is refused while Linear is connected: it is never stored and the first connection stays
+- the team picker lists the team Linear answered for the key
+- Create issue sent one issueCreate with the key, the picked team, the issue's cluster id and title, and the issue is linked in PG to the identifier and URL Linear answered
+- Disconnect soft-deletes the connection, drops it from the connections API, and the issue keeps its link
+- a Viewer's Connect and Create issue send nothing: no integrations or create-issue request, and the second issue stays unlinked in PG
+
+**Browser observations:**
+
+- a Viewer sees Connect disabled with "Only an Owner or Admin can connect Linear." and stays on the issue
+- a Viewer who opens Settings > Integrations by its URL stays on it and reads why it is closed and who it is open to
+- a Viewer sees Create issue disabled with "Viewers cannot create issues.", and no team picker opens
+
+### INT-E2E-008 — an export in Error recovers once its destination answers again
+
+**Goal:** An admin whose export destination went down finds the connection in Error with the reason, retries it, and finds it active again with every request log sent once the destination is back
+
+**Spec:** `flows/integrations/export-error-recovery.spec.ts:49`
+
+**Tags:** —
+
+**User steps:**
+
+1. deliver three gateway request logs on the gateway logs webhook
+2. connect a self-hosted PostHog with "Every 30 minutes" and "Export the last 24 hours"
+3. stop the PostHog stand-in at the connection's address, deliver one more request log, wait out the minute since the first sync and press Sync Now
+4. read the connection's badge, reason, buttons and Sync History
+5. wait out the minute and press Retry while PostHog is still down
+6. start the PostHog stand-in again, wait out the minute and press Retry
+7. Edit the connection to "Every minute"
+8. stop the stand-in again, deliver one more request log, and wait for the next scheduled sync
+9. start it again and wait, pressing nothing, for the scheduler to retry
+10. delete the connection
+
+**Backend state verified:**
+
+- the first sync succeeds; with PostHog stopped, Sync Now runs a sync that reaches it, fails, and puts the connection in Error with the plain reason, in PG and in its sync log
+- Retry while PostHog is down runs a real sync: one more attempt reaches it and fails, and the connection stays in Error
+- Retry once PostHog answers runs a sync that succeeds: the connection is active, its reason cleared, and PostHog received exactly the rows ingested after the prior delivery watermark, including a late-completed request; no request ID is delivered twice and totals equal unique delivered IDs
+- the first four sync logs read success, failed, failed, success
+- on a one-minute interval a scheduled sync during the second outage fails and puts the connection in Error; once PostHog answers the scheduler retries by itself and the sync succeeds, sending the request log delivered during the outage
+
+**Browser observations:**
+
+- the page shows the Error badge, the reason "Could not reach PostHog. It is retried automatically; Retry tries again now.", and Retry and Pause, with no Sync Now
+- Sync History shows the failed sync with the same reason, never a raw exception
+- Sync Now answers "Sync triggered.", Retry "Retry started."; once a retry succeeds the badge returns to Active and Sync Now replaces Retry
+
+## journeys
+
+### JRN-E2E-000.L1 — J00.L1 Gateway default-OFF census W00
+
+**Goal:** Consume the same-profile W00 default-OFF census without repeating it
+
+**Spec:** `flows/journeys/default-off-census.spec.ts:780`
+
+**Tags:** @journey @journey-J00
+
+**User steps:**
+
+1. Read the single W00 result bound to this run, profile, browser and running stack
+
+**Backend state verified:**
+
+- Before the key: no agentcc_org_config for A or B; after: exactly zero active A versions and null gateway mirror on default-off stock, exactly one where AGENTCC_MANAGED_MODELS_ON_FOR_NEW_ORGS is declared (708 add.32); budgets.admission_caps_enabled and privacy.trace_content absent or false, mcp.search absent, no servers or virtual_servers
+- GatewayAdmin.orgConfig(A) mirrors the saved config; no managed credit account, MCP credential/connect/approval, tool call, integration, credit entry, cap activation or trace_content_changed audit row for A
+- Redis has no `mc:{A}:*` and A is not in mc:outbox_orgs; /-/config public_price_feed.enabled is false and the public feed refuses
+- Each exact CAT-2 ID is absent or blocked with every input/output/billed price null in both catalogues; credits requests refused before upstream calls (708 add.38); org B rows and Redis state byte-identical before/after
+- HR-JRN-03 accepted at 3ddeb78b3a: consume w00-result-v2 through the per-browser census dependency; absent/stale/mismatched/partial evidence fails. Pre-708i composition uses v2 per 708 add.41 placement. HR-JRN-01 separately blocks provisioning until accepted value-free publication; L8-L10 cover virtual servers, connectors and guardrail history
+
+### JRN-E2E-000.L10 — J00.L10 Guardrail history has no fabricated runs
+
+**Goal:** A fresh organization sees the honest default state: guardrail history has no fabricated runs
+
+**Spec:** `flows/journeys/default-off-surfaces.spec.ts:30`
+
+**Tags:** @journey @journey-J00
+
+**User steps:**
+
+1. Read the fresh organization configuration and backing rows without enabling anything
+2. Open /dashboard/gateway/guardrails/logs and assert the exact empty or deployment-unavailable state
+3. Read the same organization again; visiting the page must not create configuration or history
+
+**Backend state verified:**
+
+- No MCP servers, virtual servers or search configured; no credentials, connect state, approvals, tool calls or integration connections
+- Guardrail policy/config and request history tables are empty; history API is empty, or an unavailable route is 404
+- UI contains no fabricated data row; configuration and row counts unchanged after navigation
+
+### JRN-E2E-000.L11 — J00.L11 no automatically created keys
+
+**Goal:** A fresh organization has no API key until its owner explicitly creates one
+
+**Spec:** `flows/journeys/default-off-keys.spec.ts:18`
+
+**Tags:** @journey @journey-J00
+
+**User steps:**
+
+1. Detect 733 by the served authenticated bootstrap response, never by a source flag
+2. When absent report NOT_PRESENT with the bootstrap status
+3. When present require the keyless fixture before asserting zero key rows before and after bootstrap
+
+**Backend state verified:**
+
+- Presence requires GET /accounts/keys/ = 410
+- Owed until HR-JRN-17: zero OrgApiKey and zero AgentccAPIKey rows before explicit create, unchanged after bootstrap
+
+### JRN-E2E-000.L2 — J00.L2 Phase-aware Console admission and dual-credential exchange
+
+**Goal:** Release obligation: Phase-aware Console admission and dual-credential exchange
+
+**Spec:** `flows/journeys/default-off-census.spec.ts:818`
+
+**Tags:** @journey @journey-J00
+
+**User steps:**
+
+1. Full release contract (includes owed checks): Bind resolved LM, phase, running stack, approved parts and all three browser engines; read fresh F and existing A/B capabilities
+2. Full release contract (includes owed checks): REHEARSAL denies F and positively exercises named admitted tenants; WITHDRAWN keeps every org at S0; TUESDAY_GA admits all orgs without an allowlist
+3. Full release contract (includes owed checks): Open the exact-origin dedicated Console frame and exchange by browser session AND personal key; verify current org/person/role and consume on edge
+4. Full release contract (includes owed checks): Exercise deep links/search/palette, J04.L1 denied/stale controls, loading/errors, independent products, and disabled/full sandbox states
+
+**Backend state verified:**
+
+- Phase-bound Console bodies: missing composed seams are BLOCKED/NOT_RUN; publication remains gated; three-engine matrix is required
+- Full-contract dependency (never counted as green): HR-JRN-04: require runtime/build identity and product-admission readers, plus controlled loading/error fixture for the capability gate. The absent branch must run on T-DARK rather than treating shell-not-served as a skip
+- Release criterion: Positive admission/session exchange for the evaluated org scope, including fresh F on Tuesday; never denial-only or studio-only core evidence
+- Release criterion: No unapproved omega_part_*; denied/revoked/stale authority refuses; Console does not depend on sandbox admission/capacity; other products retain independent gates
+- Release criterion: Loading/errors fail closed; genuine shell absence is withdrawal evidence only, never capabilityPassed
+
+### JRN-E2E-000.L3 — J00.L3 Unconditional public-origin 404 and dedicated-edge route census
+
+**Goal:** Release obligation: Unconditional public-origin 404 and dedicated-edge route census
+
+**Spec:** `flows/journeys/default-off-census.spec.ts:818`
+
+**Tags:** @journey @journey-J00
+
+**User steps:**
+
+1. Full release contract (includes owed checks): In EVERY phase, edge served AND absent, require exact public-origin 404 for three /omega paths as anonymous and A/B; never follow redirects
+2. Full release contract (includes owed checks): Enumerate the complete reviewed hidden/undeclared method-path inventory; join unchanged WITHDRAWN and nonzero enabled-family positives separately
+3. Full release contract (includes owed checks): Assert dedicated-edge phase/admission, independently compare three deployed manifests with LM, and census absent-arm DNS/ingress
+
+**Backend state verified:**
+
+- Phase-bound Console bodies: missing composed seams are BLOCKED/NOT_RUN; publication remains gated; three-engine matrix is required
+- Full-contract dependency (never counted as green): HR-JRN-05: require public-ingress authenticated status reader (including non-JSON 404), manifest-copy reader and isolated DNS/ingress inventory. A Django API 404 alone cannot prove the edge or DNS absent
+- Release criterion: Public-origin exact 404 is mandatory SECURITY ABSENCE, never a capability walk or an authentication refusal
+- Release criterion: No WITHDRAWN/D-2 receipt substitution; all enabled families execute positives; learning/version-evaluation remain hidden
+- Release criterion: Every manifest copy matches the same arm LM; no public-origin name routes/resolves to EE in the absent arm
+
+### JRN-E2E-000.L4 — J00.L4 Shared release line
+
+**Goal:** Release obligation: Shared release line
+
+**Spec:** `flows/journeys/default-off-census.spec.ts:818`
+
+**Tags:** @journey @journey-J00
+
+**User steps:**
+
+1. Full release contract (includes owed checks): Read FA and EE OMEGA_RELEASED_PARTS and FA logs after union regeneration
+
+**Backend state verified:**
+
+- Full-contract dependency (never counted as green): HR-JRN-06: require read-only server release-env, PEER_PARTS and redacted unknown-part log readers plus approved part ownership from LM-708; client env is not server evidence
+- Release criterion: Values equal the approved list (or both empty); no unknown-name log for console_emergency_stop, agent_ownership or console_otlp
+
+### JRN-E2E-000.L5 — J00.L5 DSX and Results default state
+
+**Goal:** Release obligation: DSX and Results default state
+
+**Spec:** `flows/journeys/default-off-census.spec.ts:818`
+
+**Tags:** @journey @journey-J00
+
+**User steps:**
+
+1. Full release contract (includes owed checks): In a non-prototype build with VITE_DSX_EXPERIMENTS_BASIC unset, require experimentsBasic ON, dataset.splits and exp.new.splitScope shown in both hosted and self-host builds
+2. Full release contract (includes owed checks): Require exp.new, dataset.tab.experiments and dataset.experimentDefaults shown by default; in a separate explicit false build require these NEW surfaces off while classic creation, the classic list and classic Data/Summary pages stay visible
+3. Full release contract (includes owed checks): Request Results screens and unavailable backend paths as the fresh org
+
+**Backend state verified:**
+
+- Executable rehearsal: authenticated capability/HTTP denial checks
+- Full-contract dependency (never counted as green): HR-JRN-07: require deployed non-prototype build/registry and frontend contract-exception readers. These are unconditional checks even on a profile without Results; source-code absence is not runtime proof
+- Release criterion: Both split surfaces shown regardless of experimentsBasic; experimentsBasic defaults ON and only explicit false disables it; classic experiment creation/list/pages visible even with explicit false; only registry-backed DSX surfaces visible; no unregistered DSX surface or Results screen reachable
+
+### JRN-E2E-000.L6 — J00.L6 Hosted sandboxes and deployments withheld
+
+**Goal:** Release obligation: Hosted sandboxes and deployments withheld
+
+**Spec:** `flows/journeys/default-off-census.spec.ts:818`
+
+**Tags:** @journey @journey-J00
+
+**User steps:**
+
+1. Full release contract (includes owed checks): Read FA readiness and capabilities for every seeded org
+
+**Backend state verified:**
+
+- Executable rehearsal: authenticated capability/HTTP denial checks
+- Full-contract dependency (never counted as green): HR-JRN-04: require hosted readiness/declaration reader and capability-envelope contract for both orgs. Withheld capabilities must be asserted, not assumed from the standalone profile
+- Release criterion: hosted_sandboxes and hosted_deployments undeclared; sandboxes/deployments denied for every org by service.py `_hosted_withheld`
+
+### JRN-E2E-000.L7 — J00.L7 Engine isolation defaults
+
+**Goal:** Release obligation: Engine isolation defaults
+
+**Spec:** `flows/journeys/default-off-census.spec.ts:818`
+
+**Tags:** @journey @journey-J00
+
+**User steps:**
+
+1. Full release contract (includes owed checks): Read both netns switches in the running engines and helper images in each engine image store
+2. Full release contract (includes owed checks): Try an engine start with either switch off on disposable staging
+
+**Backend state verified:**
+
+- Full-contract dependency (never counted as green): HR-JRN-08: require read-only engine process/image/env inventory and disposable switch-off start control; absence requires a process census as well as HTTP refusal
+- Release criterion: Both switches ON; omega-deployment-egress:netns-v1 and omega-sandbox-egress:local present; either switch off refuses start
+
+### JRN-E2E-000.L8 — J00.L8 Virtual servers remain unconfigured
+
+**Goal:** A fresh organization sees the honest default state: virtual servers remain unconfigured
+
+**Spec:** `flows/journeys/default-off-surfaces.spec.ts:30`
+
+**Tags:** @journey @journey-J00
+
+**User steps:**
+
+1. Read the fresh organization configuration and backing rows without enabling anything
+2. Open /dashboard/gateway/mcp?tab=virtual and assert the exact empty or deployment-unavailable state
+3. Read the same organization again; visiting the page must not create configuration or history
+
+**Backend state verified:**
+
+- No MCP servers, virtual servers or search configured; no credentials, connect state, approvals, tool calls or integration connections
+- MCP status has no enabled organization or servers; absent MCP profile explicitly reports gateway_mcp_disabled
+- UI contains no fabricated data row; configuration and row counts unchanged after navigation
+
+### JRN-E2E-000.L9 — J00.L9 Connectors have no configured connections
+
+**Goal:** A fresh organization sees the honest default state: connectors have no configured connections
+
+**Spec:** `flows/journeys/default-off-surfaces.spec.ts:30`
+
+**Tags:** @journey @journey-J00
+
+**User steps:**
+
+1. Read the fresh organization configuration and backing rows without enabling anything
+2. Open /dashboard/gateway/integrations and assert the exact empty or deployment-unavailable state
+3. Read the same organization again; visiting the page must not create configuration or history
+
+**Backend state verified:**
+
+- No MCP servers, virtual servers or search configured; no credentials, connect state, approvals, tool calls or integration connections
+- MCP status has no enabled organization or servers; absent MCP profile explicitly reports gateway_mcp_disabled
+- Every catalogue page reports no connected or added app; MCP-off UI exposes no app or Connect action
+
+### JRN-E2E-003.L1 — J03.L1 ISO-08 ordinary cell write; legacy subcase tracked separately
+
+**Goal:** Release obligation: ISO-08 ordinary cell write; legacy subcase tracked separately
+
+**Spec:** `flows/journeys/two-tenant-isolation.spec.ts:276`
+
+**Tags:** @journey @journey-J03
+
+**User steps:**
+
+1. Full release contract (includes owed subcases): Org A creates a dataset, rows, columns and cells
+2. Full release contract (includes owed subcases): Org B posts update_cell_value with A dataset/row/column IDs, including legacy Cell.dataset=NULL
+3. Full release contract (includes owed subcases): After EVERY B attempt, read A data as A and verify it is unchanged
+
+**Backend state verified:**
+
+- Executable ordinary-cell, KB enumeration, grid-write or absent HTTP checks; A backend read follows every B attempt
+- Remaining subcase dependency: Ordinary direct-parent and mismatched-parent cells execute here. Legacy NULL cells are a separately reported subcase (HR-JRN-09), never a skip of the ordinary-cell test.
+- Release criterion: Every cross-tenant write is 403/404; A cell unchanged by authenticated A backend read
+
+### JRN-E2E-003.L1-legacy — J03.L1 legacy NULL dataset subcase
+
+**Goal:** BLOCKED subcase: legacy NULL dataset cells retain parent authorization
+
+**Spec:** `flows/journeys/two-tenant-isolation.spec.ts:357`
+
+**Tags:** @journey @journey-J03
+
+**User steps:**
+
+1. Seed a legacy NULL-dataset cell without changing its row/column parents
+
+**Backend state verified:**
+
+- HR-JRN-09: require a test-only legacy Cell.dataset=NULL seeder with preserved row/column parents; StateProbe is read-only and the public create path always sets dataset
+
+### JRN-E2E-003.L2 — J03.L2 Knowledge-base scope
+
+**Goal:** Release obligation: Knowledge-base scope
+
+**Spec:** `flows/journeys/two-tenant-isolation.spec.ts:271`
+
+**Tags:** @journey @journey-J03
+
+**User steps:**
+
+1. Full release contract (includes owed subcases): Org A creates a knowledge base
+2. Full release contract (includes owed subcases): Org B submits its ID to the eval playground and attempts KB enumeration
+3. Full release contract (includes owed subcases): After each attempt read the KB and its files as A and compare with the pre-attempt state
+
+**Backend state verified:**
+
+- Executable ordinary-cell, KB enumeration, grid-write or absent HTTP checks; A backend read follows every B attempt
+- Remaining subcase dependency: HR-JRN-11: require a deterministic KB/file fixture and resource-use/dispatch reader for the playground. Existing uploadFixture only supports dataset CSV; no model/provider request may be used as an authorization probe
+- Release criterion: 403/404 for foreign references; no unscoped KB enumeration; bounded resource use and no A mutation
+
+### JRN-E2E-003.L3 — J03.L3 DSX grid and experiment writes
+
+**Goal:** Release obligation: DSX grid and experiment writes
+
+**Spec:** `flows/journeys/two-tenant-isolation.spec.ts:271`
+
+**Tags:** @journey @journey-J03
+
+**User steps:**
+
+1. Full release contract (includes owed subcases): As B call row duplicate, row delete, column and experiment-configuration endpoints with A IDs
+2. Full release contract (includes owed subcases): Include revoked template with a new version pin and unchanged foreign KB reference (ruling 700)
+3. Full release contract (includes owed subcases): After EVERY attempted write read the affected dataset/configuration/template/KB as A
+
+**Backend state verified:**
+
+- Executable ordinary-cell, KB enumeration, grid-write or absent HTTP checks; A backend read follows every B attempt
+- Remaining subcase dependency: HR-JRN-12: require revoked-template/version-pin and foreign-KB fixtures plus a complete org-A graph reader; ordinary row denial alone cannot close this unconditional leg
+- Release criterion: 403/404 with zero change; stricter-parent rules hold even when the UI is hidden
+
+### JRN-E2E-003.L4 — J03.L4 Results API
+
+**Goal:** Release obligation: Results API
+
+**Spec:** `flows/journeys/two-tenant-isolation.spec.ts:271`
+
+**Tags:** @journey @journey-J03
+
+**User steps:**
+
+1. Full release contract (includes owed subcases): As B request A dataset/run runs, results and analysis with baseline=none, pinned baseline and mixed evaluator versions
+2. Full release contract (includes owed subcases): Check loading/error paths for comparative output and read A state after every attempt
+
+**Backend state verified:**
+
+- Executable ordinary-cell, KB enumeration, grid-write or absent HTTP checks; A backend read follows every B attempt
+- Remaining subcase dependency: HR-JRN-07/12: require deployed contract-exception reader and Results run/baseline/mixed-version fixtures. Missing Results must run the three-route denial matrix, not skip because its UI is off
+- Release criterion: 403/404; no comparative output without validated scope; A unchanged
+
+### JRN-E2E-003.L5 — J03.L5 Console through the Node edge
+
+**Goal:** Release obligation: Console through the Node edge
+
+**Spec:** `flows/journeys/two-tenant-isolation.spec.ts:269`
+
+**Tags:** @journey @journey-J03
+
+**User steps:**
+
+1. Full release contract (includes owed subcases): A creates a Console agent, conversation with agentId and audit row
+2. Full release contract (includes owed subcases): B addresses A agent/run/events/cancel/audit using its own valid browser assertion and personal API key
+3. Full release contract (includes owed subcases): Pre-mint a B assertion and replay it twice; read A state after every attempt
+
+**Backend state verified:**
+
+- Executable ordinary-cell, KB enumeration, grid-write or absent HTTP checks; A backend read follows every B attempt
+- Remaining subcase dependency: HR-JRN-05/13: require edge/browser-assertion and personal-key actors, session-exchange claim reader and stream/run/audit seed/readers. Reuse J00.L3 ingress/DNS proof; never infer absence from Django alone
+- Release criterion: Every foreign call refused; second assertion use refused; A unchanged
+
+### JRN-E2E-003.L6 — J03.L6 Gateway keys, MCP and max-charge scopes
+
+**Goal:** Release obligation: Gateway keys, MCP and max-charge scopes
+
+**Spec:** `flows/journeys/two-tenant-isolation.spec.ts:271`
+
+**Tags:** @journey @journey-J03
+
+**User steps:**
+
+1. Full release contract (includes owed subcases): A creates gateway key, MCP connection and virtual server; create max-charge scope if maxcharge-685 is served
+2. Full release contract (includes owed subcases): B uses its own scoped gateway key against each A ID; read A connection/server/scope after each attempt
+
+**Backend state verified:**
+
+- Remaining subcase dependency: HR-JRN-14: require scoped gateway request actor and MCP/max-charge fixture/readers for both profiles. gatewayProfile/PROFILE_SERVES_MCP already declares MCP but not LM-708 maxcharge-685 or deployed credential-use evidence
+- Release criterion: 403/404 with zero change and no foreign credential use
+
+### JRN-E2E-003.L7 — J03.L7 Sandboxes
+
+**Goal:** Release obligation: Sandboxes
+
+**Spec:** `flows/journeys/two-tenant-isolation.spec.ts:271`
+
+**Tags:** @journey @journey-J03
+
+**User steps:**
+
+1. Full release contract (includes owed subcases): On the selfhost rig A creates a sandbox
+2. Full release contract (includes owed subcases): B lists, reads, writes and deletes it by ID; read A sandbox after each attempt
+
+**Backend state verified:**
+
+- Executable ordinary-cell, KB enumeration, grid-write or absent HTTP checks; A backend read follows every B attempt
+- Remaining subcase dependency: HR-JRN-08/13: require EE sandbox actors and an engine-bound intact-state reader; absent EE still requires authenticated list/create refusals on the public ingress
+- Release criterion: 403/404 on every attempt; A sandbox intact
+
+### JRN-E2E-003.L8 — J03.L8 Repeat after restart and deployment replacement
+
+**Goal:** Release obligation: Repeat after restart and deployment replacement
+
+**Spec:** `flows/journeys/two-tenant-isolation.spec.ts:271`
+
+**Tags:** @journey @journey-J03
+
+**User steps:**
+
+1. Full release contract (includes owed subcases): Retain the same two-org fixtures and run EVERY applicable leg (including absence branches)
+2. Full release contract (includes owed subcases): Restart services, repeat; replace deployment, repeat; bind every result to the same source/contract digest
+
+**Backend state verified:**
+
+- Remaining subcase dependency: HR-JRN-15: require managed service-restart and replacement controls, retained-fixture replay and per-phase receipts. Fresh ScopeActors per test cannot prove continuity; do not restart a shared stack from a spec
+- Release criterion: Identical complete results after both transitions; A unchanged after every B attempt
+
+### JRN-E2E-004.L1.baseline — dual-credential authority and sibling
+
+**Goal:** Fresh claims follow committed FA authority
+
+**Spec:** `flows/walks/host-channel-revocation.spec.ts:607`
+
+**Tags:** @journey @journey-J04
+
+**User steps:**
+
+1. Resolve exact LM/Stage B and browser binding
+2. Execute real dual-tenant observations and unchanged oracles
+
+**Backend state verified:**
+
+- Native bound; public authority; retained B before/during/after
+- No credential-bearing capture; no absent/core substitution
+
+### JRN-E2E-004.L1.deactivation — dual-credential authority and sibling
+
+**Goal:** Fresh claims follow committed FA authority
+
+**Spec:** `flows/walks/host-channel-revocation.spec.ts:607`
+
+**Tags:** @journey @journey-J04
+
+**User steps:**
+
+1. Resolve exact LM/Stage B and browser binding
+2. Execute real dual-tenant observations and unchanged oracles
+
+**Backend state verified:**
+
+- Native bound; public authority; retained B before/during/after
+- No credential-bearing capture; no absent/core substitution
+
+### JRN-E2E-004.L1.downgrade — dual-credential authority and sibling
+
+**Goal:** Fresh claims follow committed FA authority
+
+**Spec:** `flows/walks/host-channel-revocation.spec.ts:607`
+
+**Tags:** @journey @journey-J04
+
+**User steps:**
+
+1. Resolve exact LM/Stage B and browser binding
+2. Execute real dual-tenant observations and unchanged oracles
+
+**Backend state verified:**
+
+- Native bound; public authority; retained B before/during/after
+- No credential-bearing capture; no absent/core substitution
+
+### JRN-E2E-004.L1.expiry — dual-credential authority and sibling
+
+**Goal:** Fresh claims follow committed FA authority
+
+**Spec:** `flows/walks/host-channel-revocation.spec.ts:607`
+
+**Tags:** @journey @journey-J04
+
+**User steps:**
+
+1. Resolve exact LM/Stage B and browser binding
+2. Execute real dual-tenant observations and unchanged oracles
+
+**Backend state verified:**
+
+- Native bound; public authority; retained B before/during/after
+- No credential-bearing capture; no absent/core substitution
+
+### JRN-E2E-004.L1.once — dual-credential authority and sibling
+
+**Goal:** Fresh claims follow committed FA authority
+
+**Spec:** `flows/walks/host-channel-revocation.spec.ts:607`
+
+**Tags:** @journey @journey-J04
+
+**User steps:**
+
+1. Resolve exact LM/Stage B and browser binding
+2. Execute real dual-tenant observations and unchanged oracles
+
+**Backend state verified:**
+
+- Native bound; public authority; retained B before/during/after
+- No credential-bearing capture; no absent/core substitution
+
+### JRN-E2E-004.L1.removal — dual-credential authority and sibling
+
+**Goal:** Fresh claims follow committed FA authority
+
+**Spec:** `flows/walks/host-channel-revocation.spec.ts:607`
+
+**Tags:** @journey @journey-J04
+
+**User steps:**
+
+1. Resolve exact LM/Stage B and browser binding
+2. Execute real dual-tenant observations and unchanged oracles
+
+**Backend state verified:**
+
+- Native bound; public authority; retained B before/during/after
+- No credential-bearing capture; no absent/core substitution
+
+### JRN-E2E-004.L2.signals-down — native issuance cap and real restoration
+
+**Goal:** A-only delivery loss cannot extend key lifetime
+
+**Spec:** `flows/walks/host-channel-revocation.spec.ts:640`
+
+**Tags:** @journey @journey-J04
+
+**User steps:**
+
+1. Resolve exact LM/Stage B and browser binding
+2. Execute real dual-tenant observations and unchanged oracles
+
+**Backend state verified:**
+
+- Native bound; public authority; retained B before/during/after
+- No credential-bearing capture; no absent/core substitution
+
+### JRN-E2E-004.L2.signals-up — real stream close and replay refusal
+
+**Goal:** Removal cuts live Console without harming B
+
+**Spec:** `flows/walks/host-channel-revocation.spec.ts:626`
+
+**Tags:** @journey @journey-J04
+
+**User steps:**
+
+1. Resolve exact LM/Stage B and browser binding
+2. Execute real dual-tenant observations and unchanged oracles
+
+**Backend state verified:**
+
+- Native bound; public authority; retained B before/during/after
+- No credential-bearing capture; no absent/core substitution
+
+### JRN-E2E-004.L5.inventory — unconditional all-child sibling witness
+
+**Goal:** B remains usable and byte-identical during every L1-L4 arm
+
+**Spec:** `flows/walks/host-channel-revocation.spec.ts:688`
+
+**Tags:** @journey @journey-J04
+
+**User steps:**
+
+1. Resolve exact LM/Stage B and browser binding
+2. Execute real dual-tenant observations and unchanged oracles
+
+**Backend state verified:**
+
+- Native bound; public authority; retained B before/during/after
+- No credential-bearing capture; no absent/core substitution
+
+### JRN-E2E-004.L5.join — unconditional all-child sibling witness
+
+**Goal:** B remains usable and byte-identical during every L1-L4 arm
+
+**Spec:** `flows/walks/host-channel-revocation.spec.ts:688`
+
+**Tags:** @journey @journey-J04
+
+**User steps:**
+
+1. Resolve exact LM/Stage B and browser binding
+2. Execute real dual-tenant observations and unchanged oracles
+
+**Backend state verified:**
+
+- Native bound; public authority; retained B before/during/after
+- No credential-bearing capture; no absent/core substitution
+
+### JRN-E2E-004.L5.key — unconditional all-child sibling witness
+
+**Goal:** B remains usable and byte-identical during every L1-L4 arm
+
+**Spec:** `flows/walks/host-channel-revocation.spec.ts:688`
+
+**Tags:** @journey @journey-J04
+
+**User steps:**
+
+1. Resolve exact LM/Stage B and browser binding
+2. Execute real dual-tenant observations and unchanged oracles
+
+**Backend state verified:**
+
+- Native bound; public authority; retained B before/during/after
+- No credential-bearing capture; no absent/core substitution
+
+### JRN-E2E-004.L5.run — unconditional all-child sibling witness
+
+**Goal:** B remains usable and byte-identical during every L1-L4 arm
+
+**Spec:** `flows/walks/host-channel-revocation.spec.ts:688`
+
+**Tags:** @journey @journey-J04
+
+**User steps:**
+
+1. Resolve exact LM/Stage B and browser binding
+2. Execute real dual-tenant observations and unchanged oracles
+
+**Backend state verified:**
+
+- Native bound; public authority; retained B before/during/after
+- No credential-bearing capture; no absent/core substitution
+
+### JRN-E2E-004.L5.session — unconditional all-child sibling witness
+
+**Goal:** B remains usable and byte-identical during every L1-L4 arm
+
+**Spec:** `flows/walks/host-channel-revocation.spec.ts:688`
+
+**Tags:** @journey @journey-J04
+
+**User steps:**
+
+1. Resolve exact LM/Stage B and browser binding
+2. Execute real dual-tenant observations and unchanged oracles
+
+**Backend state verified:**
+
+- Native bound; public authority; retained B before/during/after
+- No credential-bearing capture; no absent/core substitution
+
+### JRN-E2E-004.L5.state — unconditional all-child sibling witness
+
+**Goal:** B remains usable and byte-identical during every L1-L4 arm
+
+**Spec:** `flows/walks/host-channel-revocation.spec.ts:688`
+
+**Tags:** @journey @journey-J04
+
+**User steps:**
+
+1. Resolve exact LM/Stage B and browser binding
+2. Execute real dual-tenant observations and unchanged oracles
+
+**Backend state verified:**
+
+- Native bound; public authority; retained B before/during/after
+- No credential-bearing capture; no absent/core substitution
+
+### JRN-E2E-016.L1 — J16.L1 Create and run an agent via BYOK
+
+**Goal:** Check access to Create and run an agent via BYOK; admitted capability execution remains harness-blocked
+
+**Spec:** `flows/journeys/console-core-run.spec.ts:51`
+
+**Tags:** @journey @journey-J16 @mock-provider
+
+**User steps:**
+
+1. Read the Console admission decision for fresh owners and members in two organizations
+2. For each non-admitted organization, open the Console and probe its public ingress and leg-specific API reads
+3. Read capabilities and rollout storage again; report absence separately from the owed admitted journey
+
+**Backend state verified:**
+
+- Capabilities must be readable and Console must not be allowed for an absence branch
+- Every checked absent public/API route answers exactly 404, without following redirects
+- Capabilities and existing Console rollout/access rows are unchanged in both organizations
+- Not executed on this harness: HR-CJ-02: need admitted Console composition, embed-origin/manifest pins, host-assertion client and profile-selected mock provider with no-dispatch/request receipts; then assert created agent and terminal run by scoped API/PG reads
+
+### JRN-E2E-016.L2 — J16.L2 Stream output and stop a run
+
+**Goal:** Check access to Stream output and stop a run; admitted capability execution remains harness-blocked
+
+**Spec:** `flows/journeys/console-core-run.spec.ts:51`
+
+**Tags:** @journey @journey-J16 @mock-provider
+
+**User steps:**
+
+1. Read the Console admission decision for fresh owners and members in two organizations
+2. For each non-admitted organization, open the Console and probe its public ingress and leg-specific API reads
+3. Read capabilities and rollout storage again; report absence separately from the owed admitted journey
+
+**Backend state verified:**
+
+- Capabilities must be readable and Console must not be allowed for an absence branch
+- Every checked absent public/API route answers exactly 404, without following redirects
+- Capabilities and existing Console rollout/access rows are unchanged in both organizations
+- Not executed on this harness: HR-CJ-03: need controlled long-running mock stream and run/event probe; prove streamed sequence, UI stop, terminal cancellation in API/storage and no sibling-tenant change
+
+### JRN-E2E-016.L3 — J16.L3 Open the exact run trace in Observe
+
+**Goal:** Check access to Open the exact run trace in Observe; admitted capability execution remains harness-blocked
+
+**Spec:** `flows/journeys/console-core-run.spec.ts:51`
+
+**Tags:** @journey @journey-J16 @mock-provider
+
+**User steps:**
+
+1. Read the Console admission decision for fresh owners and members in two organizations
+2. For each non-admitted organization, open the Console and probe its public ingress and leg-specific API reads
+3. Read capabilities and rollout storage again; report absence separately from the owed admitted journey
+
+**Backend state verified:**
+
+- Capabilities must be readable and Console must not be allowed for an absence branch
+- Every checked absent public/API route answers exactly 404, without following redirects
+- Capabilities and existing Console rollout/access rows are unchanged in both organizations
+- Not executed on this harness: HR-CJ-04: need admitted run fixture and run-to-Observe identity contract; correlate exact run/trace/project/workspace in API, PG and ClickHouse FINAL, including masking and foreign-tenant refusal
+
+### JRN-E2E-016.L4 — J16.L4 Show truncation and recover after switching context
+
+**Goal:** Check access to Show truncation and recover after switching context; admitted capability execution remains harness-blocked
+
+**Spec:** `flows/journeys/console-core-run.spec.ts:51`
+
+**Tags:** @journey @journey-J16 @mock-provider
+
+**User steps:**
+
+1. Read the Console admission decision for fresh owners and members in two organizations
+2. For each non-admitted organization, open the Console and probe its public ingress and leg-specific API reads
+3. Read capabilities and rollout storage again; report absence separately from the owed admitted journey
+
+**Backend state verified:**
+
+- Capabilities must be readable and Console must not be allowed for an absence branch
+- Every checked absent public/API route answers exactly 404, without following redirects
+- Capabilities and existing Console rollout/access rows are unchanged in both organizations
+- Not executed on this harness: HR-CJ-05: need outputTruncation-capable pinned daemon and deterministic over-limit mock output fixture; assert backend truncation metadata and newly selected run identity, not a stale SSE result
+
+### JRN-E2E-016.L5 — J16.L5 Run the agent with one platform key
+
+**Goal:** Check access to Run the agent with one platform key; admitted capability execution remains harness-blocked
+
+**Spec:** `flows/journeys/console-core-run.spec.ts:51`
+
+**Tags:** @journey @journey-J16 @mock-provider
+
+**User steps:**
+
+1. Read the Console admission decision for fresh owners and members in two organizations
+2. For each non-admitted organization, open the Console and probe its public ingress and leg-specific API reads
+3. Read capabilities and rollout storage again; report absence separately from the owed admitted journey
+
+**Backend state verified:**
+
+- Capabilities must be readable and Console must not be allowed for an absence branch
+- Every checked absent public/API route answers exactly 404, without following redirects
+- Capabilities and existing Console rollout/access rows are unchanged in both organizations
+- Not executed on this harness: HR-CJ-06: need digest-bound J11/J12 prerequisite reader and Console one-key provider fixture; prove one run, one request receipt and exactly one corresponding ledger debit (fixture grant is not a purchase)
+
+### JRN-E2E-017.L-A — J17.L-A Stop organization runs and pause automation
+
+**Goal:** Check access to Stop organization runs and pause automation; admitted capability execution remains harness-blocked
+
+**Spec:** `flows/journeys/console-admin-controls.spec.ts:46`
+
+**Tags:** @journey @journey-J17
+
+**User steps:**
+
+1. Read the Console admission decision for fresh owners and members in two organizations
+2. For each non-admitted organization, open the Console and probe its public ingress and leg-specific API reads
+3. Read capabilities and rollout storage again; report absence separately from the owed admitted journey
+
+**Backend state verified:**
+
+- Capabilities must be readable and Console must not be allowed for an absence branch
+- Every checked absent public/API route answers exactly 404, without following redirects
+- Capabilities and existing Console rollout/access rows are unchanged in both organizations
+- Not executed on this harness: HR-CJ-07: need multi-workspace running Console fixture, stop-operation/audit reader and repeatable idempotency request seam; assert all terminal states and pause persistence, new retry operation receipt, unchanged org B and paired-suite evidence
+
+### JRN-E2E-017.L-B — J17.L-B Transfer and recover an agent business owner
+
+**Goal:** Check access to Transfer and recover an agent business owner; admitted capability execution remains harness-blocked
+
+**Spec:** `flows/journeys/console-admin-controls.spec.ts:46`
+
+**Tags:** @journey @journey-J17
+
+**User steps:**
+
+1. Read the Console admission decision for fresh owners and members in two organizations
+2. For each non-admitted organization, open the Console and probe its public ingress and leg-specific API reads
+3. Read capabilities and rollout storage again; report absence separately from the owed admitted journey
+
+**Backend state verified:**
+
+- Capabilities must be readable and Console must not be allowed for an absence branch
+- Every checked absent public/API route answers exactly 404, without following redirects
+- Capabilities and existing Console rollout/access rows are unchanged in both organizations
+- Not executed on this harness: HR-CJ-08: need Console agent fixture and departed-owner identity control via the public FA seam; assert owner/version/audit after transfer and recovery, member 403 with unchanged owner, and unchanged org B
+
+### JRN-E2E-017.L-C — J17.L-C Enforce administrator tool policy before execution
+
+**Goal:** Check access to Enforce administrator tool policy before execution; admitted capability execution remains harness-blocked
+
+**Spec:** `flows/journeys/console-admin-controls.spec.ts:46`
+
+**Tags:** @journey @journey-J17 @mock-provider
+
+**User steps:**
+
+1. Read the Console admission decision for fresh owners and members in two organizations
+2. For each non-admitted organization, open the Console and probe its public ingress and leg-specific API reads
+3. Read capabilities and rollout storage again; report absence separately from the owed admitted journey
+
+**Backend state verified:**
+
+- Capabilities must be readable and Console must not be allowed for an absence branch
+- Every checked absent public/API route answers exactly 404, without following redirects
+- Capabilities and existing Console rollout/access rows are unchanged in both organizations
+- Not executed on this harness: HR-CJ-09: need Workspace-Admin-only roster, admitted policy settings, mock tool-call provider, local HTTPS hook/failure control and invocation receipt reader; compare saved FA org/workspace policies and zero tool executions on deny/hook failure
+
+### JRN-E2E-017.L-D — J17.L-D Export tenant-attributed spans to a customer collector
+
+**Goal:** Check access to Export tenant-attributed spans to a customer collector; admitted capability execution remains harness-blocked
+
+**Spec:** `flows/journeys/console-admin-controls.spec.ts:46`
+
+**Tags:** @journey @journey-J17 @mock-provider
+
+**User steps:**
+
+1. Read the Console admission decision for fresh owners and members in two organizations
+2. For each non-admitted organization, open the Console and probe its public ingress and leg-specific API reads
+3. Read capabilities and rollout storage again; report absence separately from the owed admitted journey
+
+**Backend state verified:**
+
+- Capabilities must be readable and Console must not be allowed for an absence branch
+- Every checked absent public/API route answers exactly 404, without following redirects
+- Capabilities and existing Console rollout/access rows are unchanged in both organizations
+- Not executed on this harness: HR-CJ-10: need Console OTLP configuration and a local public-HTTPS collector with arrival receipts; assert persisted destination, exact run/span identity and tenant, rejected non-allowlisted save and zero foreign arrivals
+
+### JRN-E2E-018.L-C — J18.L-C Read cost by agent, key and run
+
+**Goal:** Check access to Read cost by agent, key and run; admitted capability execution remains harness-blocked
+
+**Spec:** `flows/journeys/console-triggers-cost.spec.ts:46`
+
+**Tags:** @journey @journey-J18 @mock-provider
+
+**User steps:**
+
+1. Read the Console admission decision for fresh owners and members in two organizations
+2. For each non-admitted organization, open the Console and probe its public ingress and leg-specific API reads
+3. Read capabilities and rollout storage again; report absence separately from the owed admitted journey
+
+**Backend state verified:**
+
+- Capabilities must be readable and Console must not be allowed for an absence branch
+- Every checked absent public/API route answers exactly 404, without following redirects
+- Capabilities and existing Console rollout/access rows are unchanged in both organizations
+- Not executed on this harness: HR-CJ-13: need accepted TX3-A attribution contract and profile-model billing fixture; compare exact integer monetary values and correlated agent/key/run identities against ledger deltas, never token count or rounded display alone
+
+### JRN-E2E-018.L-K — J18.L-K Show a cap refusal before provider dispatch
+
+**Goal:** Check access to Show a cap refusal before provider dispatch; admitted capability execution remains harness-blocked
+
+**Spec:** `flows/journeys/console-triggers-cost.spec.ts:46`
+
+**Tags:** @journey @journey-J18 @mock-provider
+
+**User steps:**
+
+1. Read the Console admission decision for fresh owners and members in two organizations
+2. For each non-admitted organization, open the Console and probe its public ingress and leg-specific API reads
+3. Read capabilities and rollout storage again; report absence separately from the owed admitted journey
+
+**Backend state verified:**
+
+- Capabilities must be readable and Console must not be allowed for an absence branch
+- Every checked absent public/API route answers exactly 404, without following redirects
+- Capabilities and existing Console rollout/access rows are unchanged in both organizations
+- Not executed on this harness: HR-CJ-14: need accepted G8-B Console cap surface and J13.W04 receipt binding; assert persisted cap, typed refused terminal run and unchanged profile-mock dispatch receipts and ledger
+
+### JRN-E2E-018.L-S — J18.L-S Run, restart, pause and delete an agent schedule
+
+**Goal:** Check access to Run, restart, pause and delete an agent schedule; admitted capability execution remains harness-blocked
+
+**Spec:** `flows/journeys/console-triggers-cost.spec.ts:46`
+
+**Tags:** @journey @journey-J18 @mock-provider
+
+**User steps:**
+
+1. Read the Console admission decision for fresh owners and members in two organizations
+2. For each non-admitted organization, open the Console and probe its public ingress and leg-specific API reads
+3. Read capabilities and rollout storage again; report absence separately from the owed admitted journey
+
+**Backend state verified:**
+
+- Capabilities must be readable and Console must not be allowed for an absence branch
+- Every checked absent public/API route answers exactly 404, without following redirects
+- Capabilities and existing Console rollout/access rows are unchanged in both organizations
+- Not executed on this harness: HR-CJ-12: need isolated daemon restart/time control and schedule-run receipt reader (FA TemporalProbe does not control EE schedules); assert saved schedule, run-now/fire uniqueness, restart persistence, pause/delete absence and unchanged A state after B refusals
+
+### JRN-E2E-018.L-W — J18.L-W Start exactly one run from a signed webhook
+
+**Goal:** Check access to Start exactly one run from a signed webhook; admitted capability execution remains harness-blocked
+
+**Spec:** `flows/journeys/console-triggers-cost.spec.ts:46`
+
+**Tags:** @journey @journey-J18 @mock-provider
+
+**User steps:**
+
+1. Read the Console admission decision for fresh owners and members in two organizations
+2. For each non-admitted organization, open the Console and probe its public ingress and leg-specific API reads
+3. Read capabilities and rollout storage again; report absence separately from the owed admitted journey
+
+**Backend state verified:**
+
+- Capabilities must be readable and Console must not be allowed for an absence branch
+- Every checked absent public/API route answers exactly 404, without following redirects
+- Capabilities and existing Console rollout/access rows are unchanged in both organizations
+- Not executed on this harness: HR-CJ-11: need accepted G04 registration/ingress contract, synthetic signer and delivery receipt probe; assert exactly one correlated run, replay refusal, bad-signature refusal and no extra run/provider call
+
+### JRN-E2E-019.L1 — J19.L1 Evaluate, block publication, fix, publish and roll back an agent version
+
+**Goal:** Check access to Evaluate, block publication, fix, publish and roll back an agent version; admitted capability execution remains harness-blocked
+
+**Spec:** `flows/journeys/console-eval-gated-version.spec.ts:24`
+
+**Tags:** @journey @journey-J19 @mock-provider
+
+**User steps:**
+
+1. Read the Console admission decision for fresh owners and members in two organizations
+2. For each non-admitted organization, open the Console and probe its public ingress and leg-specific API reads
+3. Read capabilities and rollout storage again; report absence separately from the owed admitted journey
+
+**Backend state verified:**
+
+- Capabilities must be readable and Console must not be allowed for an absence branch
+- Every checked absent public/API route answers exactly 404, without following redirects
+- Capabilities and existing Console rollout/access rows are unchanged in both organizations
+- Not executed on this harness: HR-CJ-15: need admitted TX1-A production adapter, deterministic 20-case drafting fixture and profile-selected mock provider with receipts; assert exact case/version/dataset binding, unique verdicts, blocked active-version invariant, successful published version, rollback identity and immutable receipts after reread. No real model call is authorized by this lane
+
+## knowledge-base
+
+### KB-E2E-001 — a developer creates a personal key inline and forgets it from the SDK example
+
+**Goal:** A developer explicitly creates a personal key in the Knowledge Base SDK setup and copies that example without fetching a shared credential.
+
+**Spec:** `flows/knowledge-base/personal-key-sdk-setup.spec.ts:21`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Knowledge Base, choose Create Knowledge Base and Import from SDK
+2. copy the real template with placeholders and verify no credential was fetched or created
+3. explicitly submit one uniquely named personal key and save its show-once pair
+4. copy the active SDK example containing that exact pair
+5. Forget key, copy again, close and reopen SDK setup; placeholders return without another mint
+
+**Backend state verified:**
+
+- Opening SDK setup and fetching the real template leaves the key row set unchanged without bootstrap or issuance calls.
+- Explicit submission adds exactly the named personal row for the session person and organization with NULL workspace and a masked list identity.
+- The copied SDK example contains the issued pair only until Forget; copied and reopened examples then contain placeholders and no raw pair remains in browser storage.
 
 ## observe
 
 ### OBS-E2E-001 — SDK trace appears in Observe with coherent backend state
 
-**Goal:** A developer sends a trace from their app and inspects it in Observe  
-**Spec:** `flows/observe/trace-ingestion.spec.ts:24`  
+**Goal:** A developer sends a trace from their app and inspects it in Observe
+
+**Spec:** `flows/observe/trace-ingestion.spec.ts:24`
+
 **Tags:** @smoke
 
 **User steps:**
@@ -1090,8 +4708,10 @@
 
 ### OBS-E2E-002 — span table filter matches the API for the same query
 
-**Goal:** A developer narrows the span table to one operation and trusts the result set  
-**Spec:** `flows/observe/span-filter-parity.spec.ts:28`  
+**Goal:** A developer narrows the span table to one operation and trusts the result set
+
+**Spec:** `flows/observe/span-filter-parity.spec.ts:28`
+
 **Tags:** —
 
 **User steps:**
@@ -1109,8 +4729,10 @@
 
 ### OBS-E2E-003 — graph metric picker lists only the current project's evals
 
-**Goal:** A developer picking a metric to graph sees only the evals attached to the project they are viewing  
-**Spec:** `flows/observe/graph-metric-scoping.spec.ts:51`  
+**Goal:** A developer picking a metric to graph sees only the evals attached to the project they are viewing
+
+**Spec:** `flows/observe/graph-metric-scoping.spec.ts:51`
+
 **Tags:** —
 
 **User steps:**
@@ -1129,8 +4751,10 @@
 
 ### OBS-E2E-004 — live observed attributes retain types and work in the filter UI
 
-**Goal:** Discover and filter live attributes without activating a catalog revision  
-**Spec:** `flows/observe/observed-catalog.spec.ts:12`  
+**Goal:** Discover and filter live attributes without activating a catalog revision
+
+**Spec:** `flows/observe/observed-catalog.spec.ts:12`
+
 **Tags:** —
 
 **User steps:**
@@ -1148,8 +4772,10 @@
 
 ### OBS-E2E-005 — discovered attributes filter traces and graph traffic consistently
 
-**Goal:** Select typed attribute suggestions and see the same exact traces in the list and graph  
-**Spec:** `flows/observe/catalog-trace-filter-parity.spec.ts:16`  
+**Goal:** Select typed attribute suggestions and see the same exact traces in the list and graph
+
+**Spec:** `flows/observe/catalog-trace-filter-parity.spec.ts:16`
+
 **Tags:** —
 
 **User steps:**
@@ -1168,8 +4794,10 @@
 
 ### OBS-E2E-006 — session suggestions select only their own traces
 
-**Goal:** Find a session through discovered values and inspect only its traces  
-**Spec:** `flows/observe/catalog-session-parity.spec.ts:19`  
+**Goal:** Find a session through discovered values and inspect only its traces
+
+**Spec:** `flows/observe/catalog-session-parity.spec.ts:19`
+
 **Tags:** —
 
 **User steps:**
@@ -1188,8 +4816,10 @@
 
 ### OBS-E2E-007 — Users discovery selects only authorized user activity
 
-**Goal:** Find a user through supported system/custom filters and navigate to exactly their authorized sessions and traces after changing workspace  
-**Spec:** `flows/observe/catalog-user-parity.spec.ts:76`  
+**Goal:** Find a user through supported system/custom filters and navigate to exactly their authorized sessions and traces after changing workspace
+
+**Spec:** `flows/observe/catalog-user-parity.spec.ts:76`
+
 **Tags:** —
 
 **User steps:**
@@ -1211,8 +4841,10 @@
 
 ### OBS-E2E-008 — native and custom voice filters select only the current project calls
 
-**Goal:** Discover voice-call properties and use their native and custom filters to find exactly the calls belonging to the selected project  
-**Spec:** `flows/observe/catalog-voice-values.spec.ts:86`  
+**Goal:** Discover voice-call properties and use their native and custom filters to find exactly the calls belonging to the selected project
+
+**Spec:** `flows/observe/catalog-voice-values.spec.ts:86`
+
 **Tags:** —
 
 **User steps:**
@@ -1231,8 +4863,10 @@
 
 ### OBS-E2E-009 — catalog permissions follow explicit scope and membership removal
 
-**Goal:** Discover only currently authorized catalog properties and choices, including after workspace membership removal  
-**Spec:** `flows/observe/catalog-permission-boundaries.spec.ts:40`  
+**Goal:** Discover only currently authorized catalog properties and choices, including after workspace membership removal
+
+**Spec:** `flows/observe/catalog-permission-boundaries.spec.ts:40`
+
 **Tags:** —
 
 **User steps:**
@@ -1253,8 +4887,10 @@
 
 ### OBS-E2E-010 — historical and live suggestions retain history while filters use current facts
 
-**Goal:** Discover repaired historical and live values, then distinguish a stale suggestion from current trace matches  
-**Spec:** `flows/observe/catalog-history-live-parity.spec.ts:55`  
+**Goal:** Discover repaired historical and live values, then distinguish a stale suggestion from current trace matches
+
+**Spec:** `flows/observe/catalog-history-live-parity.spec.ts:55`
+
 **Tags:** @h5-local
 
 **User steps:**
@@ -1275,8 +4911,10 @@
 
 ### OBS-E2E-011 — Sessions custom property/value selection preserves project and result scope
 
-**Goal:** Select a discovered custom attribute value in Sessions and inspect only its matching session traces  
-**Spec:** `flows/observe/catalog-session-custom-filter.spec.ts:19`  
+**Goal:** Select a discovered custom attribute value in Sessions and inspect only its matching session traces
+
+**Spec:** `flows/observe/catalog-session-custom-filter.spec.ts:19`
+
 **Tags:** —
 
 **User steps:**
@@ -1293,42 +4931,50 @@
 
 ### OBS-E2E-012 — an unreachable recording shows an error, not an endless loader
 
-**Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever  
-**Spec:** `flows/observe/voice-recording-error.spec.ts:76`  
+**Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever
+
+**Spec:** `flows/observe/voice-recording-error.spec.ts:100`
+
 **Tags:** —
 
 **User steps:**
 
-1. seed a voice call whose recording URLs 404
-2. open Voice Observe
-3. open the call detail drawer
-4. see "Recording unavailable", with no retry offered
+1. create a scoped voice project through the public API and ingest a call whose recording URLs 404
+2. open Voice Observe and the exact seeded call detail drawer
+3. see "Recording unavailable", with no loader, retry or exposed recording URL
 
 **Backend state verified:**
 
-- the seeded conversation span is queryable in CH
-- voice_call_detail returns the recording URLs unchanged
+- the project is source=simulator in the actor organization and workspace
+- the exact seeded conversation root is live in ClickHouse under that project and organization
+- the browser voice list and detail select only the seeded call and retain its four recording URLs
 
 ### OBS-E2E-013 — a voice call with no recording says so
 
-**Goal:** A user opens a voice call that has no recording at all and sees a plain explanation  
-**Spec:** `flows/observe/voice-recording-error.spec.ts:144`  
+**Goal:** A user opens a voice call that has no recording at all and sees a plain explanation
+
+**Spec:** `flows/observe/voice-recording-error.spec.ts:153`
+
 **Tags:** —
 
 **User steps:**
 
-1. seed a voice call with no recording attributes
-2. open the call detail drawer
-3. see "No recording found"
+1. create a scoped voice project through the public API and ingest a call with no recording attributes
+2. open the exact seeded call detail drawer
+3. see "No recording found" without a loader or recording error
 
 **Backend state verified:**
 
-- voice_call_detail reports recording_available false
+- the project is source=simulator in the actor organization and workspace
+- the exact seeded conversation root is live in ClickHouse under that project and organization
+- the browser voice list and detail select only the seeded call, with recording_available false and no recording URLs
 
 ### OBS-E2E-020 — duplicate saved-view names are rejected
 
-**Goal:** A user cannot silently overwrite an existing observability view by reusing its name  
-**Spec:** `flows/observe/saved-view-duplicate-name.spec.ts:14`  
+**Goal:** A user cannot silently overwrite an existing observability view by reusing its name
+
+**Spec:** `flows/observe/saved-view-duplicate-name.spec.ts:14`
+
 **Tags:** —
 
 **User steps:**
@@ -1346,8 +4992,10 @@
 
 ### OBS-E2E-027 — trace list pager windows forward without an endless page count
 
-**Goal:** A developer paging through a large trace list always knows where they are and when they have reached the end  
-**Spec:** `flows/observe/list-pagination.spec.ts:220`  
+**Goal:** A developer paging through a large trace list always knows where they are and when they have reached the end
+
+**Spec:** `flows/observe/list-pagination.spec.ts:220`
+
 **Tags:** —
 
 **User steps:**
@@ -1367,8 +5015,10 @@
 
 ### OBS-E2E-028 — Next stays usable through a full Back-Back-Next-Next round trip from the terminal page
 
-**Goal:** A developer bouncing back and forth near the end of a trace list never loses forward navigation  
-**Spec:** `flows/observe/list-pagination.spec.ts:446`  
+**Goal:** A developer bouncing back and forth near the end of a trace list never loses forward navigation
+
+**Spec:** `flows/observe/list-pagination.spec.ts:446`
+
 **Tags:** —
 
 **User steps:**
@@ -1385,8 +5035,10 @@
 
 ### OBS-E2E-029 — an exactly-full final page ends pagination without offering a phantom next page
 
-**Goal:** A developer whose trace count divides evenly by the page size sees a real last page, not an empty page N+1  
-**Spec:** `flows/observe/list-pagination.spec.ts:538`  
+**Goal:** A developer whose trace count divides evenly by the page size sees a real last page, not an empty page N+1
+
+**Spec:** `flows/observe/list-pagination.spec.ts:538`
+
 **Tags:** —
 
 **User steps:**
@@ -1402,8 +5054,10 @@
 
 ### OBS-E2E-030 — has_more without a strictly greater total promises no page number, but keeps Next enabled
 
-**Goal:** A developer searching a sparse cursor window is never shown a page number the transport cannot prove exists  
-**Spec:** `flows/observe/list-pagination.spec.ts:592`  
+**Goal:** A developer searching a sparse cursor window is never shown a page number the transport cannot prove exists
+
+**Spec:** `flows/observe/list-pagination.spec.ts:592`
+
 **Tags:** —
 
 **User steps:**
@@ -1420,8 +5074,10 @@
 
 ### OBS-E2E-031 — the Next label DOM node survives ~1.5s of ancestor re-render churn
 
-**Goal:** A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it  
-**Spec:** `flows/observe/list-pagination.spec.ts:671`  
+**Goal:** A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it
+
+**Spec:** `flows/observe/list-pagination.spec.ts:671`
+
 **Tags:** —
 
 **User steps:**
@@ -1438,8 +5094,10 @@
 
 ### OBS-E2E-032 — a real dwell-click on Next/Back actually fires a click, not just a press
 
-**Goal:** A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render  
-**Spec:** `flows/observe/list-pagination.spec.ts:737`  
+**Goal:** A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render
+
+**Spec:** `flows/observe/list-pagination.spec.ts:737`
+
 **Tags:** —
 
 **User steps:**
@@ -1457,8 +5115,10 @@
 
 ### OBS-E2E-033 — changing page size changes the outbound page_size, the rendered row count, and resets to page 1
 
-**Goal:** A developer who changes results-per-page gets exactly that many rows and starts back at page 1, not a stale mid-list position  
-**Spec:** `flows/observe/list-pagination.spec.ts:806`  
+**Goal:** A developer who changes results-per-page gets exactly that many rows and starts back at page 1, not a stale mid-list position
+
+**Spec:** `flows/observe/list-pagination.spec.ts:806`
+
 **Tags:** —
 
 **User steps:**
@@ -1474,8 +5134,10 @@
 
 ### OBS-E2E-034 — the agent call-log pager (a plain DRF-paginated, non-cursor screen) still paginates and reaches its last row
 
-**Goal:** A developer browsing an agent version's call logs gets a working pager even though this screen has no cursor `has_more` contract  
-**Spec:** `flows/observe/agent-call-log-pager.spec.ts:11`  
+**Goal:** A developer browsing an agent version's call logs gets a working pager even though this screen has no cursor `has_more` contract
+
+**Spec:** `flows/observe/agent-call-log-pager.spec.ts:11`
+
 **Tags:** —
 
 **User steps:**
@@ -1493,8 +5155,10 @@
 
 ### OBS-E2E-035 — changing the date filter resets pagination to page 1 and drops the old cursor
 
-**Goal:** A developer who narrows the date range never sees stale rows or a stale page position from the filter they just replaced  
-**Spec:** `flows/observe/list-pagination.spec.ts:846`  
+**Goal:** A developer who narrows the date range never sees stale rows or a stale page position from the filter they just replaced
+
+**Spec:** `flows/observe/list-pagination.spec.ts:846`
+
 **Tags:** —
 
 **User steps:**
@@ -1511,8 +5175,10 @@
 
 ### OBS-E2E-036 — the furthest-visited page reappears as a boundary after walking back to page 1
 
-**Goal:** A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on  
-**Spec:** `flows/observe/list-pagination.spec.ts:933`  
+**Goal:** A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on
+
+**Spec:** `flows/observe/list-pagination.spec.ts:933`
+
 **Tags:** —
 
 **User steps:**
@@ -1529,8 +5195,10 @@
 
 ### OBS-E2E-037 — Observe count tiles use one latest completed eval per span
 
-**Goal:** See only the newest completed result for a rerun span in Observe count tiles and the detail breakdown.  
-**Spec:** `flows/observe/eval-count-tiles.spec.ts:55`  
+**Goal:** See only the newest completed result for a rerun span in Observe count tiles and the detail breakdown.
+
+**Spec:** `flows/observe/eval-count-tiles.spec.ts:55`
+
 **Tags:** —
 
 **User steps:**
@@ -1551,8 +5219,10 @@
 
 ### OBS-E2E-038 — a saved view opens its preset date on fresh dates, and Custom on its saved range
 
-**Goal:** A user who reopens a saved trace view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:390`  
+**Goal:** A user who reopens a saved trace view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:438`
+
 **Tags:** —
 
 **User steps:**
@@ -1572,8 +5242,10 @@
 
 ### OBS-E2E-039 — a saved span view opens its preset date on fresh dates, and Custom on its saved range
 
-**Goal:** A user who reopens a saved span view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:444`  
+**Goal:** A user who reopens a saved span view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:492`
+
 **Tags:** —
 
 **User steps:**
@@ -1593,8 +5265,10 @@
 
 ### OBS-E2E-040 — a saved compare view opens its compare preset date on fresh dates, and a Custom compare range as saved
 
-**Goal:** A user who reopens a saved trace view in compare mode days later sees its compare preset (Today, Yesterday, 7D…12M) as of now, while a Custom compare range stays exactly as saved  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:498`  
+**Goal:** A user who reopens a saved trace view in compare mode days later sees its compare preset (Today, Yesterday, 7D…12M) as of now, while a Custom compare range stays exactly as saved
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:546`
+
 **Tags:** —
 
 **User steps:**
@@ -1613,8 +5287,10 @@
 
 ### OBS-E2E-041 — a saved session view opens its preset date on fresh dates, and Custom on its saved range
 
-**Goal:** A user who reopens a saved session view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:589`  
+**Goal:** A user who reopens a saved session view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:637`
+
 **Tags:** —
 
 **User steps:**
@@ -1634,8 +5310,10 @@
 
 ### OBS-E2E-042 — a saved user view opens its preset date on fresh dates, and Custom on its saved range
 
-**Goal:** A user who reopens a saved user view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:589`  
+**Goal:** A user who reopens a saved user view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:637`
+
 **Tags:** —
 
 **User steps:**
@@ -1655,8 +5333,10 @@
 
 ### OBS-E2E-043 — a bookmarked trace list link loads its preset date fresh, and a Custom range as bookmarked
 
-**Goal:** A user who opens a trace list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:684`  
+**Goal:** A user who opens a trace list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`
+
 **Tags:** —
 
 **User steps:**
@@ -1675,8 +5355,10 @@
 
 ### OBS-E2E-044 — a bookmarked span list link loads its preset date fresh, and a Custom range as bookmarked
 
-**Goal:** A user who opens a span list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:684`  
+**Goal:** A user who opens a span list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`
+
 **Tags:** —
 
 **User steps:**
@@ -1695,8 +5377,10 @@
 
 ### OBS-E2E-045 — a bookmarked session list link loads its preset date fresh, and a Custom range as bookmarked
 
-**Goal:** A user who opens a session list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:684`  
+**Goal:** A user who opens a session list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`
+
 **Tags:** —
 
 **User steps:**
@@ -1715,8 +5399,10 @@
 
 ### OBS-E2E-046 — a bookmarked user list link loads its preset date fresh, and a Custom range as bookmarked
 
-**Goal:** A user who opens a user list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:684`  
+**Goal:** A user who opens a user list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`
+
 **Tags:** —
 
 **User steps:**
@@ -1735,8 +5421,10 @@
 
 ### OBS-E2E-047 — a bookmarked compare date link loads its preset date fresh, and a Custom range as bookmarked
 
-**Goal:** A user who opens a compare date bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:684`  
+**Goal:** A user who opens a compare date bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`
+
 **Tags:** —
 
 **User steps:**
@@ -1754,8 +5442,10 @@
 
 ### OBS-E2E-048 — the workspace Users list opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
-**Goal:** A user who reopens the workspace Users list days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:801`  
+**Goal:** A user who reopens the workspace Users list days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:849`
+
 **Tags:** —
 
 **User steps:**
@@ -1764,6 +5454,7 @@
 2. for each preset and Custom, open a /dashboard/users link carrying that option with a range from ~400 days ago
 3. save one workspace Users view per preset and Custom, all storing that range
 4. open /dashboard/users and click each saved view tab in turn
+5. wheel-scroll each nonempty complete Users API page, including a target beyond the first virtualized viewport; for Custom, verify the grid stays and names the empty range instead of the setup screen
 
 **Backend state verified:**
 
@@ -1771,12 +5462,15 @@
 - each preset link and view sends every user-list request with the preset window as of now, never the stored one, and the URL date param is rewritten to it
 - Today lists only the today user, Yesterday only the yesterday user, and 7D–12M exactly both, among this flow's users
 - Custom links and views send and keep their stored range verbatim and list neither user
+- the complete wheel-scrolled rendered user-ID set equals the actual API page; a rolling view reveals the initially offscreen target; an empty API page keeps the grid visible with no user rows and a no-users message naming the date range, never the setup screen
 - opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range
 
 ### OBS-E2E-049 — a user's session tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
-**Goal:** A user who reopens one end user's session tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:878`  
+**Goal:** A user who reopens one end user's session tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:965`
+
 **Tags:** —
 
 **User steps:**
@@ -1796,8 +5490,10 @@
 
 ### OBS-E2E-050 — a user's trace tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
-**Goal:** A user who reopens one end user's trace tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:878`  
+**Goal:** A user who reopens one end user's trace tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:965`
+
 **Tags:** —
 
 **User steps:**
@@ -1817,8 +5513,10 @@
 
 ### OBS-E2E-051 — a user's span tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
-**Goal:** A user who reopens one end user's span tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:878`  
+**Goal:** A user who reopens one end user's span tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range
+
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:965`
+
 **Tags:** —
 
 **User steps:**
@@ -1838,8 +5536,10 @@
 
 ### OBS-E2E-052 — OpenRouter-shaped traces keep coherent usage through filters, sorting and details
 
-**Goal:** A developer inspects OpenRouter-shaped traces and trusts content, identities and usage through filtering, sorting and trace/session details  
-**Spec:** `flows/observe/openrouter-usage.spec.ts:43`  
+**Goal:** A developer inspects OpenRouter-shaped traces and trusts content, identities and usage through filtering, sorting and trace/session details
+
+**Spec:** `flows/observe/openrouter-usage.spec.ts:43`
+
 **Tags:** —
 
 **User steps:**
@@ -1857,12 +5557,218 @@
 - C: trace/span/session API precision and UI displays retain positive subprecision costs, nested 18, equal independent calls and parent-only usage
 - D: session first-generation messages and Users UI/API identities equal the scoped storage facts
 
+### OBS-E2E-053 — without a licence, Ask a question opens the Instant eval upgrade page and its API answers 402
+
+**Goal:** Try Instant eval on a self-hosted install with no Enterprise licence and be shown its upgrade page instead of the feature (nothing stubbed)
+
+**Spec:** `flows/observe/instant-eval-insights-gates.spec.ts:106`
+
+**Tags:** —
+
+**User steps:**
+
+1. create an Observe project through the API
+2. open the project's Traces view and its Evaluate menu
+3. choose Ask a question
+4. open the Ask page from a bookmarked link
+5. post an Instant eval estimate for the project through the API
+
+**Backend state verified:**
+
+- the project row exists in PG tracer_project under the actor org
+- the capabilities API denies instant_eval with LICENSE_MISSING
+- the estimate API answers 402 with upgrade_required, code LICENSE_MISSING and feature instant_eval
+
+**Browser observations:**
+
+- the Evaluate menu lists Ask a question, Find patterns, Add evaluators, and only the first two carry the Enterprise mark
+- Ask a question lands on /observe/:id/ask showing the Instant eval upgrade page, its upgrade link and the Jev footnote
+- the bookmarked /ask link shows the same upgrade page
+- the browser never requests an Instant eval endpoint
+
+### OBS-E2E-054 — native source accounting retains exact usage and known, zero and unknown costs
+
+**Goal:** A developer trusts native trace accounting and can filter and sort costs without treating unknown as zero
+
+**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:8`
+
+**Tags:** —
+
+**User steps:**
+
+1. read parent-only native trace and session list coverage, deliver children later, then replay identical IDs
+2. ingest synthetic Copilot and Gemini trees plus a legacy control, including duplicate delivery
+3. verify exact source identities, normalized counters and session grouping in storage
+4. read exact trace membership and known, zero and unknown costs in the desktop grid
+5. filter by trace name and by zero or positive cost
+6. sort positive costs and the full set both ways, replaying each captured API request
+
+**Backend state verified:**
+
+- root-only, late-child and replay lists keep observed request counts 0, 3, 3 with coverage unknown and unchanged source summary presence
+- source IDs, parents, normalization profiles, summary counters and sanitized event attributes persist exactly
+- trace API totals and grid distinguish zero from unknown costs
+- session fallback and explicit identities match exact source membership
+- filtered and sorted API, replay and DOM IDs match independent expected sets and order, with exact counts and no lower-bound marker
+
+### OBS-E2E-056 — native sessions preserve exact membership, costs and trace navigation
+
+**Goal:** A developer trusts native session totals and opens the intended source trace from ordered conversation history
+
+**Spec:** `flows/observe/native-session-accounting-navigation.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. read the exact six seeded session identities in the API and desktop grid
+2. open the two-turn Copilot session and navigate to its first source trace
+3. scroll the grid to inspect observed-only native costs, coverage unknown and exact request and trace counts
+4. open each remaining session and match its history card, source trace, tokens and cost
+
+**Backend state verified:**
+
+- session list and history totals sum all request contributions, not parent summaries
+- two-turn history has exactly the source chronology, 86142 tokens, two traces and 1.20 USD
+- single-trace session API, card and header retain exact membership, token breakdown and known, zero or null cost
+- View Trace opens the exact source trace, without unexpected browser or HTTP errors
+
+### OBS-E2E-057 — native tree, model, tool and timeline details preserve source truth
+
+**Goal:** A developer inspects native model and tool work on a normal desktop with truthful costs and sanitized events
+
+**Spec:** `flows/observe/native-trace-desktop-detail.spec.ts:7`
+
+**Tags:** —
+
+**User steps:**
+
+1. open known, zero, unknown and legacy traces from the real grid
+2. select root and model nodes and inspect source IDs and canonical token and cost summaries
+3. inspect Gemini tool output and sanitized exception attributes
+4. switch to timeline and back to tree using the display controls
+
+**Backend state verified:**
+
+- trace detail contains exact source IDs, parents, token contributions and LLM call counts
+- trace and selected model costs preserve known, zero and unknown semantics
+- Copilot links and exception types and Gemini sanitized events survive in the detail API
+- tool output and exception type render in the selected node; unexpected browser and HTTP errors fail
+
+### OBS-E2E-058 — without a licence, Find patterns opens the Insights upgrade page and its API answers 402
+
+**Goal:** Try Insights on a self-hosted install with no Enterprise licence and be shown its upgrade page instead of the feature (nothing stubbed)
+
+**Spec:** `flows/observe/instant-eval-insights-gates.spec.ts:168`
+
+**Tags:** —
+
+**User steps:**
+
+1. create an Observe project through the API
+2. open the project's Traces view and its Evaluate menu
+3. choose Find patterns
+4. open the Insights page from a bookmarked link
+5. list the project's Insights reports through the API
+
+**Backend state verified:**
+
+- the project row exists in PG tracer_project under the actor org
+- the capabilities API denies insights with LICENSE_MISSING
+- the report list API answers 402 with upgrade_required, code LICENSE_MISSING and feature insights
+
+**Browser observations:**
+
+- the Evaluate menu lists Ask a question, Find patterns, Add evaluators, and only the first two carry the Enterprise mark
+- Find patterns lands on /observe/:id/insights showing the Insights upgrade page and its upgrade link
+- the bookmarked /insights link shows the same upgrade page
+- the browser never requests an Insights endpoint
+
+### OBS-E2E-059 — Copilot agent traces show request usage and optional timing detail
+
+**Goal:** A developer inspects a VS Code Copilot turn with accurate token usage, an Agent label and optional internal timing detail
+
+**Spec:** `flows/observe/copilot-agent-usage-timing.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. send the sanitized native VS Code capture plus Strands, Pydantic and parent-only controls
+2. open the captured trace from the real Observe grid
+3. read the agent label and observed token summary with timing activity hidden
+4. show timing spans and hide them again without losing their stored data
+
+**Backend state verified:**
+
+- all 91 captured spans retain their IDs; one agent, five model calls and 72 internal timing spans are stored
+- trace detail and trace list report 88073 captured tokens, 193 Strands tokens, 193 Pydantic tokens and 193 parent-only tokens
+- all 72 timing span IDs remain in the detail API while the tree hides them by default and shows their exact names on request
+
+### OBS-E2E-060 — a deployment's Observe project is the one its traces land in, with two default alerts
+
+**Goal:** A deployed agent's traces and its two default alerts are in one Observe project, deploy/<name>, whichever comes first: the Deployments tab's ensure or the first trace
+
+**Spec:** `flows/observe/deployment-observe-link.spec.ts:64`
+
+**Tags:** —
+
+**User steps:**
+
+1. ensure before the org is admitted to Deployments: refused as not found
+2. admit the actor's org and a second org to Deployments directly through the backend (the rollout's staff entry; no operator UI in this harness, see e2e/lib/rollout-seed.ts)
+3. ensure deployment A (POST /tracer/omega/deployments/<id>/observe/), then send its trace through the collector with project_name=deploy/<name>
+4. send deployment B's trace first, then ensure it
+5. ensure deployment A again
+6. the second org ensures deployment A's id
+7. list the alerts and the spans of A's project as Observe does
+8. ensure three more deployments of the actor's org (N=3), then send each one's trace as the EE relay does: with X-FI-Expected-Organization-Id, -Workspace-Id and -Project-Id naming the project ensure returned
+9. send a trace that asserts another deployment's project as its expected target
+
+**Backend state verified:**
+
+- the unadmitted ensure is 404 product_not_admitted and writes no tracer_project row
+- one live tracer_project row per deploy/<name> in the org, trace_type observe, and the CH spans (FINAL) of each trace carry its project_id, which is the projectId ensure returned (both orders)
+- two live tracer_useralertmonitor rows per project (count_of_errors and daily_tokens_spent), matching the alert ids ensure returned; alertsDeferred is null
+- one tracer_omega_deployment_observe_link row per deployment id, in the actor's workspace, pointing at that project
+- the second ensure returns the same projectId and alert ids and adds no row
+- the other org gets 404 with the not-found message, and has no deploy/<name> project
+- list_monitors?project_id=<A> returns exactly the two defaults, unmuted; list_spans_observe returns both seeded spans
+- the three deployments get three distinct projects (deploy/<name> each, one link row each); every relay-shaped trace is accepted and its CH spans carry exactly its own deployment's project id
+- the mismatched expected target is refused 403 by the collector and no span of that trace lands anywhere
+
+### OBS-E2E-061 — personal traces remain visible while retired and revoked credentials are refused
+
+**Goal:** A developer can ingest and inspect traces with a personal key, while retired credentials and a revoked personal key can no longer add traces.
+
+**Spec:** `flows/observe/collector-personal-key-lifecycle.spec.ts:28`
+
+**Tags:** —
+
+**User steps:**
+
+1. provision the actor with a session-created personal key and explicitly create two flow-specific personal keys
+2. ingest an independently identified trace and inspect it in Observe
+3. send retained synthetic system and retired credentials and require HTTP 401
+4. warm the personal key, start a monotonic clock before DELETE, and read its committed deleted state from primary Postgres
+5. require a completed export refusal within 30 seconds of the pre-DELETE boundary
+6. ingest with the eligible control, reload Observe and compare exact accepted identities with API and storage
+
+**Backend state verified:**
+
+- primary Postgres binds the personal key to the signed-in person and org; latest spans and traces retain every minted project and identity
+- valid retained synthetic system and retired credentials return 401 and remain absent from spans/traces FINAL throughout a full 15-second exclusion window after a positive export barrier
+- committed personal-key deletion is followed by a completed 401 within 30000 ms of the pre-DELETE clock, while the independent control still ingests
+- Observe exact accepted trace identities equal the real span-list API and latest storage identities, with every refused identity absent
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
 
-**Goal:** Run a synthetic prompt through the local mock, then discover, edit and remove its current evaluation configuration through supported UI  
-**Spec:** `flows/prompts/catalog-definition-lifecycle.spec.ts:34`  
+**Goal:** Run a synthetic prompt through the local mock, then discover, edit and remove its current evaluation configuration through supported UI
+
+**Spec:** `flows/prompts/catalog-definition-lifecycle.spec.ts:34`
+
 **Tags:** —
 
 **User steps:**
@@ -1879,12 +5785,142 @@
 - current prompt catalog identifies the exact binding and its two configured choices
 - mapping edit preserves binding ID/name, completes, and deletion removes it from UI and current discovery
 
+### PROMPT-E2E-002 — re-run changes create new variants and retain earlier results
+
+**Goal:** Change a prompt or model on the classic experiment page and keep the earlier results as separate variants
+
+**Spec:** `flows/prompts/experiment-rerun.spec.ts:20`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed published prompts and an evaluated experiment on an uploaded synthetic dataset
+2. open the classic experiment page while the original run may still be executing
+3. open Re-run with changes, select a different published prompt and run a new variant
+4. without reloading, wait for that run to finish and run another variant with a different loopback-backed model
+5. try the same experiment and a foreign prompt from another organization
+
+**Backend state verified:**
+
+- the original and both appended configs retain their exact prompt versions and models and produce independently expected output cells
+- each UI PUT creates exactly one new config and leaves all earlier config and output cell identities and values unchanged
+- another organization cannot read or append to the experiment and a foreign prompt cannot be appended by the owner
+
+**Browser observations:**
+
+- Re-run with changes is disabled while each appended variant is queued or running and becomes available again when it completes, with no page reload
+- experiment status reads stay bounded while executions are pending
+
+### PROMPT-E2E-003 — isolated component replay bounds unavailable run reads
+
+**Goal:** In an isolated component replay, see an unavailable run configuration without automatic request storms; this is not public-route acceptance
+
+**Spec:** `flows/prompts/unavailable-run-component.spec.ts:19`
+
+**Tags:** @component-replay
+
+**User steps:**
+
+1. seed one real experiment in each of two synthetic organizations using public APIs
+2. open the test-only source component with its real experiment and unavailable run-config endpoint
+3. unmount and remount the observer twenty times while delivering focus and reconnect events
+4. read the unavailable state, press Retry once and verify one additional request
+5. verify another organization cannot read the experiment and retained configuration identities are unchanged
+
+**Backend state verified:**
+
+- each real run-config endpoint returns 404 exactly once across twenty observer remount/focus/reconnect cycles and once more after explicit Retry
+- each owner can read its persisted experiment while the other organization receives 404; read-only replay preserves exact configuration identities
+
+**Browser observations:**
+
+- the production ExperimentSourceGate shows Experiment unavailable and withholds editable children in Chromium and Firefox component replays
+- this test-only mount does not establish public Edit entry-point reachability or Results acceptance
+
+### PROMPT-E2E-004 — create a prompt experiment and retry without duplicating execution
+
+**Goal:** Create a prompt experiment from its public wizard and safely retry the identical submission
+
+**Spec:** `flows/prompts/experiment-create.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. upload a synthetic dataset and seed a published prompt and evaluator through public APIs
+2. open the prompt-prefilled experiment wizard, select an evaluation group and click Run experiment
+3. in the isolated admission-outage run, discard and reopen the saved draft, restore Temporal and retry unchanged
+4. read the classic experiment page and exact persisted prompt output
+5. retry the captured creation request and verify the original experiment and output are retained
+6. try the owner dataset, experiment and prompt from another organization
+
+**Backend state verified:**
+
+- the browser POST persists the exact selected prompt version, model and group evaluator and three expected output cells
+- the isolated outage produces a real 503 with committed pending intent; reopening restores the draft and an identical browser retry admits that same experiment
+- replaying the identical POST returns the same experiment, snapshot, configuration and output identities without another execution
+- the other organization cannot create against the owner dataset, read the experiment or inject its prompt into the owner experiment
+
+### PROMPT-E2E-006 — inspect, give feedback, stop, rerun and delete an experiment
+
+**Goal:** Reach an experiment through the dataset list, save row feedback and manage its execution without touching another organization
+
+**Spec:** `flows/prompts/experiment-lifecycle.spec.ts:16`
+
+**Tags:** —
+
+**User steps:**
+
+1. upload a synthetic dataset and seed a prompt experiment through the public APIs
+2. open the focused-grid palette and list-row New experiment doors, then Open experiments and the experiment row
+3. inspect an evaluation, save feedback, close and reopen it
+4. check foreign-organization refusal for each read and lifecycle write
+5. rerun from the experiment list, stop it, then rerun to completion
+6. select the experiment by its identity and confirm deletion
+
+**Backend state verified:**
+
+- the experiment produces three exact loopback-stand-in outputs on its own snapshot
+- the browser feedback POST persists the chosen metric, column, row, value and explanation and reads them back
+- browser rerun and stop requests yield Queued or Running, Cancelled, then Completed with retained configuration identity
+- the browser DELETE soft-deletes exactly the selected experiment and removes it from its list and detail
+- foreign experiment, row, feedback, stop, rerun and delete requests are refused without changing owner state
+
+### PROMPT-E2E-007 — run a saved graph version and isolate its experiment results
+
+**Goal:** Choose an older saved agent graph version, run it on dataset rows and inspect only authorized persisted results
+
+**Spec:** `flows/prompts/native-graph-experiment.spec.ts:39`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two tenant-owned graphs and two versions of the owned graph through public APIs
+2. upload synthetic CSV through the file dialog
+3. choose Agent graph, excluding Already running and the foreign graph
+4. select the older saved version, with global-variable mapping hidden
+5. select the loopback-STANDIN evaluation group and submit the experiment
+6. read exact completed native outputs in Postgres, the rows API and the classic grid
+7. reject foreign graph and version admission and foreign experiment reads without mutation
+
+**Backend state verified:**
+
+- the browser-selected graph and older version persist on a snapshot in the caller organization and workspace
+- the real native graph worker writes exactly the independently expected transformed input for every imported row
+- the loopback-STANDIN evaluator completes on all three native outputs
+- the rows API and classic grid expose the same exact completed outputs
+- foreign graph and version admission and foreign experiment reads are refused without changing the owner experiment or creating another experiment
+
 ## settings
 
 ### SET-E2E-001 — admin restricts MCP tool groups for connected clients
 
-**Goal:** An admin restricts which MCP tool groups are available to connected clients  
-**Spec:** `flows/settings/mcp-tool-groups.spec.ts:19`  
+**Goal:** An admin restricts which MCP tool groups are available to connected clients
+
+**Spec:** `flows/settings/mcp-tool-groups.spec.ts:19`
+
 **Tags:** @smoke
 
 **User steps:**
@@ -1901,12 +5937,223 @@
 - GET /mcp/internal/tools/ equals the initial tool set minus all dataset tools
 - POST /mcp/internal/tool-call/ list_datasets returns 403 while whoami and list_projects still succeed
 
+### SET-E2E-002 — admin reads fresh host update reports and missing reporting stays unknown
+
+**Goal:** An organisation admin reads host-reported restoration progress and the restored previous version separately from a failed update, alongside available release and freshness, through a sanitized read-only report; missing reporting stays unknown.
+
+**Spec:** `flows/settings/host-update-status.spec.ts:79`
+
+**Tags:** —
+
+**User steps:**
+
+1. atomically publish a fresh status.json from the committed valid_status fixture with a minted available version
+2. open /dashboard/settings/updates as the actor
+3. read restoring progress with an unverified installed version and recovery explanation
+4. atomically replace the report with restored status, a known running component and a second minted candidate, then reload
+5. delete the report and reload
+
+**Backend state verified:**
+
+- GET /api/host-update-status/ returns 200 with the minted version and its keys are a subset of the closed public schema, with no path, env, command or secret strings
+- the page version and freshness equal the API values
+- an atomic replace on the host is seen by the container without restarting anything
+- with the file removed the API reports the unavailable state and the page shows reporting unavailable and never up to date
+- POST, PUT, PATCH and DELETE return 405 and an unauthenticated GET returns 401
+
+### SET-E2E-003 — a receiver that answers with HTML, a javascript: link and an RTLO is shown as inert text
+
+**Goal:** An admin reads what their endpoint answered without the answer acting on the page (WT-15c)
+
+**Spec:** `flows/settings/webhooks-inert-receiver-text.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a webhook whose endpoint answers 500 with HTML, a javascript: link and an RTLO character
+2. send a test from the endpoint page
+3. open the delivery from the log and expand "From your endpoint"
+
+**Backend state verified:**
+
+- GET /webhooks/deliveries/{id}/ stores the excerpt with the HTML intact and the RTLO removed
+
+**Browser observations:**
+
+- the excerpt is literal text: no <img>, <script> or javascript: link is created and the onerror never runs
+
+### SET-E2E-004 — the Webhooks section exists exactly where this install can send webhooks
+
+**Goal:** An admin sees the Webhooks section only on an install where webhooks work, never as "coming soon"
+
+**Spec:** `flows/settings/webhooks-section-gate.spec.ts:22`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Settings > Integrations
+2. open the workspace's Settings > Integrations
+3. open another workspace's Settings > Integrations and add a webhook there
+4. open a webhook endpoint URL directly
+
+**Backend state verified:**
+
+- GET /integrations/destinations/ reports webhooks available exactly when the stack sends (FI_WEBHOOKS_ENABLED) and the release gate is passed or the test plan runs (FI_WEBHOOKS_TEST_PLAN)
+- the webhook added on another workspace's page belongs to that workspace (GET /webhooks/endpoints/), and the registry asked for that workspace lists it and not the session workspace's webhook
+
+**Browser observations:**
+
+- sending on: the Webhooks heading, Add webhook and the policy card are shown, on the org page and, with the workspace policy, on the workspace page
+- sending on: another workspace's page lists that workspace's webhooks, not the session workspace's, and the org page does not list the new one
+- sending off: no Webhooks heading, no Add webhook, no policy card, no "coming soon" on either page, and the endpoint URL returns to Integrations
+
+### SET-E2E-005 — an admin redelivers the failed deliveries in bulk, edits the headers and deletes the webhook
+
+**Goal:** An admin recovers the deliveries an outage failed, changes what the webhook sends, and removes it
+
+**Spec:** `flows/settings/webhooks-bulk-redeliver-edit-delete.spec.ts:38`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a webhook whose endpoint answers 500 twice and send two tests from the endpoint page
+2. filter the delivery log to Failed, then to Delivered
+3. redeliver the failed deliveries in bulk, confirming the dry-run count, and watch the Delivered view fill in
+4. show the deliveries of the last 24 hours
+5. in Settings, see the subscriptions made with the API listed as kept, and change only the retry window
+6. in Settings, also send failed runs from Production started by the API, cancelled included, and change the delivery settings
+7. in Settings, point the webhook at a URL with a token in its query, change only the timeout, then type the URL again with a new token
+8. add a header in Settings and save it, then send a test
+9. add a second header without typing the first one again
+10. delete the webhook from the endpoint page
+
+**Backend state verified:**
+
+- GET /webhooks/endpoints/{id}/deliveries/?status=failed has exactly the two tests
+- the receiver gets both again with the same webhook-ids as attempt 2, and both deliveries end succeeded
+- the save of the retry window sends PATCH /webhooks/endpoints/{id}/ with max_age_s alone, and GET /webhooks/endpoints/{id}/ still has the API-made subscriptions exactly
+- GET /webhooks/endpoints/{id}/ has the deployment.run.failed subscription with exactly those filters next to the API-made ones, and the timeout, rate, in-flight, max age and run targeting saved
+- while the token is hidden the timeout save sends PATCH /webhooks/endpoints/{id}/ with timeout_ms alone; the URL save sends the full URL; GET /webhooks/endpoints/{id}/ masks the token, and the next request reaches the receiver with the new one
+- GET /webhooks/endpoints/{id}/ lists the header name and never its value; the receiver gets the value byte for byte
+- a save that would blank the kept header is refused before it is sent: the header names are unchanged
+- after Delete, GET /webhooks/endpoints/{id}/ is 404 and the registry no longer lists it
+
+**Browser observations:**
+
+- with the last 24 hours shown, the log is read a few times at most, never in a loop
+
+### SET-E2E-006 — a user finds this deployment's MCP server URL and its setup guide
+
+**Goal:** A user reads this deployment's MCP server URL and its setup guide before connecting a client
+
+**Spec:** `flows/settings/mcp-server-setup.spec.ts:41`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Settings MCP Server
+2. read the MCP server URL under Connect Your IDE
+3. follow View Docs
+4. read the MCP server setup guide
+
+**Backend state verified:**
+
+- GET /mcp/config/ mcp_url equals the MCP server URL the page shows
+- GET /docs/mcp-server.html is a 200 text/html page with the MCP server setup title, loading nothing from another origin
+- an uncredentialed request to the shown URL is 401 with WWW-Authenticate resource_metadata at <base>/.well-known/oauth-protected-resource/mcp
+- that protected-resource document names the shown URL as its resource
+
+### SET-E2E-007 — Personal keys only
+
+**Goal:** Create and use only my personal keys, with access ending when my membership ends
+
+**Spec:** `flows/settings/key-role-bootstrap.spec.ts:28`
+
+**Tags:** —
+
+**User steps:**
+
+1. sign up a fresh account, verify zero keys and the retired bootstrap, then explicitly create a personal key
+2. create personal keys and compare Owner, Admin, Member and workspace Member masked Keys pages with stored identities
+3. refuse retired legacy credentials over header, Basic and both MCP transports
+4. refuse API-key issuance and a Member administrative action; let the Owner revoke a member key
+5. remove the Member and verify the personal key stays refused without recreating membership
+
+**Backend state verified:**
+
+- fresh signup and repeated bootstrap 410 leave zero API-key rows before explicit session issuance
+- Member and workspace Member list only own keys; Owner and Admin list masked organization personal metadata; all four Keys pages match exact stored IDs without issuing on mount
+- a seeded retired key returns 401 api_key_retired only with the correct secret on header, Basic and MCP
+- API-key issuance and Member admin writes return 403; non-admins cannot modify others keys; own disable and enable work; Owner and Admin revocation disable the exact selected personal keys
+- removed-member key calls return 401 and neither organization nor workspace membership heals
+
+### SET-E2E-009 — a person explicitly creates and saves workspace-scoped and unrestricted keys
+
+**Goal:** A person starting without keys explicitly creates and saves a personal key with the workspace access they selected.
+
+**Spec:** `flows/settings/personal-key-creation.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. open both Keys routes with zero keys and open each prefilled form without creating a credential
+2. name a key, select the current workspace, submit once and save the one-time pair and export snippet
+3. create a second named key with no workspace restriction from the other Keys route
+4. reload both routes and reopen creation; read only masked metadata without another mint
+5. authenticate a read with each saved pair as the same signed-in person
+
+**Backend state verified:**
+
+- Both page/form mounts leave the fresh organization key set empty and make no bootstrap or issuance request.
+- Each explicit submit creates exactly one personal row for the session person and organization with respectively the selected workspace UUID and NULL.
+- The key-list API and both UI routes expose only masked values after dismissal, reopen and reload without additional rows.
+- Each newly issued pair authenticates as its stored person.
+
+### SET-E2E-010 — an admin adds a webhook, tests, redelivers, rotates its secret, turns it off and the policy blocks a host
+
+**Goal:** An admin sends Future AGI events to their own endpoint and manages it from Settings > Integrations > Webhooks
+
+**Spec:** `flows/settings/webhooks-lifecycle.spec.ts:29`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Settings > Integrations and see the Webhooks section empty state
+2. add a webhook for "A new version is committed" and save it
+3. copy the signing secret shown once, download it as an .env line, and send a test from the secret dialog
+4. open the endpoint from the list and the test delivery from its log
+5. redeliver the delivery from the drawer and see attempt 2 there
+6. rotate the secret from the More actions menu with a 24 hour overlap, send a test, then stop the previous secret
+7. turn the webhook off
+8. read what was done on the Activity card
+9. set the org policy to allow only acme.test subdomains and try to add the same URL and to turn the webhook on
+
+**Backend state verified:**
+
+- GET /integrations/destinations/ lists the endpoint as a webhook destination
+- GET /webhooks/endpoints/{id}/ shows only the secret tail, never the secret
+- the receiver gets the test signed with the shown secret, with test: true and X-FutureAGI-Test: 1
+- GET /webhooks/endpoints/{id}/deliveries/ has exactly the test delivery, succeeded
+- the redelivery reaches the receiver with the same webhook-id as attempt 2, and the delivery has 2 attempts
+- during the overlap the receiver gets two v1 signatures that verify with the old and the new secret; after stop, one active secret
+- GET /webhooks/endpoints/{id}/ is disabled_manual after Turn off and stays so when Turn on is refused
+- GET /webhooks/endpoints/{id}/activity/ lists the turn off first, then the stopped and rotated secrets, the redelivery, the test and the creation
+- GET /webhooks/policy/ allows only the acme.test wildcard, and no second endpoint is created
+
 ## simulate
 
 ### SIM-E2E-001 — Simulate opens on Environments, and an org from after the cutoff sees only Environments
 
-**Goal:** A developer opening Simulate lands on Environments, old Harness, Simulator Agent, Personas and template links go somewhere sensible, Personas opens as a tab on Environments, and a new org sees only Environment in the menu and gets not found from direct Scenarios, Run Simulation and Agent Definition links  
-**Spec:** `flows/simulate/environments-only-routing.spec.ts:33`  
+**Goal:** A developer opening Simulate lands on Environments, old Harness, Simulator Agent, Personas and template links go somewhere sensible, Personas opens as a tab on Environments, and a new org sees only Environment in the menu and gets not found from direct Scenarios, Run Simulation and Agent Definition links
+
+**Spec:** `flows/simulate/environments-only-routing.spec.ts:33`
+
 **Tags:** —
 
 **User steps:**
@@ -1935,8 +6182,10 @@
 
 ### SIM-E2E-002 — an org from before the Simulate cutoff keeps Scenarios and Run Simulation
 
-**Goal:** An existing customer, whose org predates the cutoff, still reaches every Simulate page from the menu  
-**Spec:** `flows/simulate/existing-customer-pages.spec.ts:22`  
+**Goal:** An existing customer, whose org predates the cutoff, still reaches every Simulate page from the menu
+
+**Spec:** `flows/simulate/existing-customer-pages.spec.ts:22`
+
 **Tags:** —
 
 **User steps:**
@@ -1952,3 +6201,192 @@
 
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
+
+## walks
+
+### WALK-E2E-000 — W00 a fresh organization reads every launch gateway feature off, for every role, before and after its first key
+
+**Goal:** Every role of a brand-new organization sees each launch gateway feature remain off until explicitly enabled; UI absence alone is never proof of OFF
+
+**Spec:** `flows/walks/default-off-census.spec.ts:61`
+
+**Tags:** @walk @walk-W00 @new-org-default-off
+
+**User steps:**
+
+1. sign up Owner A and Owner B, and invite Admin, Member and Viewer into A
+2. as each of A's roles open Models, Billing, Budgets, MCP, Gateway Settings, Integrations and Guardrails
+3. read the neutral credits-OFF notice, absent switch and server OFF state, plus each feature marker at 1440 and 390 px, light and dark
+4. after each role-appropriate Billing page loads, verify the managed wallet stays absent without hiding cloud platform Billing
+5. open the gateway's public price feed anonymously
+6. as Owner A create the first gateway key in the console
+7. repeat every page and viewport/scheme census as Owner, Admin, Member and Viewer
+
+**Backend state verified:**
+
+- before the key neither org has a PG agentcc_org_config version and the gateway holds no org config for A
+- A has no row in usage_managedcreditaccount, usage_managedcreditentry, the MCP credential, connect, approval and tool-call tables, integrations_connection or the cap activation table, and no trace-content audit entry
+- when the served credit ledger is Redis-backed, Redis holds no mc:{A} key and A is in neither mc:outbox_orgs nor mc:needs_push; an in-memory ledger reads ABSENT
+- GET /-/config shows the public price feed as the profile declares it, and the feed route is not served on a profile that does not declare it
+- on default-off profiles after the key A has exactly zero org config rows and active versions and a null gateway mirror; config switches stay off and mcp.search absent
+- all 34 exact CAT-2 identities are absent or blocked-unpriced in both the API catalogue and gateway admin catalogue before and after the key
+- after the first console key every CAT-2 credits request returns 403 permission_denied with zero mock upstream calls
+- org B's rows, audit entries, gateway org config and Redis keys are identical at start and end
+- a complete value-free result binds every role, phase, page and viewport/scheme to the run, profile, browser, hashed org set and attested stack
+
+**Browser observations:**
+
+- every Models cell proves managed OFF with an absent control, the exact visible neutral notice and a successful server readback of enabled false
+- the loaded Billing destination has no AI Gateway credits region for any role; existing cloud platform Billing and member access refusal remain
+- no browser request left the machine except the ASSETS-PENDING font and icon hosts
+
+### WALK-E2E-001 — W01 one key spends exact credit, keeps BYOK free and isolates organizations
+
+**Goal:** An organization uses one gateway key for three vendors on fixture credit, with exact micro-dollar charges and no cross-organization access
+
+**Spec:** `flows/walks/one-key-money.spec.ts:72`
+
+**Tags:** @walk @walk-W01 @new-org-default-off
+
+**User steps:**
+
+1. mint a key in the console, inspect the one-time reveal and its masked prefix after reload
+2. observe credits OFF, enable through the Admin API, observe the zero-credit refusal and grant one fixture dollar
+3. send five managed plain and streamed calls, pin Gemini refusals, and exercise BYOK plus refused cross-mode and allowed same-mode fallback
+4. compare AG Grid logs, attempt drawers, Models balance and Billing figures with API and storage
+5. check Member and Viewer denial in fresh Billing contexts and Owner B isolation
+6. cancel Turn off by keyboard, capture narrow and dark layouts, then disable credits and retain the balance
+
+**Backend state verified:**
+
+- OFF is 403 future_agi_credits_off; zero credit is 402 managed_credits_exhausted with the product message
+- enable adds one active config version; the fixture grant is one entry and one account-version increment
+- managed charges are exactly 92, 92, 441, 441 and 9 micros; gateway spent is 1075, available 998925 and held zero
+- memory outbox has five pending settlements and PostgreSQL has only the grant; Redis is explicitly absent
+- BYOK has zero markup and no ledger change; fallback attempt sets are primary-error only or primary-error plus request_fallback-success
+- Member config write is 403; Owner B cannot retrieve any A log and its money snapshot is unchanged
+- stack logs contain neither the minted key, its prefix nor either synthetic BYOK credential
+
+**Browser observations:**
+
+- keys reveal once; log cells and attempt outcomes match the public API
+- Member and Viewer stay on Billing with the no-access message and no managed-credit requests
+- Turn off cancellation makes no config write; Models has no horizontal overflow at 390 pixels
+
+### WALK-E2E-002 — W02 wallet projections, credited-once fixtures and fail-closed consent
+
+**Goal:** An Owner or Admin reads and exports the real credit ledger, observes honest purchase and auto-reload unavailability, and saves the low-balance alert
+
+**Spec:** `flows/walks/wallet-billing.spec.ts:52`
+
+**Tags:** @walk @walk-W02 @new-org-default-off
+
+**User steps:**
+
+1. opt in by API, grant fixture credit and make three managed calls costing exactly 625 micros
+2. read BillingV2 figures, ledger and statement as Owner, and download both CSV exports
+3. refuse checkout on this build, then visit pending, credited, repeated, legacy and cancelled return URLs using one test-mode top-up fixture
+4. verify self-hosted card-return URLs do not confirm a payment method or mutate money
+5. save the low-balance alert in the UI, see auto-reload disabled with the sentence that it is not available, have enabling saves with missing, stale and current consent and a below-minimum amount refused, then disable by API
+6. repeat reads and exports, checkout refusal, return checks, the refused enabling save and the disable as Admin
+7. deny Member and Viewer in fresh Billing contexts and on all money endpoints; isolate Owner B even when naming A
+
+**Backend state verified:**
+
+- statement and CSV projections equal exact integer-micro ledger rows, and five summary GETs leave account metadata unchanged
+- checkout is 503 billing_unavailable; status stays pending until one labelled top-up exists and repeats do not duplicate it
+- every enabling save, with missing, stale or current consent or a below-minimum amount, is 400 auto_reload_unavailable and changes no balance, account or receipt
+- Owner and Admin disabling saves succeed without consent, report auto-reload as not available and write no receipt
+- opening Billing settings sends no settings save and changes no account or receipt
+- Member and Viewer get five 403 responses each; Owner B never reads A money and its baseline stays unchanged
+- stack logs contain neither synthetic checkout nor card session identifiers
+
+**Browser observations:**
+
+- BillingV2 regions, figures, ledger rows, statement lines and CSV controls match their public projections
+- the auto-reload switch is visible and disabled, described by the sentence that automatic reloads are not available, with no agreement to give
+- checkout notices and URL cleanup are UI facts, never purchase proof
+- Member and Viewer remain on Billing with no-access copy and zero managed-credit requests
+- Billing has no horizontal overflow at 390 pixels in light and dark layouts
+
+### WALK-E2E-017 — W17 an admin exports request logs, controls Sync Now and recovers failed destinations without crossing organizations
+
+**Goal:** An admin connects Datadog, Mixpanel, PostHog and S3, controls exports and recovers failures while lower roles and another organization cannot change the connections
+
+**Spec:** `flows/walks/export-sync.spec.ts:37`
+
+**Tags:** @walk @walk-W17
+
+**User steps:**
+
+1. Admin validates a refused credential then connects each declared local destination with an 18-hour start and 30-minute interval
+2. Sync Now, double-click while real preparation is pending, then navigate away with another preparation held before dispatch
+3. read run history and exported counts in the console, API and storage, including at-least-once repeats
+4. reject credential replacements while preserving stored credentials; inspect active controls as Member and Viewer
+5. revoke Datadog and Mixpanel credentials, stop PostHog and disable the isolated S3 user; read Error, Retry while down, restore each destination and Retry successfully
+6. delete each connection with confirmation, cancelling the first confirmation
+7. Member and Viewer have no usable management controls and their create, validate, edit and delete requests are refused
+8. org B cannot read A connections and its state remains byte-identical; error diagnostics and application logs hide credentials
+
+**Backend state verified:**
+
+- connections are absent by default, refused validation creates nothing, and successful UI creates persist exactly the four destinations, active status and 1800-second intervals
+- every successful sink delivery is exactly the org-A request IDs in its independently queried sync window, including documented repeats but never the 20-hour decoy or org B
+- each double-click creates one dispatch and sync row; cancellation while preparation is pending creates neither a dispatch nor a row nor a delivery
+- Sync History API and UI exactly match PG rows and counts; recovery rows read success, failed, failed, success, with sanitized Datadog credentials_refused details
+- refused credential edits preserve ciphertext, and confirmed removal soft-deletes every connection and removes it from the API
+- lower-role management writes are 403 without storage changes, cross-org reads are 404, B remains byte-identical, and no supplied credential appears in error details or application logs
+
+### WALK-E2E-018 — W18 guardrail catalogue and saved policy controls match enforcement, refusals and role isolation
+
+**Goal:** An Admin enables a runnable guardrail, sees streams enforced and saved-only checks honestly, edits lists and confirms removal without ambiguous or unauthorized writes
+
+**Spec:** `flows/walks/guardrails-policy.spec.ts:34`
+
+**Tags:** @walk @walk-W18
+
+**User steps:**
+
+1. seed an org provider and personal gateway key, a null-enabled stored partner and two same-name policy checks
+2. Admin opens Guardrails: exact runnable catalogue; enable Data Leakage Prevention in block mode and stream a passing and blocked answer
+3. read the stored-only partner Off with its actual gateway threshold; disable DLP and call with no guardrail metadata
+4. attempt the duplicate-name edit in the UI and read the refusal; save Topic Restriction and Language Detection lists; cancel then confirm removal
+5. refuse count_tokens under an organization provider lock before any mock dispatch
+6. Owner reaches the named key by keyboard with visible focus; Member and Viewer cannot save; org B cannot read or change A policy
+7. repeat read-only Guardrails checks at 390px and in dark mode; collect value-free H1 evidence
+
+**Backend state verified:**
+
+- exact active guardrails section and policy rows match every named UI save; the gateway copy matches the same expected checks
+- passing stream is complete, blocked stream has only the guardrail error and DONE, and both reached the mock
+- the two correlated request logs are 200 and 403; the blocked row has guardrail_triggered true and guardrail_action blocked
+- the null-enabled stored-only check never runs: a third call has no guardrail metadata and its local partner recorder stays empty
+- the duplicate-name UI edit returns 400 guardrail_name_ambiguous and leaves all versions and policies byte-identical
+- Topic Restriction and Language Detection lists persist exactly; removal creates no write before confirmation and removes only the chosen check
+- an ineligible count_tokens call is 403 model_not_permitted with org_provider_denied and makes zero upstream requests
+- Member and Viewer writes return 403 without state change; org B sees no A policy and B state is unchanged
+
+**Browser observations:**
+
+- exact catalogue set, stored-only Off and threshold, reason for ambiguous edit, and confirmation controls
+- named key grid cell reached with Tab, visible focus and Enter opens its named drawer
+- Chromium and Firefox, desktop and 390px, light and dark; non-local browser requests are blocked and classified
+
+### WALK-E2E-020 — Sandboxes on a deployment with no sandboxes set up render a calm unavailable state, not an error
+
+**Goal:** An owner opens Sandboxes on a deployment with no sandbox backend and reads, in plain words, that sandboxes are not available there, with nothing offered that cannot work
+
+**Spec:** `flows/walks/sandboxes-unavailable.spec.ts:89`
+
+**Tags:** @walk @walk-SBX
+
+**User steps:**
+
+1. Owner A opens /dashboard/sandboxes while Omega answers the sandbox list 200 with no sandboxes and a create refusal coded sandboxes_unavailable
+2. read the Sandboxes page
+
+**Browser observations:**
+
+- the unavailable state shows its title and what the deployment needs, with no button inside it
+- no New sandbox button, no create-refusal warning, no error state, no empty-list state and no alert on the page
+- the list read carried a one-use Omega sign-in

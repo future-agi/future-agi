@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Keep the README values table and values.schema.json in step with values.yaml.
 
-    python3 hack/values_docs.py          rewrite README.md's table and values.schema.json
+    python3 hack/values_docs.py          rewrite README.md's generated content and values.schema.json
     python3 hack/values_docs.py --check  fail when either is stale or a key is undocumented
+
+The webhook custody prose and its envFrom table note are generated here as
+well: they describe template policy, not a new values default or schema rule.
 
 Every key in values.yaml has a ``# -- description`` comment on the line
 above it, or is a section whose keys all do. A documented key whose value is
@@ -44,14 +47,24 @@ PERCENT_OR_EMPTY = {
     "anyOf": [{"type": "integer", "minimum": 1}, {"type": "string", "maxLength": 0}]
 }
 
+# Empty means the chart/release default. Keep these in the schema as well as
+# validate.yaml: Helm lint ignores template fail(), even in --strict mode.
+DNS_LABEL_OR_EMPTY = {
+    "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$",
+    "maxLength": 63,
+}
+
 # path pattern -> schema fragment merged over the one derived from the default.
 RULES: list[tuple[str, dict]] = [
+    ("nameOverride", DNS_LABEL_OR_EMPTY),
+    ("fullnameOverride", DNS_LABEL_OR_EMPTY),
     ("*.mode", {"enum": ["external", "bundled"]}),
     ("objectStorage.backend", {"enum": ["s3", "gcs", "minio"]}),
     ("config.envType", {"enum": ["production", "local"]}),
     ("config.cdcMode", {"enum": ["outbox", "off"]}),
     ("config.logLevel", {"enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]}),
     ("bootstrap.installHook", {"enum": ["auto", "pre-install", "post-install"]}),
+    ("hosted.migration.phase", {"enum": ["", "schema", "backfill", "check"]}),
     (
         "postgres.external.sslMode",
         {"enum": ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]},
@@ -88,6 +101,9 @@ RULES: list[tuple[str, dict]] = [
     ("*.service.port", PORT),
     ("bootstrap.ttlSecondsAfterFinished", {"type": ["integer", "string"]}),
     ("*Seconds", {"type": "integer", "minimum": 1}),
+    # The operator's 900 s schema deadline plus 30 s process grace
+    # (agentcc.hosted_migration_progress; deploy/tests/test_hosted_deployment.py).
+    ("hosted.migration.activeDeadlineSeconds", {"minimum": 930}),
     ("*.extraEnv", SCALAR_MAP),
     ("secrets.extra", SCALAR_MAP),
     ("*Annotations", STRING_MAP),
@@ -106,6 +122,11 @@ RULES: list[tuple[str, dict]] = [
         },
     ),
     ("agentccGateway.redis.db", {"type": "integer", "minimum": 0}),
+    # Variable names, each a key of providerCredentials.existingSecret.
+    (
+        "agentccGateway.providerCredentials.keys",
+        {"items": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"}},
+    ),
     (
         "worker.queues",
         {
@@ -173,8 +194,38 @@ RULES: list[tuple[str, dict]] = [
     ("gatewayApi.llmGateway.timeout", {"pattern": "^(([0-9]{1,5}(h|m|s|ms)){1,4})?$"}),
     ("gatewayApi.parentRefs", {"items": {"type": "object", "required": ["name"]}}),
     ("*.preStopSleepSeconds", {"minimum": 0}),
+    # Omega gateway (services/omega-gateway/src/config.mjs bounds the same).
+    ("omega.issuer.url", {"pattern": "^(https://[^/?#@ ]+(/[^?#@ ]*)?)?$"}),
+    ("omega.gateway.ee.url", {"pattern": "^(https://[^/?#@ ]+(/[^?#@ ]*)?)?$"}),
+    (
+        "omega.gateway.sessionExchangeUrl",
+        {"pattern": "^(https://[^/?#@ ]+(/[^?#@ ]*)?)?$"},
+    ),
+    ("omega.gateway.otlp.tracesUrl", {"pattern": "^(https://[^/?#@ ]+(/[^?#@ ]*)?)?$"}),
+    (
+        "omega.gateway.allowedOrigins",
+        {"items": {"type": "string", "pattern": "^https://[^/?#@ ]+$"}},
+    ),
+    ("omega.gateway.drainMs", {"minimum": 0, "maximum": 30000}),
+    ("omega.gateway.trustedProxyHops", {"minimum": 0, "maximum": 5}),
+    ("omega.gateway.maxBodyBytes", {"minimum": 1024, "maximum": 10485760}),
+    ("omega.gateway.maxBundleBytes", {"minimum": 1048576, "maximum": 268435456}),
+    ("omega.gateway.console.trustedTypes", {"enum": ["report", "enforce"]}),
+    ("omega.gateway.console.staticDir", {"pattern": "^(/.*)?$"}),
+    ("omega.ingress.timeout", {"pattern": "^(([0-9]{1,5}(h|m|s|ms)){1,4})?$"}),
+    ("omega.internalTls.reloadInterval", {"pattern": "^([0-9]{1,5}(h|m|s)){1,3}$"}),
+    ("omega.internalTls.allowFrom", {"items": {"type": "object"}}),
     # Enterprise and hardened operations; validate.yaml enforces the same.
     ("edition", {"enum": ["oss", "ee"]}),
+    (
+        "billing.enforcement",
+        {
+            "anyOf": [
+                {"type": "boolean"},
+                {"type": "string", "enum": ["auto", "true", "false"]},
+            ]
+        },
+    ),
     (
         "global.compatibility.openshift.adaptSecurityContext",
         {"enum": ["auto", "force", "disabled"]},
@@ -208,6 +259,7 @@ RULES: list[tuple[str, dict]] = [
                     "clickhouse",
                     "redis",
                     "objectStorage",
+                    "providerCredentials",
                 ]
             },
             "additionalProperties": {
@@ -235,6 +287,17 @@ RULES: list[tuple[str, dict]] = [
             }
         },
     ),
+    # Omega Hub (templates/hub/_hub.tpl refuses the same when hub.enabled).
+    (
+        "hub.maintainerOrgId",
+        {"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})?$"},
+    ),
+    (
+        "hub.trustedProxyDepth",
+        {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "string", "pattern": "^[0-9]*$"}]},
+    ),
+    ("hub.checker.runner.dockerHost", {"pattern": "^(tcp://[^/:]+(:[0-9]+)?/?)?$"}),
+    ("hub.checker.runner.networkPolicyTo", {"items": {"type": "object"}}),
 ]
 
 
@@ -307,11 +370,73 @@ def table(values: dict, docs: dict[str, str]) -> str:
     rows = ["| Key | Default | Description |", "| --- | --- | --- |"]
     for path, description in docs.items():
         value = lookup(values, path)
+        if path == "config.extraEnvFrom":
+            description += (
+                " WEBHOOKS_ENCRYPTION_KEYS comes only from secrets.existingSecret;"
+                " envFrom is not a supported webhook-key source. An explicit empty"
+                " entry masks it when no existingSecret is configured or live lookup"
+                " finds that Secret without the key. See [webhook encryption at rest]"
+                "(#webhook-encryption-at-rest) for optional-reference lookup limits."
+            )
         rows.append(
             f"| `{path}` | {default_text(value).replace('|', '&#124;')} "
             f"| {description.replace('|', '&#124;')} |"
         )
     return "\n".join(rows)
+
+
+def webhook_docs(readme: str) -> str:
+    """Keep template custody policy in the existing generated-docs path.
+
+    These unique prose anchors also delimit the old policy on first generation;
+    subsequent generations are idempotent. No values/schema changes are needed.
+    """
+    start = "The shared Python environment"
+    end = "Keep the keys in the environment's secret store"
+    if readme.count(start) != 1 or readme.count(end) != 1:
+        raise SystemExit("webhook documentation anchors changed; update values_docs.py")
+    first, last = readme.index(start), readme.index(end)
+    if first >= last:
+        raise SystemExit("webhook documentation anchors are out of order")
+    policy = """The shared Python environment uses only the named Secret for webhook keys,
+with an **optional** `secretKeyRef` when the key is available or lookup cannot
+see that Secret. All consumers of `INTEGRATION_ENCRYPTION_KEY` receive the
+webhook entry: the backend API and its collectstatic init container, the
+all-queues worker, exact-aggregation worker and each dedicated queue worker,
+and the bootstrap Job. Non-backend components do not receive it.
+
+If `secrets.existingSecret` is unset, every Python consumer gets exactly one
+explicit `WEBHOOKS_ENCRYPTION_KEYS` entry with `value: ""`. Kubernetes explicit
+`env` takes precedence over `envFrom`, so opaque sources cannot supply webhook
+keys in this case. The application drops empty entries and treats the empty
+value exactly like an unset variable: webhook secret storage fails closed.
+The chart never generates this key, stores it in its own Secret, or supplies
+a values default. Inline `extraEnv` and `secrets.extra` entries for this name
+are refused with a value-free message.
+
+When `secrets.existingSecret` is set, a live `lookup` reads that named Secret
+in the release namespace and checks **key-name membership only**. If the
+Secret exists but its data lacks `WEBHOOKS_ENCRYPTION_KEYS`, the same explicit
+empty mask is rendered. Otherwise the optional named-Secret reference is
+retained. Lookup errors fail the render; live rendering needs GET permission
+on the named Secret. No key value is copied into the manifest by this check.
+
+`WEBHOOKS_ENCRYPTION_KEYS` must come only from `secrets.existingSecret`;
+`config.extraEnvFrom` is not a supported way to supply it. Unprefixed
+ConfigMap and Secret envFrom sources for other variables continue to be
+accepted.
+**Residual limitation:** offline/client-side rendering (including GitOps)
+or a named Secret that does not yet exist cannot establish key membership,
+so the optional reference remains. If its key is absent at pod startup,
+Kubernetes skips it and an envFrom binding can still supply the variable.
+Operators must therefore exclude this name from opaque sources; do not rely
+on offline rendering to enforce custody. Deleting the key after rendering a
+reference has the same fallback risk. Adding it after an empty mask was
+rendered requires re-rendering and rolling out the workloads. Out-of-band
+pod changes are outside this chart guarantee.
+
+"""
+    return readme[:first] + policy + readme[last:]
 
 
 def type_of(value) -> dict:
@@ -381,7 +506,7 @@ def main() -> int:
     schema = json.dumps(build_schema(values, docs), indent=2) + "\n"
     readme = README.read_text()
     start, end = readme.index(TABLE_START), readme.index(TABLE_END)
-    new_readme = (
+    new_readme = webhook_docs(
         readme[: start + len(TABLE_START)]
         + "\n"
         + table(values, docs)
@@ -394,7 +519,7 @@ def main() -> int:
         if SCHEMA.read_text() != schema:
             stale.append("values.schema.json")
         if readme != new_readme:
-            stale.append("README.md values table")
+            stale.append("README.md generated content")
         if stale:
             print(
                 f"stale: {', '.join(stale)}. Run: python3 {os.path.relpath(Path(__file__).resolve())}",
@@ -406,7 +531,7 @@ def main() -> int:
 
     SCHEMA.write_text(schema)
     README.write_text(new_readme)
-    print(f"wrote values.schema.json and the README table ({len(docs)} keys)")
+    print(f"wrote values.schema.json and README generated content ({len(docs)} keys)")
     return 0
 
 

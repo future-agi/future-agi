@@ -4,11 +4,17 @@ import { Tab, Tabs } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 /**
- * Compact underline-style tab bar. Uses MUI `Tabs` with
- * `variant="scrollable"` + `scrollButtons="auto"` so overflowing tabs
- * get chevron arrows on the sides (same as the trace drawer's
- * SpanDetailPane tab row). Styling matches that file so both drawers
- * feel like one product.
+ * Compact underline-style tab bar. Drawer panes are narrow (about 280px
+ * at a 1024px window), so the tabs wrap onto extra rows instead of
+ * hiding behind chevrons: every tab label stays readable.
+ * The strip's variant and scroll buttons are set here, not left to the
+ * theme's MuiTabs defaults, so the app and the tests render the same
+ * strip. It stays scrollable, so a pane dragged narrower than one tab
+ * still scrolls sideways, and any chevrons MUI shows keep their compact
+ * size.
+ * MUI's sliding indicator assumes a single row, so it is hidden and the
+ * selected tab draws its own underline with the same token the theme
+ * indicator uses (border.selected).
  */
 const CompactTabs = ({ value, onChange, tabs }) => {
   return (
@@ -18,34 +24,30 @@ const CompactTabs = ({ value, onChange, tabs }) => {
       variant="scrollable"
       scrollButtons="auto"
       allowScrollButtonsMobile
-      sx={{
-        minHeight: 32,
+      sx={(theme) => ({
+        boxShadow: "none",
         borderBottom: "1px solid",
         borderColor: "divider",
-        "& .MuiTabs-flexContainer": { gap: 0 },
+        "& .MuiTabs-flexContainer": { gap: 0, flexWrap: "wrap" },
+        "& .MuiTabs-indicator": { display: "none" },
         "& .MuiTab-root": {
-          minHeight: 32,
-          fontSize: 12,
-          fontWeight: 500,
-          textTransform: "none",
           minWidth: "unset !important",
-          padding: "0 10px !important",
           marginRight: "0 !important",
           gap: "4px",
-          color: "text.secondary",
+          whiteSpace: "nowrap",
           fontFamily: "'Inter', sans-serif",
           letterSpacing: 0,
         },
-        "& .Mui-selected": { color: "primary.main", fontWeight: 600 },
-        "& .MuiTabs-indicator": {
-          backgroundColor: "primary.main",
-          height: 2,
+        "& .MuiTab-root.Mui-selected": {
+          boxShadow: `inset 0 -2px 0 ${
+            theme.palette.border?.selected || theme.palette.secondary.main
+          }`,
         },
         "& .MuiTabs-scrollButtons": {
           width: 24,
           "&.Mui-disabled": { opacity: 0.3 },
         },
-      }}
+      })}
     >
       {tabs?.map((tab) => (
         <Tab

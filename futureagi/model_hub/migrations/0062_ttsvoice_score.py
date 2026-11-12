@@ -61,7 +61,7 @@ def backfill_trace_annotations(apps, schema_editor):
     Score = apps.get_model("model_hub", "Score")
 
     qs = (
-        TraceAnnotation.objects.filter(deleted=False)
+        TraceAnnotation.objects.using(schema_editor.connection.alias).filter(deleted=False)
         .select_related(
             "annotation_label",
             "observation_span__trace__project__organization",
@@ -127,7 +127,7 @@ def backfill_trace_annotations(apps, schema_editor):
                 # Idempotency: skip if a Score already exists for this
                 # (source, label, annotator) combination so re-running
                 # the migration is safe and fast.
-                if Score.objects.filter(
+                if Score.objects.using(schema_editor.connection.alias).filter(
                     **source_kwargs,
                     label_id=ta.annotation_label_id,
                     annotator_id=ta.user_id,
@@ -136,7 +136,7 @@ def backfill_trace_annotations(apps, schema_editor):
                     skipped += 1
                     continue
 
-                Score.objects.create(
+                Score.objects.using(schema_editor.connection.alias).create(
                     **source_kwargs,
                     label_id=ta.annotation_label_id,
                     annotator_id=ta.user_id,
@@ -165,7 +165,7 @@ def backfill_item_annotations(apps, schema_editor):
     Score = apps.get_model("model_hub", "Score")
 
     qs = (
-        ItemAnnotation.objects.filter(deleted=False)
+        ItemAnnotation.objects.using(schema_editor.connection.alias).filter(deleted=False)
         .select_related("queue_item", "label", "annotator")
         .order_by("created_at")
     )
@@ -203,7 +203,7 @@ def backfill_item_annotations(apps, schema_editor):
                 # Idempotency: skip if a Score already exists for this
                 # (source, label, annotator) combination so re-running
                 # the migration is safe and fast.
-                if Score.objects.filter(
+                if Score.objects.using(schema_editor.connection.alias).filter(
                     **{fk_id_field: source_obj_id},
                     label_id=ia.label_id,
                     annotator_id=ia.annotator_id,
@@ -212,7 +212,7 @@ def backfill_item_annotations(apps, schema_editor):
                     skipped += 1
                     continue
 
-                Score.objects.create(
+                Score.objects.using(schema_editor.connection.alias).create(
                     **{fk_id_field: source_obj_id},
                     label_id=ia.label_id,
                     annotator_id=ia.annotator_id,

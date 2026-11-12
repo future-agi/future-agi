@@ -10,7 +10,7 @@ from django.conf import settings
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-from accounts.models.user import OrgApiKey
+from accounts.tests.personal_keys import personal_key_for
 from mcp_server import mcp_app
 from mcp_server.models.connection import MCPConnection
 from mcp_server.models.tool_config import MCPToolGroupConfig
@@ -24,16 +24,16 @@ pytestmark = [pytest.mark.e2e, pytest.mark.django_db(transaction=True)]
 @pytest.fixture
 def protocol_client(user, workspace, monkeypatch):
     @asynccontextmanager
-    async def connect(key_workspace=None):
-        credentials = await sync_to_async(OrgApiKey.objects.create)(
-            name="MCP transport test",
-            api_key=f"mcp-transport-{uuid4().hex}",
-            secret_key=uuid4().hex,
-            organization=user.organization,
-            workspace=key_workspace or workspace,
-            user=user,
-            type="mcp",
-        )
+    async def connect(key_workspace=None, credentials=None):
+        if credentials is None:
+            credentials = await sync_to_async(personal_key_for)(
+                user,
+                user.organization,
+                name="MCP transport test",
+                api_key=f"mcp-transport-{uuid4().hex}",
+                secret_key=uuid4().hex,
+                workspace=key_workspace or workspace,
+            )
         monkeypatch.setattr(mcp_app, "_streamable_app", None)
         monkeypatch.setattr(mcp_app, "_session_manager", None)
         mcp_app.get_mcp_streamable_app()
@@ -167,14 +167,19 @@ def _initialize_payload(client_name_size: int) -> bytes:
 
 
 async def test_streamable_http_rejects_a_request_body_over_the_configured_limit(
-    user, monkeypatch
+    user, workspace, monkeypatch
 ):
     """A body past DATA_UPLOAD_MAX_MEMORY_SIZE must 413 before touching MCP
     dispatch, same as mcp 1.30's own default — we only move the ceiling."""
     from mcp_server.oauth_utils import generate_oauth_token
 
     token, _ = await sync_to_async(generate_oauth_token)(
-        user.id, user.organization_id, None, "test-client", "context", expires_in=3600
+        user.id,
+        user.organization_id,
+        workspace.id,
+        "test-client",
+        "context",
+        expires_in=3600,
     )
     # A real body past the production 1 GiB ceiling would allocate multiple
     # GiB at peak (the JSON string, then its encoded bytes) just to prove a
@@ -193,7 +198,7 @@ async def test_streamable_http_rejects_a_request_body_over_the_configured_limit(
 
 
 async def test_streamable_http_accepts_a_request_body_past_mcps_old_default(
-    user, monkeypatch
+    user, workspace, monkeypatch
 ):
     """mcp 1.30 defaults max_request_body_size to 4 MiB; get_mcp_streamable_app
     overrides it to DATA_UPLOAD_MAX_MEMORY_SIZE so a >4 MiB request (e.g. an
@@ -202,7 +207,12 @@ async def test_streamable_http_accepts_a_request_body_past_mcps_old_default(
     from mcp_server.oauth_utils import generate_oauth_token
 
     token, _ = await sync_to_async(generate_oauth_token)(
-        user.id, user.organization_id, None, "test-client", "context", expires_in=3600
+        user.id,
+        user.organization_id,
+        workspace.id,
+        "test-client",
+        "context",
+        expires_in=3600,
     )
     payload = _initialize_payload(5 * 1024 * 1024)
     assert len(payload) > 4 * 1024 * 1024  # exceeds mcp's old default cap
@@ -268,9 +278,9 @@ async def test_streamable_http_requires_credentials():
 async def test_bearer_transport_fails_closed_when_org_access_is_revoked(
     oauth_protocol_client, user, workspace
 ):
-    """The Bearer path carries no OrgApiKey, so the executor's tenant guards
-    are the only thing preventing a fallback into another tenant."""
+    """Live revocation refuses each new HTTP request before tool dispatch."""
     from accounts.models.organization_membership import OrganizationMembership
+    from mcp_server.oauth_utils import generate_oauth_token
     from model_hub.models.develop_dataset import Dataset
 
     membership = await sync_to_async(
@@ -279,25 +289,64 @@ async def test_bearer_transport_fails_closed_when_org_access_is_revoked(
         ).first()
     )()
     assert membership is not None, "expected an organization membership to revoke"
+    token, _ = await sync_to_async(generate_oauth_token)(
+        user.id, user.organization_id, workspace.id, "test-client", "context datasets"
+    )
 
     async with oauth_protocol_client() as client:
+        admitted = await _post_initialize(f"Bearer {token}")
+        assert admitted.status_code == 200
         before = await client.call_tool(
             "create_dataset", {"new_dataset_name": "oauth before revoke"}
         )
         assert before.isError is False, before
 
-        membership.is_active = False
-        await sync_to_async(membership.save)(update_fields=["is_active"])
+    membership.is_active = False
+    await sync_to_async(membership.save)(update_fields=["is_active"])
 
-        after = await client.call_tool(
-            "create_dataset", {"new_dataset_name": "oauth after revoke"}
+    # Raw HTTP observes the earlier 401; the SDK raises before exposing it.
+    # Wrap real entry points, without substituting any authorization decision.
+    with (
+        patch.object(mcp_app, "_bind_context", wraps=mcp_app._bind_context) as bind,
+        patch.object(
+            mcp_app.executor, "execute", wraps=mcp_app.executor.execute
+        ) as execute,
+        patch.object(
+            mcp_app.executor, "execute_sync", wraps=mcp_app.executor.execute_sync
+        ) as execute_sync,
+    ):
+        after = await _post_raw_body(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "create_dataset",
+                        "arguments": {"new_dataset_name": "oauth after revoke"},
+                    },
+                }
+            ).encode(),
+            f"Bearer {token}",
         )
-        listed = await client.call_tool("list_datasets", {})
-
-    assert after.isError is True
-    assert after.structuredContent["error"]["code"] == "HTTP_403"
-    assert listed.isError is True
-    assert listed.structuredContent["error"]["code"] == "HTTP_403"
+        listed = await _post_raw_body(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {"name": "list_datasets", "arguments": {}},
+                }
+            ).encode(),
+            f"Bearer {token}",
+        )
+    assert after.status_code == 401
+    assert listed.status_code == 401
+    assert after.json()["error"] == "invalid_token"
+    assert listed.json()["error"] == "invalid_token"
+    bind.assert_not_called()
+    execute.assert_not_called()
+    execute_sync.assert_not_called()
     assert not await sync_to_async(
         Dataset.no_workspace_objects.filter(name="oauth after revoke").exists
     )()
@@ -338,7 +387,7 @@ async def test_protocol_rejects_oversized_pages_before_api_dispatch(protocol_cli
 
 
 async def test_streamable_http_hands_the_api_key_to_the_executor(
-    protocol_client, user, workspace
+    protocol_client, user, workspace, monkeypatch
 ):
     """The credential that authenticated the request must reach the executor so
     Django resolves the tenant from the key, exactly as the REST API does."""
@@ -356,17 +405,59 @@ async def test_streamable_http_hands_the_api_key_to_the_executor(
     assert result.isError is False
     (context,) = seen
     assert context.api_key is not None
-    assert context.api_key.type == "mcp"
+    assert context.api_key.type == "user"
+    assert context.api_key.user_id == user.id
     assert context.api_key.workspace_id == workspace.id
     assert context.organization.id == user.organization.id
     assert context.workspace.id == workspace.id
+
+    # The same transport must refuse the previous credential type before tools
+    # execute; the admitted personal control above must remain usable.
+    from accounts.models import OrgApiKey
+
+    retired = await sync_to_async(OrgApiKey.no_workspace_objects.create)(
+        organization=user.organization, user=user, workspace=workspace, type="mcp"
+    )
+    monkeypatch.setattr(mcp_app, "_streamable_app", None)
+    monkeypatch.setattr(mcp_app, "_session_manager", None)
+    mcp_app.get_mcp_streamable_app()
+    async with (
+        mcp_app._session_manager.run(),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=mcp_app.mcp_streamable_with_auth),
+            base_url="http://localhost",
+        ) as raw,
+    ):
+        denied = await raw.post(
+            "/mcp",
+            headers={
+                "X-Api-Key": retired.api_key,
+                "X-Secret-Key": retired.secret_key,
+                "Accept": "application/json, text/event-stream",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "personal-control", "version": "1.0"},
+                },
+            },
+        )
+    assert denied.status_code == 401
+    assert denied.json()["code"] == "api_key_retired"
+    assert denied.json()["create_url"] == "/dashboard/keys"
+    assert "result" not in denied.json()
+    assert len(seen) == 1
 
 
 async def test_streamable_http_denies_tools_once_the_key_workspace_is_deactivated(
     protocol_client, user, workspace
 ):
-    """A key scoped to a workspace that gets deactivated must fail with 403
-    instead of silently executing in the organization's default workspace."""
+    """A deactivated pinned workspace refuses the credential at HTTP admission,
+    even while an MCP session is open; no fallback to the default workspace."""
     from accounts.models.workspace import Workspace
     from model_hub.models.develop_dataset import Dataset
 
@@ -377,7 +468,10 @@ async def test_streamable_http_denies_tools_once_the_key_workspace_is_deactivate
         is_active=True,
         created_by=user,
     )
-    async with protocol_client(key_workspace=other) as client:
+    credentials = await sync_to_async(personal_key_for)(
+        user, user.organization, workspace=other
+    )
+    async with protocol_client(credentials=credentials) as client:
         before = await client.call_tool(
             "create_dataset", {"new_dataset_name": "keyed before deactivation"}
         )
@@ -390,15 +484,34 @@ async def test_streamable_http_denies_tools_once_the_key_workspace_is_deactivate
         other.is_active = False
         await sync_to_async(other.save)(update_fields=["is_active"])
 
-        after = await client.call_tool(
-            "create_dataset", {"new_dataset_name": "keyed after deactivation"}
-        )
-        listed = await client.call_tool("list_datasets", {})
-
-    assert after.isError is True
-    assert after.structuredContent["error"]["code"] == "HTTP_403"
-    assert listed.isError is True
-    assert listed.structuredContent["error"]["code"] == "HTTP_403"
+        # The HTTP boundary now rejects the credential before JSON-RPC runs.
+        # Use raw requests so the MCP SDK's task-group error wrapping cannot
+        # hide the status, while keeping the established session open above.
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=mcp_app.mcp_streamable_with_auth),
+            base_url="http://localhost",
+            headers={
+                "X-Api-Key": credentials.api_key,
+                "X-Secret-Key": credentials.secret_key,
+            },
+        ) as http_client:
+            for name, arguments in (
+                ("create_dataset", {"new_dataset_name": "keyed after deactivation"}),
+                ("list_datasets", {}),
+            ):
+                refused = await http_client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 99,
+                        "method": "tools/call",
+                        "params": {"name": name, "arguments": arguments},
+                    },
+                )
+                assert refused.status_code == 401
+                assert refused.json()["error"] == "invalid_token"
+                assert refused.json()["error_description"] == "Invalid credentials"
+                assert "create_url" not in refused.json()
     assert not await sync_to_async(
         Dataset.no_workspace_objects.filter(name="keyed after deactivation").exists
     )()

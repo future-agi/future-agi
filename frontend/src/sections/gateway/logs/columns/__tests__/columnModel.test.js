@@ -14,6 +14,14 @@ import {
   validateConfig,
 } from "../columnModel";
 
+// Every built-in shown, in the canonical order: a plain config for the
+// mechanics below (the default view hides three, see PLAIN).
+const PLAIN = Object.freeze({
+  v: 1,
+  columns: BUILTIN_COLUMNS.map((col) => ({ id: col.id })),
+  hidden: [],
+});
+
 const DEFAULT_LABELS = [
   "Timestamp",
   "Model",
@@ -35,12 +43,67 @@ describe("columnModel ids and defaults", () => {
     expect(BUILTIN_COLUMNS.every((c) => c.id.startsWith("builtin:"))).toBe(
       true,
     );
-    expect(DEFAULT_CONFIG).toEqual({
-      v: 1,
-      columns: BUILTIN_COLUMNS.map((c) => ({ id: c.id })),
-      hidden: [],
-    });
     expect(LOCKED_COLUMN_ID).toBe("builtin:startedAt");
+  });
+
+  // Application, Service and Session ID were on by default
+  // and empty on most rows; Status sat in the middle.
+  it("default config hides application, service, sessionId, and puts Status next to Timestamp", () => {
+    expect(DEFAULT_CONFIG.columns.map((c) => c.id)).toEqual([
+      "builtin:startedAt",
+      "builtin:statusCode",
+      "builtin:model",
+      "builtin:provider",
+      "builtin:latencyMs",
+      "builtin:cost",
+      "builtin:totalTokens",
+      "builtin:application",
+      "builtin:service",
+      "builtin:sessionId",
+    ]);
+    expect(DEFAULT_CONFIG.hidden).toEqual([
+      "builtin:application",
+      "builtin:service",
+      "builtin:sessionId",
+    ]);
+    // A record saved this way is valid, so it round-trips.
+    expect(validateConfig(DEFAULT_CONFIG)).toEqual(DEFAULT_CONFIG);
+    const resolved = resolveColumns({
+      config: DEFAULT_CONFIG,
+      declarations: [],
+      status: "success",
+    });
+    expect(resolved.columns.map((c) => c.label)).toEqual([
+      "Timestamp",
+      "Status",
+      "Model",
+      "Provider",
+      "Latency",
+      "Cost",
+      "Tokens",
+    ]);
+  });
+
+  it("keeps the hidden defaults in Columns, one click from showing", () => {
+    const resolved = resolveColumns({
+      config: DEFAULT_CONFIG,
+      declarations: [],
+      status: "success",
+    });
+    const entry = (label) =>
+      resolved.entries.builtin.find((e) => e.label === label);
+    for (const label of ["Application", "Service", "Session ID"]) {
+      expect(entry(label), label).toMatchObject({
+        checked: false,
+        inConfig: true,
+      });
+    }
+    const shown = resolveColumns({
+      config: toggleColumn(DEFAULT_CONFIG, "builtin:sessionId"),
+      declarations: [],
+      status: "success",
+    });
+    expect(shown.columns.map((c) => c.label)).toContain("Session ID");
   });
 
   it("namespaces custom ids so a property named model cannot collide", () => {
@@ -148,7 +211,7 @@ describe("validateConfig", () => {
       {
         v: 1,
         columns: [
-          ...DEFAULT_CONFIG.columns.slice(0, -1),
+          ...PLAIN.columns.slice(0, -1),
           ...Array.from({ length: MAX_COLUMN_ENTRIES - 9 }, (_, i) => ({
             id: `metadata:p${i}`,
           })),
@@ -189,7 +252,7 @@ describe("validateConfig", () => {
     const raw = {
       v: 1,
       columns: [
-        ...DEFAULT_CONFIG.columns.slice(0, -1),
+        ...PLAIN.columns.slice(0, -1),
         ...Array.from({ length: MAX_COLUMN_ENTRIES - 10 }, (_, i) => ({
           id: `metadata:p${i}`,
         })),
@@ -218,7 +281,7 @@ describe("validateConfig", () => {
 describe("resolveColumns", () => {
   it("renders the defaults with no declarations", () => {
     const { columns, stale } = resolveColumns({
-      config: DEFAULT_CONFIG,
+      config: PLAIN,
       declarations: [],
       status: "success",
     });
@@ -229,7 +292,7 @@ describe("resolveColumns", () => {
   it("renders a declared custom column in config order with a key-derived heading", () => {
     const config = {
       v: 1,
-      columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+      columns: [...PLAIN.columns, { id: "metadata:tenant" }],
       hidden: ["builtin:service"],
     };
     const { columns } = resolveColumns({
@@ -253,7 +316,7 @@ describe("resolveColumns", () => {
   it("holds custom columns back while declarations are pending or failed, without touching config", () => {
     const config = {
       v: 1,
-      columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+      columns: [...PLAIN.columns, { id: "metadata:tenant" }],
       hidden: [],
     };
     for (const status of ["pending", "error"]) {
@@ -271,7 +334,7 @@ describe("resolveColumns", () => {
   it("marks undeclared saved ids stale only after a successful fetch", () => {
     const config = {
       v: 1,
-      columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+      columns: [...PLAIN.columns, { id: "metadata:tenant" }],
       hidden: [],
     };
     const { columns, stale, entries } = resolveColumns({
@@ -287,7 +350,7 @@ describe("resolveColumns", () => {
 
   it("excludes the reserved application/service keys from custom entries", () => {
     const { entries } = resolveColumns({
-      config: DEFAULT_CONFIG,
+      config: PLAIN,
       declarations: [decl("application"), decl("service"), decl("tenant")],
       status: "success",
     });
@@ -362,9 +425,9 @@ describe("resolveColumns", () => {
 
 describe("config mutations", () => {
   it("toggle hides a visible column keeping its slot, re-shows a hidden one and appends a new custom id", () => {
-    let config = toggleColumn(DEFAULT_CONFIG, "builtin:provider");
+    let config = toggleColumn(PLAIN, "builtin:provider");
     expect(config.hidden).toEqual(["builtin:provider"]);
-    expect(config.columns).toEqual(DEFAULT_CONFIG.columns);
+    expect(config.columns).toEqual(PLAIN.columns);
     config = toggleColumn(config, "builtin:provider");
     expect(config.hidden).toEqual([]);
     config = toggleColumn(config, "metadata:tenant");
@@ -375,39 +438,27 @@ describe("config mutations", () => {
   });
 
   it("toggle never hides the locked column", () => {
-    expect(toggleColumn(DEFAULT_CONFIG, LOCKED_COLUMN_ID)).toEqual(
-      DEFAULT_CONFIG,
-    );
+    expect(toggleColumn(PLAIN, LOCKED_COLUMN_ID)).toEqual(PLAIN);
   });
 
   it("move swaps with the neighbour of the same kind and never displaces the locked column", () => {
     const movable = resolveColumns({
-      config: DEFAULT_CONFIG,
+      config: PLAIN,
       declarations: [],
       status: "success",
     }).movableIds;
-    const moved = moveColumn(DEFAULT_CONFIG, "builtin:provider", -1, movable);
+    const moved = moveColumn(PLAIN, "builtin:provider", -1, movable);
     expect(moved.columns.map((c) => c.id).slice(0, 3)).toEqual([
       "builtin:startedAt",
       "builtin:provider",
       "builtin:model",
     ]);
-    expect(moveColumn(DEFAULT_CONFIG, "builtin:model", -1, movable)).toEqual(
-      DEFAULT_CONFIG,
-    );
-    expect(moveColumn(DEFAULT_CONFIG, LOCKED_COLUMN_ID, 1, movable)).toEqual(
-      DEFAULT_CONFIG,
-    );
-    expect(moveColumn(DEFAULT_CONFIG, "builtin:sessionId", 1, movable)).toEqual(
-      DEFAULT_CONFIG,
-    );
+    expect(moveColumn(PLAIN, "builtin:model", -1, movable)).toEqual(PLAIN);
+    expect(moveColumn(PLAIN, LOCKED_COLUMN_ID, 1, movable)).toEqual(PLAIN);
+    expect(moveColumn(PLAIN, "builtin:sessionId", 1, movable)).toEqual(PLAIN);
     const withCustom = {
       v: 1,
-      columns: [
-        ...DEFAULT_CONFIG.columns,
-        { id: "metadata:a" },
-        { id: "metadata:b" },
-      ],
+      columns: [...PLAIN.columns, { id: "metadata:a" }, { id: "metadata:b" }],
       hidden: [],
     };
     const customMovable = resolveColumns({
@@ -434,7 +485,7 @@ describe("config mutations", () => {
     const withStale = {
       v: 1,
       columns: [
-        ...DEFAULT_CONFIG.columns,
+        ...PLAIN.columns,
         { id: "metadata:a" },
         { id: "metadata:deleted" },
         { id: "metadata:b" },
@@ -450,7 +501,7 @@ describe("config mutations", () => {
       const up = moveColumn(withStale, "metadata:b", -1, movable);
       for (const moved of [down, up]) {
         expect(ids(moved)).toEqual([
-          ...ids(DEFAULT_CONFIG),
+          ...ids(PLAIN),
           "metadata:b",
           "metadata:deleted",
           "metadata:a",
@@ -490,7 +541,7 @@ describe("config mutations", () => {
           { id: "metadata:deleted" },
           { id: "builtin:provider" },
           { id: "metadata:b" },
-          ...DEFAULT_CONFIG.columns.slice(3),
+          ...PLAIN.columns.slice(3),
         ],
         hidden: ["builtin:model"],
       };
@@ -503,7 +554,7 @@ describe("config mutations", () => {
         "metadata:deleted",
         "builtin:provider",
         "metadata:a",
-        ...ids(DEFAULT_CONFIG).slice(3),
+        ...ids(PLAIN).slice(3),
       ]);
       expect(moveColumn(config, "builtin:provider", -1, movable)).toEqual({
         ...config,
@@ -514,7 +565,7 @@ describe("config mutations", () => {
           { id: "metadata:deleted" },
           { id: "builtin:model" },
           { id: "metadata:b" },
-          ...DEFAULT_CONFIG.columns.slice(3),
+          ...PLAIN.columns.slice(3),
         ],
       });
     });
@@ -527,7 +578,7 @@ describe("config mutations", () => {
       const staleLast = {
         ...withStale,
         columns: [
-          ...DEFAULT_CONFIG.columns,
+          ...PLAIN.columns,
           { id: "metadata:a" },
           { id: "metadata:b" },
           { id: "metadata:deleted" },
@@ -556,13 +607,11 @@ describe("config mutations", () => {
   it("removeColumn drops a stale id from columns and hidden but never the locked column", () => {
     const config = {
       v: 1,
-      columns: [...DEFAULT_CONFIG.columns, { id: "metadata:old" }],
+      columns: [...PLAIN.columns, { id: "metadata:old" }],
       hidden: ["metadata:old"],
     };
     const removed = removeColumn(config, "metadata:old");
-    expect(removed).toEqual(DEFAULT_CONFIG);
-    expect(removeColumn(DEFAULT_CONFIG, LOCKED_COLUMN_ID)).toEqual(
-      DEFAULT_CONFIG,
-    );
+    expect(removed).toEqual(PLAIN);
+    expect(removeColumn(PLAIN, LOCKED_COLUMN_ID)).toEqual(PLAIN);
   });
 });

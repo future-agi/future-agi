@@ -141,8 +141,7 @@ export const dummyEvaluationDataV2 = {
         },
       ],
       model_detail: {
-        logo_url:
-          "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png",
+        logo_url: "/icons/settings/openai.png",
         providers: "openai",
         model_name: "gpt-4o-mini",
         is_available: true,
@@ -176,8 +175,7 @@ export const dummyEvaluationDataV2 = {
         },
       ],
       model_detail: {
-        logo_url:
-          "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png",
+        logo_url: "/icons/settings/openai.png",
         providers: "openai",
         model_name: "gpt-4o-mini",
         is_available: true,

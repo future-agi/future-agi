@@ -16,4 +16,5 @@ Adding a new runner:
 
 # Import runner modules to trigger self-registration.
 # Add new runners here as they are created.
+import agent_playground.services.engine.runners.deterministic_text  # noqa: F401
 import agent_playground.services.engine.runners.llm_prompt  # noqa: F401

@@ -11,7 +11,7 @@ from functools import wraps
 
 import structlog
 from django.conf import settings
-from django.db import DatabaseError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.db.models import (
     Count,
     Exists,
@@ -127,9 +127,11 @@ from model_hub.services.bulk_selection import (
     resolve_filtered_trace_ids,
 )
 from model_hub.utils.annotation_queue_helpers import (
+    QUEUE_SOURCE_UNAVAILABLE,
     CollectorSourceCache,
     assign_items_to_all_annotators,
     auto_assign_items,
+    automation_rule_entitlement_check,
     calculate_agreement,
     canonical_score_value,
     dataset_cells_by_row,
@@ -141,6 +143,8 @@ from model_hub.utils.annotation_queue_helpers import (
     is_source_available_for_annotation,
     pinned_source_project_ids,
     preview_payload_for_source,
+    queue_item_source_is_available,
+    queue_project_workspace_ids,
     resolve_source_content,
     resolve_source_object,
     resolve_source_objects_bulk,
@@ -158,7 +162,11 @@ from tfc.utils.api_serializers import (
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.email import email_helper
 from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.pagination import ExtendedPageNumberPagination
+from tfc.utils.pagination import (
+    MAX_PAGE_SIZE,
+    ExtendedPageNumberPagination,
+    PageSizeTooLarge,
+)
 from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
@@ -1377,13 +1385,14 @@ def _reopen_items_missing_required_labels(queue):
     )
 
 
-def _span_notes_target_for_queue_item(item, *, ch_cache=None):
+def _span_notes_target_for_queue_item(item, *, ch_cache=None, request=None):
     """Return the span that stores whole-item notes for queue annotation.
 
     CH-native: span-source items resolve the span from CH by its soft id;
     trace-source items pick the trace's root span from CH (lean) — preference
     order ``observation_type="conversation"`` root (voice) → first root span →
-    ``None``. Downstream only reads ``.id``. Never query PG (tables are dropped).
+    ``None``. The returned ``.id`` AND ``.project_id`` identify the authorized
+    CH copy. Legacy notes separately verify their own PG span ownership anchor.
 
     ``ch_cache`` (opt-in :class:`CollectorSourceCache`): reads the already-resolved
     source off the page/item cache — same root-pick rule, so the same span — instead
@@ -1400,11 +1409,16 @@ def _span_notes_target_for_queue_item(item, *, ch_cache=None):
         return None
     if ch_cache is None:
         ch_cache = CollectorSourceCache.for_items(
-            [item], caller="notes_target", raise_on_error=True
+            [item],
+            caller="notes_target",
+            raise_on_error=True,
+            request=request,
         )
+    if not queue_item_source_is_available(item, ch_cache=ch_cache, request=request):
+        return None
     if item.source_type == "observation_span":
-        return ch_cache.span(item.observation_span_id)
-    return ch_cache.trace_root(item.trace_id)
+        return ch_cache.span(item.observation_span_id, item=item)
+    return ch_cache.trace_root(item.trace_id, item=item)
 
 
 def _serialize_queue_item_note(note):
@@ -1440,21 +1454,112 @@ def _item_note_rows(item):
     )
 
 
-def _span_note_rows(span):
-    """Return SpanNotes for the given span.
+def _span_note_anchor_scope(item, span, *, project_workspaces=None):
+    """PG ownership required in addition to an authorized CH notes target.
 
-    *span* is a ``CHSpan`` resolved from CH via
-    ``_span_notes_target_for_queue_item`` (or a Django ``ObservationSpan`` on the
-    legacy path); both expose a string ``.id`` that the ``SpanNotes.span`` FK
-    accepts as a ``span_id=`` filter value.
+    Callers resolve ``span`` through ``_span_notes_target_for_queue_item`` first.
+    A collector id alone is not authority for its independently owned PG copy.
+    Unpinned legacy items use the resolved source project, never a queue fallback.
+    The project must be one the queue may reach by the shared workspace rule
+    (``queue_project_workspace_ids``: a queue with no workspace reads in its
+    organization's default workspace), and the lookup pins that project's own
+    workspace, none included. Every key goes into one ``filter()`` call: the
+    sibling project keys keep the project join inner when that workspace is
+    none. ``project_workspaces`` is the queue's map when a page batches it.
     """
-    if span is None:
-        return []
-    return list(
-        SpanNotes.objects.filter(span_id=span.id)
+    project_id = getattr(span, "project_id", None)
+    if item is None or span is None or not project_id:
+        return None
+    queue = item.queue
+    if item.organization_id != queue.organization_id or (
+        item.project_id and str(item.project_id) != str(project_id)
+    ):
+        return None
+    if project_workspaces is None:
+        project_workspaces = queue_project_workspace_ids(queue, [project_id])
+    if str(project_id) not in project_workspaces:
+        return None
+    return {
+        "id": span.id,
+        "project_id": project_id,
+        "deleted": False,
+        "project__deleted": False,
+        "project__organization_id": queue.organization_id,
+        "project__workspace_id": project_workspaces[str(project_id)],
+    }
+
+
+def _span_note_rows_by_item(targets):
+    """Read a page's legacy notes in one ownership-joined query, including authors."""
+    from django.db.models import F
+
+    targets = list(targets)
+    rows = {item.pk: [] for item, _ in targets}
+    # One project lookup per queue on the page, never one per item or note.
+    reach = {}
+    for item, span in targets:
+        project_id = getattr(span, "project_id", None)
+        if span is not None and project_id:
+            queue_projects = reach.setdefault(str(item.queue_id), (item.queue, set()))
+            queue_projects[1].add(str(project_id))
+    project_workspaces = {
+        queue_id: queue_project_workspace_ids(queue, project_ids)
+        for queue_id, (queue, project_ids) in reach.items()
+    }
+    item_ids_by_anchor = {}
+    predicate = Q(pk__in=[])
+    for item, span in targets:
+        scope = _span_note_anchor_scope(
+            item,
+            span,
+            project_workspaces=project_workspaces.get(str(item.queue_id), {}),
+        )
+        if scope is None:
+            continue
+        key = tuple(
+            str(scope[field])
+            for field in (
+                "id",
+                "project_id",
+                "project__organization_id",
+                "project__workspace_id",
+            )
+        )
+        if key not in item_ids_by_anchor:
+            predicate |= Q(
+                **{f"span__{field}": value for field, value in scope.items()}
+            )
+        item_ids_by_anchor.setdefault(key, []).append(item.pk)
+    if not item_ids_by_anchor:
+        return rows
+    notes = (
+        SpanNotes.no_workspace_objects.filter(predicate, deleted=False)
+        .annotate(
+            _note_project_id=F("span__project_id"),
+            _note_organization_id=F("span__project__organization_id"),
+            _note_workspace_id=F("span__project__workspace_id"),
+        )
         .select_related("created_by_user")
         .order_by("-created_at")
     )
+    for note in notes:
+        key = tuple(
+            str(value)
+            for value in (
+                note.span_id,
+                note._note_project_id,
+                note._note_organization_id,
+                note._note_workspace_id,
+            )
+        )
+        for item_id in item_ids_by_anchor.get(key, ()):
+            rows[item_id].append(note)
+    return rows
+
+
+def _span_note_rows(span, *, item):
+    """The single-item form uses the same PG ownership gate as a page."""
+    return _span_note_rows_by_item([(item, span)])[item.pk]
 
 
 def _item_note_payloads(item, span_notes_target=None, viewer_user_id=None):
@@ -1470,7 +1575,7 @@ def _item_note_payloads(item, span_notes_target=None, viewer_user_id=None):
     queue_notes = _item_note_rows(item)
     seen_user_ids = {note.annotator_id for note in queue_notes if note.annotator_id}
     payloads = [_serialize_queue_item_note(note) for note in queue_notes]
-    for span_note in _span_note_rows(span_notes_target):
+    for span_note in _span_note_rows(span_notes_target, item=item):
         if span_note.created_by_user_id in seen_user_ids:
             continue
         if viewer_user_id and span_note.created_by_user_id == viewer_user_id:
@@ -1673,16 +1778,30 @@ def _flatten_export_attributes(value, prefix="", depth=0):
 
 
 def _nested_get(value, dotted_path):
-    current = value
-    for part in dotted_path.split("."):
+    """Resolve export paths, preferring literal dotted keys over nested aliases."""
+    parts = dotted_path.split(".")
+    missing = object()
+
+    def lookup(current, start):
+        if start == len(parts):
+            return current
         if isinstance(current, dict):
-            current = current.get(part)
-        elif isinstance(current, list) and part.isdigit():
-            index = int(part)
-            current = current[index] if index < len(current) else None
-        else:
-            return None
-    return current
+            # Discovery keeps source keys verbatim. Try the longest literal
+            # key first, including keys whose values are nested dictionaries.
+            for end in range(len(parts), start, -1):
+                key = ".".join(parts[start:end])
+                if key in current:
+                    found = lookup(current[key], end)
+                    if found is not missing:
+                        return found
+        elif isinstance(current, list) and parts[start].isdigit():
+            index = int(parts[start])
+            if index < len(current):
+                return lookup(current[index], start + 1)
+        return missing
+
+    result = lookup(value, 0)
+    return None if result is missing else result
 
 
 def _single_or_list(values):
@@ -1817,8 +1936,10 @@ def _serialize_eval_log(log):
     }
 
 
-def _eval_metrics_for_queue_items(items):
+def _eval_metrics_for_queue_items(items, *, request=None, ch_cache=None):
     from collections import defaultdict
+
+    from django.db.models import F
 
     if not items:
         return {}
@@ -1827,14 +1948,22 @@ def _eval_metrics_for_queue_items(items):
 
     span_item_ids = defaultdict(list)
     trace_item_ids = defaultdict(list)
+    if ch_cache is None:
+        ch_cache = CollectorSourceCache.for_items(items, request=request)
     for item in items:
+        if not queue_item_source_is_available(item, request=request, ch_cache=ch_cache):
+            continue
         if (
             item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value
             and item.observation_span_id
         ):
-            span_item_ids[str(item.observation_span_id)].append(item.id)
+            source = ch_cache.span(item.observation_span_id)
+            span_item_ids[
+                (str(source.project_id), str(item.observation_span_id))
+            ].append(item.id)
         elif item.source_type == QueueItemSourceType.TRACE.value and item.trace_id:
-            trace_item_ids[str(item.trace_id)].append(item.id)
+            source = ch_cache.trace_root(item.trace_id)
+            trace_item_ids[(str(source.project_id), str(item.trace_id))].append(item.id)
         elif (
             item.source_type == QueueItemSourceType.CALL_EXECUTION.value
             and item.call_execution_id
@@ -1845,24 +1974,75 @@ def _eval_metrics_for_queue_items(items):
 
     eval_filter = Q()
     if span_item_ids:
-        eval_filter |= Q(observation_span_id__in=list(span_item_ids))
+        eval_filter |= Q(observation_span_id__in=[sid for _, sid in span_item_ids])
     if trace_item_ids:
-        eval_filter |= Q(trace_id__in=list(trace_item_ids))
+        eval_filter |= Q(trace_id__in=[sid for _, sid in trace_item_ids])
     if not eval_filter:
         return metrics_by_item
 
+    project_ids = {pid for pid, _ in (*span_item_ids, *trace_item_ids)}
+    config_scope = Q(
+        custom_eval_config__project_id__in=project_ids,
+        custom_eval_config__deleted=False,
+    )
+    # Langfuse scores have no config. Their own persisted PG source must prove
+    # ownership; a CH copy or a matching external id alone grants nothing.
+    pg_source_scope = Q()
+    if span_item_ids:
+        pg_source_scope |= Q(
+            observation_span_id__in=[sid for _, sid in span_item_ids],
+            observation_span__project_id__in=project_ids,
+            observation_span__deleted=False,
+        )
+    if trace_item_ids:
+        pg_source_scope |= Q(
+            trace_id__in=[sid for _, sid in trace_item_ids],
+            trace__project_id__in=project_ids,
+            trace__deleted=False,
+        )
     seen_by_item = {item.id: set() for item in items}
     eval_logs = (
-        EvalLogger.objects.filter(eval_filter, deleted=False)
+        EvalLogger.no_workspace_objects.filter(
+            eval_filter,
+            config_scope | (Q(custom_eval_config__isnull=True) & pg_source_scope),
+            deleted=False,
+        )
         .select_related("custom_eval_config")
+        .annotate(
+            _export_span_project_id=F("observation_span__project_id"),
+            _export_span_deleted=F("observation_span__deleted"),
+            _export_trace_project_id=F("trace__project_id"),
+            _export_trace_deleted=F("trace__deleted"),
+        )
         .order_by("created_at")
     )
     for log in eval_logs:
         matched_item_ids = []
-        if log.observation_span_id:
-            matched_item_ids.extend(span_item_ids.get(str(log.observation_span_id), []))
-        if log.trace_id:
-            matched_item_ids.extend(trace_item_ids.get(str(log.trace_id), []))
+        if log.custom_eval_config_id:
+            span_project_id = trace_project_id = log.custom_eval_config.project_id
+        else:
+            # Each target uses its OWN anchor, even if the other FK admitted the
+            # log to this batch. Missing/deleted joins cannot become a fallback.
+            span_project_id = (
+                log._export_span_project_id
+                if log._export_span_deleted is False
+                else None
+            )
+            trace_project_id = (
+                log._export_trace_project_id
+                if log._export_trace_deleted is False
+                else None
+            )
+        if log.observation_span_id and span_project_id:
+            matched_item_ids.extend(
+                span_item_ids.get(
+                    (str(span_project_id), str(log.observation_span_id)), []
+                )
+            )
+        if log.trace_id and trace_project_id:
+            matched_item_ids.extend(
+                trace_item_ids.get((str(trace_project_id), str(log.trace_id)), [])
+            )
 
         for item_id in matched_item_ids:
             if log.id in seen_by_item[item_id]:
@@ -2212,7 +2392,9 @@ def _base_export_field_defs():
     ]
 
 
-def _build_annotation_queue_export_fields(queue, sample_items=None):
+def _build_annotation_queue_export_fields(
+    queue, sample_items=None, *, request=None, ch_cache=None, cell_cache=None
+):
     fields = []
     used_columns = set()
 
@@ -2230,7 +2412,7 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
             QueueItem.objects.filter(queue=queue, deleted=False)
             .select_related(
                 "project",
-                "dataset_row",
+                "dataset_row__dataset",
                 "prototype_run",
                 "call_execution",
             )
@@ -2359,9 +2541,20 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
         "evaluation_data",
         "customer_latency_metrics",
     )
-    ch_cache = CollectorSourceCache.for_items(sample_items)
+    if ch_cache is None:
+        ch_cache = CollectorSourceCache.for_items(sample_items, request=request)
+    if cell_cache is None:
+        cell_cache = dataset_cells_by_row(
+            sample_items, request=request, ch_cache=ch_cache
+        )
     sample_contents = [
-        (item, resolve_source_content(item, ch_cache=ch_cache)) for item in sample_items
+        (
+            item,
+            resolve_source_content(
+                item, ch_cache=ch_cache, cell_cache=cell_cache, request=request
+            ),
+        )
+        for item in sample_items
     ]
     source_types = {
         content.get("type") or item.source_type
@@ -2374,7 +2567,7 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
         source_type = content.get("type") or item.source_type
         for root in attribute_roots:
             root_value = content.get(root)
-            for path, value in _flatten_export_attributes(root_value, root):
+            for path, _value in _flatten_export_attributes(root_value, root):
                 field_id = (
                     f"attr:{source_type}:{path}"
                     if has_multiple_source_types
@@ -2388,7 +2581,8 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
                         "id": field_id,
                         "label": path.replace("_", " "),
                         "column": _unique_export_column_name(path, used_columns),
-                        "data_type": _infer_dataset_type(value),
+                        # Use the same literal-key precedence as the export.
+                        "data_type": _infer_dataset_type(_nested_get(content, path)),
                         "group": (
                             f"From {_source_export_label(source_type)}"
                             if has_multiple_source_types
@@ -2404,7 +2598,11 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
                     }
                 )
 
-    eval_metrics_by_item = _eval_metrics_for_queue_items(sample_items)
+    eval_metrics_by_item = _eval_metrics_for_queue_items(
+        sample_items,
+        request=request,
+        ch_cache=ch_cache,
+    )
     seen_eval_ids = set()
     for metrics_by_key in eval_metrics_by_item.values():
         for eval_key, entries in metrics_by_key.items():
@@ -2459,7 +2657,9 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
     }
 
 
-def _infer_attribute_field_data_type(field_id, sample_items, ch_cache=None):
+def _infer_attribute_field_data_type(
+    field_id, sample_items, ch_cache=None, request=None
+):
     source_type, path = _parse_attribute_field_id(field_id)
     if not path:
         return DataTypeChoices.TEXT.value
@@ -2467,13 +2667,18 @@ def _infer_attribute_field_data_type(field_id, sample_items, ch_cache=None):
     for item in sample_items or []:
         if source_type and item.source_type != source_type:
             continue
-        value = _nested_get(resolve_source_content(item, ch_cache=ch_cache), path)
+        value = _nested_get(
+            resolve_source_content(item, ch_cache=ch_cache, request=request),
+            path,
+        )
         if value not in (None, ""):
             return _infer_dataset_type(value)
     return DataTypeChoices.TEXT.value
 
 
-def _custom_attribute_export_field(field_id, sample_items=None, ch_cache=None):
+def _custom_attribute_export_field(
+    field_id, sample_items=None, ch_cache=None, request=None
+):
     if not field_id.startswith("attr:"):
         return None
     source_type, path = _parse_attribute_field_id(field_id)
@@ -2483,7 +2688,12 @@ def _custom_attribute_export_field(field_id, sample_items=None, ch_cache=None):
         field_id,
         path.replace("_", " "),
         path,
-        _infer_attribute_field_data_type(field_id, sample_items, ch_cache=ch_cache),
+        _infer_attribute_field_data_type(
+            field_id,
+            sample_items,
+            ch_cache=ch_cache,
+            request=request,
+        ),
         f"From {_source_export_label(source_type)}" if source_type else "Attributes",
         False,
         path=path,
@@ -2718,6 +2928,28 @@ def _queue_members_from_ids(queue_id, user_ids):
     return [
         users_by_id[user_id] for user_id in normalized_ids if user_id in users_by_id
     ]
+
+
+def _active_queue_name_conflicts(queue):
+    """Match the active-name constraints, including org-wide workspace collisions."""
+    scope = Q()
+    for field in ("project_id", "dataset_id", "agent_definition_id"):
+        value = getattr(queue, field)
+        if value is not None:
+            scope |= Q(**{field: value})
+    if not scope:
+        scope = Q(
+            project__isnull=True,
+            dataset__isnull=True,
+            agent_definition__isnull=True,
+        )
+    # Name uniqueness is per organization/scope, not per selected workspace.
+    return AnnotationQueue.no_workspace_objects.filter(
+        scope,
+        organization_id=queue.organization_id,
+        name=queue.name,
+        deleted=False,
+    ).exclude(pk=queue.pk)
 
 
 def _restore_archived_default_queue(queue):
@@ -3038,6 +3270,8 @@ class AnnotationQueuePagination(ExtendedPageNumberPagination):
 
         page_size = getattr(request, "validated_query_data", {}).get("page_size")
         if page_size is not None:
+            if page_size > MAX_PAGE_SIZE:
+                raise PageSizeTooLarge()
             return page_size
 
         return super().get_page_size(request)
@@ -3245,6 +3479,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         below.
         """
         instance = self.get_object()
+        if not _is_queue_manager(instance, request.user):
+            return self._gm.forbidden_response(
+                "Only queue managers can archive queues."
+            )
         self.perform_destroy(instance)
         return self._gm.success_response(
             {"deleted": True, "archived": True, "queue_id": str(instance.pk)}
@@ -3265,9 +3503,42 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         except AnnotationQueue.DoesNotExist:
             return self._gm.not_found("Queue not found or not archived.")
 
-        # Resets rule cadence so users don't get a flood of fires on the
-        # first scheduler tick after restoring a long-archived queue.
-        _restore_archived_default_queue(queue)
+        if not _is_queue_manager(queue, request.user):
+            return self._gm.forbidden_response(
+                "Only queue managers can restore queues."
+            )
+
+        def name_conflict_response():
+            return self._gm.custom_error_response(
+                status.HTTP_409_CONFLICT,
+                "An active queue already uses this name in the same scope. "
+                "Rename the active queue using Edit, then return to Archived and "
+                "restore this queue.",
+                code="queue_name_conflict",
+            )
+
+        conflicts = _active_queue_name_conflicts(queue)
+        if conflicts.exists():
+            return name_conflict_response()
+
+        try:
+            # Keep the restore and cadence reset atomic. The savepoint also
+            # leaves the connection usable if a concurrent queue claims the name.
+            with transaction.atomic():
+                _restore_archived_default_queue(queue)
+        except IntegrityError as exc:
+            constraint = getattr(
+                getattr(exc.__cause__, "diag", None), "constraint_name", None
+            )
+            if constraint in {
+                "unique_active_queue_name_org",
+                "unique_active_queue_name_org_project",
+                "unique_active_queue_name_org_dataset",
+                "unique_active_queue_name_org_agent",
+            } or conflicts.exists():
+                return name_conflict_response()
+            raise
+
         serializer = self.get_serializer(queue)
         return self._gm.success_response(serializer.data)
 
@@ -3286,6 +3557,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         a typo'd request.
         """
         queue = self.get_object()
+        if not _is_queue_manager(queue, request.user):
+            return self._gm.forbidden_response(
+                "Only queue managers can permanently delete queues."
+            )
         data = request.validated_data
         if data.get("force") is not True:
             return self._gm.bad_request(
@@ -3468,7 +3743,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 "queue",
                 "reviewed_by",
                 "project",
-                "dataset_row",
+                "dataset_row__dataset",
                 "prototype_run",
                 "call_execution",
             )
@@ -3501,14 +3776,23 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         )
         scores_by_item = _scores_for_queue_items(items_list, queue_label_ids)
         item_notes_by_id = _latest_item_notes_for_queue_items(items_list)
-        eval_metrics_by_item = _eval_metrics_for_queue_items(items_list)
-        ch_source_cache = CollectorSourceCache.for_items(items_list)
-        cell_cache = dataset_cells_by_row(items_list)
+        ch_source_cache = CollectorSourceCache.for_items(items_list, request=request)
+        cell_cache = dataset_cells_by_row(
+            items_list, request=request, ch_cache=ch_source_cache
+        )
+        eval_metrics_by_item = _eval_metrics_for_queue_items(
+            items_list,
+            request=request,
+            ch_cache=ch_source_cache,
+        )
 
         result = []
         for item in items_list:
             content = resolve_source_content(
-                item, ch_cache=ch_source_cache, cell_cache=cell_cache
+                item,
+                ch_cache=ch_source_cache,
+                cell_cache=cell_cache,
+                request=request,
             )
             annotations = [
                 _serialize_score_for_export(score)
@@ -3753,7 +4037,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
     def export_fields(self, request, pk=None):
         """Return source/label/attribute fields available for dataset export."""
         queue = self.get_object()
-        return self._gm.success_response(_build_annotation_queue_export_fields(queue))
+        return self._gm.success_response(
+            _build_annotation_queue_export_fields(queue, request=request),
+        )
 
     @validated_request(
         request_serializer=QueueExportToDatasetRequestSerializer,
@@ -3803,7 +4089,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 "queue",
                 "reviewed_by",
                 "project",
-                "dataset_row",
+                "dataset_row__dataset",
                 "prototype_run",
                 "call_execution",
             )
@@ -3812,11 +4098,17 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         if status_filter:
             items_qs = items_qs.filter(status=status_filter)
         items_list = list(items_qs.order_by("order", "created_at"))
-        ch_source_cache = CollectorSourceCache.for_items(items_list)
-        cell_cache = dataset_cells_by_row(items_list)
+        ch_source_cache = CollectorSourceCache.for_items(items_list, request=request)
+        cell_cache = dataset_cells_by_row(
+            items_list, request=request, ch_cache=ch_source_cache
+        )
 
         export_field_defs = _build_annotation_queue_export_fields(
-            queue, sample_items=items_list[:100]
+            queue,
+            sample_items=items_list[:100],
+            request=request,
+            ch_cache=ch_source_cache,
+            cell_cache=cell_cache,
         )
         fields_by_id = {field["id"]: field for field in export_field_defs["fields"]}
         requested_mapping = data.get("column_mapping") or []
@@ -3830,7 +4122,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 continue
             field_id = entry.get("field") or entry.get("id")
             field_def = fields_by_id.get(field_id) or _custom_attribute_export_field(
-                field_id or "", items_list[:100], ch_cache=ch_source_cache
+                field_id or "",
+                items_list[:100],
+                ch_cache=ch_source_cache,
+                request=request,
             )
             if not field_def:
                 continue
@@ -3896,7 +4191,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             dataset.save(update_fields=["column_order", "column_config"])
 
         max_order = (
-            Row.objects.filter(dataset=dataset, deleted=False)
+            Row.all_objects.filter(dataset=dataset)
             .order_by("-order")
             .values_list("order", flat=True)
             .first()
@@ -3909,10 +4204,17 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         )
         scores_by_item = _scores_for_queue_items(items_list, queue_label_ids)
         item_notes_by_id = _latest_item_notes_for_queue_items(items_list)
-        eval_metrics_by_item = _eval_metrics_for_queue_items(items_list)
+        eval_metrics_by_item = _eval_metrics_for_queue_items(
+            items_list,
+            request=request,
+            ch_cache=ch_source_cache,
+        )
         for i, item in enumerate(items_list):
             content = resolve_source_content(
-                item, ch_cache=ch_source_cache, cell_cache=cell_cache
+                item,
+                ch_cache=ch_source_cache,
+                cell_cache=cell_cache,
+                request=request,
             )
             scores = scores_by_item.get(item.id, [])
             annotations_metadata = {}
@@ -3933,6 +4235,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                         "source_id": _source_id_for_queue_item(item),
                         "annotations": annotations_metadata,
                         "review": _serialize_item_review(item),
+                        **(
+                            {"source_unavailable": QUEUE_SOURCE_UNAVAILABLE}
+                            if content.get("error") == QUEUE_SOURCE_UNAVAILABLE
+                            else {}
+                        ),
                     },
                 )
             )
@@ -4182,6 +4489,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         Queue items are created lazily when someone actually annotates.
         """
         queue = self.get_object()
+        if not _is_queue_manager(queue, request.user):
+            return self._gm.forbidden_response(
+                "Only queue managers can manage queue labels."
+            )
         data = request.validated_data
         label_id = data.get("label_id")
         required = _is_truthy(data.get("required", False))
@@ -4252,6 +4563,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
     def remove_label(self, request, pk=None):
         """Remove a label from an annotation queue."""
         queue = self.get_object()
+        if not _is_queue_manager(queue, request.user):
+            return self._gm.forbidden_response(
+                "Only queue managers can manage queue labels."
+            )
         label_id = request.validated_data.get("label_id")
 
         deleted_count = AnnotationQueueLabel.objects.filter(
@@ -4297,6 +4612,8 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                     "observation_span",
                     span_notes_source_id,
                     organization=request.organization,
+                    workspace=getattr(request, "workspace", None),
+                    project_id=query_params.get("project_id"),
                 )
                 if not span_notes_source:
                     return self._gm.not_found(
@@ -4389,6 +4706,20 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             .order_by("queue__name", "order")
         )
 
+        # Legacy notes must share each item's authorized CH source, then prove
+        # their own PG anchor. Batch the ownership join across the entire page.
+        items = list(items)
+        notes_ch_cache = CollectorSourceCache.for_items(items, request=request)
+        span_notes_by_item = _span_note_rows_by_item(
+            (
+                item,
+                _span_notes_target_for_queue_item(
+                    item, ch_cache=notes_ch_cache, request=request
+                ),
+            )
+            for item in items
+        )
+
         # Helper to build labels list and existing scores for a queue
         def _build_queue_entry(
             queue,
@@ -4467,10 +4798,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 else span_notes_source_id
             )
             if span_notes_lookup_id:
-                db_notes = list(
-                    SpanNotes.objects.filter(span_id=span_notes_lookup_id)
-                    .select_related("created_by_user")
-                    .order_by("-created_at")
+                # A default queue with no item has no authorized item source.
+                # Do not fall back to its client-supplied span id in that case,
+                # or when it differs from the item's authorized root/span.
+                db_notes = (
+                    span_notes_by_item.get(item.pk, []) if item is not None else []
                 )
                 seen_user_ids = {
                     note.annotator_id for note in queue_note_rows if note.annotator_id
@@ -4489,7 +4821,8 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 span_notes.extend(
                     _serialize_span_note(note)
                     for note in db_notes
-                    if note.created_by_user_id not in seen_user_ids
+                    if str(note.span_id) == str(span_notes_lookup_id)
+                    and note.created_by_user_id not in seen_user_ids
                     and note.created_by_user_id != request.user.pk
                 )
 
@@ -4759,10 +5092,22 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         return self._gm.success_response(results)
 
 
+class QueueItemPagination(ExtendedPageNumberPagination):
+    def get_page_size(self, request):
+        page_size = getattr(request, "validated_query_data", {}).get("page_size")
+        if page_size is not None:
+            if "limit" in request.query_params:
+                raise serializers.ValidationError(
+                    {"page_size": ["Use either page_size or limit, not both."]}
+                )
+            return page_size
+        return super().get_page_size(request)
+
+
 class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     serializer_class = QueueItemSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = ExtendedPageNumberPagination
+    pagination_class = QueueItemPagination
     queryset = QueueItem.objects.all()
     _gm = GeneralMethods()
 
@@ -4792,12 +5137,12 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 "assigned_to",
                 "reserved_by",
                 "reviewed_by",
+                "dataset_row__dataset",
             )
             .prefetch_related(
                 # Tracer sources (trace / observation_span / trace_session) render
                 # CH-native via the serializer's CollectorSourceCache — no PG
                 # prefetch on them (a SELECT from the dropped tracer tables would 500).
-                "dataset_row",
                 "prototype_run",
                 "call_execution",
                 Prefetch(
@@ -5564,10 +5909,11 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             )
 
         if user and queue and not is_review_mode and should_scope_by_assignment:
+            # Manual managers may claim unassigned items even after assignments exist.
             base_qs = _queue_item_user_scope(
                 base_qs,
                 user,
-                include_unassigned=False,
+                include_unassigned=not queue.auto_assign and is_queue_manager,
             )
         if user and not is_reviewer and review_status != "pending_review":
             base_qs = _scope_targeted_rework_items(base_qs, user)
@@ -5597,6 +5943,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         responses={200: QueueSubmitAnnotationsResponseSerializer, **ERROR_RESPONSES},
     )
     @action(detail=True, methods=["post"], url_path="annotations/submit")
+    @transaction.atomic
     def submit_annotations(self, request, queue_id=None, pk=None):
         """Submit or update annotations for a queue item."""
         # Only allow annotation when queue is active
@@ -5718,7 +6065,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         source_id = (
             getattr(item, f"{source_fk_field}_id", None) if source_fk_field else None
         )
-        span_notes_target = _span_notes_target_for_queue_item(item)
+        span_notes_target = _span_notes_target_for_queue_item(item, request=request)
         # Older clients sent one top-level `notes` field. For trace/span items that
         # can store whole-item notes, treat that legacy field as the item note so it
         # never gets copied into every label note by accident.
@@ -5801,6 +6148,8 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     queue_item=item,
                     deleted=False,
                 )
+                .select_for_update()
+                .order_by("id")
             }
             now = timezone.now()
             to_create, to_update = [], []
@@ -5840,6 +6189,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     # it. The row just read IS the previous version, so the entry
                     # is built here rather than re-reading it as save() must.
                     if score.value != value:
+                        score.value_updated_at = now
                         score.value_history = Score.appended_value_history(
                             score.value,
                             score.value_history,
@@ -5862,12 +6212,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             # exactly the NULL/mismatched-workspace rows this manager exists to
             # reach, reporting them as submitted.
             #
-            # The old per-label update_or_create took a FOR UPDATE row lock and
-            # serialised concurrent writers; this read is unlocked. Only the same
-            # annotator can collide (annotator_id is in every applicable unique
-            # key), so the exposure is one user double-submitting an item: the
-            # update path is last-writer-wins and can lose one value_history
-            # entry, and the create path drops the loser's value below.
+            # Existing scores stay locked from the read through these writes.
+            # Concurrent submissions compare against the saved value and cannot
+            # restore a stale value timestamp or discard a history entry.
             with transaction.atomic():
                 if to_create:
                     # A concurrent submit of the same label can win the race; the
@@ -5883,6 +6230,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                             "source_type",
                             "value",
                             "value_history",
+                            "value_updated_at",
                             "score_source",
                             "notes",
                             "organization",
@@ -5921,37 +6269,46 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 ).update(deleted=True, deleted_at=now, updated_at=now)
 
         if span_notes_target is not None and item_notes is not None:
-            # `span_notes_target` is a Django ObservationSpan (span-source items)
-            # or a CHSpan (trace-source items, root loaded from CH); both expose a
-            # string `.id`. SpanNotes.span is a db_constraint=False soft FK, so the
-            # write must NOT gate on a PG ObservationSpan lookup — a CH-only
-            # collector span has no PG row, and the PG tracer tables are dropped.
-            # Write the soft id directly; the try/except stays defensive.
+            # QueueItemNote above is authoritative, including CH-only sources.
+            # The optional legacy mirror needs its OWN live PG ownership anchor.
+            # Lock the span/project join through this submit transaction so a
+            # concurrent ownership change cannot race the mirror write/clear.
             from django.db import IntegrityError
 
-            target_id = span_notes_target.id
-            if item_notes:
-                try:
-                    SpanNotes.objects.update_or_create(
-                        span_id=target_id,
+            from tracer.models.observation_span import ObservationSpan
+
+            anchor_scope = _span_note_anchor_scope(item, span_notes_target)
+            anchor = (
+                ObservationSpan.no_workspace_objects.select_for_update()
+                .filter(**anchor_scope)
+                .first()
+                if anchor_scope is not None
+                else None
+            )
+            # Foreign and missing anchors both silently skip the legacy mirror.
+            if anchor is not None:
+                if item_notes:
+                    try:
+                        SpanNotes.no_workspace_objects.update_or_create(
+                            span_id=anchor.pk,
+                            created_by_user=request.user,
+                            defaults={
+                                "notes": item_notes,
+                                "created_by_annotator": request.user.email,
+                            },
+                        )
+                    except IntegrityError as e:
+                        logger.warning(
+                            "span_notes_integrity_error",
+                            span_id=str(anchor.pk),
+                            queue_item_id=str(item.id),
+                            error=str(e),
+                        )
+                else:
+                    SpanNotes.no_workspace_objects.filter(
+                        span_id=anchor.pk,
                         created_by_user=request.user,
-                        defaults={
-                            "notes": item_notes,
-                            "created_by_annotator": request.user.email,
-                        },
-                    )
-                except IntegrityError as e:
-                    logger.warning(
-                        "span_notes_integrity_error",
-                        span_id=str(target_id),
-                        queue_item_id=str(item.id),
-                        error=str(e),
-                    )
-            else:
-                SpanNotes.objects.filter(
-                    span_id=target_id,
-                    created_by_user=request.user,
-                ).delete()
+                    ).delete()
 
         # Update item status to in_progress if pending
         if item.status == QueueItemStatus.PENDING.value:
@@ -6119,9 +6476,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 "This item was sent back to a different annotator."
             )
 
-        if not getattr(
-            item.queue, "is_default", False
-        ) and not _has_explicit_queue_role(
+        if not getattr(item.queue, "is_default", False) and not _has_queue_role(
             queue_id,
             request.user,
             AnnotatorRole.ANNOTATOR.value,
@@ -6290,7 +6645,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             # select_related on them (a join to the dropped tracer tables would 500).
             item = QueueItem.objects.select_related(
                 "project",
-                "dataset_row",
+                "dataset_row__dataset",
                 "prototype_run",
                 "call_execution",
                 "assigned_to",
@@ -6413,12 +6768,16 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         # used to do its own point-read — three unscoped `spans FINAL` scans per
         # open on a voice trace (TH-7104). The cache reads once, pruned to the
         # item's denormalized project_id, and the serializer reuses it.
-        ch_cache = CollectorSourceCache.for_items([item])
+        ch_cache = CollectorSourceCache.for_items([item], request=request)
 
         existing_notes = ""
         span_notes = []
         span_notes_source_id = None
-        span_notes_target = _span_notes_target_for_queue_item(item, ch_cache=ch_cache)
+        span_notes_target = _span_notes_target_for_queue_item(
+            item,
+            ch_cache=ch_cache,
+            request=request,
+        )
         if span_notes_target is not None:
             span_notes_source_id = span_notes_target.id
         span_notes = _item_note_payloads(
@@ -6645,6 +7004,28 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         )
         item_pks = list(items.values_list("pk", flat=True))
 
+        legacy_assignees = {}
+        if action == "add" and "user_id" in request.data:
+            # Preserve owners stored only in the legacy FK before adding users.
+            legacy_assignees = dict(
+                items.exclude(assigned_to_id=None).values_list("pk", "assigned_to_id")
+            )
+            if legacy_assignees:
+                active_assignments = set(
+                    QueueItemAssignment.objects.filter(
+                        queue_item_id__in=legacy_assignees, deleted=False,
+                    ).values_list("queue_item_id", "user_id")
+                )
+                to_preserve = [
+                    QueueItemAssignment(queue_item_id=item_pk, user_id=uid)
+                    for item_pk, uid in legacy_assignees.items()
+                    if (item_pk, uid) not in active_assignments
+                ]
+                if to_preserve:
+                    QueueItemAssignment.objects.bulk_create(
+                        to_preserve, ignore_conflicts=True,
+                    )
+
         if action == "set":
             # Soft-delete existing assignments not in new set
             QueueItemAssignment.objects.filter(
@@ -6694,7 +7075,8 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         # and keeping the first row per item reproduces that exactly; without it
         # assigned_to would follow scan order and could differ between two
         # identical calls.
-        first_by_item = {}
+        # Singular additive requests keep their existing legacy FK unchanged.
+        first_by_item = dict(legacy_assignees)
         for qi_id, user_id in (
             QueueItemAssignment.objects.filter(
                 queue_item_id__in=item_pks, deleted=False
@@ -8123,7 +8505,22 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
         manager_error = self._queue_manager_error(request)
         if manager_error:
             return manager_error
-        return super().update(request, *args, **kwargs)
+
+        # Validate the effective enabled state (including omitted fields on
+        # PATCH) before saving; do not infer booleans from raw request strings.
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        if serializer.validated_data.get("enabled", instance.enabled):
+            check = automation_rule_entitlement_check(instance)
+            if check is not None and not check.allowed:
+                return self._gm.forbidden_response(check.reason)
+
+        self.perform_update(serializer)
+        if getattr(instance, "_prefetched_objects_cache", None):
+            instance._prefetched_objects_cache = {}
+        return Response(serializer.data)
 
     def partial_update(self, request, *args, **kwargs):
         manager_error = self._queue_manager_error(request)
@@ -8205,6 +8602,10 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
                     "rules attached to it."
                 ),
             )
+
+        check = automation_rule_entitlement_check(rule)
+        if check is not None and not check.allowed:
+            return self._gm.forbidden_response(check.reason)
 
         from model_hub.utils.annotation_queue_helpers import (
             AUTOMATION_RULE_MATCH_LIMIT,

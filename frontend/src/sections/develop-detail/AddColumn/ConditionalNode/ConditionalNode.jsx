@@ -25,6 +25,7 @@ import { ExtractEntitiesChild } from "../ExtractEntities/ExtractEntities";
 import { ExtractJsonKeyChild } from "../ExtractJsonKey/ExtractJsonKey";
 import { RetrievalChild } from "../Retrieval/Retrieval";
 import { ExecuteCodeChild } from "../ExecuteCode/ExecuteCode";
+import { EXECUTE_CODE_COLUMN_OFFERED } from "../common";
 import { ClassificationChild } from "../Classification/Classification";
 import { AddColumnApiCallChild } from "../AddColumnApiCall/AddColumnApiCall";
 import ConditionalInput from "./ConditionalInput";
@@ -35,13 +36,16 @@ import { useConditionalNodeStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import PropTypes from "prop-types";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const COLUMN_TYPE_OPTIONS = [
   { label: "Run Prompt", value: "run_prompt" },
   { label: "Retrieval", value: "retrieval" },
   { label: "Extract Entities", value: "extract_entities" },
   { label: "Extract JSON Key", value: "extract_json" },
-  { label: "Execute Custom Code", value: "extract_code" },
+  ...(EXECUTE_CODE_COLUMN_OFFERED
+    ? [{ label: "Execute Custom Code", value: "extract_code" }]
+    : []),
   { label: "Classification", value: "classification" },
   { label: "API Calls", value: "api_call" },
 ];
@@ -370,6 +374,7 @@ const ConditionalNodeChild = ({ editId }) => {
     }
   };
 
+  const covered = useDrawerCovered(Boolean(selectedFormType));
   const renderFormDrawer = () => {
     if (!selectedFormType) return null;
 
@@ -380,14 +385,15 @@ const ConditionalNodeChild = ({ editId }) => {
       <Drawer
         anchor="right"
         open={Boolean(selectedFormType)}
+        sx={coveredDrawerSx(covered)}
         onClose={handleCloseDirty}
         PaperProps={{
           sx: {
-            width: "550px",
+            width: "480px",
             height: "100vh",
             position: "fixed",
             zIndex: 9999,
-            borderRadius: "10px",
+            borderRadius: "8px",
             backgroundColor: "divider",
           },
         }}
@@ -536,7 +542,10 @@ const ConditionalNodeChild = ({ editId }) => {
                 new_column_name: cfg.new_column_name,
                 concurrency: cfg.concurrency,
               };
-              if (branchType === "extract_entities" || branchType === "extract_json") {
+              if (
+                branchType === "extract_entities" ||
+                branchType === "extract_json"
+              ) {
                 config.column_id = cfg.column_id;
               }
               if (branchType === "extract_json") {
@@ -634,7 +643,7 @@ const ConditionalNodeChild = ({ editId }) => {
             alignItems: "center",
           }}
         >
-          <Typography fontWeight={700} color="text.secondary">
+          <Typography fontWeight={600} color="text.secondary">
             {editId ? "Edit Conditional Node" : "Conditional Node"}
           </Typography>
           <IconButton
@@ -644,7 +653,7 @@ const ConditionalNodeChild = ({ editId }) => {
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Box
@@ -686,7 +695,7 @@ const ConditionalNodeChild = ({ editId }) => {
                 }}
               >
                 {index === 0 ? (
-                  <Typography fontSize="14px" fontWeight={600}>
+                  <Typography fontSize="13px" fontWeight={600}>
                     If
                   </Typography>
                 ) : (
@@ -804,10 +813,12 @@ const ConditionalNode = () => {
 
   const editId = openConditionalNode?.editId;
 
+  const coveredSecond = useDrawerCovered(openConditionalNode);
   return (
     <Drawer
       anchor="right"
       open={openConditionalNode}
+      sx={coveredDrawerSx(coveredSecond)}
       onClose={onClose}
       variant="persistent"
       PaperProps={{
@@ -815,8 +826,7 @@ const ConditionalNode = () => {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

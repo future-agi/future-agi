@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import React from "react";
 import CustomTooltip from "src/components/tooltip";
 import ModelHoverState from "./ModelHoverState";
@@ -38,6 +39,7 @@ const ModelButtonField = ({
       }}
     >
       <CustomTooltip
+        card
         show={
           !disabledHover && !openDropdown && (value || modelDetail?.model_name)
         }
@@ -78,7 +80,7 @@ const ModelButtonField = ({
             {value && modelDetail?.logoUrl ? (
               <Image
                 ratio="1/1"
-                src={modelDetail?.logoUrl}
+                src={localProviderLogo(modelDetail)}
                 alt={modelDetail?.model_name}
                 flexShrink={0}
                 disableThemeFilter={
@@ -94,7 +96,7 @@ const ModelButtonField = ({
             ) : (
               buttonIcon || (
                 <Iconify
-                  icon="radix-icons:box-model"
+                  icon="solar:graph-linear"
                   width="16px"
                   height="16px"
                   sx={{
@@ -121,13 +123,11 @@ const ModelButtonField = ({
           </Box>
         ) : (
           <Button
+            size="small"
             sx={{
-              borderRadius: "4px",
               backgroundColor: "background.paper",
               border: "1px solid",
               borderColor: "divider",
-              height: "32px",
-              padding: "4px 8px",
               display: "flex",
               // flexDirection: "row",
               // alignItems: "center",
@@ -138,7 +138,7 @@ const ModelButtonField = ({
               value && modelDetail?.logoUrl ? (
                 <Image
                   ratio="1/1"
-                  src={modelDetail?.logoUrl}
+                  src={localProviderLogo(modelDetail)}
                   alt={modelDetail?.model_name}
                   flexShrink={0}
                   disableThemeFilter={
@@ -154,7 +154,7 @@ const ModelButtonField = ({
               ) : (
                 buttonIcon || (
                   <Iconify
-                    icon="radix-icons:box-model"
+                    icon="solar:graph-linear"
                     width="16px"
                     height="16px"
                     sx={{
@@ -186,8 +186,9 @@ const ModelButtonField = ({
         <>
           {openDropdown ? (
             <IconButton
+              aria-label="Close model list"
               sx={{
-                transition: "transform 0.3s ease",
+                transition: "transform 0.2s ease",
                 transform: openDropdown ? "rotate(180deg)" : "rotate(0deg)",
               }}
             >
@@ -198,6 +199,7 @@ const ModelButtonField = ({
             </IconButton>
           ) : (
             <IconButton
+              aria-label="Choose a model"
               onClick={() => {
                 if (!disabledClick) {
                   setOpenDropdown(true);
@@ -223,8 +225,10 @@ ModelButtonField.propTypes = {
   isModalContainer: PropTypes.bool,
   disabledHover: PropTypes.bool,
   openDropdown: PropTypes.bool,
-  value: PropTypes.string,
-  modelDetail: PropTypes.object,
+  // A model name, or the selected models when `multiple` is set.
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.array]),
+  // Multi-select fields (TTS / STT / image models) pass one detail per model.
+  modelDetail: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),
   hoverPlacement: PropTypes.string,
   disabledClick: PropTypes.bool,
   setOpenDropdown: PropTypes.func.isRequired,

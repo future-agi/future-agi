@@ -1,5 +1,3 @@
-import { BUILD_TONES } from "src/sections/simulate/environments/buildEnvironment/buildTones";
-
 // The one monospace stack the contract uses for observation fields, action
 // verbs and verifier names. Kept as a constant so the string is not repeated
 // across the part components.
@@ -7,23 +5,78 @@ export const MONO_FONT = "ui-monospace, Menlo, monospace";
 
 // The three kinds of verifier that make up the reward spec. The verifiers ARE
 // the evals applied to the environment, given weights — grouped here only for
-// presentation. Colours read from BUILD_TONES.
+// presentation. Each kind is a category, so it takes a data-palette series
+// (`theme.palette.data[series]`), not a status colour.
 export const VERIFIER_KINDS = [
-  { id: "goal", label: "Goal", color: BUILD_TONES.green, blurb: "Did the task get done. Terminal, sparse." },
-  { id: "rubric", label: "Rubric", color: BUILD_TONES.blue, blurb: "How well, judged per turn. Dense." },
-  { id: "constraint", label: "Constraints", color: BUILD_TONES.red, blurb: "What must never happen. Penalty." },
+  { id: "goal", label: "Goal", series: 0, blurb: "Did the task get done. Terminal, sparse." },
+  { id: "rubric", label: "Rubric", series: 1, blurb: "How well, judged per turn. Dense." },
+  { id: "constraint", label: "Constraints", series: 2, blurb: "What must never happen. Penalty." },
 ];
+
+const plural = (n, unit) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+
+// The run-end card in plain words, with no RL vocabulary (terminate, truncate,
+// bootstrap). The platform records which way each call ended rather than
+// deciding it up front. The limits have different scopes: the turn limit is
+// each scenario's own, while the time limit is the whole run's wall-clock
+// ceiling (every scenario together), not a per-conversation allowance.
+const END_CONDITIONS_COPY = {
+  title: "Run end conditions",
+  subtitle: "How each conversation can end, and the limits on a run",
+  notAuthored: "Not authored yet",
+  // A built environment's build writes them; a template or fork is never built.
+  notAuthoredBuilt: "The build writes these once it has read how a run of this agent ends.",
+  notAuthoredUnbuilt: "This environment hasn't been built, so it has none.",
+  endsLabel: "How a conversation can end",
+  endsBlurb: "Each call records which of these ended it.",
+  limitsLabel: "Limits",
+  limitsBlurb: "What stops a run early.",
+  // The raw code sits beside its plain label: call logs show the code.
+  codeTitle: "How call logs record this ending",
+  // Plain words for the canonical ended reasons a hosted call can carry
+  // (futureagi/simulate/utils/ended_reason.py). Any other code is shown as words
+  // made from the code itself.
+  endedReasons: {
+    "assistant-ended-call": {
+      label: "Your agent ended the conversation",
+      note: "Your agent wrapped up, or the session closed.",
+    },
+    cancelled: {
+      label: "Cancelled",
+      note: "Stopped before the conversation finished.",
+    },
+    "customer-ended-call": {
+      label: "Customer ended the conversation",
+      note: "The simulated customer finished or dropped off.",
+    },
+    // A per-conversation timeout (the SDK's conversation_timeout), not the
+    // run's time limit shown under Limits.
+    "max-duration-reached": {
+      label: "Time limit reached",
+      note: "This conversation hit its own time limit.",
+    },
+    "no-answer": {
+      label: "No answer",
+      note: "Your agent couldn't be reached.",
+    },
+    "silence-timed-out": {
+      label: "Silence timed out",
+      note: "Nobody spoke for a while, so the conversation closed.",
+    },
+  },
+  turnsLimit: (n) => plural(n, "turn"),
+  turnsNote: "The most any scenario allows. Each scenario sets its own.",
+  durationLimit: (seconds) => {
+    if (seconds > 0 && seconds % 3600 === 0) return plural(seconds / 3600, "hour");
+    if (seconds > 0 && seconds % 60 === 0) return plural(seconds / 60, "minute");
+    return plural(seconds, "second");
+  },
+  durationNote: "The whole run, every scenario together, must finish inside this time.",
+};
 
 // Every copy string on the contract tab, so nothing is inlined in the JSX.
 export const CONTRACT_COPY = {
-  endConditions: {
-    title: "Run end conditions",
-    subtitle: "When a run is over, and which kind of over it was",
-    notAuthored: "Not authored yet",
-    // A built environment's build writes them; a template or fork is never built.
-    notAuthoredBuilt: "The build writes these once it has read how a run of this agent ends.",
-    notAuthoredUnbuilt: "This environment hasn't been built, so it has none.",
-  },
+  endConditions: END_CONDITIONS_COPY,
   headingBlurb:
     "What makes this an environment rather than a test script. Everything read from your agent compiles into these five parts, and everything downstream reads them back.",
   compiled: (done, total) => `${done}/${total} compiled`,
@@ -69,10 +122,11 @@ export const CONTRACT_COPY = {
     "Weights are editable on the interface, and the verifiers themselves are the evals applied to this environment.",
   interfaceAction: "Interface",
 
-  terminateLabel: "Terminate",
-  terminateBlurb: "The episode has a value. Goal verifiers settle.",
-  truncateLabel: "Truncate",
-  truncateBlurb: "Not a failure, and not terminal. Bootstrap from the last state.",
+  // Kept for the episode card: the same plain copy as the run-end card.
+  terminateLabel: END_CONDITIONS_COPY.endsLabel,
+  terminateBlurb: END_CONDITIONS_COPY.endsBlurb,
+  truncateLabel: END_CONDITIONS_COPY.limitsLabel,
+  truncateBlurb: END_CONDITIONS_COPY.limitsBlurb,
   clockLabel: (mode) => `Clock · ${mode}`,
   seedTitle: "Deterministic seed",
 

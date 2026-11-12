@@ -240,7 +240,9 @@ describe("TaskLivePreview sparse cursor continuation", () => {
         vi.advanceTimersByTimeAsync(ANALYTICS_REQUEST_TIMEOUT_MS - 10_000 + 1),
       );
       expect(continuationSignal.aborted).toBe(true);
-      expect(screen.getByText("Preparing the exact preview.")).toBeVisible();
+      expect(
+        screen.getByText(`No matching ${rowType} found so far.`),
+      ).toBeVisible();
       expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
       expect(
         screen.queryByText(QUERY_FAILED_RETRY_MESSAGE),
@@ -254,7 +256,9 @@ describe("TaskLivePreview sparse cursor continuation", () => {
         await vi.advanceTimersByTimeAsync(1_000);
       });
       expect(listCalls).toBe(2);
-      expect(screen.getByText("Preparing the exact preview.")).toBeVisible();
+      expect(
+        screen.getByText(`No matching ${rowType} found so far.`),
+      ).toBeVisible();
       await act(async () => {
         screen.getByRole("button", { name: "Continue search" }).click();
         await vi.advanceTimersByTimeAsync(1);
@@ -1315,7 +1319,8 @@ describe("TaskLivePreview sparse cursor continuation", () => {
     );
 
     await screen.findByText("Row 1 of 1");
-    expect(screen.getByText(/retained preview row/)).toBeVisible();
+    // Row detail loads after the row counter renders; wait for it.
+    expect(await screen.findByText(/retained preview row/)).toBeVisible();
     await act(async () => {
       screen.getByRole("button", { name: "Next row" }).click();
     });
@@ -1323,7 +1328,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
     const retrySearch = await screen.findByRole("button", {
       name: "Retry search",
     });
-    expect(screen.getByText("The exact preview was paused.")).toBeVisible();
+    expect(screen.getByText("We couldn't finish the search.")).toBeVisible();
     expect(screen.queryByText("No matching rows")).not.toBeInTheDocument();
 
     const failedResumeRequest = mocks.get.mock.calls.filter(
@@ -1412,7 +1417,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
 
     await screen.findByText("Row 1 of 1");
     expect(
-      screen.getByText(/preview recovered after cold retry/),
+      await screen.findByText(/preview recovered after cold retry/),
     ).toBeVisible();
     expect(spanListCalls).toBe(2);
   });
@@ -1483,7 +1488,7 @@ describe("TaskLivePreview sparse cursor continuation", () => {
     );
 
     await screen.findByText("Row 1 of 1");
-    expect(screen.getByText(/legacy preview value/)).toBeVisible();
+    expect(await screen.findByText(/legacy preview value/)).toBeVisible();
     expect(spanListCalls).toBe(2);
     const firstSpanRequest = mocks.get.mock.calls.find(
       ([url]) => url === "/spans/",

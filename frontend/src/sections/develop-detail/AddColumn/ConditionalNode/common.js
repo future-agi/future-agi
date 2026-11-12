@@ -82,22 +82,33 @@ export const getConditionalNodeValidation = (allColumns, isEdit = false) => {
       ? z.string().optional()
       : z.string().min(1, { message: "New column name is required" }),
     config: z.array(
-      z.object({
-        branchType: z.enum(["if", "elif", "else"]),
-        condition: z
-          .string()
-          .min(1, { message: "Condition is required" })
-          .transform((val) => replaceColumnNameWithId(val, allColumns)),
-        branchNodeConfig: z.object({
-          type: z.string().min(1, { message: "Type is required" }),
-          config: z
-            .any()
-            .nullable()
-            .refine((val) => val !== null, {
-              message: "Config is required",
-            }),
+      z
+        .object({
+          branchType: z.enum(["if", "elif", "else"]),
+          // L5 G4: an Else branch has no condition.
+          condition: z
+            .string()
+            .optional()
+            .default("")
+            .transform((val) => replaceColumnNameWithId(val ?? "", allColumns)),
+          branchNodeConfig: z.object({
+            type: z.string().min(1, { message: "Type is required" }),
+            config: z
+              .any()
+              .nullable()
+              .refine((val) => val !== null, {
+                message: "Config is required",
+              }),
+          }),
+        })
+        .superRefine((branch, ctx) => {
+          if (branch.branchType !== "else" && !String(branch.condition).trim())
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["condition"],
+              message: "Condition is required",
+            });
         }),
-      }),
     ),
   });
 };

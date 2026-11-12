@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/schemas/connector-price-overlay/v1.json",
+  "title": "connector-price-overlay/v1",
+  "description": "Gateway-only pricing for one connector provider or partner platform. Overlay files are never published: they live in an operator directory (connectors.pricing_dir) filled from private sources, never in this repository and never under ee/ (which is public). A managed (resold) connector bills through the tool-price-card-v1 card that priceCardRef names.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "key", "estimate", "billingMode"],
+  "properties": {
+    "schema": { "const": "connector-price-overlay/v1" },
+    "key": {
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9-]{1,39}/[a-z][a-z0-9-]{1,23}|platform/[a-z][a-z0-9-]{1,39})$",
+      "description": "<app-id>/<provider-id>, or platform/<platform-id>. No app may use the id platform."
+    },
+    "estimate": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["unit", "usdPerUnit", "source", "checkedAt"],
+        "properties": {
+          "unit": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,31}$",
+            "description": "What is counted, such as tool_call or auth_event."
+          },
+          "usdPerUnit": { "type": "number", "minimum": 0 },
+          "source": {
+            "type": "string",
+            "maxLength": 2048,
+            "pattern": "^https://[a-z0-9.-]+(:[0-9]{1,5})?([/?][A-Za-z0-9._~:/?@!$&'()*+,;=%-]*)?$"
+          },
+          "checkedAt": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+          }
+        }
+      }
+    },
+    "billingMode": { "enum": ["byok", "managed"] },
+    "priceCardRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The tool-price-card-v1 card and SKU a managed call settles at.",
+      "required": ["capability", "vendor", "sku"],
+      "properties": {
+        "capability": { "type": "string", "pattern": "^[a-z][a-z0-9_.]*$" },
+        "vendor": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,47}$" },
+        "sku": { "type": "string", "minLength": 1, "maxLength": 100 }
+      }
+    }
+  },
+  "if": { "properties": { "billingMode": { "const": "managed" } } },
+  "then": {
+    "required": ["priceCardRef"],
+    "properties": { "priceCardRef": true }
+  },
+  "else": { "properties": { "priceCardRef": false } }
+}

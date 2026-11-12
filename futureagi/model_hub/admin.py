@@ -369,7 +369,16 @@ class ExperimentsTableAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "status", "created_at")
     list_filter = ("status", "created_at")
     search_fields = ("name", "description")
-    readonly_fields = ("created_at", "updated_at")
+    # Never expose the raw JSON widget or replace the server-owned snapshot on
+    # an admin save. Other fields remain editable; metadata is a public read.
+    exclude = ("run_metadata",)
+    readonly_fields = ("created_at", "updated_at", "public_metadata")
+
+    @admin.display(description="Metadata")
+    def public_metadata(self, obj):
+        from model_hub.services.run_metadata_public import public_run_metadata
+
+        return public_run_metadata(obj.run_metadata)
 
 
 @admin.register(ExperimentDatasetTable)

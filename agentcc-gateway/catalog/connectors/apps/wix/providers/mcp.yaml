@@ -1,0 +1,39 @@
+# The Wix MCP, hosted by Wix at mcp.wix.com. By default the agent signs in
+# with the person's Wix account (an interactive login the MCP client runs
+# against the server). Its tools reach the whole account: CallWixSiteAPI
+# performs any action on a chosen site, and ManageWixSite creates and
+# publishes sites, so tool postures matter here.
+#
+# Not offered: Wix's API-key method. It sends the key in Authorization with
+# no Bearer prefix plus the account id in a wix-account-id header, a
+# per-customer setting that nothing carries to the gateway.
+schema: "connector-manifest/v1#provider"
+app: wix
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.wix.com/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: mcp_oauth
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://dev.wix.com/docs/overview/ai-the-wix-platform/the-wix-mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://github.com/wix/wix-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://dev.wix.com/docs/overview/ai-the-wix-platform/the-wix-mcp
+    fetchedAt: 2026-10-21

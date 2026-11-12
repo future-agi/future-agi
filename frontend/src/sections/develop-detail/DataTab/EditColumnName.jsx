@@ -1,6 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { LoadingButton } from "@mui/lab";
 import {
+  Alert,
   Box,
   Button,
   Dialog,
@@ -10,7 +11,8 @@ import {
   IconButton,
   Typography,
 } from "@mui/material";
-import React, { useEffect } from "react";
+import { useEffect } from "react";
+import { getInlineActionErrorMessage } from "src/utils/errorUtils";
 import { useForm } from "react-hook-form";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
@@ -27,6 +29,7 @@ import {
 import { useDevelopDetailContext } from "../Context/DevelopDetailContext";
 import { useSearchParams } from "react-router-dom";
 import PropTypes from "prop-types";
+import { runColumnMutation } from "./columnMutationRequest";
 
 const EditColumnName = ({ onSuccess }) => {
   const { dataset: paramId } = useParams();
@@ -52,7 +55,7 @@ const EditColumnName = ({ onSuccess }) => {
     defaultValues,
     resolver: zodResolver(
       z.object({
-        newColumnName: z.string().min(1, "Dataset name is required"),
+        newColumnName: z.string().min(1, "Column name is required"),
       }),
     ),
   });
@@ -65,14 +68,28 @@ const EditColumnName = ({ onSuccess }) => {
   const {
     mutate: updateColumn,
     isPending,
+    error,
     reset: resetMutation,
   } = useMutation({
+    networkMode: "always",
+    meta: { errorHandled: true },
     mutationFn: (d) =>
-      axios.put(
-        endpoints.develop.updateColumnName(dataset, editColumnName.id),
-        d,
+      runColumnMutation((config) =>
+        axios.put(
+          endpoints.develop.updateColumnName(dataset, editColumnName.id),
+          d,
+          config,
+        ),
       ),
-    onSuccess: () => {
+    onSuccess: (_res, data) => {
+      trackEvent(Events.editColumnNameSuccessful, {
+        [PropertyName.columnName]: {
+          dataset,
+          columnId: editColumnName.id,
+          old_column_name: editColumnName.name,
+          new_column_name: data.new_column_name,
+        },
+      });
       enqueueSnackbar("Column name updated successfully", {
         variant: "success",
       });
@@ -94,6 +111,10 @@ const EditColumnName = ({ onSuccess }) => {
       onCloseCallback();
     },
   });
+  // A refusal the workspace recovery handles shows one calm line.
+  const errorMessage = error
+    ? getInlineActionErrorMessage(error, "Couldn't save the column")
+    : null;
 
   const onCloseCallback = () => {
     formReset();
@@ -101,24 +122,21 @@ const EditColumnName = ({ onSuccess }) => {
     resetMutation();
   };
 
+  const handleClose = () => {
+    if (!isPending) onCloseCallback();
+  };
+
   const onSubmit = (data) => {
     // @ts-ignore
     updateColumn({ new_column_name: data.newColumnName });
-    trackEvent(Events.editColumnNameSuccessful, {
-      [PropertyName.columnName]: {
-        dataset: dataset,
-        columnId: editColumnName.id,
-        old_column_name: data.newColumnName,
-        new_column_name: editColumnName.name,
-      },
-    });
   };
 
   return (
     <Dialog
       open={Boolean(editColumnName)}
-      onClose={onCloseCallback}
-      maxWidth="sm"
+      onClose={handleClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
       fullWidth
     >
       <DialogTitle
@@ -136,11 +154,15 @@ const EditColumnName = ({ onSuccess }) => {
             justifyContent: "space-between",
           }}
         >
-          <Typography fontWeight={700} fontSize="18px">
+          <Typography fontWeight={600} fontSize="16px">
             Edit Column Name
           </Typography>
-          <IconButton onClick={onCloseCallback}>
-            <Iconify icon="mdi:close" />
+          <IconButton
+            aria-label="Close edit column name"
+            disabled={isPending}
+            onClick={handleClose}
+          >
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -150,7 +172,13 @@ const EditColumnName = ({ onSuccess }) => {
             paddingTop: 0.5,
           }}
         >
+          {errorMessage && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {errorMessage}
+            </Alert>
+          )}
           <FormTextFieldV2
+            disabled={isPending}
             autoFocus
             label="Column Name"
             placeholder="Enter column name"
@@ -161,7 +189,7 @@ const EditColumnName = ({ onSuccess }) => {
           />
         </DialogContent>
         <DialogActions sx={{ padding: 2 }}>
-          <Button onClick={onCloseCallback} variant="outlined">
+          <Button onClick={handleClose} disabled={isPending} variant="outlined">
             Cancel
           </Button>
           <LoadingButton

@@ -2,6 +2,7 @@ from django.conf import settings
 
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import ProviderCredentials
+from simulate.services.agent_api_key_storage import encrypt_api_key
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 
 MASKED_VALUE = "********"
@@ -37,7 +38,9 @@ def _has_credential_fields(data: ProviderCredentialsInput) -> bool:
 
 def _apply_secrets(creds, *, api_key: str, api_secret: str, provider_changed: bool):
     if api_key and not is_masked(api_key):
-        creds.api_key = api_key
+        # Client input is always clear, even if it starts with enc::.
+        # ProviderCredentials.save must only see authenticated storage here.
+        creds.api_key = encrypt_api_key(api_key)
     elif provider_changed:
         creds.api_key = ""
     if api_secret and not is_masked(api_secret):

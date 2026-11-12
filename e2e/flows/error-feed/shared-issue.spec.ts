@@ -1,4 +1,5 @@
-import { test as base, expect, type Route } from "@playwright/test";
+import { type Route } from "@playwright/test";
+import { test as base, expect } from "../../lib/trace-hygiene/fixture";
 import { flowAnnotation } from "../../lib/flow-meta";
 import {
   SHARED_ISSUE,
@@ -7,7 +8,6 @@ import {
   TRACE_A_DETAIL,
   TRACE_B,
 } from "./shared-issue.payload";
-
 // Deliberately NOT using lib/fixtures: a shared link is opened by someone who
 // is not signed in, so the flow starts from a clean, unauthenticated context.
 //
@@ -186,13 +186,13 @@ base(
           .locator(".ag-row")
           .filter({ hasText: TRACE_A.slice(0, 8) })
           .click();
-        await expect(page.getByText(/Trace ID/).first()).toBeVisible({
-          timeout: UI_READY,
-        });
+        // The grid already has a "Trace ID" header. Wait for detail-response
+        // content before inspecting the request recorded by its route handler.
+        await expect(
+          page.getByText("support_agent").first(),
+          "selected shared trace spans are rendered",
+        ).toBeVisible({ timeout: UI_READY });
         expect(traceRequests).toEqual([TRACE_A]);
-        await expect(page.getByText("support_agent").first()).toBeVisible({
-          timeout: UI_READY,
-        });
       },
       { timeout: UI_READY },
     );

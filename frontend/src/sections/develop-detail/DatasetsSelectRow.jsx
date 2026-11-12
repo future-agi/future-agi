@@ -26,15 +26,18 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import CustomTooltip from "src/components/tooltip";
 import Share from "src/components/Share/Share";
 import ConfigureDatasetModal from "./Common/ConfigureDatasetModal";
+import DatasetVersionChip from "./DataTab/Versions/DatasetVersionChip";
+import NewExperimentButton from "./Experiment/NewExperimentButton";
 import {
   useDatasetOriginStore,
   useProcessingStore,
-  useRunExperimentStoreShallow,
   useRunOptimizationStore,
 } from "./states";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+
+import { isPrototypeMode } from "src/utils/prototype";
 
 const DatasetsSelectRow = ({
   setIsChooseWinnerSelected,
@@ -61,7 +64,9 @@ const DatasetsSelectRow = ({
   );
 
   const isData = Boolean(tableData?.data?.result?.table?.length);
-  const isSyntheticDataset = Boolean(tableData?.data?.result?.synthetic_dataset);
+  const isSyntheticDataset = Boolean(
+    tableData?.data?.result?.synthetic_dataset,
+  );
   const plusRef = useRef(null);
   const compareRef = useRef(null);
   const theme = useTheme();
@@ -69,6 +74,7 @@ const DatasetsSelectRow = ({
   const [queryParamState] = useSearchParams({
     tab: "",
   });
+  const asOfVersion = Boolean(queryParamState?.version);
   const location = useLocation();
 
   const { dataset: dataSetId } = useParams();
@@ -91,12 +97,20 @@ const DatasetsSelectRow = ({
   // Use prop if provided, otherwise check URL params
   const hideScenarioFeatures = hideScenarioFeaturesProp ?? fromScenario;
 
-  const { initiateCreateMode } = useRunExperimentStoreShallow((state) => ({
-    initiateCreateMode: state.initiateCreateMode,
-  }));
   const { setOpenRunOptimization } = useRunOptimizationStore();
   const { processingComplete } = useDatasetOriginStore();
   const { isProcessingData } = useProcessingStore();
+
+  // L7b absent-sweep: Compare datasets is absent in prototype builds (its
+  // flow is not mocked). A compare deep link leaves compare mode and lands
+  // on the dataset's Data tab.
+  const compareAbsent = isPrototypeMode();
+  useEffect(() => {
+    if (compareAbsent && isCompareDataset) {
+      setIsCompareDataset?.(false);
+      setCurrentTab?.("data");
+    }
+  }, [compareAbsent, isCompareDataset]);
 
   useEffect(() => {
     if (!compareFromOutside) {
@@ -217,14 +231,6 @@ const DatasetsSelectRow = ({
     ? []
     : [
         {
-          icon: "ic_experiment",
-          title: "Experiment",
-          action: () => initiateCreateMode(true),
-          hoverText: "Configure multiple prompts, models, and evaluations",
-          link: "https://docs.futureagi.com/docs/dataset/features/experiments",
-          // event: Events.runExperimentClicked,
-        },
-        {
           icon: "ic_optimize",
           title: "Optimize",
           hoverText:
@@ -256,8 +262,14 @@ const DatasetsSelectRow = ({
           paddingX: theme.spacing(1),
           paddingRight: theme.spacing(2.5),
           display: "flex",
-          gap: theme.spacing(2),
+          gap: theme.spacing(1.5),
           alignItems: "center",
+          // Header buttons keep one-line labels; when a wide version chip
+          // ("v7 latest golden-v4") leaves no room, the action buttons wrap
+          // to a second line instead of overflowing.
+          flexWrap: "wrap",
+          rowGap: theme.spacing(1),
+          "& .MuiButton-root": { whiteSpace: "nowrap", flexShrink: 0 },
         }}
       >
         <BackButton onBack={handleBackClick} />
@@ -282,14 +294,14 @@ const DatasetsSelectRow = ({
               <Box sx={{ fontSize: "12px", color: "text.secondary" }}>
                 Scenario
               </Box>
-              <Box sx={{ fontSize: "14px", fontWeight: 500 }}>
+              <Box sx={{ fontSize: "13px", fontWeight: 500 }}>
                 {scenarioName}
               </Box>
             </Box>
           </Box>
         )} */}
 
-        {!isCompareDataset ? (
+        {!isCompareDataset || compareAbsent ? (
           <>
             <Box
               sx={{
@@ -336,7 +348,7 @@ const DatasetsSelectRow = ({
                   }}
                 >
                   <CircularProgress size={16} />
-                  <Box sx={{ color: "text.secondary", fontSize: "14px" }}>
+                  <Box sx={{ color: "text.secondary", fontSize: "13px" }}>
                     {fromScenario
                       ? "Loading scenarios..."
                       : "Loading datasets..."}
@@ -350,7 +362,6 @@ const DatasetsSelectRow = ({
                   options={scenarioOptions || []}
                   renderValue={renderValue}
                   anchorRef={plusRef}
-                  ref={plusRef}
                   popoverComponent={(props) => (
                     <DatasetSelectDropDown
                       {...props}
@@ -398,7 +409,6 @@ const DatasetsSelectRow = ({
                   options={datasetOptions || []}
                   renderValue={renderValue}
                   anchorRef={plusRef}
-                  ref={plusRef}
                   popoverComponent={(props) => (
                     <DatasetSelectDropDown
                       {...props}
@@ -434,39 +444,49 @@ const DatasetsSelectRow = ({
                 />
               )}
             </Box>
-            {!shouldHideDevelopBar && !hideScenarioFeatures && (
-              <CustomTooltip
-                show={true}
-                title="Compare with another dataset"
-                placement="top"
-                arrow
-                size="small"
-              >
-                <Button
-                  ref={compareRef}
+            {/* Slot (L3): dataset version chip */}
+            {!shouldHideDevelopBar && <DatasetVersionChip />}
+            {/* "Compare datasets" (§1.3: "Compare runs" is the run compare
+                page); like the right-side buttons, only on the Data tab. */}
+            {/* Not while viewing a past version (read-only): the wide
+                "Viewing v5 · golden-v3" chip takes its place. */}
+            {currentTab === "data" &&
+              !compareAbsent &&
+              !shouldHideDevelopBar &&
+              !hideScenarioFeatures &&
+              !asOfVersion && (
+                <CustomTooltip
+                  show={true}
+                  title="Compare with another dataset"
+                  placement="top"
+                  arrow
                   size="small"
-                  variant="outlined"
-                  onClick={() => {
-                    setCompareDatasetDrawerVisible(true);
-                    trackEvent(Events.datasetCompareClicked, {
-                      [PropertyName.id]: dataSetId,
-                    });
-                  }}
-                  disabled={
-                    !isData || (isSyntheticDataset && !processingComplete)
-                  }
-                  startIcon={
-                    <SvgColor
-                      src="/assets/icons/custom/compare.svg"
-                      // sx={{ width: "16px", height: "16px", color: theme.palette.text.primary }}
-                    />
-                  }
-                  // sx={buttonStyles}
                 >
-                  Compare
-                </Button>
-              </CustomTooltip>
-            )}
+                  <Button
+                    ref={compareRef}
+                    size="small"
+                    variant="outlined"
+                    onClick={() => {
+                      setCompareDatasetDrawerVisible(true);
+                      trackEvent(Events.datasetCompareClicked, {
+                        [PropertyName.id]: dataSetId,
+                      });
+                    }}
+                    disabled={
+                      !isData || (isSyntheticDataset && !processingComplete)
+                    }
+                    startIcon={
+                      <SvgColor
+                        src="/assets/icons/custom/compare.svg"
+                        // sx={{ width: "16px", height: "16px", color: theme.palette.text.primary }}
+                      />
+                    }
+                    // sx={buttonStyles}
+                  >
+                    Compare datasets
+                  </Button>
+                </CustomTooltip>
+              )}
             <Box
               sx={{
                 display: "flex",
@@ -475,6 +495,17 @@ const DatasetsSelectRow = ({
                 alignItems: "center",
               }}
             >
+              {/* Slot (L5): New experiment, in place of the old Experiment button */}
+              {currentTab === "data" &&
+                !shouldHideDevelopBar &&
+                !hideScenarioFeatures && (
+                  <NewExperimentButton
+                    placement="header"
+                    disabled={
+                      !isData || (isSyntheticDataset && !processingComplete)
+                    }
+                  />
+                )}
               {currentTab === "data" &&
                 !shouldHideDevelopBar &&
                 actionButtons.map((button, index) => (
@@ -488,7 +519,7 @@ const DatasetsSelectRow = ({
                           <Link
                             href={button.link}
                             underline="always"
-                            color="blue.500"
+                            color="status.info.fg"
                             target="_blank"
                             rel="noopener noreferrer"
                             fontWeight="fontWeightMedium"
@@ -581,15 +612,17 @@ const DatasetsSelectRow = ({
           />
         )}
       </Box>
-      <CompareDatasetDrawer
-        onCompareDatasetDrawerClose={onCompareDatasetDrawerClose}
-        compareDatasetDrawerVisible={compareDatasetDrawerVisible}
-        datasetOptions={datasetOptions}
-        setCompareDatasetDrawerVisible={setCompareDatasetDrawerVisible}
-        setBaseColumnDrawerVisible={setBaseColumnDrawerVisible}
-        onSelectedDatasetsChange={handleSelectedDatasets}
-      />
-      {selectedDatasets.length ? (
+      {!compareAbsent && (
+        <CompareDatasetDrawer
+          onCompareDatasetDrawerClose={onCompareDatasetDrawerClose}
+          compareDatasetDrawerVisible={compareDatasetDrawerVisible}
+          datasetOptions={datasetOptions}
+          setCompareDatasetDrawerVisible={setCompareDatasetDrawerVisible}
+          setBaseColumnDrawerVisible={setBaseColumnDrawerVisible}
+          onSelectedDatasetsChange={handleSelectedDatasets}
+        />
+      )}
+      {selectedDatasets.length && !compareAbsent ? (
         <BaseColumnDrawer
           setIsCompareDataset={setIsCompareDataset}
           baseColumnDrawerVisible={baseColumnDrawerVisible}

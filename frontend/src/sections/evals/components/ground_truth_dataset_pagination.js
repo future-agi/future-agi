@@ -214,14 +214,17 @@ export const appendGroundTruthDatasetPage = (
 };
 
 /**
- * One user action performs one bounded page request.  Promise.race keeps the
- * wall honest even when a transport adapter ignores AbortSignal; late results
- * are never appended to the visible exact prefix.
+ * One call performs one bounded page request.  The import flow calls it once
+ * per page, in sequence, and stops at the first failure.  Promise.race keeps
+ * the wall honest even when a transport adapter ignores AbortSignal; late
+ * results are never appended to the visible exact prefix.  An optional
+ * `signal` lets the caller cancel the in-flight request.
  */
 export const readNextGroundTruthDatasetPage = async ({
   previous,
   requestPage,
   timeoutMs = GROUND_TRUTH_DATASET_ACTION_TIMEOUT_MS,
+  signal,
 }) => {
   if (previous?.complete) return previous;
   const current = previous || createEmptyGroundTruthDatasetRead();
@@ -234,12 +237,15 @@ export const readNextGroundTruthDatasetPage = async ({
   }
 
   const controller = new AbortController();
+  const forwardAbort = () => controller.abort(signal.reason);
+  if (signal?.aborted) forwardAbort();
+  else signal?.addEventListener("abort", forwardAbort, { once: true });
   let timer;
   const timeoutError = paginationError(
     "ground_truth_dataset_timeout",
     `Dataset rows did not load within ${formatRuntimeSeconds(
       timeoutMs,
-    )} seconds. Retry Load more.`,
+    )} seconds. Retry to continue from the last loaded row.`,
   );
   const deadline = new Promise((_, reject) => {
     timer = globalThis.setTimeout(() => {
@@ -266,5 +272,6 @@ export const readNextGroundTruthDatasetPage = async ({
     );
   } finally {
     globalThis.clearTimeout(timer);
+    signal?.removeEventListener("abort", forwardAbort);
   }
 };

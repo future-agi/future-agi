@@ -1,0 +1,20 @@
+{
+  "http": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json",
+      "www-authenticate": "Bearer realm=\"agentcc-gateway\""
+    }
+  },
+  "body": {
+    "error": {
+      "message": "This gateway API key is not recognized: it may be mistyped, revoked or deleted. Check it on the Gateway API Keys page, or create a new one there.",
+      "type": "authentication_error",
+      "param": null,
+      "code": "invalid_api_key",
+      "metadata": {
+        "reason": "unknown_api_key"
+      }
+    }
+  }
+}

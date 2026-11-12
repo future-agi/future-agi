@@ -15,6 +15,7 @@ from django.db.models import Count, Q
 
 
 def reseed_broken_demo_data(apps, schema_editor):
+    alias = schema_editor.connection.alias
     Dataset = apps.get_model("model_hub", "Dataset")
     Row = apps.get_model("model_hub", "Row")
     Cell = apps.get_model("model_hub", "Cell")
@@ -29,7 +30,7 @@ def reseed_broken_demo_data(apps, schema_editor):
 
     # Find broken demo datasets (0 rows) in one query
     broken_datasets = (
-        Dataset.objects.filter(source="demo", deleted=False)
+        Dataset.objects.using(alias).filter(source="demo", deleted=False)
         .annotate(row_count=Count("row", filter=Q(row__deleted=False)))
         .filter(row_count=0)
     )
@@ -51,7 +52,7 @@ def reseed_broken_demo_data(apps, schema_editor):
     failed = 0
     for org_id, datasets in broken_orgs.items():
         membership = (
-            OrganizationMembership.objects.filter(
+            OrganizationMembership.objects.using(alias).filter(
                 organization_id=org_id, is_active=True
             )
             .order_by("created_at")
@@ -67,32 +68,30 @@ def reseed_broken_demo_data(apps, schema_editor):
         # Use a savepoint so we can roll back just this org on failure
         # without aborting the entire migration.
         #
-        # NOTE: upload_demo_dataset / create_demo_traces_and_spans swallow
-        # their own exceptions, so we can't rely on them raising. Instead
-        # we verify the result after calling them and manually roll back
-        # the savepoint if the reseed didn't produce rows.
+        # The trace seeder can return an error instead of raising. Verify
+        # the result and roll back if the reseed didn't produce rows.
         try:
-            sid = transaction.savepoint()
+            sid = transaction.savepoint(using=alias)
 
             # Delete broken datasets and children
-            Cell.objects.filter(dataset_id__in=ds_ids).delete()
-            Row.objects.filter(dataset_id__in=ds_ids).delete()
-            Column.objects.filter(dataset_id__in=ds_ids).delete()
-            Dataset.objects.filter(pk__in=ds_ids).delete()
+            Cell.objects.using(alias).filter(dataset_id__in=ds_ids).delete()
+            Row.objects.using(alias).filter(dataset_id__in=ds_ids).delete()
+            Column.objects.using(alias).filter(dataset_id__in=ds_ids).delete()
+            Dataset.objects.using(alias).filter(pk__in=ds_ids).delete()
 
             # Hard-delete demo projects so re-seed can recreate
-            Project.objects.filter(
+            Project.objects.using(alias).filter(
                 organization_id=org_id, source="demo", deleted=False
             ).delete()
 
             # Re-seed
-            upload_demo_dataset(org_id, user_id)
-            create_demo_traces_and_spans(str(org_id))
+            upload_demo_dataset(org_id, user_id, using=alias)
+            # The publication outbox does not exist until accounts.0029.
+            create_demo_traces_and_spans(str(org_id), using=alias, publish=False)
 
-            # Verify reseed actually worked — the functions swallow errors
-            # so we must check the result ourselves.
+            # Verify the reseed produced rows before committing the repair.
             new_demo = (
-                Dataset.objects.filter(
+                Dataset.objects.using(alias).filter(
                     organization_id=org_id,
                     source="demo",
                     name="Demo-dataset",
@@ -105,16 +104,16 @@ def reseed_broken_demo_data(apps, schema_editor):
             if not new_demo or new_demo.row_count == 0:
                 # Reseed silently failed — roll back to keep old broken data
                 # (broken data is better than no data)
-                transaction.savepoint_rollback(sid)
+                transaction.savepoint_rollback(sid, using=alias)
                 print(f"  FAIL org={org_id} — reseed produced no rows, rolled back")
                 failed += 1
             else:
-                transaction.savepoint_commit(sid)
+                transaction.savepoint_commit(sid, using=alias)
                 print(f"  OK org={org_id} — re-seeded ({new_demo.row_count} rows)")
                 ok += 1
 
         except Exception as e:
-            transaction.savepoint_rollback(sid)
+            transaction.savepoint_rollback(sid, using=alias)
             print(f"  FAIL org={org_id}: {e}")
             failed += 1
 

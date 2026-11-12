@@ -35,6 +35,8 @@ class BillingEventType(str, Enum):  # noqa: UP042 - StrEnum changes str() of eve
     EVAL_EXPLANATION = "eval_explanation"
     FALCON_AI_CHAT = "falcon_ai_chat"
     HARNESS_AUTHORING = "harness_authoring"
+    JEV_EVALUATOR = "jev_evaluator"
+    INSIGHTS_REPORT = "insights_report"
     AGENT_FIX = "agent_fix"
 
     # ── Storage ──
@@ -45,6 +47,10 @@ class BillingEventType(str, Enum):  # noqa: UP042 - StrEnum changes str() of eve
     # ── Gateway ──
     GATEWAY_REQUEST = "gateway_request"
     GATEWAY_CACHE_HIT = "gateway_cache_hit"
+    # USD micros billed for managed-model calls, already paid from prepaid
+    # managed credits. Its own dimension: never ai_credits, which would mark
+    # the spend up a second time.
+    GATEWAY_MANAGED_SPEND = "gateway_managed_spend"
 
     # ── Simulation ──
     VOICE_CALL = "voice_call"

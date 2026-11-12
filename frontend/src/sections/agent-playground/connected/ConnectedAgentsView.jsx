@@ -1,13 +1,14 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CONNECTED_AGENTS_PATH } from "../agentsTabs";
+import { CONNECTED_AGENTS_PATH, CONNECT_AGENT_PLACE } from "../agentsTabs";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import { format } from "date-fns";
-import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
+import OverflowCellText from "src/components/data-table/OverflowCellText";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useConnectedAgents } from "src/api/agents/connectedAgents";
 import {
@@ -17,42 +18,50 @@ import {
   usedInLabel,
   versionsParts,
 } from "./connectedAgentLabels";
+import ListToolbar from "src/components/list-toolbar/ListToolbar";
+import EmptyState from "src/components/empty-state";
 
 const PAGE_SIZE_DEFAULT = 25;
 const MONO = "ui-monospace, Menlo, monospace";
 
-const CellText = ({ children, color = "text.primary" }) => (
-  <Typography variant="body2" noWrap sx={{ fontSize: 13, color }}>
+// Table values are 12/18 (body-sm), one size under the row title's weight.
+const CellText = ({ children, color = "text.secondary", title }) => (
+  <Typography variant="body2" noWrap title={title} sx={{ color }}>
     {children}
   </Typography>
 );
 
-CellText.propTypes = { children: PropTypes.node, color: PropTypes.string };
+CellText.propTypes = {
+  children: PropTypes.node,
+  color: PropTypes.string,
+  title: PropTypes.string,
+};
 
+// Every column's minimum (764 px) fits the 768 px a 1024 px window leaves
+// the table (1024 - 200 menu - 2 x 24 padding, less the 8 px bar when the
+// rows scroll), so no column hides past the right edge; wider windows give
+// the room to Agent name and Used in. Value widths are Inter's own at
+// 12 px/400, plus the cell's 2 x 10 px padding and 1 px for rounding.
 const columns = [
   {
     id: "name",
     accessorKey: "name",
     header: "Agent name",
     meta: { flex: 2 },
-    minSize: 280,
+    // About 142 px at 1024, 359 at 1280, 466 at 1440. A longer name ends in
+    // an ellipsis and shows whole on hover or when its cell takes focus.
+    minSize: 138,
     enableSorting: false,
     cell: ({ row }) => {
       const a = row.original;
       return (
         <Stack justifyContent="center" sx={{ minWidth: 0, height: "100%" }}>
-          <Typography variant="body2" noWrap sx={{ fontWeight: 500 }}>
-            {a.name}
-          </Typography>
-          {a.description && (
-            <Typography
-              noWrap
-              title={a.description}
-              sx={{ typography: "s3", color: "text.subtitle" }}
-            >
-              {a.description}
-            </Typography>
-          )}
+          {/* One line: the name; the tooltip adds the description. */}
+          <OverflowCellText
+            text={a.name}
+            detail={a.description || undefined}
+            sx={{ fontWeight: 500 }}
+          />
         </Stack>
       );
     },
@@ -61,7 +70,8 @@ const columns = [
     id: "modality",
     accessorKey: "modality",
     header: "Modality",
-    size: 160,
+    // "Voice · Outbound" (98.7 px) after its 16 px icon and 6 px gap.
+    size: 142,
     enableSorting: false,
     cell: ({ row }) => {
       const icon = modalityIcon(row.original);
@@ -88,7 +98,7 @@ const columns = [
     id: "source",
     accessorKey: "source",
     header: "Source",
-    size: 150,
+    size: 90,
     enableSorting: false,
     cell: ({ row }) => <CellText>{sourceLabel(row.original.source)}</CellText>,
   },
@@ -96,13 +106,13 @@ const columns = [
     id: "versions",
     accessorKey: "latestLabel",
     header: "Versions",
-    size: 140,
+    size: 100,
     enableSorting: false,
     cell: ({ row }) => {
       const { version, rest } = versionsParts(row.original);
       return (
         <CellText>
-          <Box component="span" sx={{ fontFamily: MONO, fontWeight: 600 }}>
+          <Box component="span" sx={{ fontFamily: MONO, fontWeight: 500 }}>
             {version}
           </Box>
           <Box component="span" sx={{ color: "text.secondary" }}>
@@ -117,14 +127,18 @@ const columns = [
     accessorKey: "environmentCount",
     header: "Used in",
     meta: { flex: 1 },
-    minSize: 200,
+    // "No environments yet" (118.1 px), whole. A long environment name
+    // ends in an ellipsis and shows whole on hover or when its cell takes
+    // focus.
+    minSize: 140,
     enableSorting: false,
     cell: ({ row }) => {
       const { text, empty } = usedInLabel(row.original);
       return (
-        <CellText color={empty ? "text.disabled" : "text.primary"}>
-          {text}
-        </CellText>
+        <OverflowCellText
+          text={text}
+          sx={{ color: empty ? "text.disabled" : "text.secondary" }}
+        />
       );
     },
   },
@@ -132,15 +146,16 @@ const columns = [
     id: "createdAt",
     accessorKey: "createdAt",
     header: "Created at",
-    size: 180,
+    // Every "dd-MM-yyyy, h:mm a" value whole: the widest from 2026 to 2030,
+    // "04-04-2030, 10:44 AM", is 132.3 px.
+    size: 154,
     enableSorting: false,
-    cell: ({ row }) => (
-      <CellText>
-        {row.original.createdAt
-          ? format(new Date(row.original.createdAt), "dd-MM-yyyy, h:mm a")
-          : "—"}
-      </CellText>
-    ),
+    cell: ({ row }) => {
+      const at = row.original.createdAt
+        ? format(new Date(row.original.createdAt), "dd-MM-yyyy, h:mm a")
+        : null;
+      return <CellText title={at ?? undefined}>{at ?? "—"}</CellText>;
+    },
   },
 ];
 
@@ -163,53 +178,29 @@ export default function ConnectedAgentsView({ onConnect }) {
   });
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
-  const rowHeight = useMemo(
-    () => (items.some((a) => a.description) ? 52 : 44),
-    [items],
-  );
+  // One-line rows: the name only.
+  const rowHeight = ROW_HEIGHT.default;
 
   if (!isLoading && !isError && !search && !query && total === 0) {
+    // Name only the ways in that Build environment offers, and make no
+    // claim about a copy: hosted agents are simulated on their own platform.
     return (
-      <Box
-        sx={{
-          p: 5,
-          textAlign: "center",
-          border: "1px dashed",
-          borderColor: "divider",
-          borderRadius: 1.5,
-        }}
-      >
-        <Iconify
-          icon="solar:link-circle-linear"
-          width={28}
-          sx={{ color: "text.subtitle" }}
-        />
-        <Typography sx={{ typography: "s1", fontWeight: 600, mt: 1 }}>
-          No connected agents yet
-        </Typography>
-        <Typography
-          sx={{
-            typography: "s2",
-            color: "text.subtitle",
-            mt: 0.5,
-            mb: 2,
-            maxWidth: 460,
-            mx: "auto",
-          }}
-        >
-          Connect your agent from a hosted platform, an endpoint, a repository
-          or an upload. Simulations run against a copy of it.
-        </Typography>
-        <Button
-          variant="contained"
-          color="primary"
-          size="small"
-          onClick={onConnect}
-          sx={{ typography: "s2", fontWeight: 700 }}
-        >
-          Connect an agent
-        </Button>
-      </Box>
+      <EmptyState
+        icon="solar:link-circle-linear"
+        title="No connected agents yet"
+        description="Connect your agent from a hosted platform, a repository or an upload."
+        action={
+          // Connecting happens in Simulate, so the button names where it goes.
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            onClick={onConnect}
+          >
+            Connect in {CONNECT_AGENT_PLACE}
+          </Button>
+        }
+      />
     );
   }
 
@@ -218,21 +209,24 @@ export default function ConnectedAgentsView({ onConnect }) {
       sx={{
         display: "flex",
         flexDirection: "column",
-        gap: 1.5,
         flex: 1,
         minHeight: 0,
       }}
     >
-      <FormSearchField
-        searchQuery={query}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setPage(0);
-        }}
-        size="small"
-        placeholder="Search"
-        sx={{ width: 250, "& .MuiOutlinedInput-root": { height: "30px" } }}
-      />
+      {/* Same toolbar wrapper as the Agent Playground tab: 12px below the
+          tabs, 8px above the table, so switching tabs moves nothing. */}
+      <ListToolbar>
+        <FormSearchField
+          searchQuery={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setPage(0);
+          }}
+          size="small"
+          placeholder="Search"
+          sx={{ width: 250 }}
+        />
+      </ListToolbar>
       <DataTable
         columns={columns}
         data={items}
@@ -240,6 +234,7 @@ export default function ConnectedAgentsView({ onConnect }) {
         rowCount={total}
         getRowId={(r) => r.id}
         rowHeight={rowHeight}
+        showScrollbar
         onRowClick={(r) => navigate(`${CONNECTED_AGENTS_PATH}/${r.id}`)}
         emptyMessage={
           isError

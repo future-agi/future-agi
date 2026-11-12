@@ -1,5 +1,6 @@
 import { request, type APIRequestContext, type Page, type Request, type TestInfo } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
+import { test as scopeTest } from '../../lib/scope-actors';
 import { sendTrace, type SeededTrace } from '../../lib/otlp';
 import { POLL, type StateProbe } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
@@ -167,6 +168,12 @@ const gridRows = (page: Page, colId: string | null) =>
 // Press it as a user would, a bounded number of times per step, so the row
 // check reads the finished result rather than the paused one.
 const MAX_CONTINUE_CLICKS = 10;
+type UserViewportFrame = {
+  top: number; height: number; full: number;
+  rows: { user: string; rowId: string | null | undefined; rowIndex: number }[];
+};
+type UserViewportWalk = { dateOption: string | undefined; apiIds: string[]; renderedIds: string[]; frames: UserViewportFrame[] };
+const userViewportWitness = new WeakMap<Page, { latest: Promise<string[]>; walks: UserViewportWalk[] }>();
 const readRows = async (
   page: Page, colId: string | null, keep: (row: string) => boolean, state: { clicks: number },
 ) => {
@@ -175,6 +182,47 @@ const readRows = async (
   if (state.clicks < MAX_CONTINUE_CLICKS && (await resume.count()) > 0) {
     state.clicks += 1;
     await resume.first().click();
+  }
+  const witness = userViewportWitness.get(page);
+  if (colId === 'user_id' && witness) {
+    const apiIds = (await witness.latest).slice().sort();
+    if (apiIds.length === 0) {
+      // An empty page only says the date range was quiet: the grid stays,
+      // with no rows to wheel-scroll, and its overlay names that range.
+      await expect(page.locator('.clean-data-table:visible'))
+        .toHaveCount(1, { timeout: UI_READY });
+      await expect(page.getByRole('heading', { name: /^No users for / }))
+        .toBeVisible({ timeout: UI_READY });
+      await expect(page.getByText('Set up telemetry', { exact: true }))
+        .toHaveCount(0);
+      const rendered = await gridRows(page, colId);
+      expect(rendered, 'range-empty Users grid must equal actual API page').toEqual(apiIds);
+      witness.walks.push({
+        dateOption: urlDateFilter(page, 'userDateFilter')?.dateOption,
+        apiIds, renderedIds: rendered, frames: [],
+      });
+      return rendered.filter(keep);
+    }
+    const viewport = page.locator('.clean-data-table:visible .ag-body-viewport');
+    await viewport.hover(); await page.mouse.wheel(0, -10000);
+    await expect.poll(() => viewport.evaluate(el => el.scrollTop), {timeout:UI_READY}).toBe(0);
+    const seen = new Set<string>(); const frames: UserViewportFrame[] = [];
+    for (let step=0;step<20;step++) {
+      // Two animation frames let AG Grid render the wheel-driven viewport;
+      // no API rows are inserted into the DOM and no expected set is reduced.
+      await page.evaluate(() => new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+      const rows=await page.locator('.clean-data-table:visible .ag-center-cols-container .ag-row[row-id] [col-id="user_id"]').evaluateAll(cells=>cells.map(c=>({user:(c.textContent??'').trim(),rowId:c.closest('.ag-row')?.getAttribute('row-id'),rowIndex:Number(c.closest('.ag-row')?.getAttribute('row-index'))})));
+      rows.forEach(r=>seen.add(r.user));
+      const pos=await viewport.evaluate(el=>({top:el.scrollTop,height:el.clientHeight,full:el.scrollHeight}));
+      frames.push({...pos,rows});
+      if(pos.top+pos.height>=pos.full-1)break;
+      await viewport.hover();await page.mouse.wheel(0,Math.max(120,pos.height*0.8));
+      await expect.poll(()=>viewport.evaluate(el=>el.scrollTop),{timeout:UI_READY}).toBeGreaterThan(pos.top);
+    }
+    const rendered=[...seen].sort();
+    expect(rendered,'wheel-walked complete rendered IDs must equal actual API page').toEqual(apiIds);
+    const item={dateOption:urlDateFilter(page,'userDateFilter')?.dateOption,apiIds,renderedIds:rendered,frames};witness.walks.push(item);
+    return rendered.filter(keep);
   }
   return (await gridRows(page, colId)).filter(keep);
 };
@@ -798,7 +846,7 @@ for (const surface of [
   });
 }
 
-test('OBS-E2E-048: the workspace Users list opens a preset date fresh from a bookmark or a saved view, and Custom as stored', {
+scopeTest('OBS-E2E-048: the workspace Users list opens a preset date fresh from a bookmark or a saved view, and Custom as stored', {
   tag: ['@flow'],
   annotation: flowAnnotation({
     id: 'OBS-E2E-048', area: 'observe',
@@ -806,17 +854,29 @@ test('OBS-E2E-048: the workspace Users list opens a preset date fresh from a boo
     steps: ['send one trace now and one yesterday at noon, each from its own user, so a project auto-creates',
             'for each preset and Custom, open a /dashboard/users link carrying that option with a range from ~400 days ago',
             'save one workspace Users view per preset and Custom, all storing that range',
-            'open /dashboard/users and click each saved view tab in turn'],
+            'open /dashboard/users and click each saved view tab in turn',
+            'wheel-scroll each nonempty complete Users API page, including a target beyond the first virtualized viewport; for Custom, verify the grid stays and names the empty range instead of the setup screen'],
     backendChecks: ['both traces have all their spans in ClickHouse spans (FINAL)',
                     'each preset link and view sends every user-list request with the preset window as of now, never the stored one, and the URL date param is rewritten to it',
                     'Today lists only the today user, Yesterday only the yesterday user, and 7D–12M exactly both, among this flow\'s users',
                     'Custom links and views send and keep their stored range verbatim and list neither user',
+                    'the complete wheel-scrolled rendered user-ID set equals the actual API page; a rolling view reveals the initially offscreen target; an empty API page keeps the grid visible with no user rows and a no-users message naming the date range, never the setup screen',
                     'opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range'],
   }),
-}, async ({ page, actor, probe }, testInfo) => {
+}, async ({ browser, scopeActors, scopeProbe: probe }, testInfo) => {
   // SPAN_VISIBLE (15s) + 8 bookmark loads + the list load + 8 tab steps, each
   // bounded by UI_READY (17 × 60s = 1020s); the rest is headroom.
   test.setTimeout(1_100_000);
+  // The workspace-wide list must not inherit a previous flow's user pages.
+  // Use the already-qualified test-scoped actor fixture, then reproduce the
+  // virtualized busy page deterministically with the 23 controls below.
+  const actor = scopeActors.owners[0];
+  const context = await scopeActors.openContext(browser, scopeActors.ownerA);
+  const page = await context.newPage();
+  // At 900px high AG Grid's overscan mounts the entire 25-row page. Keep a
+  // desktop width but a shorter viewport so the final virtualization guard
+  // proves that scrolling really reveals a previously unmounted target.
+  await page.setViewportSize({ width: 1440, height: 640 });
   const req = await request.newContext();
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const stored = staleRange(400);
@@ -829,6 +889,29 @@ test('OBS-E2E-048: the workspace Users list opens a preset date fresh from a boo
   }));
   await attachSeeded(testInfo, { ...seeded, stored, views });
 
+  // Twenty-three controls place yesterday's target beyond the initial
+  // virtualized viewport. Scrolling must reveal it; API presence alone cannot
+  // satisfy the UI assertion. The two date-window targets remain unchanged.
+  const controls=[];
+  for(let i=0;i<23;i++) {
+    const name=`e2e-svd-scroll-${suffix}-${i}-control`;
+    const at=BigInt(Date.now()-60_000-i*1000)*1_000_000n;
+    controls.push(await sendTrace(req,{collectorUrl:E2E.collectorUrl,apiKey:actor.apiKey,secretKey:actor.secretKey,
+      projectName:`e2e-svdates-${suffix}`,rootName:name,childName:`${name}-llm`,
+      ...identity(`${name}-session`,name),startTimeUnixNano:at,endTimeUnixNano:at+50_000_000n}));
+  }
+  await testInfo.attach('virtualization-control-identities', {body:JSON.stringify(controls),contentType:'application/json'});
+  const allSources=[seeded.today,seeded.yesterday,...controls];
+  await expect.poll(async()=>{
+    const spans=await probe.ch<{trace_id:string;id:string}>('SELECT trace_id,id FROM spans FINAL WHERE project_id={p:UUID}',{p:seeded.projectId});
+    return spans.map(s=>`${s.trace_id}:${s.id}`).sort();
+  },POLL.SPAN_VISIBLE).toEqual(allSources.flatMap(t=>t.spanIds.map(id=>`${t.traceId}:${id}`)).sort());
+  const viewportState={latest:Promise.resolve([] as string[]),walks:[] as UserViewportWalk[]};userViewportWitness.set(page,viewportState);
+  page.on('response',response=>{
+    if(new URL(response.url()).pathname===USER_LIST_PATH&&response.request().method()!=='OPTIONS') {
+      viewportState.latest=response.json().then(body=>body.result.table.map((r: {user_id: string})=>r.user_id));
+    }
+  });
   const { todayUser, yesterdayUser } = seeded.names;
   const both = [todayUser, yesterdayUser];
   const rows: Record<Option, string[]> = {
@@ -858,6 +941,10 @@ test('OBS-E2E-048: the workspace Users list opens a preset date fresh from a boo
   await test.step('storage: opening the views wrote nothing back', () =>
     expectStoredUnchanged(probe, views, "->'display'->'dateFilter'",
       (v) => ({ dateFilter: stored, dateOption: v.option })));
+  const neededScroll=viewportState.walks.filter(w=>w.dateOption==='7D'&&w.frames.length>1&&
+    !w.frames[0].rows.some(r=>r.user===yesterdayUser)&&w.renderedIds.includes(yesterdayUser));
+  expect(neededScroll.length,'corrected run must actually reveal previously virtualized target').toBeGreaterThan(0);
+  await testInfo.attach('actual-viewport-walks',{body:JSON.stringify(viewportState.walks),contentType:'application/json'});
   await req.dispose();
 });
 

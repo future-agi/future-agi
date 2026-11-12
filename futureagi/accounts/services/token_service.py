@@ -2,6 +2,7 @@ import structlog
 from django.core.cache import cache
 from django.utils import timezone
 
+from accounts.services.auth_cache import cache_access_token
 from accounts.authentication import generate_encrypted_message
 from accounts.models.auth_token import (
     AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES,
@@ -49,10 +50,12 @@ def issue_tokens(user):
     access_token_encrypted = generate_encrypted_message(
         {"user_id": str(user.id), "id": str(access_token.id)}
     )
-    cache.set(
-        f"access_token_{str(access_token.id)}",
-        {"token": access_token_encrypted, "user": user},
+    cache_access_token(
+        str(access_token.id),
+        access_token_encrypted,
+        user,
         timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
+        cache_backend=cache,
     )
 
     return {
@@ -92,10 +95,12 @@ def issue_sos_tokens(user):
     access_token_encrypted = generate_encrypted_message(
         {"user_id": str(user.id), "id": str(access_token.id)}
     )
-    cache.set(
-        f"access_token_{str(access_token.id)}",
-        {"token": access_token_encrypted, "user": user},
+    cache_access_token(
+        str(access_token.id),
+        access_token_encrypted,
+        user,
         timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
+        cache_backend=cache,
     )
 
     return {

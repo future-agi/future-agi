@@ -1,3 +1,9 @@
+import {
+  formatExactMoney,
+  multiplyMoneyValues,
+} from "src/sections/common/format/money";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import PropTypes from "prop-types";
 import React, {
   useState,
@@ -12,6 +18,7 @@ import {
   Autocomplete,
   Box,
   Button,
+  ButtonBase,
   Chip,
   CircularProgress,
   Drawer,
@@ -36,7 +43,23 @@ import {
   validateFilter,
   transformFilter,
 } from "src/sections/develop-detail/DataTab/DevelopFilters/common";
-import DevelopFilterRow from "src/sections/develop-detail/DataTab/DevelopFilters/DevelopFilterRow";
+import { FilterButton } from "src/components/filter";
+import {
+  columnsToFields,
+  fromPanelValue as fromFilterPanelValue,
+  toPanelValue as toFilterPanelValue,
+} from "src/components/filter/datasetColumnAdapter";
+
+// Column data types the dataset rows endpoint can filter on.
+const FILTERABLE_DATA_TYPES = new Set([
+  "text",
+  "integer",
+  "float",
+  "boolean",
+  "datetime",
+  "array",
+  "audio",
+]);
 import { getRandomId } from "src/utils/utils";
 import { isEqual } from "lodash";
 import "src/sections/develop-detail/DataTab/developDataGrid.css";
@@ -96,7 +119,6 @@ import {
   SESSION_DATE_FILTER_COLUMN,
 } from "./add-items-session-utils";
 import "src/styles/clean-data-table.css";
-import { fetchRootSpans } from "src/api/project/llm-tracing";
 import { summarizeAddResults, addResultToast } from "./add-items-results";
 import {
   ExactSelectorContinuationNotice,
@@ -117,6 +139,18 @@ import {
   traceSelectorRowsFromResponse,
 } from "./telemetry-selector-contract";
 import { spanSourceIdsFromPhysicalRowIds } from "src/sections/projects/LLMTracing/spanPhysicalIdentity";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import ContentSkeleton from "src/components/content-skeleton";
+
+const CHIP_ROLE = {
+  success: "success",
+  warning: "warning",
+  error: "danger",
+  info: "info",
+  primary: "discovery",
+  secondary: "discovery",
+  default: "neutral",
+};
 
 const panelFilterToApi = (panel) =>
   panelFilterToApiBase(panel, { includeMeta: true });
@@ -141,10 +175,8 @@ export function SelectionCheckboxNudge({ selectionCount }) {
     <Alert
       severity="info"
       variant="outlined"
-      icon={<Iconify icon="mdi:checkbox-marked-outline" width={18} />}
       sx={{
         mt: 2,
-        borderRadius: 0.75,
         "& .MuiAlert-message": {
           width: "100%",
         },
@@ -177,7 +209,7 @@ export function buildAnnotatorFilterChipLabelMap(annotatorOptions = []) {
     : undefined;
 }
 
-function renderProjectAutocompleteOption(props, option, state) {
+export function renderProjectAutocompleteOption(props, option, state) {
   const { key, ...optionProps } = props;
   return (
     <li
@@ -186,11 +218,7 @@ function renderProjectAutocompleteOption(props, option, state) {
     >
       {option?.name}
       {option?.trace_type === "experiment" && (
-        <Chip
-          label="Prototype"
-          size="small"
-          sx={{ ml: 1, height: 20, fontSize: 10 }}
-        />
+        <Chip label="Experiment" size="small" sx={{ ml: 1 }} />
       )}
     </li>
   );
@@ -387,11 +415,11 @@ const SOURCE_TYPES = [
 ];
 
 const SIMULATION_FILTER_CATEGORIES = [
-  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
-  { key: "system", label: "System Metrics", icon: "mdi:tune-variant" },
-  { key: "persona", label: "Persona", icon: "mdi:account-outline" },
-  { key: "attribute", label: "Attributes", icon: "mdi:tag-multiple-outline" },
-  { key: "eval", label: "Evals", icon: "mdi:check-decagram-outline" },
+  { key: "all", label: "All", icon: "solar:widget-4-linear" },
+  { key: "system", label: "System Metrics", icon: "solar:tuning-2-linear" },
+  { key: "persona", label: "Persona", icon: "solar:user-linear" },
+  { key: "attribute", label: "Attributes", icon: "solar:tag-price-linear" },
+  { key: "eval", label: "Evals", icon: "solar:check-circle-linear" },
 ];
 
 const SIMULATION_STATIC_FILTER_FIELDS = [
@@ -616,12 +644,13 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
   const [selectionMode, setSelectionMode] = useState("manual");
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [selectAllInfo, setSelectAllInfo] = useState(null);
-  // Voice/simulator projects route trace selections through CallLogsGrid;
-  // those selections must keep `source_type: "trace"` (matching the voice
-  // obs page's "Add to queue") instead of being converted to root spans.
+  const datasetSelectionRevision = useRef(0);
+  // Voice/simulator projects need the voice filter namespace when resolving
+  // all-matching trace selections on the backend.
   const [isVoiceTraceSelection, setIsVoiceTraceSelection] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
-  // Trace project (from TraceSelector) — passed to fetchRootSpans to prune CH.
+  // Active telemetry picker project — scopes source resolution in the
+  // add-items request.
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const { mutate: addItems, isPending } = useAddQueueItems();
   const queryClient = useQueryClient();
@@ -650,13 +679,16 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
   }, []);
 
   const resetSelection = useCallback(() => {
+    datasetSelectionRevision.current += 1;
     setSelectionMode("manual");
     setSelectedIds(new Set());
     setSelectAllInfo(null);
     setIsVoiceTraceSelection(false);
+    setSelectedProjectId(null);
   }, []);
 
   const handleSubmit = async () => {
+    const selectionRevision = datasetSelectionRevision.current;
     try {
       // Filter-mode selectAll for trace/span/session/call_execution:
       // let the backend resolve the full match set server-side (one POST,
@@ -694,10 +726,12 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
           },
           {
             onSuccess: (resp) => {
-              const { message, variant } = addResultToast(
-                summarizeAddResults([resp]),
-              );
+              const summary = summarizeAddResults([resp]);
+              const { message, variant } = addResultToast(summary);
               enqueueSnackbar(message, { variant });
+              // Nothing was added: keep the drawer and the selection so the
+              // user can read why and change it.
+              if (summary.added === 0) return;
               resetSelection();
               setSourceType(null);
               onClose();
@@ -724,6 +758,8 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
             selectAllInfo.filters,
             selectAllInfo.search,
           );
+          // The picker may have changed while enumeration was in flight.
+          if (datasetSelectionRevision.current !== selectionRevision) return;
           itemsToAdd = allIds.map((id) => ({
             source_type: "dataset_row",
             source_id: id,
@@ -733,43 +769,16 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
         }
       } else {
         let ids = Array.from(selectedIds);
-        let effectiveSourceType = sourceType;
 
         if (sourceType === "observation_span") {
           ids = spanSourceIdsFromPhysicalRowIds(ids);
         }
 
-        // Voice/simulator projects keep `source_type: "trace"` — matches
-        // the "Add to queue" flow on the voice observability page so the
-        // queue badge says "Trace" (not "Span") and the annotator drawer
-        // resolves the call via the trace FK. For regular tracing
-        // projects, remap trace -> root span so the queue items match the
-        // annotator workspace's span-oriented UI (consistent with the
-        // ``mappedIds`` branch above at lines 540-548).
-        if (sourceType === "trace" && !isVoiceTraceSelection) {
-          setIsResolving(true);
-          try {
-            const rootSpanMap = await fetchRootSpans(
-              ids,
-              selectedProjectId ? [selectedProjectId] : [],
-            );
-            const originalCount = ids.length;
-            ids = ids.map((traceId) => rootSpanMap[traceId]).filter(Boolean);
-            effectiveSourceType = "observation_span";
-            const droppedCount = originalCount - ids.length;
-            if (droppedCount > 0) {
-              enqueueSnackbar(
-                `${droppedCount} trace${droppedCount !== 1 ? "s" : ""} skipped — no root span found yet`,
-                { variant: "warning" },
-              );
-            }
-          } finally {
-            setIsResolving(false);
-          }
-        }
-
+        // Keep trace identity in both selection modes so queue deduplication
+        // uses the same FK. Trace tasks already render their root span; that
+        // presentation choice must not turn them into independent span tasks.
         itemsToAdd = ids.map((id) => ({
-          source_type: effectiveSourceType,
+          source_type: sourceType,
           source_id: id,
         }));
       }
@@ -788,6 +797,11 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
       if (totalCount > BATCH_SIZE) {
         const responses = [];
         for (let i = 0; i < totalCount; i += BATCH_SIZE) {
+          // A completed batch must not send more rows from an invalidated scope.
+          if (
+            sourceType === "dataset_row" &&
+            datasetSelectionRevision.current !== selectionRevision
+          ) return;
           const batch = itemsToAdd.slice(i, i + BATCH_SIZE);
           const resp = await new Promise((resolve, reject) => {
             addItems(
@@ -797,22 +811,35 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
           });
           responses.push(resp);
         }
-        const { message, variant } = addResultToast(
-          summarizeAddResults(responses),
-        );
+        // The last batch may have finished after the picker changed, too.
+        if (
+          sourceType === "dataset_row" &&
+          datasetSelectionRevision.current !== selectionRevision
+        ) return;
+        const summary = summarizeAddResults(responses);
+        const { message, variant } = addResultToast(summary);
         enqueueSnackbar(message, { variant });
+        if (summary.added === 0) return;
         resetSelection();
         setSourceType(null);
         onClose();
       } else {
+        if (
+          sourceType === "dataset_row" &&
+          datasetSelectionRevision.current !== selectionRevision
+        ) return;
         addItems(
           { queueId, items: itemsToAdd, project_id: enumeratedProjectId },
           {
             onSuccess: (resp) => {
-              const { message, variant } = addResultToast(
-                summarizeAddResults([resp]),
-              );
+              if (
+                sourceType === "dataset_row" &&
+                datasetSelectionRevision.current !== selectionRevision
+              ) return;
+              const summary = summarizeAddResults([resp]);
+              const { message, variant } = addResultToast(summary);
               enqueueSnackbar(message, { variant });
+              if (summary.added === 0) return;
               resetSelection();
               setSourceType(null);
               onClose();
@@ -856,8 +883,11 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
       call_execution: "Choose a test and execution run to add calls from",
     }[sourceType] || "";
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={handleClose}
@@ -914,8 +944,12 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
                 flex: "1 1 280px",
               }}
             >
-              <IconButton size="small" onClick={handleBack}>
-                <Iconify icon="eva:arrow-ios-back-fill" width={20} />
+              <IconButton
+                size="small"
+                aria-label="Back to sources"
+                onClick={handleBack}
+              >
+                <Iconify icon="solar:alt-arrow-left-linear" width={20} />
               </IconButton>
               <Box sx={{ minWidth: 0 }}>
                 <Typography variant="h6" noWrap sx={{ minWidth: 0 }}>
@@ -927,8 +961,8 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               </Box>
             </Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <IconButton onClick={handleClose}>
-                <Iconify icon="mingcute:close-line" width={20} />
+              <IconButton aria-label="Close" onClick={handleClose}>
+                <Iconify icon="solar:close-linear" width={20} />
               </IconButton>
             </Box>
           </Box>
@@ -954,6 +988,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               <DatasetRowSelector
                 onSetSelection={handleSetSelection}
                 onSelectAll={handleSelectAll}
+                onResetSelection={resetSelection}
               />
             )}
             {sourceType === "trace" && (
@@ -968,12 +1003,14 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               <SpanSelector
                 onSetSelection={handleSetSelection}
                 onSelectAll={handleSelectAll}
+                onProjectChange={setSelectedProjectId}
               />
             )}
             {sourceType === "trace_session" && (
               <SessionSelector
                 onSetSelection={handleSetSelection}
                 onSelectAll={handleSelectAll}
+                onProjectChange={setSelectedProjectId}
               />
             )}
             {sourceType === "call_execution" && (
@@ -1058,6 +1095,7 @@ function SourceTypeSelection({ onSelect, onClose, isDefaultQueue }) {
         }}
       >
         <IconButton
+          aria-label="Close"
           onClick={onClose}
           sx={{
             color: "text.primary",
@@ -1084,22 +1122,24 @@ function SourceTypeSelection({ onSelect, onClose, isDefaultQueue }) {
         }}
       >
         <Typography variant="h5" sx={{ mb: 1 }}>
-          Add your first annotation project
+          Add items to this queue
         </Typography>
         <Typography
           variant="body2"
           color="text.secondary"
           sx={{ mb: 4, textAlign: "center" }}
         >
-          Add datasets, traces or spans to this queue. These items will be
-          queued for human annotation.{" "}
+          Pick where items come from: datasets, traces, spans, sessions or
+          simulations. Items you add wait here for people to annotate.{" "}
           <Typography
             component="a"
             variant="body2"
-            href="#"
+            href="https://docs.futureagi.com/docs/annotations"
+            target="_blank"
+            rel="noopener noreferrer"
             sx={{ color: "primary.main" }}
           >
-            Check docs
+            Read the docs
           </Typography>
         </Typography>
         {isDefaultQueue && (
@@ -1122,35 +1162,45 @@ function SourceTypeSelection({ onSelect, onClose, isDefaultQueue }) {
             gap: 1.5,
           }}
         >
-          {SOURCE_TYPES.map((src) => (
-            <Box
+          {/* L7b absent-sweep: only sources that work are listed. */}
+          {SOURCE_TYPES.filter((src) => src.enabled).map((src) => (
+            <ButtonBase
               key={src.value}
+              type="button"
               onClick={src.enabled ? () => onSelect(src.value) : undefined}
-              sx={{
+              sx={(theme) => ({
+                width: "100%",
+                justifyContent: "flex-start",
+                textAlign: "left",
                 border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 0.5,
-                px: 2.5,
-                py: 2,
+                borderColor: "border.default",
+                borderRadius: "8px",
+                px: 1.5,
+                py: 1,
                 display: "flex",
                 alignItems: "center",
-                gap: 2,
+                gap: 1.5,
                 cursor: src.enabled ? "pointer" : "not-allowed",
                 opacity: src.enabled ? 1 : 0.9,
                 transition: "all 0.15s",
                 "&:hover": src.enabled
                   ? { borderColor: "primary.main", bgcolor: "action.hover" }
                   : {},
-              }}
+                "&.Mui-focusVisible": {
+                  outline: `2px solid ${theme.palette.border.focus}`,
+                  outlineOffset: -2,
+                },
+              })}
             >
               <Box
+                component="span"
                 sx={{
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  width: 40,
-                  height: 40,
-                  borderRadius: 0.5,
+                  width: 28,
+                  height: 28,
+                  borderRadius: "6px",
                   bgcolor: "action.hover",
                   color: "primary.main",
                 }}
@@ -1159,36 +1209,34 @@ function SourceTypeSelection({ onSelect, onClose, isDefaultQueue }) {
                   <SvgColor
                     src={src.icon}
                     sx={{
-                      width: 24,
-                      height: 24,
+                      width: 16,
+                      height: 16,
                       color: "primary.main",
                     }}
                   />
                 ) : (
-                  <Iconify icon={src.icon} width={24} color="primary.main" />
+                  <Iconify icon={src.icon} width={16} color="primary.main" />
                 )}
               </Box>
-              <Box sx={{ flex: 1 }}>
-                <Typography variant="subtitle2">{src.label}</Typography>
-                <Typography variant="caption" color="text.secondary">
+              <Box component="span" sx={{ flex: 1 }}>
+                <Typography
+                  component="span"
+                  sx={{ display: "block", fontSize: 13, fontWeight: 600 }}
+                >
+                  {src.label}
+                </Typography>
+                <Typography variant="caption" color="text.tertiary">
                   {src.description}
                 </Typography>
-                {!src.enabled && (
-                  <Chip
-                    label="Coming soon"
-                    size="small"
-                    sx={{ ml: 1, height: 20, fontSize: 10 }}
-                  />
-                )}
               </Box>
               {src.enabled && (
                 <Iconify
-                  icon="eva:arrow-ios-forward-fill"
+                  icon="solar:alt-arrow-right-linear"
                   width={20}
                   sx={{ color: "text.secondary" }}
                 />
               )}
-            </Box>
+            </ButtonBase>
           ))}
         </Box>
       </Box>
@@ -1345,27 +1393,22 @@ export function ExactSelectorReadFailureNotice({ failed, onRetry }) {
   if (!failed) return null;
 
   return (
-    <Box
+    <Alert
+      severity="warning"
       role="status"
-      sx={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 1,
-        px: 1.5,
-        py: 0.75,
-        borderBottom: "1px solid",
-        borderColor: "divider",
-        bgcolor: "action.hover",
-      }}
+      action={
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          onClick={onRetry}
+        >
+          Retry
+        </Button>
+      }
     >
-      <Typography variant="caption" color="text.secondary">
-        Rows are temporarily unavailable.
-      </Typography>
-      <Button size="small" variant="outlined" onClick={onRetry}>
-        Retry
-      </Button>
-    </Box>
+      Rows are temporarily unavailable.
+    </Alert>
   );
 }
 
@@ -1408,7 +1451,7 @@ function SelectorEmptyState({
       }}
     >
       {loading ? (
-        <CircularProgress size={28} sx={{ mb: 2 }} />
+        <ContentSkeleton variant="panel" />
       ) : (
         <Box
           sx={{
@@ -1424,7 +1467,7 @@ function SelectorEmptyState({
             color: "text.secondary",
           }}
         >
-          <Typography component="span" color="error.main" fontWeight={700}>
+          <Typography component="span" color="error.main" fontWeight={600}>
             *
           </Typography>
         </Box>
@@ -1459,7 +1502,11 @@ SelectorEmptyState.propTypes = {
 // ---------------------------------------------------------------------------
 // Dataset Row Selector – Same AG Grid as dataset view
 // ---------------------------------------------------------------------------
-export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
+export function DatasetRowSelector({
+  onSetSelection,
+  onSelectAll,
+  onResetSelection,
+}) {
   const [datasetId, setDatasetId] = useState("");
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search.trim(), 300);
@@ -1473,6 +1520,17 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
   const queryClient = useQueryClient();
   const filtersRef = useRef([]);
   const searchRef = useRef("");
+
+  const resetQuerySelection = useCallback(() => {
+    // Do not rely on a later grid callback: the grid can unmount while the
+    // next dataset's schema loads, but the footer belongs to the parent.
+    gridApi?.deselectAll?.();
+    if (onResetSelection) {
+      onResetSelection();
+    } else {
+      onSetSelection([]);
+    }
+  }, [gridApi, onResetSelection, onSetSelection]);
 
   const {
     data: datasets,
@@ -1560,7 +1618,12 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
 
   const applyDatasetSearch = useCallback(
     (nextSearch) => {
-      searchRef.current = nextSearch.trim();
+      const normalizedSearch = nextSearch.trim();
+      // Ignore the previous debounced value after typing or switching datasets.
+      if (normalizedSearch !== search.trim()) return;
+      if (normalizedSearch === searchRef.current) return;
+      resetQuerySelection();
+      searchRef.current = normalizedSearch;
       if (!gridApi || !datasetId) return;
       const ds = createDataSource(
         queryClient,
@@ -1570,12 +1633,18 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
       );
       gridApi.setGridOption("serverSideDatasource", ds);
     },
-    [gridApi, datasetId, queryClient],
+    [gridApi, datasetId, queryClient, resetQuerySelection, search],
   );
 
   useEffect(() => {
     applyDatasetSearch(debouncedSearch);
   }, [applyDatasetSearch, debouncedSearch]);
+
+  const handleSearchChange = (event) => {
+    const nextSearch = event.target.value;
+    if (nextSearch.trim() !== search.trim()) resetQuerySelection();
+    setSearch(nextSearch);
+  };
 
   const handleSearchKeyDown = useCallback(
     (e) => {
@@ -1589,6 +1658,8 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
   // Handle row selection — detect select-all via getServerSideSelectionState
   const onSelectionChanged = useCallback(
     (event) => {
+      // Rows still belong to the applied search until the debounce completes.
+      if (search.trim() !== searchRef.current) return;
       const api = event.api;
       const selState = api.getServerSideSelectionState();
 
@@ -1615,7 +1686,7 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         onSetSelection(ids);
       }
     },
-    [onSetSelection, onSelectAll, datasetId],
+    [onSetSelection, onSelectAll, datasetId, search],
   );
 
   // Refresh grid when filters change
@@ -1642,34 +1713,50 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
       filtersRef.current = newFilters;
       const newValid = newFilters.filter(validateFilter).map(transformFilter);
       if (!isEqual(oldValid, newValid)) {
+        resetQuerySelection();
         refreshGrid();
       }
     },
-    [filters, refreshGrid],
+    [filters, refreshGrid, resetQuerySelection],
   );
 
-  // Build allColumns for filter row (same shape DevelopFilterRow expects)
-  const allColumns = useMemo(
+  // Filter panel fields: the dataset's filterable columns.
+  const filterFields = useMemo(
     () =>
-      columnDefs.map((cd) => ({
-        field: cd.field,
-        headerName: cd.headerName,
-        col: cd.col || { dataType: "text" },
-      })),
+      columnsToFields(columnDefs, (cd) => {
+        const dataType = cd.col?.data_type;
+        return {
+          id: FILTERABLE_DATA_TYPES.has(dataType) ? cd.field : undefined,
+          // Audio columns filter on their duration, a number. Mapped here so
+          // other filters that share the adapter keep treating audio as text.
+          label:
+            dataType === "audio" ? `${cd.headerName} duration` : cd.headerName,
+          dataType: dataType === "audio" ? "float" : dataType,
+        };
+      }),
     [columnDefs],
   );
-
-  const isFilterApplied = useMemo(
-    () =>
-      filters.some((f) =>
-        f.filterConfig?.filterValue && Array.isArray(f.filterConfig.filterValue)
-          ? f.filterConfig.filterValue.length > 0
-          : f.filterConfig.filterValue !== "",
-      ),
+  const filterValue = useMemo(
+    () => toFilterPanelValue(filters, filterFields),
+    [filters, filterFields],
+  );
+  const handleFilterChange = useCallback(
+    (rows) => {
+      const next = fromFilterPanelValue(rows);
+      setFilters(() =>
+        next.length ? next : [{ ...DefaultFilter, id: getRandomId() }],
+      );
+    },
+    [setFilters],
+  );
+  const activeFilterCount = useMemo(
+    () => filters.filter(validateFilter).length,
     [filters],
   );
 
   const handleDatasetChange = (e) => {
+    if (e.target.value === datasetId) return;
+    resetQuerySelection();
     setDatasetId(e.target.value);
     setSearch("");
     searchRef.current = "";
@@ -1747,43 +1834,28 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         {datasetId && (
           <>
             <Box sx={{ flex: "1 1 auto", minWidth: 0 }} />
-            <IconButton
-              size="small"
-              onClick={() => setFilterOpen((v) => !v)}
-              sx={{
-                border: "1px solid",
-                borderColor: isFilterApplied ? "primary.main" : "divider",
-                borderRadius: 0.5,
-                p: 0.75,
-                bgcolor: (theme) =>
-                  isFilterApplied
-                    ? alpha(theme.palette.primary.main, 0.12)
-                    : "transparent",
-              }}
-            >
-              <SvgColor
-                src="/assets/icons/action_buttons/ic_filter.svg"
-                sx={{
-                  width: 16,
-                  height: 16,
-                  color: isFilterApplied ? "primary.main" : "text.primary",
-                }}
-              />
-            </IconButton>
+            <FilterButton
+              fields={filterFields}
+              value={filterValue}
+              onChange={handleFilterChange}
+              count={activeFilterCount}
+              open={filterOpen}
+              onOpenChange={setFilterOpen}
+            />
             <TextField
               size="small"
               placeholder="Search in dataset"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={handleSearchChange}
               onKeyDown={handleSearchKeyDown}
               sx={{ minWidth: 180, flex: "1 1 220px" }}
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
                     <Iconify
-                      icon="eva:search-fill"
+                      icon="solar:magnifier-linear"
                       sx={{ color: "text.disabled" }}
-                      width={18}
+                      width={16}
                     />
                   </InputAdornment>
                 ),
@@ -1792,53 +1864,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
           </>
         )}
       </Box>
-
-      {/* Filter box */}
-      {datasetId && filterOpen && (
-        <Box sx={{ px: 1.5, pb: 1, flexShrink: 0 }}>
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 0.5,
-            }}
-          >
-            {filters.map((filter, index) => (
-              <DevelopFilterRow
-                key={filter.id}
-                index={index}
-                filter={filter}
-                allColumns={allColumns}
-                removeFilter={(id) => {
-                  if (filters.length === 1) {
-                    setFilterOpen(false);
-                    setFilters([{ ...DefaultFilter, id: getRandomId() }]);
-                  } else {
-                    setFilters((prev) => prev.filter((f) => f.id !== id));
-                  }
-                }}
-                addFilter={() => {
-                  setFilters((prev) => [
-                    ...prev,
-                    { ...DefaultFilter, id: getRandomId() },
-                  ]);
-                }}
-                updateFilter={(id, newFilter) => {
-                  setFilters((prev) =>
-                    prev.map((f) =>
-                      f.id === id
-                        ? typeof newFilter === "function"
-                          ? newFilter(f)
-                          : newFilter
-                        : f,
-                    ),
-                  );
-                }}
-              />
-            ))}
-          </Box>
-        </Box>
-      )}
 
       {/* Empty state */}
       {!datasetId && (
@@ -1907,6 +1932,7 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
 DatasetRowSelector.propTypes = {
   onSetSelection: PropTypes.func.isRequired,
   onSelectAll: PropTypes.func.isRequired,
+  onResetSelection: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------
@@ -2022,14 +2048,12 @@ function TraceSelector({
   } = useGetProjectDetails(projectId, !!projectId);
   const isVoiceProject = projectDetails?.source === PROJECT_SOURCE.SIMULATOR;
 
-  // Surface voice/simulator state to the parent so handleSubmit knows to
-  // keep `source_type: "trace"` instead of resolving to root spans.
+  // Surface voice/simulator state for the backend filter namespace.
   useEffect(() => {
     onVoiceProjectChange?.(isVoiceProject);
   }, [isVoiceProject, onVoiceProjectChange]);
 
-  // Surface the selected project so handleSubmit can pass it to fetchRootSpans
-  // (prunes the CH scan).
+  // Surface the selected project to scope the add-items source resolution.
   useEffect(() => {
     onProjectChange?.(projectId || null);
   }, [projectId, onProjectChange]);
@@ -2413,7 +2437,7 @@ function TraceSelector({
                 <FieldLoadingAdornment loading={isVersionListLoading} />
               ),
             }}
-            helperText={!versionId ? "Required for prototype projects." : " "}
+            helperText={!versionId ? "Required for experiment projects." : " "}
             SelectProps={{
               MenuProps: {
                 PaperProps: { style: { maxHeight: 300, overflowY: "auto" } },
@@ -2456,7 +2480,6 @@ function TraceSelector({
               sx={{
                 border: "1px solid",
                 borderColor: isFilterApplied ? "primary.main" : "divider",
-                borderRadius: 0.5,
                 p: 0.75,
                 bgcolor: (theme) =>
                   isFilterApplied
@@ -2673,7 +2696,7 @@ function TraceSelector({
               ref={gridRef}
               className="clean-data-table"
               theme={agTheme}
-              rowHeight={40}
+              rowHeight={ROW_HEIGHT.default}
               columnDefs={columnDefs}
               defaultColDef={defaultColDef}
               rowSelection={{ mode: "multiRow" }}
@@ -2716,7 +2739,7 @@ TraceSelector.propTypes = {
 // ---------------------------------------------------------------------------
 // Span Selector – Same AG Grid as span view with server-side row model
 // ---------------------------------------------------------------------------
-function SpanSelector({ onSetSelection, onSelectAll }) {
+function SpanSelector({ onSetSelection, onSelectAll, onProjectChange }) {
   const [projectId, setProjectId] = useState("");
   const [versionId, setVersionId] = useState("");
   const [columns, setColumns] = useState([]);
@@ -2738,6 +2761,10 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   const filtersRef = useRef([]);
   const [pageSelectAllMeta, setPageSelectAllMeta] = useState(null);
   const [spanReadFailed, setSpanReadFailed] = useState(false);
+
+  useEffect(() => {
+    onProjectChange?.(projectId || null);
+  }, [projectId, onProjectChange]);
 
   const {
     data: projects,
@@ -3111,7 +3138,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
                 <FieldLoadingAdornment loading={isVersionListLoading} />
               ),
             }}
-            helperText={!versionId ? "Required for prototype projects." : " "}
+            helperText={!versionId ? "Required for experiment projects." : " "}
             SelectProps={{
               MenuProps: {
                 PaperProps: { style: { maxHeight: 300, overflowY: "auto" } },
@@ -3154,7 +3181,6 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
               sx={{
                 border: "1px solid",
                 borderColor: isFilterApplied ? "primary.main" : "divider",
-                borderRadius: 0.5,
                 p: 0.75,
                 bgcolor: (theme) =>
                   isFilterApplied
@@ -3295,7 +3321,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
               ref={gridRef}
               className="clean-data-table"
               theme={agTheme}
-              rowHeight={40}
+              rowHeight={ROW_HEIGHT.default}
               columnDefs={columnDefs}
               defaultColDef={defaultColDef}
               rowSelection={{ mode: "multiRow" }}
@@ -3331,6 +3357,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
 SpanSelector.propTypes = {
   onSetSelection: PropTypes.func.isRequired,
   onSelectAll: PropTypes.func.isRequired,
+  onProjectChange: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------
@@ -3338,7 +3365,7 @@ SpanSelector.propTypes = {
 // ---------------------------------------------------------------------------
 const SESSION_ROWS_LIMIT = 30;
 
-function SessionSelector({ onSetSelection, onSelectAll }) {
+function SessionSelector({ onSetSelection, onSelectAll, onProjectChange }) {
   const [projectId, setProjectId] = useState("");
   const [versionId, setVersionId] = useState("");
   const [columns, setColumns] = useState([]);
@@ -3357,6 +3384,10 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
   const filtersRef = useRef([]);
   const [sessionReadFailed, setSessionReadFailed] = useState(false);
+
+  useEffect(() => {
+    onProjectChange?.(projectId || null);
+  }, [projectId, onProjectChange]);
 
   const {
     data: projects,
@@ -3505,7 +3536,13 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
           flex: 1,
           minWidth: 200,
         },
-        { field: "duration", headerName: "Duration", flex: 1, minWidth: 200 },
+        {
+          field: "duration",
+          headerName: "Duration",
+          flex: 1,
+          minWidth: 200,
+          cellStyle: { fontVariantNumeric: "tabular-nums" },
+        },
         {
           field: "startTime",
           headerName: "Start Time",
@@ -3515,6 +3552,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
         {
           field: "totalCost",
           headerName: "Total Cost",
+          cellStyle: { fontVariantNumeric: "tabular-nums" },
           flex: 1,
           minWidth: 200,
         },
@@ -3534,7 +3572,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
       suppressSizeToFit: false,
       cellStyle: {
         padding: "0px 20px",
-        fontSize: "14px",
+        fontSize: "13px",
         height: "100%",
       },
     }),
@@ -3722,7 +3760,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
                 <FieldLoadingAdornment loading={isVersionListLoading} />
               ),
             }}
-            helperText={!versionId ? "Required for prototype projects." : " "}
+            helperText={!versionId ? "Required for experiment projects." : " "}
             SelectProps={{
               MenuProps: {
                 PaperProps: { style: { maxHeight: 300, overflowY: "auto" } },
@@ -3773,10 +3811,8 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
               }}
               sx={{
                 width: 36,
-                height: 36,
                 border: "1px solid",
                 borderColor: isFilterApplied ? "primary.main" : "divider",
-                borderRadius: 0.5,
                 p: 0.75,
                 bgcolor: (theme) =>
                   isFilterApplied
@@ -3918,7 +3954,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
               ref={gridRef}
               className="clean-data-table"
               theme={agTheme}
-              rowHeight={50}
+              rowHeight={ROW_HEIGHT.default}
               columnDefs={columnDefs}
               defaultColDef={defaultColDef}
               rowSelection={{ mode: "multiRow" }}
@@ -3946,6 +3982,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
 SessionSelector.propTypes = {
   onSetSelection: PropTypes.func.isRequired,
   onSelectAll: PropTypes.func.isRequired,
+  onProjectChange: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------
@@ -4022,23 +4059,19 @@ function formatMilliseconds(value) {
 }
 
 function formatCurrencyCents(value) {
-  if (value === null || value === undefined || value === "") return "-";
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return value == null ? "-" : String(value);
-  return `$${formatNumber(numeric / 100, {
-    minimumFractionDigits: numeric ? 2 : 0,
-    maximumFractionDigits: 4,
-  })}`;
+  return formatExactMoney(multiplyMoneyValues(value, "0.01"), {
+    missing: "-",
+    grouping: true,
+    minimumFractionDigits: Number(value) === 0 ? 0 : 2,
+  });
 }
 
 function formatCurrencyDollars(value) {
-  if (value === null || value === undefined || value === "") return "-";
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return value == null ? "-" : String(value);
-  return `$${formatNumber(numeric, {
-    minimumFractionDigits: numeric ? 2 : 0,
-    maximumFractionDigits: 4,
-  })}`;
+  return formatExactMoney(value, {
+    missing: "-",
+    grouping: true,
+    minimumFractionDigits: Number(value) === 0 ? 0 : 2,
+  });
 }
 
 function formatGenericSimulationValue(value) {
@@ -4163,12 +4196,10 @@ function CallStatusCellRenderer({ data }) {
   };
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-      <Chip
-        label={status}
-        size="small"
-        color={colorMap[status] || "default"}
-        variant="outlined"
-        sx={{ height: 24, fontSize: 12, textTransform: "capitalize" }}
+      <StatusBadge
+        status={status}
+        label={String(status)}
+        role={CHIP_ROLE[colorMap[status] || "default"]}
       />
     </Box>
   );
@@ -4889,7 +4920,6 @@ function SimulationSelector({ onSetSelection }) {
               sx={{
                 border: "1px solid",
                 borderColor: isFilterApplied ? "primary.main" : "divider",
-                borderRadius: 0.5,
                 p: 0.75,
                 bgcolor: (theme) =>
                   isFilterApplied
@@ -5016,7 +5046,7 @@ function SimulationSelector({ onSetSelection }) {
               ref={gridRef}
               className="clean-data-table"
               theme={agTheme}
-              rowHeight={56}
+              rowHeight={ROW_HEIGHT.twoLine}
               columnDefs={columnDefs}
               defaultColDef={defaultColDef}
               rowSelection={{ mode: "multiRow" }}

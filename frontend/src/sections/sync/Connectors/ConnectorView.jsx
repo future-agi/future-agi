@@ -61,7 +61,7 @@ const ConnectorView = () => {
             icon: "/assets/icons/connectors/c_data_bricks.svg",
           },
           {
-            title: "Snowflakes (Coming Soon)",
+            title: "Snowflake (Coming Soon)",
             icon: "/assets/icons/connectors/c_snowflaks.svg",
           },
         ]}

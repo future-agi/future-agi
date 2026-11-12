@@ -9,6 +9,7 @@ import structlog
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from accounts.utils import get_request_organization
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
@@ -25,6 +26,7 @@ from tracer.views.feed._permissions import (
     ErrorFeedLicenseRequired,
     resolve_requested_project_ids,
 )
+from tracer.views.feed._schema import WORKSPACE_QUERY_PARAMETER
 
 logger = structlog.get_logger(__name__)
 
@@ -44,20 +46,18 @@ class FeedListView(ErrorFeedLicenseRequired, APIView):
 
     @validated_request(
         query_serializer=FeedListQuerySerializer,
+        manual_parameters=[WORKSPACE_QUERY_PARAMETER],
         responses={200: FeedListApiResponseSerializer, **ERROR_RESPONSES},
     )
     def get(self, request):
         params = request.validated_query_data
         requested_project_id = params.get("project_id")
+        request.organization = get_request_organization(request)
         project_ids = resolve_requested_project_ids(
             request, str(requested_project_id) if requested_project_id else None
         )
         if project_ids is None:
             return self._gm.forbidden_response("Access denied to this project")
-        if not project_ids:
-            return self._gm.forbidden_response(
-                "User not associated with an organization"
-            )
 
         try:
             result = feed_service.list_feed_issues(
@@ -95,15 +95,12 @@ class FeedStatsView(ErrorFeedLicenseRequired, APIView):
     def get(self, request):
         params = request.validated_query_data
         requested_project_id = params.get("project_id")
+        request.organization = get_request_organization(request)
         project_ids = resolve_requested_project_ids(
             request, str(requested_project_id) if requested_project_id else None
         )
         if project_ids is None:
             return self._gm.forbidden_response("Access denied to this project")
-        if not project_ids:
-            return self._gm.forbidden_response(
-                "User not associated with an organization"
-            )
 
         try:
             result = feed_service.get_feed_stats(

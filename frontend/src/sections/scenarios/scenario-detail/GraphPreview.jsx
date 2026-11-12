@@ -170,7 +170,7 @@ const GraphPreview = ({ scenario, agentType, viewOnly = false }) => {
         }}
       >
         <Typography typography="s1">
-          There was an error generating the scenario graph
+          Scenario generation failed, so there is no graph to show.
         </Typography>
       </Box>
     );

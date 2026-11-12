@@ -27,9 +27,19 @@ export const WORKSPACE_TABS = [
     icon: "solar:shield-check-linear",
     badge: "evals",
   },
-  { id: "runs", label: "Runs", icon: "solar:play-circle-linear", badge: "runs" },
+  {
+    id: "runs",
+    label: "Runs",
+    icon: "solar:play-circle-linear",
+    badge: "runs",
+  },
   // Shown only once the environment has a fix (Fix my agent).
-  { id: "improvements", label: "Improvements", icon: "solar:magic-stick-3-linear", badge: "improvements" },
+  {
+    id: "improvements",
+    label: "Improvements",
+    icon: "solar:magic-stick-3-linear",
+    badge: "improvements",
+  },
   // Shown only when the environment has versioning switched on.
   { id: "versions", label: "Versions", icon: "solar:history-linear" },
   {
@@ -46,6 +56,19 @@ export const WORKSPACE_TABS = [
 export const GAP_AREA_TO_TAB = {
   Contract: "contract",
   Grading: "evals",
+};
+
+// An environment built from a private GitHub repository that this deployment no
+// longer reads says so in one sentence: on its page, and on a run, build, check
+// or rebuild that failed for it. The code is the backend's typed failure code.
+export const PRIVATE_GITHUB_UNAVAILABLE_CODE = "github_private_unavailable";
+export const PRIVATE_GITHUB_ENVIRONMENT_MESSAGE =
+  "Private GitHub repositories are not available on Future AGI cloud. Upload the code to keep using this environment.";
+
+// Why a failed run failed, by its job's failure code. A code not listed adds no
+// line: the run header keeps its status chip alone, as before.
+export const RUN_FAILURE_REASONS = {
+  [PRIVATE_GITHUB_UNAVAILABLE_CODE]: PRIVATE_GITHUB_ENVIRONMENT_MESSAGE,
 };
 
 // Header, overflow-menu and empty-state copy for the workspace shell.
@@ -102,11 +125,14 @@ export const WORKSPACE_COPY = {
   },
   runBlocked: {
     agent: "No agent is connected to this environment yet",
-    scenarios: "Add scenarios on the Scenarios tab",
+    // The Scenarios tab has no working Add; the builder chat adds scenarios.
+    scenarios:
+      "This environment has no scenarios. Ask the builder in the chat to add some.",
     generic: "Setup incomplete",
     starting: "Starting a run",
     notReady: "This environment hasn't finished building",
-    noRunTest: "This environment isn't linked to a run yet. Rebuild it to run simulations.",
+    noRunTest:
+      "This environment isn't linked to a run yet. Rebuild it to run simulations.",
     detailFailed: "This environment's details didn't load. Retry them first.",
     detailLoading: "Loading this environment's details",
   },
@@ -278,6 +304,10 @@ export const AGENT_VERSIONS_COPY = {
   missing: (names) => `Missing: ${names.join(", ")}`,
   invalid: (names) => `Rejected by the provider: ${names.join(", ")}`,
   checkError: (code) => `The check couldn't finish (${code}).`,
+  // A check's error code that has words of its own, said instead of the code.
+  checkErrors: {
+    [PRIVATE_GITHUB_UNAVAILABLE_CODE]: PRIVATE_GITHUB_ENVIRONMENT_MESSAGE,
+  },
   // Why a version whose check passed is not this environment's default.
   activation: {
     environment_busy: "Not made default: the environment was busy",
@@ -367,6 +397,7 @@ export const AGENT_VERSIONS_COPY = {
     watchHint:
       "New commits become new agent versions automatically; they're checked before becoming the default.",
     privateNotWatched: "Private repositories aren't watched for new commits.",
+    privateUnavailable: PRIVATE_GITHUB_ENVIRONMENT_MESSAGE,
     checkRunning: "Another change is still being checked",
     upload: "Upload new source",
     uploading: (progress) => `Uploading… ${progress}%`,

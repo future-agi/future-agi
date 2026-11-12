@@ -8,9 +8,16 @@ import React, {
 } from "react";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
-import { Box, Button, Skeleton, Typography, useTheme } from "@mui/material";
+import {
+  Box,
+  Button,
+  Link,
+  Skeleton,
+  Typography,
+  useTheme,
+} from "@mui/material";
 import {
   getCallLogsColumnDefs,
   useCallLogs,
@@ -49,8 +56,30 @@ import {
 } from "src/sections/projects/LLMTracing/listPagerState";
 import CursorGridPagination from "src/sections/projects/LLMTracing/CursorGridPagination";
 import { useUrlState } from "src/routes/hooks/use-url-state";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import axios from "src/utils/axios";
+import { apiPath } from "src/api/contracts/api-surface";
+import EmptyContent from "src/components/empty-content";
+import { RouterLink } from "src/routes/components";
+import { useSimulationAgents } from "src/hooks/useDashboards";
+import { CONNECTED_AGENTS_PATH } from "src/sections/agent-playground/agentsTabs";
+import { agentDetailPath } from "src/sections/agent-playground/connected/detail/agentDetailTabs";
+import {
+  OBSERVE_KNOWN_ISSUES_URL,
+  VOICE_OBSERVE_NOTICE,
+} from "src/utils/platformObserveAvailability";
+import useFitHeight from "src/hooks/use-fit-height";
 
-const CELL_HEIGHT_MAP = { Short: 40, Medium: 52, Large: 68, "Extra Large": 88 };
+// A grid that does not fit to the window hands useFitHeight no element, so it
+// never measures and the grid keeps its fixed height.
+const NO_FIT_REF = { current: null };
+
+const CELL_HEIGHT_MAP = {
+  Short: ROW_HEIGHT.default,
+  Medium: 52,
+  Large: 68,
+  "Extra Large": 88,
+};
 
 // Padding matches CallLogsCellRenderer.jsx so custom-col cells align with
 // the rest of the row.
@@ -67,7 +96,7 @@ const CustomColCellRenderer = (params) => {
         height: "100%",
       }}
     >
-      <Typography variant="body2" sx={{ fontSize: 13 }} noWrap>
+      <Typography variant="body2" sx={{ fontSize: 12 }} noWrap>
         {String(display)}
       </Typography>
     </Box>
@@ -79,7 +108,7 @@ const CustomColLoadingSkeleton = () => (
     variant="rectangular"
     width="80%"
     height={15}
-    sx={{ mx: 1, borderRadius: 0.5 }}
+    sx={{ mx: 1, borderRadius: "4px" }}
   />
 );
 
@@ -96,6 +125,122 @@ const TERMINAL_CALL_STATUSES = new Set([
 const isSelectableForAnnotation = (row) => {
   const status = String(row?.status || "").toLowerCase();
   return TERMINAL_CALL_STATUSES.has(status);
+};
+
+// Providers whose calls the scheduled job fetches, every 600 s
+// (futureagi/tfc/temporal/schedules/tracer.py). LiveKit and code agents have
+// no hosted call history, so the fetch line would be wrong for them.
+const FETCHED_VOICE_PROVIDERS = new Set([
+  "vapi",
+  "retell",
+  "eleven_labs",
+  "bland",
+  "twilio",
+]);
+const OBSERVABILITY_PROVIDERS = apiPath("/tracer/observability-provider/");
+const PROVIDER_FETCH_COPY =
+  "Calls from your connected provider are fetched about every 10 minutes.";
+const KEY_REJECTED_COPY =
+  "Last fetch failed: the provider rejected the API key.";
+const CHECK_SETTINGS_COPY =
+  "Check the API key and assistant ID in your agent's settings";
+
+// The Connected agents Definition tab shows the assistant ID and API key.
+const AgentSettingsLink = ({ projectId }) => {
+  const { data: agents } = useSimulationAgents();
+  const agent = (agents || []).find(
+    (candidate) => candidate?.observability_project_id === projectId,
+  );
+  return (
+    <Link
+      component={RouterLink}
+      href={
+        agent?.id
+          ? agentDetailPath(agent.id, "definition")
+          : CONNECTED_AGENTS_PATH
+      }
+      sx={{ fontSize: 12, fontWeight: 500 }}
+    >
+      {CHECK_SETTINGS_COPY}
+    </Link>
+  );
+};
+
+AgentSettingsLink.propTypes = {
+  projectId: PropTypes.string,
+};
+
+// OBS-SW-110: an empty project call list says how calls from a connected
+// provider arrive, whether the provider rejected the key on the last fetch,
+// the release notice, and where the key is set.
+const ProjectCallsEmptyState = ({ projectId }) => {
+  const { data: provider } = useQuery({
+    queryKey: ["observabilityProvider", projectId],
+    queryFn: () =>
+      axios.get(OBSERVABILITY_PROVIDERS, {
+        params: { project_id: projectId },
+      }),
+    select: (response) =>
+      (response?.data?.result?.providers || []).find(
+        (candidate) => candidate?.enabled,
+      ) || null,
+    enabled: Boolean(projectId),
+    staleTime: 60 * 1000,
+    // OBS-SW-171: this overlay shows only while the list is empty, so polling
+    // here surfaces a key the provider rejects after the page was opened.
+    refetchInterval: 60 * 1000,
+    retry: false,
+    meta: { errorHandled: true },
+  });
+  const fetched = FETCHED_VOICE_PROVIDERS.has(provider?.provider);
+  const lastStatus = Number(provider?.last_fetch_error?.status_code);
+  const keyRejected = lastStatus === 401 || lastStatus === 403;
+
+  return (
+    <EmptyContent
+      title="No calls found"
+      // AG Grid overlays ignore the pointer unless the content opts back in.
+      sx={{ pointerEvents: "auto" }}
+      description={
+        fetched ? (
+          <>
+            <Box component="span" sx={{ display: "block" }}>
+              {PROVIDER_FETCH_COPY}
+            </Box>
+            {keyRejected && (
+              <Box
+                component="span"
+                sx={{
+                  display: "block",
+                  mt: 1,
+                  color: "status.danger.fg",
+                  fontWeight: 500,
+                }}
+              >
+                {KEY_REJECTED_COPY}
+              </Box>
+            )}
+            <Box component="span" sx={{ display: "block", mt: 1 }}>
+              {VOICE_OBSERVE_NOTICE}{" "}
+              <Link
+                href={OBSERVE_KNOWN_ISSUES_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                sx={{ textDecoration: "underline" }}
+              >
+                2.0.0 release notes: Known issues
+              </Link>
+            </Box>
+          </>
+        ) : undefined
+      }
+      action={fetched ? <AgentSettingsLink projectId={projectId} /> : undefined}
+    />
+  );
+};
+
+ProjectCallsEmptyState.propTypes = {
+  projectId: PropTypes.string,
 };
 
 const CallLogsGrid = React.forwardRef(function CallLogsGrid(
@@ -116,6 +261,10 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     hideDrawer = false,
     showErrors = false,
     setExtraFilters,
+    // The project's voice call list (LLMTracingView) fills the window down to
+    // its pagination, as the trace and span grids beside it do. Other hosts
+    // (agent call logs, the add-items dialog) keep the fixed height.
+    fitToWindow = false,
   },
   forwardedRef,
 ) {
@@ -126,12 +275,12 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       headerColumnBorder: false,
       wrapperBorder: { width: 0 },
       wrapperBorderRadius: 0,
-      rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+      rowBorder: { width: 1, color: theme.palette.divider },
       headerFontSize: "13px",
       headerFontWeight: 500,
       headerBackgroundColor: "transparent",
       headerTextColor: theme.palette.text.primary,
-      rowHoverColor: "rgba(120,87,252,0.04)",
+      rowHoverColor: theme.palette.action.hover,
     }),
     [theme],
   );
@@ -193,13 +342,13 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       const rowId = params.data?.id || params.data?.trace_id;
       if (rowId && activeCallId && rowId === activeCallId) {
         return {
-          backgroundColor: "rgba(120, 87, 252, 0.08)",
+          backgroundColor: theme.palette.action.selected,
           cursor: "pointer",
         };
       }
       return { cursor: "pointer" };
     },
-    [activeCallId],
+    [activeCallId, theme.palette.action.selected],
   );
   // Reset the opaque chain synchronously whenever any query-shaping input
   // changes. A cursor is signed against the complete normalized request, not
@@ -249,6 +398,9 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     showMetricsIds: state.showMetricsIds,
   }));
   const gridRef = useRef(null);
+  const rootRef = useRef(null);
+  /* Fill to the bottom of the window from wherever the grid starts. */
+  const fitHeight = useFitHeight(fitToWindow ? rootRef : NO_FIT_REF);
   const refreshRows = useCallback(
     ({ preserveRows = false } = {}) => {
       if (module === "project") {
@@ -379,6 +531,16 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     retainedRefreshRowsRef.current.length > 0 &&
     (isLoading || Boolean(error));
   const showLoadingSkeletons = isLoading && !hasRetainedRefreshRows;
+  // A settled, complete read of a live project grid that found no calls and
+  // has nothing more to read: the only state that looks up the provider.
+  const showProjectEmptyState =
+    module === "project" &&
+    enabled &&
+    Boolean(data) &&
+    !error &&
+    !showErrors &&
+    !readMessage &&
+    !hasCursorContinuation;
 
   useEffect(() => {
     if (isLoading || error || !data || !isUsableListRead) return;
@@ -744,7 +906,13 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   );
 
   return (
-    <Box sx={{ height: "78vh", display: "flex" }}>
+    <Box
+      ref={rootRef}
+      sx={{
+        height: fitToWindow && fitHeight ? `${fitHeight}px` : "78vh",
+        display: "flex",
+      }}
+    >
       <Box
         className="ag-theme-alpine"
         sx={{
@@ -796,10 +964,10 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
               px: 1.5,
               py: 0.75,
               fontSize: 12,
-              color: "warning.main",
-              bgcolor: "warning.lighter",
+              color: "status.warning.fg",
+              bgcolor: "status.warning.bg",
               borderBottom: "1px solid",
-              borderColor: "warning.light",
+              borderColor: "status.warning.border",
             }}
           >
             {readMessage}
@@ -829,22 +997,15 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
                 : undefined
             }
             pagination={false}
-            noRowsOverlayComponent={() =>
-              cursorContinuationPaused
-                ? null
-                : NoRowsOverlay(
-                    <Typography
-                      sx={{
-                        fontSize: 14,
-                        fontWeight: 400,
-                        color: "text.secondary",
-                      }}
-                    >
-                      {readMessage ||
-                        (showErrors ? "No error found" : "No calls found")}
-                    </Typography>,
-                  )
-            }
+            noRowsOverlayComponent={() => {
+              if (cursorContinuationPaused) return null;
+              if (showProjectEmptyState)
+                return <ProjectCallsEmptyState projectId={id} />;
+              return NoRowsOverlay(
+                readMessage ||
+                  (showErrors ? "No error found" : "No calls found"),
+              );
+            }}
             getRowStyle={getRowStyle}
             onCellClicked={(params) => {
               const colDef = params?.column?.getColDef?.();
@@ -933,6 +1094,16 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
           pageSize={pageLimit}
           hasMore={pagerState.hasMore}
           provenNext={pagerState.provenNext}
+          rowCount={isUsableListRead && !isLoading ? responseRows.length : null}
+          totalCount={
+            isUsableListRead
+              ? getListPagerState({
+                  metadata: pagerMetadata,
+                  startRow: (page - 1) * pageLimit,
+                  rowCount: responseRows.length,
+                }).exactTotal
+              : null
+          }
           onPageChange={handlePageChange}
           onPageSizeChange={handlePageSizeChange}
         />
@@ -958,4 +1129,5 @@ CallLogsGrid.propTypes = {
   hideDrawer: PropTypes.bool,
   showErrors: PropTypes.bool,
   setExtraFilters: PropTypes.func,
+  fitToWindow: PropTypes.bool,
 };

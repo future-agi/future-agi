@@ -78,6 +78,33 @@ describe("OrgTwoFactorPolicySection", () => {
     });
   });
 
+  // Org Settings: each heading ran straight into its description
+  // ("Organization SecurityConfigure security policies ..."), because both
+  // rendered as inline spans. Each is its own block, as in the other Settings
+  // sections, so they read as two lines on screen and to a screen reader.
+  it.each([
+    [
+      "Organization Security",
+      "Configure security policies for all members of your organization.",
+    ],
+    [
+      "Require 2FA for all members",
+      "When enabled, all organization members must set up two-factor authentication.",
+    ],
+  ])("shows %s and its description as separate lines", async (title, line) => {
+    renderWithQueryClient(
+      <OrgTwoFactorPolicySection onStatusChange={mocks.onStatusChange} />,
+    );
+
+    const heading = await screen.findByText(title);
+    const description = screen.getByText(line);
+
+    expect(heading.tagName).toBe("DIV");
+    expect(description.tagName).toBe("DIV");
+    expect(heading.contains(description)).toBe(false);
+    expect(description.contains(heading)).toBe(false);
+  });
+
   it("clamps grace period updates to the API contract maximum", async () => {
     renderWithQueryClient(
       <OrgTwoFactorPolicySection onStatusChange={mocks.onStatusChange} />,

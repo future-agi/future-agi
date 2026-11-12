@@ -11,6 +11,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { useAuthContext } from "src/auth/hooks";
 import { enqueueSnackbar } from "src/components/snackbar";
 import logger from "src/utils/logger";
+import { useOrganizationUnavailableRecovery } from "./useOrganizationUnavailableRecovery";
 import {
   SS_KEY_ORG_DISPLAY_NAME,
   SS_KEY_ORG_ID,
@@ -116,7 +117,11 @@ export function useOrganization() {
 // --- Provider ----------------------------------------------------------------
 
 export function OrganizationProvider({ children }) {
-  const { user, authenticated, loading } = useAuthContext();
+  const {
+    user, authenticated, loading, recoverOrganization, recoveringOrganization,
+    notifyRecoveredOrganization,
+  } = useAuthContext();
+  useOrganizationUnavailableRecovery({ authenticated, recoverOrganization });
 
   const [organization, setOrganization] = useState(() => {
     // On mount, try sessionStorage first (survives refresh, per-tab)
@@ -141,7 +146,14 @@ export function OrganizationProvider({ children }) {
 
   // When user data arrives (login / refresh), seed organization if not already set
   useEffect(() => {
-    if (!authenticated || !user) return;
+    if (!authenticated || !user || recoveringOrganization) return;
+    if (user.requires_org_setup) {
+      clearSessionOrganization();
+      setOrganizationHeader(null);
+      setOrganization({ id: null, name: null, displayName: null, role: null, orgLevel: null });
+      setIsReady(true);
+      return;
+    }
 
     // If sessionStorage already has an org, trust it (per-tab persistence)
     const stored = readSessionOrganization();
@@ -161,9 +173,11 @@ export function OrganizationProvider({ children }) {
 
     // No sessionStorage → seed from the org list. `is_selected` is the
     // backend's answer; orgs[0] is just DB order.
+    let active = true;
     const seedFromMembership = async () => {
       try {
         const response = await axios.get(endpoints.organizations.list);
+        if (!active) return;
         const candidate =
           response?.data?.result?.organizations || response?.data;
         const orgs = Array.isArray(candidate) ? candidate : [];
@@ -187,12 +201,15 @@ export function OrganizationProvider({ children }) {
         }
         setIsReady(true);
       } catch (error) {
-        logger.error("Failed to seed organization from membership:", error);
-        setIsReady(true);
+        if (active) {
+          logger.error("Failed to seed organization from membership:", error);
+          setIsReady(true);
+        }
       }
     };
     seedFromMembership();
-  }, [authenticated, user]);
+    return () => { active = false; };
+  }, [authenticated, user, recoveringOrganization]);
 
   // Switch organization — called from UI
   const switchOrganization = useCallback(async (newOrganizationId) => {
@@ -295,9 +312,18 @@ export function OrganizationProvider({ children }) {
     [organization, switchOrganization, clearOrganization, isReady],
   );
 
+  const hideChildren = recoveringOrganization ||
+    (authenticated && organization.id !== readSessionOrganization().id);
+
+  useEffect(() => {
+    // Passive effects run after the child snackbar host has committed. The
+    // same gate also waits for the recovered organization state to be seeded.
+    if (authenticated && !hideChildren) notifyRecoveredOrganization?.();
+  }, [authenticated, hideChildren, notifyRecoveredOrganization, user]);
+
   return (
     <OrganizationContext.Provider value={value}>
-      {children}
+      {hideChildren ? null : children}
     </OrganizationContext.Provider>
   );
 }

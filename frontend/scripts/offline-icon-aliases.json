@@ -1,0 +1,36 @@
+{
+  "description": "Legacy invalid names and explicit redistribution-safe substitutions. Alias keys preserve stored names; targets supply bundled geometry and licence attribution.",
+  "redistributionReplacements": {
+    "gridicons:add-outline": "mdi:plus-circle-outline",
+    "dashicons:money-alt": "mdi:currency-usd",
+    "entypo:cross": "mdi:close",
+    "mdi-light:message": "mdi:message-outline",
+    "uil:calender": "mdi:calendar-outline",
+    "uil:exclamation-triangle": "mdi:alert-outline"
+  },
+  "aliases": {
+    "mdi:compare-arrows": "mdi:compare-horizontal",
+    "mdi:license-outline": "mdi:license",
+    "mdi:view-kanban-outline": "mdi:view-column-outline",
+    "mingcute:info-line": "mingcute:information-line",
+    "solar:circle-linear": "mdi:circle-outline",
+    "solar:close-linear": "mdi:close",
+    "solar:inbox-linear": "mdi:inbox-outline",
+    "solar:dice-linear": "mdi:dice-multiple-outline",
+    "solar:document-broken-linear": "solar:document-broken",
+    "solar:flow-outline": "mdi:transit-connection-variant"
+  },
+  "local": {
+    "mdi:blank": {
+      "width": 24,
+      "height": 24,
+      "body": "<path fill=\"none\" d=\"M0 0\"/>"
+    },
+    "solar:square-linear": {
+      "width": 24,
+      "height": 24,
+      "body": "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"4\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/>"
+    }
+  },
+  "localLicence": "The blank layout spacer is original project code; it intentionally paints nothing for unselected menu items. The plain outline square (unchecked checkbox state) is original project code, identical to the addIcon registration in src/components/iconify/iconify.jsx."
+}

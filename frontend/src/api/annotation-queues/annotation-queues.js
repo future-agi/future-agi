@@ -337,6 +337,7 @@ export const useHardDeleteAnnotationQueue = () => {
 export const useRestoreAnnotationQueue = () => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { errorHandled: true },
     mutationFn: (id) => axios.post(annotationQueueEndpoints.restore(id), {}),
     onSuccess: () => {
       enqueueSnackbar("Queue restored. Rule cadence reset.", {
@@ -344,8 +345,11 @@ export const useRestoreAnnotationQueue = () => {
       });
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
-    onError: () => {
-      enqueueSnackbar("Failed to restore queue", { variant: "error" });
+    onError: (error) => {
+      enqueueSnackbar(
+        getSafeActionErrorMessage(error, "Failed to restore queue"),
+        { variant: "error" },
+      );
     },
   });
 };
@@ -1875,6 +1879,9 @@ export const useQueueItemsForSource = (
           ),
           ...(projectId ? { project_id: projectId } : {}),
         },
+        // A slow server shouldn't leave the annotate panel loading forever:
+        // give up after 15 s so the panel can offer a retry.
+        timeout: 15000,
       }),
     select: (d) =>
       selectContractedList(d, {
@@ -1883,6 +1890,13 @@ export const useQueueItemsForSource = (
         label: "annotation-queues/for-source",
       }),
     enabled: validSources.length > 0,
+    // A slow or failing server (timeout, 5xx) won't get faster on retry;
+    // show the panel's Retry state now instead of waiting through retries.
+    // (The app's axios rejects with { statusCode, message }.)
+    retry: (count, error) =>
+      !(error?.statusCode >= 500) &&
+      !/timeout/i.test(error?.message || "") &&
+      count < 2,
     staleTime: 1000 * 30,
     ...options,
   });

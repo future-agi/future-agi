@@ -1,44 +1,97 @@
 import copy
+from collections.abc import Mapping
+from functools import partial
 
 import structlog
 from django.db import transaction
-from django.db.models import Max
 from django.http import Http404
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from agentcc.models import AgentccOrgConfig
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
-from agentcc.org_config_defaults import default_cost_tracking_config
+from agentcc.permissions import GatewayAdminActionsMixin
+from agentcc.serializers.contracts import CapActivationConflictSerializer
 from agentcc.serializers.guardrail_policy import AgentccGuardrailPolicySerializer
 from agentcc.serializers.org_config import (
+    AgentccOrgConfigMutationResponseSerializer,
     AgentccOrgConfigSerializer,
     AgentccOrgConfigWriteSerializer,
 )
-from agentcc.services.config_push import validate_org_config
+from agentcc.services import cap_ledger_status
+from agentcc.services.cap_ledger_status import AdmissionCapLedgerUnavailable
+from agentcc.services.cap_revision import CapPolicyRevisionConflict
+from agentcc.services.config_push import (
+    MCPCredentialPlacementRefused,
+    OrgConfigRejected,
+)
+from agentcc.services.guardrail_credentials import (
+    CONSOLE_GUARDRAIL_POLICY,
+    _prepare_guardrails,
+    log_config_rejected,
+)
+from agentcc.services.org_config_writer import (
+    CONFIG_SECTIONS,
+    GATEWAY_SYNC_FAILED_MESSAGE,
+    REPLACE_SECTIONS,
+    activate_config_version,
+    is_gateway_synced,
+    lock_org,
+    preflight_cap_ledger_for_patch,
+    write_config_version,
+)
+from agentcc.services.routing_key_rules import with_rejection_param
 from tfc.ee_gating import FeatureUnavailable
-from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
+from tfc.middleware.workspace_context import workspace_scope_is_empty
+from tfc.utils.base_viewset import (
+    BaseModelViewSetMixinWithUserOrg,
+    active_request_organization,
+)
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
-_GATEWAY_SYNC_WARNING = (
-    "Config saved but gateway sync failed. Changes will apply on next gateway restart."
-)
 
-
-class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
+class AgentccOrgConfigViewSet(
+    GatewayAdminActionsMixin, BaseModelViewSetMixinWithUserOrg, ModelViewSet
+):
     """Per-org gateway configuration management. Configs are versioned and immutable."""
 
     permission_classes = [IsAuthenticated]
+    gateway_admin_actions = frozenset(
+        {"create", "update", "partial_update", "destroy", "activate"}
+    )
     serializer_class = AgentccOrgConfigSerializer
     queryset = AgentccOrgConfig.no_workspace_objects.all()
     _gm = GeneralMethods()
 
     def get_queryset(self):
-        return super().get_queryset().order_by("-version")
+        """Every version of the request's organization, from any workspace.
+
+        A config belongs to the organization, not to a workspace: the writer
+        saves new versions with no workspace, while versions an earlier
+        release saved carry the workspace they were saved from. The history,
+        a version's detail, its diff and the rollback therefore read the
+        organization's versions as the active read does, never by workspace.
+        An authenticated empty scope still reaches nothing.
+        """
+        request = self.request
+        organization = active_request_organization(request)
+        if (
+            organization is None
+            or workspace_scope_is_empty()
+            or (
+                getattr(request, "workspace", None) is None
+                and getattr(request, "auth_scope", None) is not None
+            )
+        ):
+            return AgentccOrgConfig.no_workspace_objects.none()
+        return AgentccOrgConfig.no_workspace_objects.filter(
+            organization=organization, deleted=False
+        ).order_by("-version")
 
     def list(self, request, *args, **kwargs):
         try:
@@ -57,17 +110,59 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             logger.exception("org_config_retrieve_error", error=str(e))
             return self._gm.not_found("Org config not found")
 
+    @swagger_auto_schema(
+        responses={
+            200: AgentccOrgConfigMutationResponseSerializer,
+            409: CapActivationConflictSerializer,
+        }
+    )
     def create(self, request, *args, **kwargs):
-        """Create a new config version. Auto-increments version and activates it."""
+        """Create a new config version from the active one and activate it.
+
+        Budget replacements that touch caps require budgets.policy_revision,
+        with the same atomic precondition as update-config. Omit or send 0
+        only to expect no saved policy; disabled policies remain versioned.
+        To clear a configured policy, send only its current policy_revision
+        in budgets. Stale replacements return 409 cap_policy_revision_conflict.
+        While a policy exists (even disabled), routing.agents.key_bindings and
+        routing.agents.max_run_usd edits/clears require the same precondition.
+        A routing replacement that removes either field is also a cap edit.
+        Preserve the full budgets section when sending its revision here:
+        POST replaces named sections, unlike update-config's merge patches.
+        Any config write advances an existing policy's revision. The 200 body
+        returns result.policy_revision (0 before any policy), ready to reuse.
+
+        Each section the payload names replaces the active one whole; an
+        explicit `{}` or `null` clears it. Sections it leaves out, including
+        `managed_models`, are copied from the active version.
+
+        A guardrails section may name only policies the org may name (400
+        `guardrail_policy_not_in_org`), and every clear-text credential in it
+        is stored encrypted in the console policy, whichever shape it has.
+        """
         try:
-            write_serializer = AgentccOrgConfigWriteSerializer(data=request.data)
+            named, cleared = _named_sections(request.data)
+            org = getattr(request, "organization", None)
+            # validate_mcp reads the org's active config (vs ids, stored
+            # servers) from the org passed here, not from the request context
+            # var (M2 IR-4); the writer reruns its rules under the org lock.
+            write_serializer = AgentccOrgConfigWriteSerializer(
+                data=_without_sections(request.data, cleared),
+                context={"organization": org, "request": request},
+            )
             if not write_serializer.is_valid():
                 return self._gm.bad_request(write_serializer.errors)
 
             data = write_serializer.validated_data
-            org = getattr(request, "organization", None)
             if org is None:
                 return self._gm.bad_request("Organization context is required")
+
+            # An MCP server secret belongs in the MCP credential vault
+            # (update-mcp-server or /agentcc/mcp/credentials/), never in a
+            # config version (NG-01 item 3): the writer refuses a new one here
+            # as on every write path (refuse_mcp_secrets, M14), and keeps a
+            # legacy one stored inline until agentcc_mcp_migrate_secrets moves
+            # it into the vault.
 
             if data.get("privacy"):
                 from tfc.ee_gating import EEFeature, check_ee_feature
@@ -92,18 +187,34 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 source_format = "rules_list"
                 checks_list = copy.deepcopy(raw_rules)
 
+            # Probe before this view's outer transaction/lock. Rebuild the
+            # patch after policy sanitization below; only budgets are previewed.
+            ledger_status = preflight_cap_ledger_for_patch(
+                org,
+                {
+                    section: None if section in cleared else data[section]
+                    for section in named
+                },
+                mode=REPLACE_SECTIONS,
+            )
             with transaction.atomic():
+                # The writer's org lock comes before the policy upsert's row
+                # lock, as in every config write, so this cannot deadlock
+                # with update-config, which locks the org and then the policy.
+                lock_org(org.pk)
                 if checks_list:
                     # Upsert a UI guardrails policy for this org
-                    policy, _ = AgentccGuardrailPolicy.no_workspace_objects.get_or_create(
-                        organization=org,
-                        name="__ui_guardrails__",
-                        deleted=False,
-                        defaults={
-                            "checks": [],
-                            "scope": AgentccGuardrailPolicy.SCOPE_GLOBAL,
-                            "is_active": True,
-                        },
+                    policy, _ = (
+                        AgentccGuardrailPolicy.no_workspace_objects.get_or_create(
+                            organization=org,
+                            name=CONSOLE_GUARDRAIL_POLICY,
+                            deleted=False,
+                            defaults={
+                                "checks": [],
+                                "scope": AgentccGuardrailPolicy.SCOPE_GLOBAL,
+                                "is_active": True,
+                            },
+                        )
                     )
                     policy_serializer = AgentccGuardrailPolicySerializer(
                         policy, data={"checks": checks_list}, partial=True
@@ -127,64 +238,41 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                             sanitized_rules.append({**check, "_policy": policy_id})
                         data["guardrails"] = {**guardrails, "rules": sanitized_rules}
 
-                # Lock active config to prevent concurrent version creation
-                AgentccOrgConfig.no_workspace_objects.select_for_update().filter(
-                    organization=org, is_active=True, deleted=False
-                ).first()
-
-                # Compute next version number
-                max_version = (
-                    AgentccOrgConfig.no_workspace_objects.filter(
-                        organization=org, deleted=False
-                    ).aggregate(Max("version"))["version__max"]
-                    or 0
+                patch = {
+                    section: None if section in cleared else data[section]
+                    for section in named
+                }
+                # The parts of the section the upsert above leaves as sent
+                # (rules beside a checks map, a checks list) go through the
+                # same checks as update-config; the ids are checked as sent.
+                prepare = (
+                    partial(_prepare_guardrails, org, guardrails)
+                    if "guardrails" in patch and patch["guardrails"] is not None
+                    else None
                 )
-                next_version = max_version + 1
-
-                # Deactivate any currently active config for this org
-                AgentccOrgConfig.no_workspace_objects.filter(
-                    organization=org, is_active=True, deleted=False
-                ).update(is_active=False)
-
-                # Create the new version
-                config = AgentccOrgConfig.no_workspace_objects.create(
-                    organization=org,
-                    version=next_version,
-                    guardrails=data.get("guardrails", {}),
-                    routing=data.get("routing", {}),
-                    cache=data.get("cache", {}),
-                    rate_limiting=data.get("rate_limiting", {}),
-                    budgets=data.get("budgets", {}),
-                    cost_tracking=data.get(
-                        "cost_tracking", default_cost_tracking_config()
-                    ),
-                    ip_acl=data.get("ip_acl", {}),
-                    alerting=data.get("alerting", {}),
-                    privacy=data.get("privacy", {}),
-                    tool_policy=data.get("tool_policy", {}),
-                    mcp=data.get("mcp", {}),
-                    a2a=data.get("a2a", {}),
-                    audit=data.get("audit", {}),
-                    model_database=data.get("model_database", {}),
-                    model_map=data.get("model_map", {}),
-                    is_active=True,
-                    created_by=request.user,
-                    change_description=data.get("change_description", ""),
+                # A version the gateway contract rejects raises here, which
+                # also rolls back the guardrail policy upsert above.
+                config, warnings = write_config_version(
+                    org,
+                    patch,
+                    mode=REPLACE_SECTIONS,
+                    description=data.get("change_description", ""),
+                    user=request.user,
+                    push=lambda saved: self._push_config_to_gateway(org.id, saved),
+                    prepare=prepare,
+                    ledger_status=ledger_status,
                 )
-                # Fail closed: a version the gateway contract rejects must not
-                # become active. Raising here rolls the whole save back.
-                validate_org_config(config)
 
-            # Push to gateway
-            synced = self._push_config_to_gateway(org.id, config)
-
-            data = AgentccOrgConfigSerializer(config).data
-            data["gateway_synced"] = synced
-            if not synced:
-                data["gateway_warning"] = _GATEWAY_SYNC_WARNING
-            return self._gm.success_response(data)
+            result = _with_sync_status(config, warnings)
+            result["policy_revision"] = config.budgets.get("policy_revision", 0)
+            return self._gm.success_response(result)
         except FeatureUnavailable:
             raise
+        except (CapPolicyRevisionConflict, AdmissionCapLedgerUnavailable) as e:
+            return e.response()
+        except OrgConfigRejected as e:
+            log_config_rejected("org_config_create_rejected", org, e)
+            return with_rejection_param(self._gm.bad_request(e), e)
         except Exception as e:
             logger.exception("org_config_create_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -199,53 +287,69 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         """Soft-delete a config version. Cannot delete the active version."""
         try:
             instance = self.get_object()
-            if instance.is_active:
-                return self._gm.bad_request(
-                    "Cannot delete the active config version. Activate another version first."
+            with transaction.atomic():
+                # Under the org lock an activation of this version cannot be
+                # in flight, so the active flag read here is current.
+                lock_org(instance.organization_id)
+                instance = (
+                    AgentccOrgConfig.no_workspace_objects.select_for_update()
+                    .filter(pk=instance.pk, deleted=False)
+                    .first()
                 )
-            instance.deleted = True
-            instance.deleted_at = timezone.now()
-            instance.save(update_fields=["deleted", "deleted_at", "updated_at"])
+                if instance is None:
+                    return self._gm.not_found("Org config not found")
+                if instance.is_active:
+                    return self._gm.bad_request(
+                        "Cannot delete the active config version. Activate another version first."
+                    )
+                instance.deleted = True
+                instance.deleted_at = timezone.now()
+                instance.save(update_fields=["deleted", "deleted_at", "updated_at"])
             return self._gm.success_response({"deleted": True})
         except Exception as e:
             logger.exception("org_config_delete_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @swagger_auto_schema(responses={409: CapActivationConflictSerializer})
     @action(detail=True, methods=["post"])
     def activate(self, request, pk=None):
-        """Roll back to a specific config version by activating it."""
+        """Roll back to a specific config version by activating it.
+
+        `warnings` carries `managed_models_change` when the rollback turns
+        managed models on or off.
+        """
         try:
             instance = self.get_object()
+            # Even an already-active version passes the locked credential
+            # check; returning here would bypass refusal of a retired grant.
+            # An older version can also hold keys the gateway no longer accepts.
+            config, warnings = activate_config_version(
+                instance,
+                user=request.user,
+                push=lambda saved: self._push_config_to_gateway(
+                    saved.organization_id, saved
+                ),
+            )
             if instance.is_active:
-                return self._gm.success_response(
-                    AgentccOrgConfigSerializer(instance).data
-                )
-
-            org = instance.organization
-            # Fail closed: an older version can hold keys the gateway contract
-            # no longer accepts.
-            validate_org_config(instance)
-
-            with transaction.atomic():
-                # Deactivate current active config
-                AgentccOrgConfig.no_workspace_objects.filter(
-                    organization=org, is_active=True, deleted=False
-                ).update(is_active=False)
-
-                # Activate the selected version
-                instance.is_active = True
-                instance.save(update_fields=["is_active", "updated_at"])
-
-            # Push to gateway
-            synced = self._push_config_to_gateway(org.id, instance)
-
-            data = AgentccOrgConfigSerializer(instance).data
-            data["gateway_synced"] = synced
-            if not synced:
-                data["gateway_warning"] = _GATEWAY_SYNC_WARNING
-            return self._gm.success_response(data)
+                data = AgentccOrgConfigSerializer(config).data
+                data["warnings"] = warnings
+                return self._gm.success_response(data)
+            return self._gm.success_response(_with_sync_status(config, warnings))
         except Http404:
             return self._gm.not_found("Org config not found")
+        except AdmissionCapLedgerUnavailable as e:
+            return e.response()
+        except OrgConfigRejected as e:
+            # A version the contract no longer accepts, one that would switch
+            # on a check holding "${" where the gateway expands it
+            # (guardrail_env_reference, with param naming the field), or one
+            # holding a plaintext MCP secret (secret_in_config, M14 IR-1): the
+            # refusal's own code goes back to the client, as create and
+            # update-config do.
+            log_config_rejected(
+                "org_config_activate_rejected", instance.organization, e
+            )
+            return with_rejection_param(self._gm.bad_request(e), e)
         except Exception as e:
             logger.exception("org_config_activate_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -260,9 +364,14 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             config = AgentccOrgConfig.no_workspace_objects.filter(
                 organization=org, is_active=True, deleted=False
             ).first()
-            if not config:
-                return self._gm.success_response(None)
-            return self._gm.success_response(AgentccOrgConfigSerializer(config).data)
+            data = AgentccOrgConfigSerializer(config).data if config else None
+            response = self._gm.success_response(data)
+            response.data["admission_cap_ledger"] = (
+                data["admission_cap_ledger"]
+                if data is not None
+                else cap_ledger_status.get_ledger_status(org.id)
+            )
+            return response
         except Exception as e:
             logger.exception("org_config_active_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -284,34 +393,22 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             if not other:
                 return self._gm.not_found("Comparison config not found")
 
+            from agentcc.services.org_config_secrets import masked_section
+
             diff = {
                 "from_version": other.version,
                 "to_version": instance.version,
-                "guardrails": _json_diff(other.guardrails, instance.guardrails),
-                "routing": _json_diff(other.routing, instance.routing),
-                "cache": _json_diff(other.cache or {}, instance.cache or {}),
-                "rate_limiting": _json_diff(
-                    other.rate_limiting or {}, instance.rate_limiting or {}
-                ),
-                "budgets": _json_diff(other.budgets or {}, instance.budgets or {}),
-                "cost_tracking": _json_diff(
-                    other.cost_tracking or {}, instance.cost_tracking or {}
-                ),
-                "ip_acl": _json_diff(other.ip_acl or {}, instance.ip_acl or {}),
-                "alerting": _json_diff(other.alerting or {}, instance.alerting or {}),
-                "privacy": _json_diff(other.privacy or {}, instance.privacy or {}),
-                "tool_policy": _json_diff(
-                    other.tool_policy or {}, instance.tool_policy or {}
-                ),
-                "mcp": _json_diff(other.mcp or {}, instance.mcp or {}),
-                "a2a": _json_diff(other.a2a or {}, instance.a2a or {}),
-                "audit": _json_diff(other.audit or {}, instance.audit or {}),
-                "model_database": _json_diff(
-                    other.model_database or {}, instance.model_database or {}
-                ),
-                "model_map": _json_diff(
-                    other.model_map or {}, instance.model_map or {}
-                ),
+                # Secret sections are masked on both sides before the diff, so
+                # a rotated secret shows as a change (the masks differ) without
+                # revealing either value, and an unchanged one is not a change
+                # (NG-01).
+                **{
+                    section: _json_diff(
+                        masked_section(section, getattr(other, section) or {}),
+                        masked_section(section, getattr(instance, section) or {}),
+                    )
+                    for section in CONFIG_SECTIONS
+                },
             }
             return self._gm.success_response(diff)
         except Exception as e:
@@ -319,11 +416,18 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.bad_request(str(e))
 
     def _push_config_to_gateway(self, org_id, config):
-        """Push to gateway. Returns True on success, False on failure."""
+        """Push to gateway. Returns True on success, False on failure.
+
+        A config whose MCP secret the gateway cannot place is refused, not a
+        failed push (AM-C20 item 2, AM-C22): the create or activation that
+        pushes it answers 400 and rolls back, so it never becomes the active
+        config, as update-config and the vault's writes do."""
         try:
             from agentcc.services.config_push import push_org_config
 
             return push_org_config(str(org_id), config)
+        except MCPCredentialPlacementRefused:
+            raise
         except Exception as e:
             logger.warning(
                 "org_config_push_failed",
@@ -331,6 +435,34 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 error=str(e),
             )
             return False
+
+
+def _named_sections(raw):
+    """The config sections a POST names, and those it sets to null.
+
+    Read from the raw payload: the write serializer fills a default for every
+    absent section, so its validated data cannot tell absent from empty.
+    """
+    if not isinstance(raw, Mapping):
+        return [], set()
+    named = [section for section in CONFIG_SECTIONS if section in raw]
+    return named, {section for section in named if raw[section] is None}
+
+
+def _without_sections(raw, sections):
+    # The write serializer rejects null, so null (clear) sections skip it.
+    if not sections:
+        return raw
+    return {key: value for key, value in raw.items() if key not in sections}
+
+
+def _with_sync_status(config, warnings):
+    data = AgentccOrgConfigSerializer(config).data
+    data["gateway_synced"] = is_gateway_synced(warnings)
+    if not data["gateway_synced"]:
+        data["gateway_warning"] = GATEWAY_SYNC_FAILED_MESSAGE
+    data["warnings"] = warnings
+    return data
 
 
 def _json_diff(old, new):

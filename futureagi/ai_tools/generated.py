@@ -77,6 +77,11 @@ class GeneratedAPITool(BaseTool):
         return bool(self.generated.annotations.get("readOnlyHint"))
 
     def run(self, raw_params: dict | None, context: ToolContext) -> ToolResult:
+        from ai_tools.background import background_tool_denial
+
+        denial = background_tool_denial(self, context)
+        if denial is not None:
+            return denial
         return self._invoke(self._coerce_params(raw_params or {}), context)
 
     def execute(
@@ -87,6 +92,11 @@ class GeneratedAPITool(BaseTool):
         return self._invoke(dict(params or {}), context)
 
     def _invoke(self, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+        from ai_tools.background import background_tool_denial
+
+        denial = background_tool_denial(self, context)
+        if denial is not None:
+            return denial
         _ensure_urlconf_loaded_once()
         request_context = MCPRequestContext(
             user=context.user,

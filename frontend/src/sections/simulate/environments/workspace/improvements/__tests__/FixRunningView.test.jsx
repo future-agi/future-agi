@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render as rtlRender, screen, within } from "@testing-library/react";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
 import { MemoryRouter } from "react-router-dom";
 
 import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
@@ -7,6 +9,15 @@ import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/__tests__/fixtur
 import FixRunningView from "../FixRunningView";
 import TrialChart from "../TrialChart";
 import TrialsTable from "../TrialsTable";
+
+// The trials table reads theme.palette.data, so render with the app theme.
+const appTheme = createTheme({ palette: palette("light") });
+// eslint-disable-next-line react/prop-types
+const AppTheme = ({ children }) => (
+  <ThemeProvider theme={appTheme}>{children}</ThemeProvider>
+);
+const render = (ui, options) =>
+  rtlRender(ui, { wrapper: AppTheme, ...options });
 
 vi.mock("src/utils/axios", async (importOriginal) => {
   const { withFakeFixRunsApi } = await import(
@@ -106,5 +117,16 @@ describe("TrialChart", () => {
     expect(
       screen.getByText(/^pass rate on the target scenarios · Trial 3 · winner/),
     ).toBeInTheDocument();
+  });
+
+  it("shows no arrow when the best trial did not move the pass rate", () => {
+    const [trial] = byId("fix-search").candidates;
+    trial.verdict.target_pass_rate = [0.5, 0.5];
+    render(<TrialChart candidates={[trial]} />);
+    const lead = screen.getByText(/^pass rate on the target scenarios/);
+    expect(lead).toHaveTextContent(
+      "Trial 1 · best so far · no change from the agent before the change, on the same scenarios",
+    );
+    expect(lead).not.toHaveTextContent(/[▲▼]/);
   });
 });

@@ -283,6 +283,39 @@ class TestKnowledgeBaseDropdownList:
 
         assert response.json()["result"]["table_data"] == []
 
+    def test_status_flag_answers_200_with_every_completed_kb(
+        self, auth_client, organization, workspace
+    ):
+        made = [_kb(organization, workspace, f"ready-kb-{n:02d}") for n in range(12)]
+        _kb(
+            organization,
+            workspace,
+            "still-indexing-kb",
+            status=StatusType.PROCESSING.value,
+        )
+
+        response = auth_client.get(LIST_URL, {"status": "true"})
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = response.json()["result"]["table_data"]
+        assert sorted(row["name"] for row in rows) == [kb.name for kb in made]
+        assert {row["id"] for row in rows} == {str(kb.id) for kb in made}
+
+    def test_lists_every_kb_of_an_organization_with_more_than_ten(
+        self, auth_client, organization, workspace
+    ):
+        made = [_kb(organization, workspace, f"kb-{n:02d}") for n in range(12)]
+
+        response = auth_client.get(LIST_URL)
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = response.json()["result"]["table_data"]
+        assert len(rows) == 12
+        listed = {row["id"] for row in rows}
+        assert listed == {str(kb.id) for kb in made}
+        # The two made first are listed too, not only the ten newest.
+        assert {str(made[0].id), str(made[1].id)} <= listed
+
 
 @pytest.mark.integration
 @pytest.mark.api

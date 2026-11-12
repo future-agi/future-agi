@@ -23,7 +23,7 @@ def backfill_updated_fields_call_execution(apps, schema_editor):
         return None
 
     # Backfill CallExecution records
-    for ce in CallExecution.objects.all():
+    for ce in CallExecution.objects.using(schema_editor.connection.alias).all():
         update_fields = []
 
         vapi_call_id = getattr(ce, "vapi_call_id", None)
@@ -44,10 +44,10 @@ def backfill_updated_fields_call_execution(apps, schema_editor):
                 update_fields.append("provider_call_data")
 
         if update_fields:
-            ce.save(update_fields=update_fields)
+            ce.save(using=schema_editor.connection.alias, update_fields=update_fields)
 
     # Backfill CallExecutionSnapshot records
-    for snap in CallExecutionSnapshot.objects.all():
+    for snap in CallExecutionSnapshot.objects.using(schema_editor.connection.alias).all():
         update_fields = []
 
         vapi_call_id = getattr(snap, "vapi_call_id", None)
@@ -63,7 +63,7 @@ def backfill_updated_fields_call_execution(apps, schema_editor):
                 update_fields.append("provider_call_data")
 
         if update_fields:
-            snap.save(update_fields=update_fields)
+            snap.save(using=schema_editor.connection.alias, update_fields=update_fields)
 
 class Migration(migrations.Migration):
 

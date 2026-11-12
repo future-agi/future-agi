@@ -83,7 +83,10 @@ export function buildTimeRangePayload(preset, customDateRange) {
 
 export function resolveInitialTimeRange(savedTimeRange, urlPreset) {
   const tr = savedTimeRange || {};
-  if (!urlPreset && tr.custom_start && tr.custom_end) {
+  // A URL preset carries no dates, so only a real preset may override the
+  // saved range; "custom" (or anything off-enum) keeps the widget's saved one.
+  const override = VALID_PRESETS.has(urlPreset) ? urlPreset : null;
+  if (!override && tr.custom_start && tr.custom_end) {
     const start = new Date(tr.custom_start);
     const end = new Date(tr.custom_end);
     if (isValid(start) && isValid(end)) {
@@ -91,9 +94,45 @@ export function resolveInitialTimeRange(savedTimeRange, urlPreset) {
     }
   }
   return {
-    timePreset: urlPreset || tr.preset || DEFAULT_DATE_PRESET,
+    timePreset: override || tr.preset || DEFAULT_DATE_PRESET,
     customDateRange: null,
   };
+}
+
+// The dashboard date filter rides the URL between the dashboard and the widget
+// editor, which are separate routes. A Custom choice carries its dates too:
+// "custom" alone restored the chip without its range, so returning from the
+// editor dropped the override and a new widget saved the 30D default.
+const CUSTOM_START_PARAM = "customStart";
+const CUSTOM_END_PARAM = "customEnd";
+
+export function toDateFilterSearch(datePreset, customDateRange) {
+  const params = new URLSearchParams();
+  if (!datePreset) return params;
+  params.set("timePreset", datePreset);
+  if (datePreset === "custom") {
+    const start = toISOIfValid(customDateRange?.[0]);
+    const end = toISOIfValid(customDateRange?.[1]);
+    if (start && end) {
+      params.set(CUSTOM_START_PARAM, start);
+      params.set(CUSTOM_END_PARAM, end);
+    }
+  }
+  return params;
+}
+
+// Append the date filter to `path`, after any params `path` already carries.
+export function withDateFilterSearch(path, datePreset, customDateRange) {
+  const search = toDateFilterSearch(datePreset, customDateRange).toString();
+  if (!search) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}${search}`;
+}
+
+export function readCustomDateRange(searchParams) {
+  if (searchParams?.get("timePreset") !== "custom") return null;
+  const start = toISOIfValid(searchParams.get(CUSTOM_START_PARAM));
+  const end = toISOIfValid(searchParams.get(CUSTOM_END_PARAM));
+  return start && end ? [new Date(start), new Date(end)] : null;
 }
 
 export function toTimeRangePayload(range) {

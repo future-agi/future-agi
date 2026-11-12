@@ -1,3 +1,5 @@
+import { formatExactMoney } from "src/sections/common/format/money";
+import { formatUsdCost } from "src/utils/format-usd-cost";
 import _ from "lodash";
 
 const yAxisUnitGroups = {
@@ -32,7 +34,7 @@ export const formatYAxisValue = (value, selectedGraphProperty) => {
   const key = _.toLower(selectedGraphProperty);
 
   const formatRules = {
-    cost: (v) => Number(v).toFixed(6),
+    cost: (v) => formatExactMoney(v, { prefix: "", minimumFractionDigits: 6 }),
   };
 
   const formatter = formatRules[key] || ((v) => v.toString());
@@ -56,4 +58,31 @@ export const getLineSeriesName = (selectedGraphProperty) => {
   )}`;
 
   return `${baseUnit} (${label})`;
+};
+
+/** Optional generated monetary companion; absence keeps legacy presentation. */
+export const isIncompleteCost = (coverage) =>
+  Boolean(coverage && coverage.status !== "complete");
+
+/**
+ * `known_subtotal` arrives as a JSON float (a ClickHouse Float64 sum) or as a
+ * client-side reduce over such floats, so it carries no authoritative decimal
+ * digits: 0.0005734000000000001 is binary noise. Twelve significant digits
+ * drop that noise and keep every cent and sub-cent a price can produce; the
+ * shared USD formatter then prints it like every other cost.
+ */
+export const formatKnownSubtotal = (subtotal) =>
+  formatUsdCost(
+    typeof subtotal === "number" && Number.isFinite(subtotal)
+      ? Number(subtotal.toPrecision(12))
+      : subtotal,
+  );
+
+/** A known subtotal must never be labelled as a complete total or mean. */
+export const monetaryCostLabel = (value, coverage) => {
+  if (coverage?.status === "unknown") return "Unknown";
+  if (coverage?.status === "partial") {
+    return `Partial · Known subtotal ${formatKnownSubtotal(coverage.known_subtotal)}`;
+  }
+  return value == null ? "—" : `$${value}`;
 };

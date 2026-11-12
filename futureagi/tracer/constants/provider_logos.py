@@ -1,12 +1,21 @@
+"""Provider logos for spans served from Postgres, as root-relative paths.
+
+The paths are files in frontend/public that the install's own UI serves, the
+same artwork model_hub.models.choices.ProviderLogoUrls returns. Before, these
+were absolute URLs on the fi-image-assets S3 bucket (Google's on fi-content-dev),
+so every browser drawing a span's provider logo fetched it from that bucket.
+See tracer/constants/provider_icons.py for the ClickHouse reader's paths.
+"""
+
 from tracer.utils.otel import FiLLMProviderValues
 
 PROVIDER_LOGOS = {
-    FiLLMProviderValues.OPENAI.value: "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png",
-    FiLLMProviderValues.ANTHROPIC.value: "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/claude-ai-icon.png",
-    FiLLMProviderValues.COHERE.value: "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/cohere-small.png",
-    FiLLMProviderValues.MISTRALAI.value: "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/mistral-ai-icon.png",
-    FiLLMProviderValues.GOOGLE.value: "https://fi-content-dev.s3.ap-south-1.amazonaws.com/images/9fed909e-b0ed-40f6-b9df-f9dece3110a0/441cb6be-b1ff-453a-9a14-22dc35f9b9a2",
-    FiLLMProviderValues.AZURE.value: "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/azure-icon.png",
-    FiLLMProviderValues.AWS.value: "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/bedrock-small.svg",
-    FiLLMProviderValues.VERTEXAI.value: "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png",
+    FiLLMProviderValues.OPENAI.value: "/icons/settings/openai.png",
+    FiLLMProviderValues.ANTHROPIC.value: "/icons/settings/anthropic.png",
+    FiLLMProviderValues.COHERE.value: "/icons/settings/cohere.png",
+    FiLLMProviderValues.MISTRALAI.value: "/icons/settings/mistral.png",
+    FiLLMProviderValues.GOOGLE.value: "/icons/settings/google.png",
+    FiLLMProviderValues.AZURE.value: "/icons/settings/azure.png",
+    FiLLMProviderValues.AWS.value: "/assets/provider-logos/bedrock-small.svg",
+    FiLLMProviderValues.VERTEXAI.value: "/assets/provider-logos/vertex-ai.png",
 }

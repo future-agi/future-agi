@@ -38,7 +38,7 @@ def populate_plan(apps, schema_editor):
     SubTier = apps.get_model("usage", "SubscriptionTier")
 
     tier_ids_by_plan = {}
-    for tier_id, tier_name in SubTier.objects.values_list("id", "name"):
+    for tier_id, tier_name in SubTier.objects.using(schema_editor.connection.alias).values_list("id", "name"):
         plan = TIER_NAME_TO_PLAN.get(tier_name)
         if plan is None:
             continue
@@ -46,7 +46,7 @@ def populate_plan(apps, schema_editor):
 
     updated = 0
     for plan, tier_ids in tier_ids_by_plan.items():
-        updated += OrgSub.objects.filter(
+        updated += OrgSub.objects.using(schema_editor.connection.alias).filter(
             plan="free",
             subscription_tier_id__in=tier_ids,
             deleted=False,
@@ -65,11 +65,11 @@ def set_annual_interval(apps, schema_editor):
     SubTier = apps.get_model("usage", "SubscriptionTier")
 
     yearly_tier_ids = list(
-        SubTier.objects.filter(name="basic_yearly").values_list("id", flat=True)
+        SubTier.objects.using(schema_editor.connection.alias).filter(name="basic_yearly").values_list("id", flat=True)
     )
 
     if yearly_tier_ids:
-        updated = OrgSub.objects.filter(
+        updated = OrgSub.objects.using(schema_editor.connection.alias).filter(
             subscription_tier_id__in=yearly_tier_ids,
             billing_interval="monthly",
             deleted=False,

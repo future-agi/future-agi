@@ -1,9 +1,8 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { LoadingButton } from "@mui/lab";
 import { Box, FormControlLabel, Skeleton, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
-import { useNavigate } from "react-router";
 import { paths } from "src/routes/paths";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
@@ -21,9 +20,45 @@ const DetailForm = ({
 }) => {
   const knowledgeBaseDropdownDisabled = Boolean(knowledgeId);
   const [sameRows, setSameRow] = useState(true);
-  const navigate = useNavigate();
-  const { data: knowledgeBaseList, isPending: isKnowledgeBaseListPending } =
-    useKnowledgeBaseList("", null);
+  const {
+    data: knowledgeBaseList,
+    isPending: isKnowledgeBaseListPending,
+    isFetching: isKnowledgeBaseListFetching,
+    refetch: refetchKnowledgeBaseList,
+  } = useKnowledgeBaseList("", null);
+
+  // Knowledge bases are created in another tab, so read the list again when
+  // the user comes back to this tab and each time the picker gets focus. A
+  // browser can bring the tab back without a focus event, and the picker is
+  // where the user looks for the knowledge base they just created. A read
+  // already running is reused rather than started again.
+  const refreshKnowledgeBaseList = useCallback(() => {
+    refetchKnowledgeBaseList?.({ cancelRefetch: false });
+  }, [refetchKnowledgeBaseList]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshKnowledgeBaseList();
+    };
+    window.addEventListener("focus", refreshKnowledgeBaseList);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", refreshKnowledgeBaseList);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [refreshKnowledgeBaseList]);
+
+  // A new tab keeps everything typed in this form. It is opened with an
+  // opener so it starts with a copy of this tab's sessionStorage, which pins
+  // the organization and workspace, and the knowledge base is created where
+  // this form reads its list. The opener link is then cut, as noopener would.
+  const handleCreateKnowledgeBase = () => {
+    const knowledgeBaseTab = window.open(
+      paths.dashboard.knowledge_base,
+      "_blank",
+    );
+    if (knowledgeBaseTab) knowledgeBaseTab.opener = null;
+  };
 
   const knowledgeBaseOptions = useMemo(
     () =>
@@ -97,18 +132,24 @@ const DetailForm = ({
             <ShowComponent condition={!isKnowledgeBaseListPending}>
               <FormSearchSelectFieldControl
                 disabled={knowledgeBaseDropdownDisabled}
-                label="Select knowledge base"
+                label="Knowledge base (optional)"
                 placeholder="Select knowledge base here"
                 size="small"
                 control={control}
                 fieldName={`kb_id`}
                 fullWidth
                 createLabel="Create knowledge base"
-                handleCreateLabel={() =>
-                  navigate(paths.dashboard.knowledge_base)
-                }
+                handleCreateLabel={handleCreateKnowledgeBase}
                 options={knowledgeBaseOptions}
-                onFocus={() => setFocusField("kb_id")}
+                noOptions={
+                  isKnowledgeBaseListFetching
+                    ? "Loading knowledge bases…"
+                    : "No knowledge bases yet"
+                }
+                onFocus={() => {
+                  setFocusField("kb_id");
+                  refreshKnowledgeBaseList();
+                }}
                 onBlur={() => setFocusField("")}
               />
             </ShowComponent>
@@ -156,7 +197,7 @@ const DetailForm = ({
               borderColor: editMode ? "divider" : undefined,
               paddingX: editMode ? 1.5 : 0,
               paddingY: editMode ? 2 : 0,
-              borderRadius: 0.5,
+              borderRadius: "4px",
             }}
           >
             {editMode && (
@@ -217,7 +258,7 @@ const DetailForm = ({
           variant="contained"
           color="primary"
           type="button"
-          sx={{ minWidth: "200px", height: "38px" }}
+          sx={{ minWidth: "200px" }}
           disabled={disabledNext}
           onClick={() => handleNextTab(1)}
         >

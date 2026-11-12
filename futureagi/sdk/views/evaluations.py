@@ -2,14 +2,16 @@ import uuid
 
 import structlog
 from django.core.exceptions import ValidationError
-from django.db.models import Q
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
 
-from accounts.authentication import APIKeyAuthentication
+from accounts.authentication import (
+    APIKeyAuthentication,
+    ServiceEnvelopeEvalAuthentication,
+)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from analytics.utils import (
     MixpanelEvents,
@@ -23,6 +25,7 @@ from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.evaluation import Evaluation
 from sdk.serializers.contracts import (
     ConfigureEvaluationsRequestSerializer,
+    SDKAdmissionErrorResponseSerializer,
     SDKConfigureEvaluationsResponseSerializer,
     SDKErrorResponseSerializer,
     SDKEvalTemplateResponseSerializer,
@@ -33,8 +36,11 @@ from sdk.serializers.contracts import (
     SDKStandaloneEvalV2RequestSerializer,
     SDKStandaloneEvalV2ResponseSerializer,
 )
-from sdk.serializers.evaluations import ConfigureEvaluationsSerializer
-from sdk.utils.api_errors import sdk_validation_error_response
+from sdk.serializers.evaluations import (
+    ConfigureEvaluationsSerializer,
+    StandaloneEvaluationsSerializer,
+)
+from sdk.utils.api_errors import SDKAdmissionError, sdk_validation_error_response
 from sdk.utils.async_evaluations import _handle_async_eval
 from sdk.utils.evaluations import (
     StandaloneEvaluationError,
@@ -42,6 +48,7 @@ from sdk.utils.evaluations import (
     _run_protect,
     _run_standalone_eval,
 )
+from sdk.utils.template_lookup import find_sdk_template, sdk_templates_q
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -148,7 +155,7 @@ class GetEvalStructureEvalIdView(APIView):
 
 class StandaloneEvalView(APIView):
     _gm = GeneralMethods()
-    authentication_classes = [APIKeyAuthentication]
+    authentication_classes = [ServiceEnvelopeEvalAuthentication, APIKeyAuthentication]
     permission_classes = [IsAuthenticated]
     parser_classes = (JSONParser,)
 
@@ -157,7 +164,10 @@ class StandaloneEvalView(APIView):
         responses={
             200: SDKStandaloneEvalResponseSerializer,
             400: SDKErrorResponseSerializer,
+            402: SDKAdmissionErrorResponseSerializer,
+            429: SDKAdmissionErrorResponseSerializer,
             500: SDKErrorResponseSerializer,
+            503: SDKAdmissionErrorResponseSerializer,
         },
         reject_unknown_fields=True,
         validation_error_response=sdk_validation_error_response,
@@ -222,6 +232,9 @@ class StandaloneEvalView(APIView):
             logger.info("Successfully completed all evaluations")
             return self._gm.success_response(output_entries)
 
+        except SDKAdmissionError as exc:
+            return exc.to_response()
+
         except Exception as e:
             logger.exception(f"Error in running standalone eval: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -275,7 +288,12 @@ class StandaloneEvalView_v2(APIView):
                     "name": evaluation.eval_template.name,
                     "input_data": evaluation.input_data,
                     "reason": evaluation.reason,
-                    "runtime": evaluation.runtime,
+                    # A run that failed before the engine returned stored no
+                    # runtime. Send 0 so clients that read runtime as an
+                    # integer can parse the result.
+                    "runtime": (
+                        evaluation.runtime if evaluation.runtime is not None else 0
+                    ),
                     "model": evaluation.model_name,
                     "output_type": evaluation.output_type,
                     "value": evaluation.value,
@@ -313,7 +331,10 @@ class StandaloneEvalView_v2(APIView):
         responses={
             200: SDKStandaloneEvalResponseSerializer,
             400: SDKErrorResponseSerializer,
+            402: SDKAdmissionErrorResponseSerializer,
+            429: SDKAdmissionErrorResponseSerializer,
             500: SDKErrorResponseSerializer,
+            503: SDKAdmissionErrorResponseSerializer,
         },
         reject_unknown_fields=True,
         validation_error_response=sdk_validation_error_response,
@@ -341,23 +362,18 @@ class StandaloneEvalView_v2(APIView):
                 "config": request.validated_data.get("config", {}),
             }
 
-            serializer = ConfigureEvaluationsSerializer(
+            serializer = StandaloneEvaluationsSerializer(
                 data=eval_config, context={"request": request}
             )
             if not serializer.is_valid():
                 return sdk_validation_error_response(serializer.errors)
 
-            eval_template = EvalTemplate.no_workspace_objects.get(
-                Q(name=eval_name)
-                & (
-                    Q(organization=organization, workspace=request.workspace)
-                    | Q(organization__isnull=True)
-                )
+            eval_template = find_sdk_template(
+                eval_name, organization, request.workspace
             )
 
-            is_batched = False
-            if inputs and isinstance(list(inputs.values())[0], list):
-                is_batched = True
+            is_batched = serializer.validated_data["is_batched"]
+            if is_batched:
                 properties = get_mixpanel_properties(
                     user=request.user,
                     type=MixpanelTypes.OBSERVE.value,
@@ -391,6 +407,7 @@ class StandaloneEvalView_v2(APIView):
                     model=model,
                     user=request.user,
                     workspace=request.workspace,
+                    organization=organization,
                     eval_config=serializer.validated_data.get("config", {}),
                     error_localizer_enabled=error_localizer_enabled,
                     trace_eval=trace_eval,
@@ -415,6 +432,7 @@ class StandaloneEvalView_v2(APIView):
                     model=model,
                     user=request.user,
                     workspace=request.workspace,
+                    organization=organization,
                     eval_config=serializer.validated_data.get("config", {}),
                     error_localizer_enabled=error_localizer_enabled,
                     trace_eval=trace_eval,
@@ -436,7 +454,17 @@ class StandaloneEvalView_v2(APIView):
             return self._gm.success_response(output_entries)
 
         except StandaloneEvaluationError as e:
+            from model_hub.utils.jev_templates import jev_error_response
+
+            # A failed Jev run carries its typed code (JEV_MODEL_UNKNOWN,
+            # JEV_KEY_INVALID, ...) and fixed text, not the generic "invalid".
+            jev_error = jev_error_response(e)
+            if jev_error is not None:
+                return jev_error
             return self._gm.bad_request(str(e))
+
+        except SDKAdmissionError as exc:
+            return exc.to_response()
 
         except Exception as e:
             logger.exception(f"Error in running standalone eval: {str(e)}")
@@ -464,8 +492,7 @@ class GetEvalsView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
             evals = EvalTemplate.no_workspace_objects.filter(
-                Q(organization=organization, workspace=request.workspace)
-                | Q(organization__isnull=True)
+                sdk_templates_q(organization, request.workspace)
             ).values(
                 "id",
                 "name",
@@ -539,9 +566,41 @@ class ConfigureEvaluationsView(APIView):
             if not serializer.is_valid():
                 return sdk_validation_error_response(serializer.errors)
 
-            eval_template = EvalTemplate.objects.get(
-                name=serializer.validated_data.get("eval_templates")
+            # The template the request check accepted, by the same lookup.
+            eval_templates = serializer.validated_data.get("eval_templates")
+            try:
+                eval_template = find_sdk_template(
+                    eval_templates, user_organization, request.workspace
+                )
+            except EvalTemplate.DoesNotExist:
+                return self._gm.bad_request(
+                    f"Evaluation template with name :{eval_templates} not found."
+                )
+            from model_hub.utils.jev_templates import validate_jev_binding
+
+            # Rejected here, as the dataset run path does, rather than
+            # accepted and then failed by the background run.
+            jev_error = validate_jev_binding(
+                eval_template,
+                model=serializer.validated_data.get("model_name"),
+                runtime_config=serializer.validated_data.get("config", {}),
             )
+            if jev_error is not None:
+                return jev_error
+
+            # An evaluation this deployment will not run is refused here, with its
+            # sentence, rather than accepted and then failed by the background run.
+            from agentic_eval.core_evals.fi_utils.custom_code_pause import (
+                refuse_paused_custom_code_template,
+            )
+            from agentic_eval.core_evals.fi_utils.exceptions import (
+                CodeEvalSetupError,
+            )
+
+            try:
+                refuse_paused_custom_code_template(eval_template)
+            except CodeEvalSetupError as refused:
+                return self._gm.bad_request(str(refused))
 
             ExternalEvalConfig.objects.create(
                 organization=user_organization,

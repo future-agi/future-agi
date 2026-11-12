@@ -82,6 +82,7 @@ class InviteLinkSerializer(serializers.Serializer):
 
 class InviteCreateResultSerializer(serializers.Serializer):
     invited = serializers.ListField(child=serializers.EmailField())
+    delivery_failed = serializers.ListField(child=serializers.EmailField(), required=False)
     already_members = serializers.ListField(
         child=serializers.EmailField(),
         required=False,
@@ -106,6 +107,12 @@ class InviteResendSerializer(serializers.Serializer):
     """POST /accounts/organization/invite/resend/"""
 
     invite_id = serializers.UUIDField()
+    workspace_access = WorkspaceAccessInputSerializer(many=True, required=False)
+    send_email = serializers.BooleanField(required=False, default=True)
+
+    def validate_workspace_access(self, value):
+        return InviteCreateSerializer().validate_workspace_access(value)
+
     org_level = serializers.ChoiceField(
         choices=Level.CHOICES,
         required=False,

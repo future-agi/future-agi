@@ -1,3 +1,6 @@
+import PersonalKeySnippet, {
+  PersonalKeyControl,
+} from "src/sections/keys/view/PersonalKeySnippet";
 import { Box, Skeleton } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import PropTypes from "prop-types";
@@ -40,6 +43,7 @@ const SDkComponentVoiceTestRun = ({ agentType }) => {
         paddingBottom: 2,
       }}
     >
+      <PersonalKeyControl />
       <InstructionTitle title="Step 1: Install the SDK" />
       <InstructionCodeCopy
         text={getCodeBySection("installation_guide")}
@@ -69,4 +73,10 @@ SDkComponentVoiceTestRun.propTypes = {
   agentType: PropTypes.string,
 };
 
-export default SDkComponentVoiceTestRun;
+export default function SimulationSnippet(props) {
+  return (
+    <PersonalKeySnippet>
+      <SDkComponentVoiceTestRun {...props} />
+    </PersonalKeySnippet>
+  );
+}

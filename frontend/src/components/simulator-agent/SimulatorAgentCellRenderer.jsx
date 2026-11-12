@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import {
   Box,
   Button,
@@ -58,7 +59,7 @@ const SimulatorAgentCellRenderer = (params) => {
         return (
           <Typography
             variant="body2"
-            sx={{ fontWeight: 500, fontSize: "14px", color: "text.primary" }}
+            sx={{ fontWeight: 500, fontSize: "12px", color: "text.primary" }}
           >
             {value}
           </Typography>
@@ -67,12 +68,9 @@ const SimulatorAgentCellRenderer = (params) => {
         return value && typeof value === "string" ? (
           <IconButton
             sx={{
-              borderRadius: theme.spacing(0.5),
               backgroundColor: "background.paper",
               border: "1px solid",
               borderColor: "divider",
-              paddingY: theme.spacing(0.5),
-              paddingX: theme.spacing(1),
               gap: theme.spacing(1),
               display: "flex",
               alignItems: "center",
@@ -84,14 +82,14 @@ const SimulatorAgentCellRenderer = (params) => {
             {data?.logoUrl ? (
               <Box
                 component="img"
-                src={data?.logoUrl}
+                src={localProviderLogo(data)}
                 alt={data?.model_name}
                 sx={{
                   width: theme.spacing(2),
                   height: theme.spacing(2),
                   objectFit: "cover",
                   ...(theme.palette.mode === "dark" &&
-                    isBlackBackgroundLogo(data?.logoUrl) && {
+                    isBlackBackgroundLogo(localProviderLogo(data)) && {
                       filter: "invert(1) brightness(2)",
                     }),
                 }}
@@ -124,11 +122,8 @@ const SimulatorAgentCellRenderer = (params) => {
               sx={{
                 display: "flex",
                 gap: 1,
-                borderRadius: theme.spacing(1),
                 borderColor: `${theme.palette.divider} !important`,
                 minWidth: 71,
-                px: 1,
-                py: 0.25,
               }}
             >
               <SvgColor
@@ -156,7 +151,7 @@ const SimulatorAgentCellRenderer = (params) => {
               PaperProps={{
                 sx: {
                   mt: 1,
-                  minWidth: 120,
+                  minWidth: 200,
                 },
               }}
               transformOrigin={{ horizontal: "right", vertical: "top" }}
@@ -181,13 +176,13 @@ const SimulatorAgentCellRenderer = (params) => {
                   }}
                 />
               </MenuItem>
-              <MenuItem onClick={handleDelete} sx={{ color: "error.main" }}>
+              <MenuItem onClick={handleDelete}>
                 <ListItemIcon sx={{ minWidth: "unset", mr: 0 }}>
                   <SvgColor
                     src="/assets/icons/ic_delete.svg"
                     sx={{
-                      height: 20,
-                      width: 20,
+                      height: 16,
+                      width: 16,
                     }}
                   />
                 </ListItemIcon>

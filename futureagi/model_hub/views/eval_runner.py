@@ -3,9 +3,9 @@ import json
 import re
 import traceback
 import uuid
-from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from types import SimpleNamespace
 
 import structlog
 
@@ -17,16 +17,15 @@ from rest_framework.generics import CreateAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from accounts.utils import get_request_organization
 from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 from agentic_eval.core.utils.functions import detect_input_type, is_uuid
 from agentic_eval.core.utils.model_config import ModelConfigs
-from tfc.telemetry import wrap_for_thread
-
-logger = structlog.get_logger(__name__)
-from accounts.models.organization import Organization
-from accounts.utils import get_request_organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from agentic_eval.core_evals.fi_evals.grounded.similarity import *  # noqa: F403
+from agentic_eval.core_evals.fi_utils.custom_code_pause import (
+    refuse_paused_custom_code_template,
+)
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from analytics.utils import (
     MixpanelEvents,
@@ -48,7 +47,6 @@ from model_hub.models.develop_dataset import (
     Column,
     Dataset,
     DataTypeChoices,
-    KnowledgeBaseFile,
     Row,
 )
 from model_hub.models.evals_metric import (
@@ -69,16 +67,28 @@ from model_hub.serializers.eval_runner import (
     EvalTemplateSerializer,
     EvalUserTemplateSerializer,
 )
+from model_hub.services import credit_ledger_port as credit_ledger
+from model_hub.services.http_evaluation_fence import (
+    fence_http_evaluation_write,
+    http_evaluation_write,
+)
 from model_hub.utils.eval_prompt_variables import sync_required_keys_from_prompt
 from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 from model_hub.utils.evals import prepare_user_eval_config  # noqa: E402
+from model_hub.utils.evaluation_connections import evaluation_connection_budget
+from model_hub.utils.feedback_run_scope import (
+    STARTED_BY_SCHEDULE,
+    feedback_workspace_for_run,
+)
 from model_hub.utils.json_path_resolver import (  # noqa: E402
     parse_json_safely,
     resolve_json_path,
 )
-from sdk.utils.helpers import _get_api_call_type
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+from model_hub.utils.workspace_scope import knowledge_base_id_for
+from sdk.utils.helpers import _emit_jev_usage, _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_workspace
+from tfc.telemetry import wrap_for_thread
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import (
     get_error_for_api_status,
@@ -88,7 +98,8 @@ from tfc.utils.error_codes import (
 )
 from tfc.utils.functions import get_eval_stats
 from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.parse_errors import parse_serialized_errors
+
+logger = structlog.get_logger(__name__)
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -101,6 +112,32 @@ except ImportError:
     log_and_deduct_cost_for_api_request = None
     refund_cost_for_api_call = None
 
+# One key: the assumed contract and the gateway's refusal contract
+# define no evaluator fee separate from a
+# managed call's own settlement, so a managed judge's evaluator usage bills no
+# per-run fee either. Set True only when the contract makes the fee a separate
+# charge. A managed judge's provider cost is never billed here.
+MANAGED_JUDGE_PER_RUN_FEE_SEPARATE = False
+
+# Omitted: feedback uses the run's workspace_id. None: no feedback for a run
+# with no metric. A metric run ignores None: it binds the metric's stored
+# workspace, else the organization's default workspace, and any non-empty
+# value must match that workspace or the run reads no feedback.
+_FEEDBACK_WORKSPACE_UNSET = object()
+
+
+def _managed_judge_settlement(eval_instance, settled_calls):
+    """The settlements that paid for this evaluation's judge (summaries
+    with their request ids), or None when the judge was not paid with Future
+    AGI credits. A managed judge never falls back to another payer, so its
+    whole LLM cost was settled by the credit meter."""
+    from model_hub.services.model_route import is_managed_route_binding
+
+    managed = is_managed_route_binding(getattr(eval_instance, "model_route", None))
+    if not managed and not settled_calls:
+        return None
+    return [call.summary() for call in settled_calls]
+
 
 def _request_organization(request):
     return getattr(request, "organization", None) or request.user.organization
@@ -109,7 +146,9 @@ def _request_organization(request):
 def _request_workspace_filter(request, field_name="workspace"):
     workspace = getattr(request, "workspace", None) or get_current_workspace()
     if not workspace:
-        return models.Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     if getattr(workspace, "is_default", False):
         return (
@@ -228,6 +267,13 @@ def bulk_update_or_create_cells(
         else dataset_id
     )
 
+    # Native/Temporal plans serialize row IDs as strings, while ORM keys are
+    # UUIDs. Normalize before lookup so reruns update rather than duplicate cells.
+    rows_list = [
+        row_id if isinstance(row_id, uuid.UUID) else uuid.UUID(str(row_id))
+        for row_id in rows_list
+    ]
+
     # Get existing cells that match our filters
     existing_cells = Cell.objects.filter(
         row__in=rows_list, column=column_id, dataset=dataset_id
@@ -271,7 +317,7 @@ def bulk_update_or_create_cells(
     return len(cells_to_update), len(cells_to_create)
 
 
-def _is_knowledge_base_uuid(uuid_value):
+def _is_knowledge_base_uuid(uuid_value, dataset=None):
     """
     Check if a UUID value belongs to a KnowledgeBaseFile.
 
@@ -288,11 +334,16 @@ def _is_knowledge_base_uuid(uuid_value):
     if not is_uuid(str(uuid_value)):
         return False
 
-    # Check if it exists in KnowledgeBaseFile
-    try:
-        return KnowledgeBaseFile.objects.filter(id=str(uuid_value)).exists()
-    except Exception:
+    if dataset is None:
         return False
+    return (
+        knowledge_base_id_for(
+            dataset.organization_id,
+            dataset.workspace,
+            uuid_value,
+        )
+        is not None
+    )
 
 
 def _extract_column_id_and_path(value):
@@ -390,13 +441,13 @@ def _resolve_column_reference(column_ref, dataset_id):
     """
     # Try as UUID first
     try:
-        return Column.objects.get(id=column_ref)
+        return Column.objects.get(id=column_ref, dataset_id=dataset_id, deleted=False)
     except (Column.DoesNotExist, ValueError):
         pass
 
     # Try as column name within the dataset
     try:
-        return Column.objects.get(name=column_ref, dataset_id=dataset_id)
+        return Column.objects.get(name=column_ref, dataset_id=dataset_id, deleted=False)
     except Column.DoesNotExist:
         return None
 
@@ -625,6 +676,14 @@ def process_mapping(
 ):
     required_field = []
     mapping = []
+    dataset = row.dataset
+    knowledge_bases = {}
+
+    def is_knowledge_base(value):
+        key = str(value)
+        if key not in knowledge_bases:
+            knowledge_bases[key] = _is_knowledge_base_uuid(value, dataset)
+        return knowledge_bases[key]
 
     # Collect all column IDs that need to be fetched (extracting base column IDs from JSON paths)
     # Skip special mapping values — they resolve via runner context, not column lookup
@@ -637,14 +696,14 @@ def process_mapping(
                 if _is_special_mapping_value(item):
                     continue
                 data = item if str(item) != str(replace_column_id) else column_id
-                if data and not _is_knowledge_base_uuid(data):
+                if data and not is_knowledge_base(data):
                     base_col_id, _ = _extract_column_id_and_path(str(data))
                     column_ids_to_fetch.add(str(base_col_id))
         else:
             if _is_special_mapping_value(value):
                 continue
             data = value if str(value) != str(replace_column_id) else column_id
-            if data and not _is_knowledge_base_uuid(data):
+            if data and not is_knowledge_base(data):
                 base_col_id, _ = _extract_column_id_and_path(str(data))
                 column_ids_to_fetch.add(str(base_col_id))
 
@@ -652,7 +711,11 @@ def process_mapping(
     cells_by_column = {}
     if column_ids_to_fetch:
         cells = Cell.objects.filter(
-            column__id__in=column_ids_to_fetch, row=row
+            column__id__in=column_ids_to_fetch,
+            row=row,
+            column__dataset=dataset,
+            column__deleted=False,
+            deleted=False,
         ).select_related("column")
         cells_by_column = {str(cell.column_id): cell for cell in cells}
 
@@ -675,7 +738,7 @@ def process_mapping(
                 try:
                     if data:
                         # Check if it's a KnowledgeBaseFile UUID
-                        if _is_knowledge_base_uuid(data):
+                        if is_knowledge_base(data):
                             # Pass through UUID unchanged
                             data_list.append(str(data))
                         else:
@@ -724,12 +787,19 @@ def process_mapping(
                 eval_template_name == "prompt_instruction_adherence"
                 and key == "prompt"
                 and data
-                and not _is_knowledge_base_uuid(data)
+                and not is_knowledge_base(data)
             ):
                 try:
                     base_col_id, _ = _extract_column_id_and_path(str(data))
-                    prompt_column = Column.objects.get(id=base_col_id)
-                    run_prompter = RunPrompter.objects.get(id=prompt_column.source_id)
+                    prompt_column = Column.objects.get(
+                        id=base_col_id, dataset=dataset, deleted=False
+                    )
+                    run_prompter = RunPrompter.objects.get(
+                        id=prompt_column.source_id,
+                        dataset=dataset,
+                        organization_id=dataset.organization_id,
+                        deleted=False,
+                    )
 
                     system_messages = [
                         msg
@@ -755,7 +825,7 @@ def process_mapping(
             try:
                 if data:
                     # Check if it's a KnowledgeBaseFile UUID
-                    if _is_knowledge_base_uuid(data):
+                    if is_knowledge_base(data):
                         # Pass through UUID unchanged
                         mapping.append(str(data))
                         required_field.append(key)
@@ -783,18 +853,21 @@ def process_mapping(
             if run_prompt_column:
                 if key == "output" and not mappings.get("input"):
                     # Skip if value is a KnowledgeBaseFile UUID
-                    if not _is_knowledge_base_uuid(value):
+                    if not is_knowledge_base(value):
                         try:
-                            output_column = Column.objects.get(id=value)
+                            output_column = Column.objects.get(
+                                id=value, dataset=dataset, deleted=False
+                            )
                             prompt_column = RunPrompter.objects.get(
-                                id=output_column.source_id
+                                id=output_column.source_id,
+                                dataset=dataset,
+                                organization_id=dataset.organization_id,
+                                deleted=False,
                             )
                             # Get the user prompt from messages
                             prompt = "\n".join(
                                 [
-                                    runner._replace_dynamic_ids(
-                                        content["text"], row
-                                    )
+                                    runner._replace_dynamic_ids(content["text"], row)
                                     for message in prompt_column.messages
                                     if message["role"] == "user"
                                     for content in message["content"]
@@ -828,8 +901,12 @@ class EvaluationRunner:
         organization_id=None,
         workspace_id=None,
         version_number=None,
+        standalone_eval_type_id=None,
+        feedback_workspace_id=_FEEDBACK_WORKSPACE_UNSET,
     ):
         self.user_eval_metric_id = user_eval_metric_id
+        # Standalone type selection must not masquerade as a dataset binding.
+        self.standalone_eval_type_id = standalone_eval_type_id
         self.column = column
         self.user_eval_metric = None
         self.experiment_dataset = experiment_dataset
@@ -858,6 +935,15 @@ class EvaluationRunner:
         self.source_configs = {} if source_configs is None else source_configs
         self.organization_id = organization_id
         self.workspace_id = workspace_id
+        # Keep admitted run scope separate from template-derived display context.
+        # feedback_workspace_id binds feedback only; workspace_id still selects
+        # provider keys and knowledge bases.
+        self._feedback_run_scope = (
+            organization_id,
+            workspace_id
+            if feedback_workspace_id is _FEEDBACK_WORKSPACE_UNSET
+            else feedback_workspace_id,
+        )
         self.version_number = version_number
         self._resolved_version = None
         # Memoized effective config (template_config + snapshot overlay).
@@ -880,26 +966,84 @@ class EvaluationRunner:
         Returns:
             List of processed few-shot examples
         """
-        # get_fewshots = RAG()
-        embedding_manager = EmbeddingManager()
+        # Dataset runs use the persisted metric/dataset binding, not ambient
+        # workspace context or the (possibly SYSTEM-owned) eval template.
+        run_organization_id, run_workspace_id = getattr(
+            self, "_feedback_run_scope", (None, None)
+        )
+        organization_id = run_organization_id
+        workspace_id = run_workspace_id
+        metric = self.user_eval_metric
+        if self.user_eval_metric_id and metric is None:
+            logger.warning("feedback_retrieval_missing_metric_binding")
+            return []
+        if metric is not None:
+            organization_id = getattr(metric, "organization_id", None)
+            dataset = getattr(metric, "dataset", None)
+            dataset_workspace_id = getattr(dataset, "workspace_id", None)
+            same_org = bool(organization_id) and str(
+                getattr(dataset, "organization_id", None)
+            ) == str(organization_id)
+            # A metric run is scheduled: its stored metric workspace, else the
+            # organization's default workspace. A dataset with no workspace is
+            # bound only to the default workspace; ambient context and run
+            # input never choose the workspace.
+            workspace_id = (
+                feedback_workspace_for_run(
+                    organization_id,
+                    dataset_workspace_id,
+                    started_by=STARTED_BY_SCHEDULE,
+                    workspace_id=getattr(metric, "workspace_id", None),
+                )
+                if same_org
+                else None
+            )
+            if (
+                not same_org
+                or not workspace_id
+                or (
+                    self.dataset is not None
+                    and (
+                        str(self.dataset.organization_id) != str(organization_id)
+                        or str(self.dataset.workspace_id) != str(dataset_workspace_id)
+                    )
+                )
+                or (
+                    run_organization_id
+                    and str(run_organization_id) != str(organization_id)
+                )
+                or (run_workspace_id and str(run_workspace_id) != str(workspace_id))
+                or (
+                    self.user_eval_metric_id
+                    and str(getattr(metric, "id", None))
+                    != str(self.user_eval_metric_id)
+                )
+                or (
+                    self.organization_id
+                    and str(self.organization_id) != str(organization_id)
+                )
+                or (self.workspace_id and str(self.workspace_id) != str(workspace_id))
+            ):
+                logger.warning("feedback_retrieval_invalid_metric_binding")
+                return []
+        if not organization_id:
+            logger.warning("feedback_retrieval_missing_organization")
+            return []
+        if not workspace_id:
+            logger.warning("feedback_retrieval_missing_workspace")
+            return []
 
         all_examples = []
+        embedding_manager = None
         try:
-            if not self.organization_id:
-                logger.warning(
-                    "No organization_id available for filtering in get_few_shot_examples - returning empty examples"
-                )
-                # print(f"[FEEDBACK RAG] Skipped — no organization_id", flush=True)
-                return all_examples
-
+            embedding_manager = EmbeddingManager()
             start_time = datetime.now()
             examples = embedding_manager.retrieve_avg_rag_based_examples(
                 eval_id=self.eval_template.id,
                 inputs=mapping,
                 input_cols=required_field,
-                organization_id=self.organization_id,
-                # Feedback retrieval is org-scoped; writes still tag workspace_id.
-                workspace_id=None,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
             )
             end_time = datetime.now()
             elapsed_time = (end_time - start_time).total_seconds()
@@ -925,10 +1069,12 @@ class EvaluationRunner:
         except Exception as e:
             logger.info(f"Error processing dataset {str(e)}")
 
-        # get_fewshots.close()
-        embedding_manager.close()
+        finally:
+            if embedding_manager is not None:
+                embedding_manager.close()
         return all_examples
 
+    @fence_http_evaluation_write
     def _initialize_eval_metric(self):
         """Initialize and set status of user eval metric"""
         self.user_eval_metric = UserEvalMetric.objects.select_related(
@@ -943,8 +1089,8 @@ class EvaluationRunner:
             )
 
         if self.version_number is None:
-            # Resolve the version that will actually run (pinned wins, else
-            # template default) so run records and usage logs agree.
+            # The resolved version (pinned wins, else template default) stamps
+            # run records and usage logs.
             try:
                 self._resolved_version = EvalTemplateVersion.objects.resolve_for_metric(
                     self.user_eval_metric
@@ -956,8 +1102,16 @@ class EvaluationRunner:
                     user_eval_metric_id=str(self.user_eval_metric_id),
                     exc_info=True,
                 )
-            if self._resolved_version:
-                self.version_number = self._resolved_version.version_number
+            # Only a live pin is sent to the engine as a version number. An
+            # unpinned metric, or one whose pinned version was deleted, runs
+            # the live template, not the template's default version.
+            pinned = self._resolved_version
+            if (
+                pinned is not None
+                and pinned.id == self.user_eval_metric.pinned_version_id
+                and not getattr(pinned, "deleted", False)
+            ):
+                self.version_number = pinned.version_number
 
         self.user_eval_metric.status = StatusType.RUNNING.value
         self.user_eval_metric.save(update_fields=["status"])
@@ -974,8 +1128,10 @@ class EvaluationRunner:
         invalidated automatically when `self.eval_template` or
         `self._resolved_version` identity changes.
         """
-        cache_key = (id(getattr(self, "eval_template", None)),
-                     id(getattr(self, "_resolved_version", None)))
+        cache_key = (
+            id(getattr(self, "eval_template", None)),
+            id(getattr(self, "_resolved_version", None)),
+        )
         cached = getattr(self, "_effective_config_cache", None)
         if (
             cached is not None
@@ -1024,6 +1180,38 @@ class EvaluationRunner:
         self._effective_config_cache = effective_config
         return effective_config
 
+    def _saved_choice_version(self):
+        """The pinned version whose saved choices run, or None for live choices.
+
+        Only with the DSX_EVAL_SAVED_CHOICES_ENABLED launch switch on (the
+        dataset.evalVersions ON state) does a binding that pins a live version
+        run that version's saved choice definition (historical execution).
+        With the switch OFF every run scores with the template's live choices,
+        pinned or not, as before this release; a pin still selects the
+        version's prompt and config snapshot. An unpinned binding resolves
+        the template default to stamp the run and apply its prompt, and keeps
+        scoring with the template's live choices, which the template editor
+        changes in place. A soft-deleted pin falls back to the default
+        (resolve_for_metric) and so to the live choices too.
+        """
+        from django.conf import settings
+
+        if getattr(settings, "DSX_EVAL_SAVED_CHOICES_ENABLED", False) is not True:
+            return None
+        metric = getattr(self, "user_eval_metric", None)
+        pinned_id = getattr(metric, "pinned_version_id", None)
+        if pinned_id is None:
+            return None
+        self._get_effective_eval_config()
+        version = getattr(self, "_resolved_version", None)
+        if (
+            version is not None
+            and version.id == pinned_id
+            and not getattr(version, "deleted", False)
+        ):
+            return version
+        return None
+
     def _get_column_config(self, dataset):
         """Get column configuration based on eval type"""
         logger.info(
@@ -1052,14 +1240,20 @@ class EvaluationRunner:
             "dataset": dataset,
         }
 
+    @fence_http_evaluation_write
     def _create_or_update_column(self, dataset, column_config, new_column=False):
         """Create new column or update existing one"""
 
         if self.is_only_eval and self.replace_column_id and not new_column:
+            column = Column.objects.get(
+                id=self.replace_column_id, dataset=dataset, deleted=False
+            )
             Cell.objects.filter(
-                column__id=self.replace_column_id, deleted=False
+                column=column,
+                row__dataset=dataset,
+                deleted=False,
             ).update(value=None, status=CellStatus.RUNNING.value, value_infos=None)
-            return Column.objects.get(id=self.replace_column_id)
+            return column
 
         # Use select_for_update to prevent race conditions when multiple async tasks
         # try to create the same column simultaneously
@@ -1069,10 +1263,27 @@ class EvaluationRunner:
                 id=dataset.id
             )
 
+            # HTTP source labels can change without replacing their output IDs.
+            # Keep non-HTTP evaluation column behavior unchanged.
+            http_source = (
+                getattr(self.experiment_dataset, "legacy_prompt_config", None) or {}
+            ).get("target_type") == "http"
+            lookup = column_config
+            if http_source:
+                lookup = {
+                    "dataset": column_config["dataset"],
+                    "source": column_config["source"],
+                    "source_id": column_config["source_id"],
+                    "deleted": False,
+                    "defaults": {
+                        key: column_config[key] for key in ("name", "data_type")
+                    },
+                }
+
             # Now try to get or create the column
             # This is safe because we have the dataset locked
             try:
-                column, created = Column.objects.get_or_create(**column_config)
+                column, created = Column.objects.get_or_create(**lookup)
             except Exception:
                 # Another task created it between our check and create
                 # Retry to get the existing column
@@ -1083,6 +1294,17 @@ class EvaluationRunner:
                     deleted=False,
                 )
                 created = False
+
+            # Labels and result types are mutable attributes, not identity.
+            # Reuse the score/reason column (and its cells) after a source rename.
+            if http_source:
+                changed_fields = []
+                for field in ("name", "data_type"):
+                    if getattr(column, field) != column_config[field]:
+                        setattr(column, field, column_config[field])
+                        changed_fields.append(field)
+                if changed_fields:
+                    column.save(update_fields=changed_fields)
 
             if created:
                 # FIX: Set status to RUNNING for experiment eval columns.
@@ -1169,6 +1391,216 @@ class EvaluationRunner:
             input_type[key] = detect_input_type(value)
         return input_type
 
+    def _emit_cell_usage(
+        self, eval_instance, api_call_log_row, row, *, judge_settlement=None
+    ):
+        """Bill one evaluated cell. Billing never fails the cell, but a lost
+        charge is logged."""
+        try:
+            try:
+                from ee.usage.schemas.events import UsageEvent
+            except ImportError:
+                UsageEvent = None
+            try:
+                from ee.usage.services.config import BillingConfig
+            except ImportError:
+                BillingConfig = None
+            try:
+                from ee.usage.services.emitter import emit
+            except ImportError:
+                emit = None
+            try:
+                from ee.usage.utils.event_properties import token_usage_properties
+            except ImportError:
+
+                def token_usage_properties(token_usage):
+                    return {}
+
+            billing_config = None
+            if BillingConfig is not None:
+                billing_config = BillingConfig.get()
+            eval_cost = getattr(eval_instance, "cost", {})
+            llm_cost = eval_cost.get("total_cost", 0)
+            per_run_fee = billing_config.get_eval_per_run_fee() if billing_config else 0
+            if judge_settlement is None:
+                actual_cost = llm_cost + per_run_fee
+            else:
+                # The managed provider cost was already settled by the
+                # credit meter; only an explicitly separate fee may remain.
+                actual_cost = per_run_fee if MANAGED_JUDGE_PER_RUN_FEE_SEPARATE else 0
+            _token_usage = getattr(eval_instance, "token_usage", {})
+
+            # Also compute fallback cost for comparison logging
+            _fallback_cost = 0
+            try:
+                from agentic_eval.core_evals.fi_utils.token_count_helper import (
+                    calculate_total_cost,
+                )
+
+                _model = self._charged_model() or "unknown"
+                _fallback = calculate_total_cost(_model, _token_usage)
+                _fallback_cost = _fallback.get("total_cost", 0)
+            except Exception:
+                pass
+
+            logger.info(
+                "eval_cost_breakdown",
+                eval_id=str(self.user_eval_metric.id),
+                model=self._charged_model(),
+                llm_cost=llm_cost,
+                per_run_fee=per_run_fee,
+                actual_cost=actual_cost,
+                fallback_calculated_cost=_fallback_cost,
+                token_usage=getattr(eval_instance, "token_usage", {}),
+                payer=(
+                    credit_ledger.PAYER_CREDITS
+                    if judge_settlement is not None
+                    else None
+                ),
+                settled_request_ids=[
+                    entry.get("request_id") for entry in judge_settlement or []
+                ],
+            )
+
+            credits = (
+                billing_config.calculate_ai_credits(actual_cost)
+                if billing_config
+                else 0
+            )
+            emit_org_id = str(
+                self.organization_id
+                or (
+                    self.user_eval_metric.organization.id
+                    if self.user_eval_metric
+                    else ""
+                )
+            )
+
+            try:
+                from ee.usage.schemas.event_types import BillingEventType
+            except ImportError:
+                BillingEventType = None
+
+            _is_code_eval = getattr(self.eval_template, "eval_type", "") == "code"
+            eval_event_type = (
+                BillingEventType.CODE_EVALUATOR.value
+                if _is_code_eval and BillingEventType is not None
+                else _get_api_call_type(self._charged_model())
+            )
+            event_properties = {
+                "source": self.source,
+                "source_id": str(
+                    self.source_id
+                    or (
+                        str(self.user_eval_metric.template.id)
+                        if self.user_eval_metric
+                        else ""
+                    )
+                ),
+                "raw_cost_usd": str(actual_cost),
+            }
+            if judge_settlement is None:
+                event_properties.update(token_usage_properties(_token_usage))
+            else:
+                # Never attach token usage that could price the settled
+                # managed provider cost for a second time.
+                event_properties.update(
+                    {
+                        "payer": credit_ledger.PAYER_CREDITS,
+                        "billed_component": "eval_per_run_fee",
+                        "dsx_settled_request_ids": ",".join(
+                            str(entry.get("request_id") or "")
+                            for entry in judge_settlement
+                        ),
+                    }
+                )
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and BillingEventType is not None
+                # No proven non-billable event exists in the legacy emitter.
+                and (judge_settlement is None or actual_cost > 0)
+            ):
+                # Keep Jev's flat per-run fee and attempt-stable IDs for
+                # non-managed evaluations. Managed costs have their own meter.
+                if judge_settlement is not None or not _emit_jev_usage(
+                    eval_instance,
+                    org_id=emit_org_id,
+                    run_id=(
+                        str(api_call_log_row.log_id)
+                        if api_call_log_row is not None
+                        else f"{self.replace_column_id}:{row.id}"
+                    ),
+                ):
+                    emit(
+                        UsageEvent(
+                            org_id=emit_org_id,
+                            event_type=eval_event_type,
+                            amount=credits,
+                            properties=event_properties,
+                        )
+                    )
+        except Exception:
+            logger.warning("eval_usage_emit_failed", exc_info=True)
+
+    def _pinned_run_choice(self):
+        """(pinned_model, crosses_model) for this run, resolved once.
+
+        The same choice the engine makes when it builds the evaluator
+        (create_eval_instance): the binding's model and config, the pinned
+        version number, and whether the caller keeps its own model. Without
+        a pinned version number it is (None, False) and nothing changes.
+        """
+        cached = getattr(self, "_pinned_choice", None)
+        if cached is not None:
+            return cached
+        if self.version_number is None or self.eval_template is None:
+            return None, False
+        from evaluations.engine.instance import pinned_run_choice
+
+        metric = self.user_eval_metric
+        self._pinned_choice = pinned_run_choice(
+            self.eval_template,
+            version_number=self.version_number,
+            model=metric.model if metric is not None else None,
+            runtime_config=metric.config if metric is not None else None,
+            organization_id=str(self.organization_id) if self.organization_id else None,
+            keep_model=getattr(self, "keep_selected_model", False),
+        )
+        return self._pinned_choice
+
+    def _charged_model(self):
+        """The model this run is limit-checked, debited and recorded under.
+
+        It is the model that actually runs: a pinned version's model when the
+        engine runs it, else the binding's model, exactly as before.
+        """
+        metric = self.user_eval_metric
+        pinned_model, _ = self._pinned_run_choice()
+        return pinned_model or (metric.model if metric is not None else None)
+
+    def _refuse_pinned_model_without_key(self):
+        """Refuse a pinned model with no key before anything is charged.
+
+        The same model choice as the build and the charge (_pinned_run_choice).
+        A pass is remembered for the rest of the run; a refusal repeats per
+        row.
+        """
+        if getattr(self, "_pinned_model_key_checked", False):
+            return
+        if self.version_number is None or self.eval_template is None:
+            return
+        from evaluations.engine.instance import refuse_pinned_model_without_key
+
+        refuse_pinned_model_without_key(
+            self.eval_template,
+            version_number=self.version_number,
+            organization_id=str(self.organization_id) if self.organization_id else None,
+            workspace_id=str(self.workspace_id) if self.workspace_id else None,
+            choice=self._pinned_run_choice(),
+        )
+        self._pinned_model_key_checked = True
+
     def _process_eval_result(self, row, mappings):
         """Process evaluation for a single row"""
         config = self.update_config_list_values(
@@ -1178,6 +1610,9 @@ class EvaluationRunner:
         api_call_log_row = None
 
         try:
+            # A paused custom code template is refused before the run is
+            # charged; the handler below records it as this row's reason.
+            refuse_paused_custom_code_template(self.eval_template)
             # Extract base column IDs from mappings (remove JSON paths like uuid.field)
             # Skip special mapping values like "output" and "prompt_chain"
             base_column_ids = []
@@ -1191,15 +1626,22 @@ class EvaluationRunner:
                 "id", "data_type"
             )
             col_map = {str(col["id"]): col["data_type"] for col in cols}
+            # A pinned version whose model has no key is refused before the
+            # up-front debit below, so it leaves no charge and no refund.
+            self._refuse_pinned_model_without_key()
             api_call_log_row = self._handle_api_call(row, mappings, config)
-            (
-                eval_result,
-                required_field_error,
-                mapping_error,
-                config_error,
-                eval_instance,
-                partial_input_warning,
-            ) = self._run_evaluation(row, mappings, config)
+            # One key: collect the settlements of this evaluation's judge
+            # calls, so its usage is marked with the request ids that paid.
+            with credit_ledger.settlement_sink() as settled_calls:
+                (
+                    eval_result,
+                    required_field_error,
+                    mapping_error,
+                    config_error,
+                    eval_instance,
+                    partial_input_warning,
+                ) = self._run_evaluation(row, mappings, config)
+            judge_settlement = _managed_judge_settlement(eval_instance, settled_calls)
             # Format response first so we can access the formatted data
             response = self._format_response(
                 eval_result, partial_input_warning=partial_input_warning
@@ -1224,7 +1666,16 @@ class EvaluationRunner:
                         response.get("reason"),
                         CellStatus.PASS.value,
                     )
-            value = self.format_output(response, row)
+            formatter = getattr(eval_instance, "format_result", None)
+            value = (
+                formatter(response, self.eval_template)
+                if callable(formatter)
+                else self.format_output(response, row)
+            )
+            if judge_settlement is not None:
+                # The evaluator usage carries the settlements that paid for
+                # it, so it is never counted as a second charge.
+                response["credit_settlement"] = judge_settlement
 
             if api_call_log_row is not None:
                 config_dict = json.loads(api_call_log_row.config)
@@ -1257,112 +1708,12 @@ class EvaluationRunner:
                 self._handle_api_call_status(api_call_log_row, CellStatus.PASS.value)
 
             # Post-eval cost-based usage emit
-            try:
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.config import BillingConfig
-                except ImportError:
-                    BillingConfig = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-                try:
-                    from ee.usage.utils.event_properties import token_usage_properties
-                except ImportError:
-                    token_usage_properties = lambda token_usage: {}
-
-                billing_config = None
-                if BillingConfig is not None:
-                    billing_config = BillingConfig.get()
-                eval_cost = getattr(eval_instance, "cost", {})
-                llm_cost = eval_cost.get("total_cost", 0)
-                per_run_fee = (
-                    billing_config.get_eval_per_run_fee() if billing_config else 0
-                )
-                actual_cost = llm_cost + per_run_fee
-                _token_usage = getattr(eval_instance, "token_usage", {})
-
-                # Also compute fallback cost for comparison logging
-                _fallback_cost = 0
-                try:
-                    from agentic_eval.core_evals.fi_utils.token_count_helper import (
-                        calculate_total_cost,
-                    )
-
-                    _model = self.user_eval_metric.model or "unknown"
-                    _fallback = calculate_total_cost(_model, _token_usage)
-                    _fallback_cost = _fallback.get("total_cost", 0)
-                except Exception:
-                    pass
-
-                logger.info(
-                    "eval_cost_breakdown",
-                    eval_id=str(self.user_eval_metric.id),
-                    model=self.user_eval_metric.model,
-                    llm_cost=llm_cost,
-                    per_run_fee=per_run_fee,
-                    actual_cost=actual_cost,
-                    fallback_calculated_cost=_fallback_cost,
-                    token_usage=getattr(eval_instance, "token_usage", {}),
-                )
-
-                credits = (
-                    billing_config.calculate_ai_credits(actual_cost)
-                    if billing_config
-                    else 0
-                )
-                emit_org_id = str(
-                    self.organization_id
-                    or (
-                        self.user_eval_metric.organization.id
-                        if self.user_eval_metric
-                        else ""
-                    )
-                )
-
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-
-                _is_code_eval = getattr(self.eval_template, "eval_type", "") == "code"
-                eval_event_type = (
-                    BillingEventType.CODE_EVALUATOR.value
-                    if _is_code_eval and BillingEventType is not None
-                    else _get_api_call_type(self.user_eval_metric.model)
-                )
-                if (
-                    emit is not None
-                    and UsageEvent is not None
-                    and BillingEventType is not None
-                ):
-
-                    emit(
-                        UsageEvent(
-                            org_id=emit_org_id,
-                            event_type=eval_event_type,
-                            amount=credits,
-                            properties={
-                                "source": self.source,
-                                "source_id": str(
-                                    self.source_id
-                                    or (
-                                        str(self.user_eval_metric.template.id)
-                                        if self.user_eval_metric
-                                        else ""
-                                    )
-                                ),
-                                "raw_cost_usd": str(actual_cost),
-                                **token_usage_properties(_token_usage),
-                            },
-                        )
-                    )
-            except Exception:
-                pass
+            self._emit_cell_usage(
+                eval_instance,
+                api_call_log_row,
+                row,
+                judge_settlement=judge_settlement,
+            )
 
             # Trigger error localization when enabled either on the dataset binding
             # (UserEvalMetric) or directly on the eval template.
@@ -1391,9 +1742,7 @@ class EvaluationRunner:
                     cell=cell,
                     log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
                     eval_config=(
-                        self.user_eval_metric.config
-                        if self.user_eval_metric
-                        else None
+                        self.user_eval_metric.config if self.user_eval_metric else None
                     ),
                 )
 
@@ -1415,7 +1764,7 @@ class EvaluationRunner:
             error_message = get_specific_error_message(e)
 
             response, status, value = self._handle_error(error_message)
-           
+
             usage_error_code = get_usage_error_code(e)
             if usage_error_code:
                 response["error_code"] = usage_error_code
@@ -1464,12 +1813,20 @@ class EvaluationRunner:
             else eval_template.id
         )
 
+        # The model that actually runs (a pinned version's, else the
+        # binding's), as for the usage limit and the usage event.
         model = (
-            self.user_eval_metric.model
+            self._charged_model()
             if self.user_eval_metric
             else ModelChoices.TURING_LARGE.value
         )
-        api_call_type = _get_api_call_type(model)
+        api_call_type = _get_api_call_type(
+            model,
+            template=eval_template,
+            runtime_config=(
+                self.user_eval_metric.config if self.user_eval_metric else None
+            ),
+        )
 
         is_futureagi_eval = self.futureagi_eval
 
@@ -1544,12 +1901,15 @@ class EvaluationRunner:
 
         return api_call_log_row
 
+    @fence_http_evaluation_write
     def _create_cell(self, dataset, column, row, response, value, status):
         """Create or update cell with evaluation results"""
         # Guard: don't write cell if experiment was cancelled while this
-        # thread was running in the ThreadPoolExecutor.
+        # thread was running in the ThreadPoolExecutor. A runner that keeps
+        # results after a stop (an experiment's base evaluations) saves a
+        # result whose call was already sent and paid for.
         experiment_id = self.source_configs.get("experiment_id")
-        if experiment_id:
+        if experiment_id and not getattr(self, "keep_results_after_stop", False):
             from model_hub.services.experiment_utils import is_experiment_cancelled
 
             if is_experiment_cancelled(uuid.UUID(str(experiment_id))):
@@ -1563,43 +1923,55 @@ class EvaluationRunner:
         if is_user_eval_stopped(self.user_eval_metric_id):
             return
 
-        cell_data = {
-            "dataset": dataset,
-            "column": column,
-            "row": row,
-            "value_infos": json.dumps(response),
-            "value": value,
-            "status": status,
-        }
+        from tfc.temporal.experiments.run_policy import (
+            experiment_write_lock,
+            holds_failed_row_outcome,
+        )
 
-        if self.is_only_eval and self.replace_column_id:
-            cell = Cell.objects.filter(
-                column__id=self.replace_column_id, row=row, deleted=False
-            ).first()
-            if cell:
-                try:
-                    for key, val in cell_data.items():
-                        setattr(cell, key, val)
-                    cell.status = status
-                    cell.save()
-                    return
-                except Exception as e:
-                    logger.error(f"{e}")
+        with experiment_write_lock(None if self.is_only_eval else experiment_id):
+            # A settled failed-row outcome is not replaced by a later pass.
+            if experiment_id and holds_failed_row_outcome(
+                dataset, column, row, self.column
+            ):
+                return
 
-        try:
-            # Create or update cell
-            Cell.objects.update_or_create(
-                dataset=dataset,
-                column=column,
-                row=row,
-                defaults={
-                    "value_infos": cell_data["value_infos"],
-                    "value": cell_data["value"],
-                    "status": cell_data["status"],
-                },
-            )
-        except Exception as e:
-            logger.exception(f"Error updating or creating cell: {str(e)}")
+            cell_data = {
+                "dataset": dataset,
+                "column": column,
+                "row": row,
+                "value_infos": json.dumps(response),
+                "value": value,
+                "status": status,
+            }
+
+            if self.is_only_eval and self.replace_column_id:
+                cell = Cell.objects.filter(
+                    column__id=self.replace_column_id, row=row, deleted=False
+                ).first()
+                if cell:
+                    try:
+                        for key, val in cell_data.items():
+                            setattr(cell, key, val)
+                        cell.status = status
+                        cell.save()
+                        return
+                    except Exception as e:
+                        logger.error(f"{e}")
+
+            try:
+                # Create or update cell
+                Cell.objects.update_or_create(
+                    dataset=dataset,
+                    column=column,
+                    row=row,
+                    defaults={
+                        "value_infos": cell_data["value_infos"],
+                        "value": cell_data["value"],
+                        "status": cell_data["status"],
+                    },
+                )
+            except Exception as e:
+                logger.exception(f"Error updating or creating cell: {str(e)}")
 
     def _get_required_fields_and_mappings(
         self, user_eval_metric=None, mapping=None, config=None, required_field=None
@@ -1691,13 +2063,6 @@ class EvaluationRunner:
                 final_mapping, final_required_field
             )
 
-            shot_count = (
-                len(few_shot_examples)
-                if isinstance(few_shot_examples, list)
-                else (1 if few_shot_examples else 0)
-            )
-            # print(f"[FEEDBACK INJECT] map_fields injecting fewshots : {few_shot_examples} for AgentEvaluator/CustomPromptEvaluator eval",flush=True)
-            # print(f"[FEEDBACK INJECT] map_fields injecting {shot_count} few-shot examples for eval_template={self.eval_template.id if self.eval_template else None}", flush=True)
             required_field.append("few_shots")
             mapping.append(few_shot_examples)
 
@@ -1802,7 +2167,9 @@ class EvaluationRunner:
                 # User eval → everything is optional.
                 required_field.append("optional_keys")
                 mapping.append(list(template_required_keys))
-        elif self.user_eval_metric_id == "CustomPromptEvaluator":
+        elif (
+            getattr(self, "standalone_eval_type_id", None) or self.user_eval_metric_id
+        ) == "CustomPromptEvaluator":
             required_field.append("required_keys")
             mapping.append(config.get("required_keys"))
 
@@ -1849,6 +2216,7 @@ class EvaluationRunner:
                     Column.objects.filter(
                         source=SourceChoices.EVALUATION.value,
                         source_id=str(self.user_eval_metric_id),
+                        dataset=self.dataset,
                         deleted=False,
                     )
                     .order_by("created_at")
@@ -1881,11 +2249,7 @@ class EvaluationRunner:
             config = config.copy()
             for key, value in config.items():
                 # Check if the value is a comma-separated string
-                if (
-                    isinstance(value, str)
-                    and "," in value
-                    and key not in PROMPT_KEYS
-                ):
+                if isinstance(value, str) and "," in value and key not in PROMPT_KEYS:
                     # Split the string by commas and update the value as a list
                     config[key] = value.split(",")
                 # Check if the key is 'comparator' and if its value matches a known function
@@ -1979,6 +2343,28 @@ class EvaluationRunner:
                     raise e
         return value
 
+    def _effective_choice_config(self):
+        """Select the live/saved definition, then overlay binding scores once."""
+        from evaluations.engine.instance import resolve_choice_scores
+        from evaluations.engine.version_choices import version_choice_config
+
+        self._get_effective_eval_config()
+        choices = version_choice_config(
+            self.eval_template, self._saved_choice_version()
+        )
+        runtime_config = getattr(self, "_runtime_config", None)
+        user_eval_metric = getattr(self, "user_eval_metric", None)
+        if runtime_config is None and user_eval_metric is not None:
+            runtime_config = user_eval_metric.config
+        choices["choice_scores"] = resolve_choice_scores(
+            self.eval_template, runtime_config, base_scores=choices["choice_scores"]
+        )
+        return choices
+
+    def _effective_choice_scores(self):
+        """The selected-base-plus-overlay map used by every dataset consumer."""
+        return self._effective_choice_config()["choice_scores"]
+
     def format_output(self, result_data, row=None, eval_template=None):
         if not self.eval_template:
             self.eval_template = eval_template
@@ -1993,18 +2379,21 @@ class EvaluationRunner:
                     eval_template.workspace.id if eval_template.workspace else None
                 )
 
-        # Non-dataset callers: delegate to the extracted pure function
+        choices = self._effective_choice_config()
+        choice_scores = choices["choice_scores"]
+        # Non-dataset callers: delegate with the same scores and metadata.
         if row is None:
             from evaluations.engine.formatting import format_eval_value
 
-            return format_eval_value(result_data, self.eval_template)
+            return format_eval_value(
+                result_data,
+                self.eval_template,
+                choice_scores=choice_scores,
+                multi_choice=choices["multi_choice"],
+            )
         output_type = result_data.get("output")
         # If choice_scores exist, force choices processing
-        if (
-            self.eval_template
-            and self.eval_template.choice_scores
-            and output_type not in ("Pass/Fail",)
-        ):
+        if self.eval_template and choice_scores and output_type not in ("Pass/Fail",):
             output_type = "choices"
         value = None
 
@@ -2018,7 +2407,7 @@ class EvaluationRunner:
                 self._get_effective_eval_config().get("eval_type_id")
                 == "DeterministicEvaluator"
             ):
-                if not self.eval_template.multi_choice:
+                if not choices["multi_choice"]:
                     data = data if data else []
                     value = data[0] if data else None
                 else:
@@ -2092,28 +2481,22 @@ class EvaluationRunner:
             # Map choice string to numeric score via choice_scores
             from model_hub.utils.scoring import apply_choice_scores
 
-            if (
-                self.eval_template
-                and self.eval_template.choice_scores
-                and isinstance(choice_result, str)
-            ):
-                mapped = apply_choice_scores(
-                    choice_result, self.eval_template.choice_scores
-                )
+            if self.eval_template and choice_scores and isinstance(choice_result, str):
+                mapped = apply_choice_scores(choice_result, choice_scores)
                 value = {
                     "score": mapped if mapped is not None else 0.0,
                     "choice": choice_result,
                 }
             elif (
                 self.eval_template
-                and self.eval_template.choice_scores
+                and choice_scores
                 and isinstance(choice_result, list)
                 and choice_result
             ):
                 picked_scores = [
                     s
                     for s in (
-                        apply_choice_scores(str(c), self.eval_template.choice_scores)
+                        apply_choice_scores(str(c), choice_scores)
                         for c in choice_result
                     )
                     if s is not None
@@ -2145,6 +2528,7 @@ class EvaluationRunner:
             config=config,
             model=self.user_eval_metric.model,
             kb_id=kb_id,
+            managed_judge_billing=self._managed_judge_billing(),
         )
 
         config_error = self._prepare_eval_config(config_copy)
@@ -2165,7 +2549,7 @@ class EvaluationRunner:
             for item in items:
                 if not item:
                     continue
-                if _is_knowledge_base_uuid(item):
+                if _is_knowledge_base_uuid(item, self.dataset):
                     return True
                 base_col_id, _ = _extract_column_id_and_path(str(item))
                 if _resolve_column_reference(base_col_id, dataset_id):
@@ -2315,7 +2699,9 @@ class EvaluationRunner:
         binding_config = (
             self.user_eval_metric.config
             if self.user_eval_metric
-            else config if isinstance(config, dict) else None
+            else config
+            if isinstance(config, dict)
+            else None
         )
         _mapped = merge_code_eval_kwargs(_mapped, self.eval_template, binding_config)
 
@@ -2337,6 +2723,11 @@ class EvaluationRunner:
             _di_raw = effective_config.get("data_injection", {})
         _di = _di_normalize(_di_raw)
 
+        if _di["full_row"] and hasattr(self, "_native_row_context"):
+            # Native inputs come from the admitted version, not mutable Cells.
+            from copy import deepcopy
+
+            _mapped.setdefault("row_context", deepcopy(self._native_row_context))
         if _di["full_row"] and "row_context" not in _mapped:
             try:
                 row_dict = {}
@@ -2512,6 +2903,20 @@ class EvaluationRunner:
         )
         return input_token_count
 
+    def _managed_judge_billing(self):
+        """One key: this runner's judge may run on Future AGI credits only when
+        its provider cost has exactly one debit, the settle. With the
+        legacy combined billing installed, ``_handle_api_call`` debits the
+        evaluation first (refunded only on error), so a managed judge would be
+        charged twice: no opt-in, and create_eval_instance refuses it with a
+        visible line at the point where a key-less judge has always failed,
+        and the existing error path refunds that legacy row."""
+        if log_and_deduct_cost_for_api_request is not None:
+            return None
+        from evaluations.engine.instance import MANAGED_JUDGE_SINGLE_METER
+
+        return MANAGED_JUDGE_SINGLE_METER
+
     def _create_eval_instance(
         self,
         config,
@@ -2519,6 +2924,7 @@ class EvaluationRunner:
         model=ModelChoices.TURING_LARGE.value,
         kb_id=None,
         runtime_config=None,
+        managed_judge_billing=None,
     ):
         """Create evaluation instance based on configuration.
 
@@ -2529,6 +2935,20 @@ class EvaluationRunner:
         from evaluations.engine.instance import create_eval_instance
         from evaluations.engine.registry import get_eval_class
 
+        if kb_id:
+            from accounts.models.workspace import Workspace
+
+            workspace = None
+            if self.workspace_id:
+                workspace = Workspace.no_workspace_objects.filter(
+                    id=self.workspace_id,
+                    organization_id=self.organization_id,
+                ).first()
+                if workspace is None:
+                    raise ValueError("Knowledge base not found")
+            if knowledge_base_id_for(self.organization_id, workspace, kb_id) is None:
+                raise ValueError("Knowledge base not found")
+
         if eval_class:
             self.eval_class = eval_class
         elif not self.eval_class:
@@ -2537,6 +2957,8 @@ class EvaluationRunner:
 
         if runtime_config is None and self.user_eval_metric:
             runtime_config = self.user_eval_metric.config
+        # format_output scores with this binding config's choice map.
+        self._runtime_config = runtime_config
 
         instance, criteria = create_eval_instance(
             eval_class=self.eval_class,
@@ -2549,6 +2971,28 @@ class EvaluationRunner:
             workspace_id=str(self.workspace_id) if self.workspace_id else None,
             version_number=self.version_number,
             is_futureagi=self.futureagi_eval,
+            saved_choices=self._saved_choice_version() is not None,
+            model_override=(
+                model
+                if getattr(self, "source", None) == "eval_playground"
+                and getattr(self, "honour_selected_model", True)
+                and self.version_number is None
+                and self.eval_template.config.get("eval_type_id")
+                in {"CustomPromptEvaluator", "AgentEvaluator"}
+                else None
+            ),
+            managed_judge_billing=managed_judge_billing,
+            # A composite child or jury seat keeps the model its link chose.
+            keep_model=getattr(self, "keep_selected_model", False),
+            # Test saves the live template without creating a version. Only
+            # standalone previews may bypass its older default definition.
+            preview_current_definition=(
+                self.source in ("eval_playground", "eval_playground_test")
+                and self.user_eval_metric_id is None
+            ),
+            # Set only for the eval playground request; every other run falls
+            # back to the concise summary instead of failing.
+            strict_summary=getattr(self, "strict_summary", False),
         )
 
         # Preserve side effects that dataset path reads via self
@@ -2560,6 +3004,7 @@ class EvaluationRunner:
     def _prepare_eval_config(self, config, model=ModelChoices.TURING_LARGE.value):
         """Prepare evaluation configuration"""
         effective_config = self._get_effective_eval_config()
+        choices = self._effective_choice_config()
         eval_type_id = effective_config.get("eval_type_id")
 
         if eval_type_id == "CustomCodeEval":
@@ -2577,16 +3022,17 @@ class EvaluationRunner:
             config["rule_prompt"] = effective_config.get("rule_prompt")
             config["model"] = model or effective_config.get("model")
             raw_output = effective_config.get("output")
-            if self.eval_template.choice_scores and raw_output != "Pass/Fail":
+            if choices["choice_scores"] and raw_output != "Pass/Fail":
                 config["output_type"] = "choices"
             else:
                 config["output_type"] = raw_output
-            config["choices"] = self.eval_template.choices or (
-                list(self.eval_template.choice_scores.keys())
-                if self.eval_template.choice_scores
+            config["choices"] = choices["choices"] or (
+                list(choices["choice_scores"].keys())
+                if choices["choice_scores"]
                 else []
             )
-            config["choice_scores"] = self.eval_template.choice_scores
+            config["choice_scores"] = choices["choice_scores"]
+            config["multi_choice"] = choices["multi_choice"]
             # pass_threshold and reverse_output control how the LLM's verdict
             # maps to a pass/fail decision. pass_threshold is stored on the
             # template model; reverse_output lives in the template config.
@@ -2619,12 +3065,16 @@ class EvaluationRunner:
             config["organization_id"] = (
                 str(self.eval_template.organization.id)
                 if self.eval_template.organization
-                else str(self.organization_id) if self.organization_id else None
+                else str(self.organization_id)
+                if self.organization_id
+                else None
             )
             config["workspace_id"] = (
                 str(self.eval_template.workspace.id)
                 if getattr(self.eval_template, "workspace", None)
-                else str(self.workspace_id) if self.workspace_id else None
+                else str(self.workspace_id)
+                if self.workspace_id
+                else None
             )
 
         elif eval_type_id == "CustomPromptEvaluator":
@@ -2633,7 +3083,7 @@ class EvaluationRunner:
             config["system_prompt"] = effective_config.get("system_prompt")
             # If choice_scores are defined, force choices mode
             raw_output = effective_config.get("output")
-            if self.eval_template.choice_scores and raw_output != "Pass/Fail":
+            if choices["choice_scores"] and raw_output != "Pass/Fail":
                 config["output_type"] = "choices"
             else:
                 config["output_type"] = raw_output
@@ -2666,13 +3116,16 @@ class EvaluationRunner:
             config["check_internet"] = effective_config.get("check_internet", False)
             config["multi_choice"] = effective_config.get("multi_choice")
             # Derive choices from choice_scores if not set on template
-            config["choices"] = self.eval_template.choices or (
-                list(self.eval_template.choice_scores.keys())
-                if self.eval_template.choice_scores
+            config["choices"] = choices["choices"] or (
+                list(choices["choice_scores"].keys())
+                if choices["choice_scores"]
                 else []
             )
-            config["choice_scores"] = self.eval_template.choice_scores
-        elif self.user_eval_metric_id == "CustomPromptEvaluator":
+            config["choice_scores"] = choices["choice_scores"]
+            config["multi_choice"] = choices["multi_choice"]
+        elif (
+            getattr(self, "standalone_eval_type_id", None) or self.user_eval_metric_id
+        ) == "CustomPromptEvaluator":
             config["system_prompt"] = config.get("system_prompt")
             config["output_type"] = config.get("output")
             config["api_key"] = self._get_api_key(
@@ -2687,8 +3140,22 @@ class EvaluationRunner:
         return config
 
     def _get_api_key(self, model, organization_id, workspace_id=None):
-        """Get API key for the model"""
+        """Get API key for the model. One key: a key-less organization whose
+        judge model is managed-eligible gets None here. This config is plain
+        data (copied and handed to the error localizer), so no route object
+        and no admission: the evaluator itself is routed in
+        evaluations.engine.instance."""
+        from model_hub.services.model_route import is_managed_eligible
+
         model_manager = LiteLLMModelManager(model, exclude_providers="custom")
+        lookup = model_manager.stored_credential_lookup(organization_id, workspace_id)
+        if not lookup.found and is_managed_eligible(
+            organization_id=organization_id,
+            workspace_id=lookup.workspace_id,
+            model_name=model,
+            model_mode=model_manager.model_mode(),
+        ):
+            return None
         api_key = model_manager.get_api_key(
             organization_id=organization_id, workspace_id=workspace_id
         )
@@ -2786,6 +3253,7 @@ class EvaluationRunner:
             except Exception as e:
                 logger.error(f"Error updating success api call status: {str(e)}")
 
+    @fence_http_evaluation_write
     def _create_reason_cell(self, dataset, column, row, response, reason, status):
         """Create or update cell for the reason with evaluation results"""
         # Mirror the _create_cell guard: if the user stopped this eval,
@@ -2825,6 +3293,7 @@ class EvaluationRunner:
             },
         )
 
+    @fence_http_evaluation_write
     def _create_tags_cell(self, dataset, column, row, response, tag_values, status):
         """Create or update cell for tags with evaluation results"""
 
@@ -2924,17 +3393,36 @@ class EvaluationRunner:
         ).select_related("dataset")
         if row_ids:
             rows_query = rows_query.filter(id__in=row_ids)
-        rows = rows_query.order_by("order")
-
-        cell_data = {
-            "value_infos": json.dumps({}),
-            "value": "",
-            "status": CellStatus.RUNNING.value,
-        }
-
-        bulk_update_or_create_cells(
-            rows.values_list("id", flat=True), column.id, dataset.id, cell_data
+        from tfc.temporal.experiments.run_policy import (
+            experiment_write_lock,
+            holds_failed_row_outcome,
+            rows_holding_failed_row_outcomes,
         )
+
+        experiment_id = self.source_configs.get("experiment_id")
+        with (
+            http_evaluation_write(self.source_configs.get("http_context")),
+            experiment_write_lock(experiment_id),
+        ):
+            if experiment_id:
+                # A row whose failed-row outcome stands is neither reset nor
+                # re-evaluated while its output is still failed.
+                rows_query = rows_query.exclude(
+                    id__in=rows_holding_failed_row_outcomes(
+                        dataset, column, self.column, row_ids=row_ids
+                    )
+                )
+            rows = rows_query.order_by("order")
+
+            cell_data = {
+                "value_infos": json.dumps({}),
+                "value": "",
+                "status": CellStatus.RUNNING.value,
+            }
+
+            bulk_update_or_create_cells(
+                rows.values_list("id", flat=True), column.id, dataset.id, cell_data
+            )
         mappings = self.user_eval_metric.config.get("mapping")
 
         # Increase max_workers for more parallelism
@@ -2999,12 +3487,23 @@ class EvaluationRunner:
                                 f"Error: {error_msg}"
                             ),
                         }
-                        Cell.objects.filter(
-                            column=column, row=row, dataset=dataset, deleted=False
-                        ).update(
-                            status=CellStatus.ERROR.value,
-                            value=json.dumps(error_value),
-                        )
+                        with (
+                            http_evaluation_write(
+                                self.source_configs.get("http_context")
+                            ),
+                            experiment_write_lock(experiment_id),
+                        ):
+                            # A settled failed-row outcome stands.
+                            if experiment_id and holds_failed_row_outcome(
+                                dataset, column, row, self.column
+                            ):
+                                continue
+                            Cell.objects.filter(
+                                column=column, row=row, dataset=dataset, deleted=False
+                            ).update(
+                                status=CellStatus.ERROR.value,
+                                value=json.dumps(error_value),
+                            )
                         # Also update reason cell to ERROR. Always-on for
                         # experiments; respect legacy flag for datasets.
                         if (
@@ -3055,12 +3554,14 @@ class EvaluationRunner:
             )
             track_mixpanel_event(MixpanelEvents.EVAL_RUN_COMPLETED.value, properties)
 
-            column.status = StatusType.COMPLETED.value
-            column.save(update_fields=["status"])
+            with http_evaluation_write(self.source_configs.get("http_context")):
+                column.status = StatusType.COMPLETED.value
+                column.save(update_fields=["status"])
         else:
             # For batch processing, check if all cells are complete after processing this batch
             self._check_and_update_eval_status(column.id)
 
+    @evaluation_connection_budget
     def _process_and_create_cell(self, row, mappings, dataset, column):
         """Process a single row and create its cell"""
         try:
@@ -3108,6 +3609,7 @@ class EvaluationRunner:
         finally:
             close_old_connections()
 
+    @fence_http_evaluation_write
     def _check_and_update_eval_status(self, column_id):
         """Check if all cells are complete (pass/error) and update column/user_eval_metric status"""
         from django.db.models import Count, Q
@@ -3225,21 +3727,21 @@ class EvaluationRunner:
                 )
             )
             api_call_type = _get_api_call_type(
-                getattr(self.user_eval_metric, "model", None)
-                or ModelChoices.TURING_LARGE.value
+                self._charged_model() or ModelChoices.TURING_LARGE.value
             )
             if check_usage is not None:
                 usage_check = check_usage(org_id, api_call_type)
                 if not usage_check.allowed:
-                    self.user_eval_metric.status = StatusType.FAILED.value
-                    self.user_eval_metric.save(update_fields=["status"])
-                    from model_hub.tasks.user_evaluation import (
-                        _mark_cells_usage_limit_error,
-                    )
+                    with http_evaluation_write(self.source_configs.get("http_context")):
+                        self.user_eval_metric.status = StatusType.FAILED.value
+                        self.user_eval_metric.save(update_fields=["status"])
+                        from model_hub.tasks.user_evaluation import (
+                            _mark_cells_usage_limit_error,
+                        )
 
-                    _mark_cells_usage_limit_error(
-                        self.user_eval_metric, usage_check
-                    )
+                        _mark_cells_usage_limit_error(
+                            self.user_eval_metric, usage_check
+                        )
                     raise ValueError(usage_check.reason or "Usage limit exceeded")
 
             self.update_cell(row_ids=row_ids)
@@ -3247,24 +3749,26 @@ class EvaluationRunner:
                 f"run_prompt [update_cell done] self.cancel_event: {self.cancel_event} ----------"
             )
             if not self.cancel_event:
-                self.user_eval_metric.status = StatusType.COMPLETED.value
-                self.user_eval_metric.save(update_fields=["status"])
+                with http_evaluation_write(self.source_configs.get("http_context")):
+                    self.user_eval_metric.status = StatusType.COMPLETED.value
+                    self.user_eval_metric.save(update_fields=["status"])
                 logger.info(
                     f"Eval Metric Status Updated {self.user_eval_metric.id} ----------"
                 )
         except Exception as e:
             # traceback.print_exc()
             logger.exception("Exception in run_prompt")
-            self.user_eval_metric.status = StatusType.ERROR.value
-            self.user_eval_metric.save(update_fields=["status"])
-            # Flip any still-running cells (+ their paired reason cells) to
-            # ERROR so the UI doesn't leave a loading skeleton behind when
-            # the runner crashes before per-row error handlers get a chance.
-            from model_hub.utils.eval_cell_status import mark_eval_cells_stopped
+            with http_evaluation_write(self.source_configs.get("http_context")):
+                self.user_eval_metric.status = StatusType.ERROR.value
+                self.user_eval_metric.save(update_fields=["status"])
+                # Flip any still-running cells (+ their paired reason cells) to
+                # ERROR so the UI doesn't leave a loading skeleton behind when
+                # the runner crashes before per-row error handlers get a chance.
+                from model_hub.utils.eval_cell_status import mark_eval_cells_stopped
 
-            mark_eval_cells_stopped(
-                self.user_eval_metric, reason=str(e)[:500] or "Evaluation failed"
-            )
+                mark_eval_cells_stopped(
+                    self.user_eval_metric, reason=str(e)[:500] or "Evaluation failed"
+                )
             logger.info(
                 f"USER EVAL METRIC ERROR UPDATED self.user_eval_metric {self.user_eval_metric.id} ----------"
             )
@@ -3299,6 +3803,623 @@ class EvaluationRunner:
         cfg = futureagi_model_configs.get(model, ModelConfigs.TURING_LARGE)
 
         return cfg.model_name, cfg.provider
+
+
+class NativeEvaluationRunner(EvaluationRunner):
+    """One native row, exact version and immutable input/output values.
+
+    The existing evaluator engine, billing admission and classic result writers
+    are reused. No update_cell() call or mutable row/column reset occurs here.
+    """
+
+    def __init__(
+        self,
+        *,
+        dataset,
+        run,
+        binding,
+        pin,
+        output_column_id=None,
+        native_guard=None,
+        native_outcome=None,
+    ):
+        from copy import copy, deepcopy
+
+        from model_hub.services.experiment_run_writes import RunWriteError
+        from model_hub.services.native_run_binding import (
+            native_evaluator_pins,
+            native_workspace,
+        )
+
+        self._native_guard = native_guard
+        self._native_outcome = native_outcome
+        self._native_graph = output_column_id is not None
+        graph_output = None
+        if output_column_id is not None:
+            plan = run.metadata.get("native_identity", {}).get("graph_plan", {})
+            if str(output_column_id) not in plan.get("terminal_column_ids", []):
+                raise RunWriteError(
+                    "Evaluator output is outside the pinned graph terminals"
+                )
+            graph_output = next(
+                (
+                    entry
+                    for entry in plan["output_columns"]
+                    if entry["id"] == str(output_column_id)
+                ),
+                None,
+            )
+            column = Column.no_workspace_objects.filter(
+                pk=output_column_id,
+                dataset_id=binding.snapshot.snapshot_dataset_id,
+                deleted=False,
+                experiments_dataset_column=binding.variant,
+            ).first()
+            if column is None or graph_output is None:
+                raise RunWriteError("Pinned graph evaluator output is unavailable")
+            binding = copy(binding)
+            binding.output_column = column
+        if pin not in run.evaluator_versions or not pin.get("definition_hash"):
+            raise RunWriteError("native evaluator requires an exact definition pin")
+        scope = native_workspace(
+            dataset, run.metadata["native_identity"].get("authorization_workspace_id")
+        )
+        metric = UserEvalMetric.no_workspace_objects.select_related("template").get(
+            pk=pin["metric_id"], deleted=False
+        )
+        native_evaluator_pins(
+            [metric],
+            dataset,
+            binding.snapshot,
+            pinned=[pin],
+            workspace=scope,
+            check_definition=run.completed_at is None,
+        )
+        version = EvalTemplateVersion.no_workspace_objects.get(
+            pk=pin["evaluator_version_id"], deleted=False
+        )
+        # Admission records the template default when the metric pins nothing
+        # (or its pin was deleted). Only the metric's own live pin runs as a
+        # version; otherwise the engine gets no number and the run keeps
+        # today's template overlay below. The recorded version still stamps
+        # the run either way.
+        # Runs admitted before admission recorded it fall back to the metric's
+        # pin as it is now.
+        self._native_live_pin = (
+            bool(pin["explicit_pin"])
+            if "explicit_pin" in pin
+            else str(metric.pinned_version_id) == str(pin["evaluator_version_id"])
+        ) and not version.deleted
+        super().__init__(
+            metric.id,
+            experiment_dataset=binding.variant,
+            column=binding.output_column,
+            format_output=True,
+            source="experiment",
+            source_id=str(metric.template_id),
+            source_configs={
+                "experiment_id": str(run.experiment_id),
+                "run_id": str(run.id),
+                "version_id": str(version.id),
+                "version_number": version.version_number,
+            },
+            organization_id=dataset.organization_id,
+            workspace_id=scope.pk if scope else None,
+            version_number=version.version_number if self._native_live_pin else None,
+        )
+        # Output labels/types are input interpretation too, not live row data.
+        self.column = copy(binding.output_column)
+        identity = run.metadata["native_identity"]
+        self.column.name = identity.get("output_column_name", self.column.name)
+        self.column.data_type = identity.get(
+            "output_column_type", self.column.data_type
+        )
+        if graph_output is not None:
+            self.column.name = graph_output["name"]
+            self.column.data_type = graph_output["data_type"]
+        self.user_eval_metric = copy(metric)
+        self.user_eval_metric.config = deepcopy(metric.config or {})
+        self.dataset = binding.snapshot.snapshot_dataset
+        self._resolved_version = version
+        self.eval_template = copy(metric.template)
+        self.eval_template.config = {
+            **deepcopy(metric.template.config or {}),
+            **deepcopy(version.config_snapshot or {}),
+        }
+        self.eval_template.criteria = version.criteria
+        for field in (
+            "output_type_normalized",
+            "pass_threshold",
+            "choice_scores",
+            "error_localizer_enabled",
+            "eval_tags",
+        ):
+            value = getattr(version, field, None)
+            if value is not None:
+                setattr(self.eval_template, field, deepcopy(value))
+        self.user_eval_metric.template = self.eval_template
+        self.replace_column_id = self.column.id
+        self.futureagi_eval = (
+            self.eval_template.config.get("eval_type_id") in FUTUREAGI_EVAL_TYPES
+        )
+        self._native_pin = dict(pin)
+
+    def _native_graph_scope(self):
+        from contextlib import nullcontext
+
+        return self._native_guard() if self._native_guard is not None else nullcontext()
+
+    def _create_reason_cell(self, dataset, column, row, response, value, status):
+        if self._native_graph:
+            # Intermediate evaluator output is not a result. The strict final
+            # writer commits result/reason and actual score checkpoint together.
+            return
+        return super()._create_reason_cell(
+            dataset, column, row, response, value, status
+        )
+
+    def _create_cell(self, dataset, column, row, response, value, status):
+        if not self._native_graph:
+            return super()._create_cell(dataset, column, row, response, value, status)
+        from model_hub.services.experiment_run_writes import RunWriteError
+        from model_hub.services.experiment_utils import (
+            is_experiment_cancelled,
+            is_user_eval_stopped,
+        )
+        from tfc.temporal.experiments.run_policy import experiment_write_lock
+
+        with (
+            self._native_graph_scope(),
+            experiment_write_lock(self.source_configs["experiment_id"]),
+        ):
+            if is_experiment_cancelled(uuid.UUID(self.source_configs["experiment_id"])):
+                raise RunWriteError(
+                    "Native graph was stopped before evaluator persistence"
+                )
+            if is_user_eval_stopped(self.user_eval_metric_id):
+                raise RunWriteError(
+                    "Native evaluator stopped before result persistence"
+                )
+            Cell.no_workspace_objects.update_or_create(
+                dataset=dataset,
+                column=column,
+                row=row,
+                defaults={
+                    "value_infos": json.dumps(response),
+                    "value": value,
+                    "status": status,
+                    "deleted": False,
+                },
+            )
+            # The classic engine can create reason cells while evaluating. Always
+            # settle the pinned reason explicitly; never swallow its write failure.
+            reason = self._create_reason_column(dataset, "", parent_column=column)
+            if reason is None:
+                raise RunWriteError(
+                    "Native graph evaluator reason column is unavailable"
+                )
+            explanation = (
+                response.get("reason", response.get("explanation", ""))
+                if isinstance(response, dict)
+                else ""
+            )
+            Cell.no_workspace_objects.update_or_create(
+                dataset=dataset,
+                column=reason,
+                row=row,
+                defaults={
+                    "value_infos": json.dumps({"reason": explanation}),
+                    "value": explanation or "",
+                    "status": status,
+                    "deleted": False,
+                },
+            )
+
+    def _saved_choice_version(self):
+        # A canonical outcome must use the version it declares, not the mutable
+        # default or a global saved-choice rollout switch. Only the metric's
+        # own live pin declares one; an unpinned run keeps the live choices.
+        return self._resolved_version if self._native_live_pin else None
+
+    def _native_value(self, reference):
+        from model_hub.services.experiment_run_writes import RunWriteError
+
+        if reference is None or reference == "":
+            return None
+        if isinstance(reference, list):
+            return [self._native_value(value) for value in reference]
+        text = str(reference)
+        if text.lower() == "output":
+            return self._native_output
+        if text.lower() == "prompt_chain":
+            if self._native_messages is None:
+                raise ValueError("native terminal prompt_chain is unavailable")
+            return _format_messages_to_prompt_chain(self._native_messages)
+        if text in self._native_values:
+            return self._native_values[text]
+        column, path = _extract_column_id_and_path(text)
+        if str(column) in self._native_values:
+            return _get_cell_value_with_json_path(
+                SimpleNamespace(value=self._native_values[str(column)]), path
+            )
+        # Retain the existing tenant-scoped KB authorization, never treat an
+        # arbitrary unknown UUID as a column or cross-dataset Cell reference.
+        if _is_knowledge_base_uuid(reference, self.dataset):
+            return text
+        raise RunWriteError("evaluator mapping is outside the immutable native inputs")
+
+    def _prepare_mapping_data(self, row, mappings):
+        if not isinstance(mappings, dict):
+            raise ValueError("native evaluator mapping must be an object")
+        return list(mappings), [
+            value if key == "call_type" else self._native_value(value)
+            for key, value in mappings.items()
+        ]
+
+    def _replace_dynamic_ids(self, value, row):
+        if not isinstance(value, str):
+            return value
+
+        def substitute(match):
+            resolved = self._native_value(match.group(1))
+            return "" if resolved is None else str(resolved)
+
+        return re.sub(r"\{\{(.*?)\}\}", substitute, value)
+
+    def _get_input_token_count(self, row, mappings, config=None):
+        # Billing uses the same pinned values that the engine will consume.
+        _, values = self._prepare_mapping_data(row, mappings)
+        words = " ".join(
+            value if isinstance(value, str) else json.dumps(value, default=str)
+            for value in values
+        )
+        words += " " + str((config or {}).get("rule_prompt", ""))
+        images = [
+            self._native_values[key]
+            for key, kind in self._native_types.items()
+            if kind == "image" and key in self._native_values
+        ]
+        return count_tiktoken_tokens(words, images) if count_tiktoken_tokens else 0
+
+    def _create_reason_column(self, dataset, reason_column_name, parent_column=None):
+        with self._native_graph_scope():
+            return super()._create_reason_column(
+                dataset, reason_column_name, parent_column=parent_column
+            )
+
+    def _native_result_column(self):
+        with self._native_graph_scope():
+            return self._native_result_column_locked()
+
+    def _native_result_column_locked(self):
+        config = self._get_column_config(self.dataset)
+        columns = list(
+            Column.no_workspace_objects.filter(
+                dataset=self.dataset,
+                source=config["source"],
+                source_id=config["source_id"],
+                deleted=False,
+            )[:2]
+        )
+        if len(columns) > 1:
+            from model_hub.services.experiment_run_writes import RunWriteError
+
+            raise RunWriteError("native evaluator result column is ambiguous")
+        if not columns:
+            return self._create_or_update_column(self.dataset, config, new_column=True)
+        column = columns[0]
+        self.experiment_dataset.columns.add(column)
+        return column
+
+    def prepare_native_rows(self, row_ids):
+        """Reset only this evaluator's planned rows, never output or other cells."""
+        from model_hub.services.experiment_utils import is_user_eval_stopped
+
+        if not row_ids or is_user_eval_stopped(self.user_eval_metric_id):
+            return
+        from model_hub.services.experiment_run_writes import RunWriteError
+        from model_hub.services.experiment_utils import is_experiment_cancelled
+        from tfc.temporal.experiments.run_policy import experiment_write_lock
+
+        with experiment_write_lock(self.source_configs["experiment_id"]):
+            if is_experiment_cancelled(uuid.UUID(self.source_configs["experiment_id"])):
+                raise RunWriteError(
+                    "native execution was cancelled before evaluator setup"
+                )
+            if is_user_eval_stopped(self.user_eval_metric_id):
+                return
+            column = self._native_result_column()
+            reason = self._create_reason_column(self.dataset, "", parent_column=column)
+            for target in (column, reason):
+                if target is not None:
+                    target.status = StatusType.RUNNING.value
+                    target.save(update_fields=["status"])
+                    bulk_update_or_create_cells(
+                        row_ids,
+                        target.id,
+                        self.dataset.id,
+                        {
+                            "value": "",
+                            "value_infos": "{}",
+                            "status": CellStatus.RUNNING.value,
+                        },
+                    )
+
+    def record_upstream_failure(self, row_id):
+        """Preserve the existing failed-row policy without running/billing an eval."""
+        from model_hub.services.experiment_run_writes import RunWriteError
+        from model_hub.services.experiment_utils import (
+            is_experiment_cancelled,
+            is_user_eval_stopped,
+        )
+        from tfc.temporal.experiments.run_policy import (
+            experiment_write_lock,
+            failed_row_values,
+            write_failed_row_cells,
+        )
+
+        experiment = self.experiment_dataset.experiment
+        if is_experiment_cancelled(experiment.id):
+            raise RunWriteError("native execution was cancelled")
+        if is_user_eval_stopped(self.user_eval_metric_id):
+            return
+        row = Row.no_workspace_objects.get(
+            pk=row_id, dataset=self.dataset, deleted=False
+        )
+        column = self._native_result_column()
+        reason = self._create_reason_column(self.dataset, "", parent_column=column)
+        message = "Upstream native output failed; evaluator was not run"
+        error = {
+            "value": message,
+            "status": CellStatus.ERROR.value,
+            "value_infos": json.dumps({"reason": message}),
+        }
+        score = (
+            failed_row_values(
+                (experiment.run_policy or {}).get("error_policy"), message
+            )
+            or error
+        )
+        with self._native_graph_scope(), experiment_write_lock(experiment.id):
+            if is_experiment_cancelled(experiment.id) or is_user_eval_stopped(
+                self.user_eval_metric_id
+            ):
+                return
+            write_failed_row_cells(self.dataset, column, [row], score)
+            if reason is not None:
+                write_failed_row_cells(self.dataset, reason, [row], error)
+
+    def _requires_native_prompt(self):
+        """Only actual prompt references require direct terminal evidence."""
+
+        def needs(value, mapping=False):
+            if isinstance(value, dict):
+                return any(
+                    needs(item, mapping)
+                    for key, item in value.items()
+                    if not (mapping and key == "call_type")
+                )
+            if isinstance(value, (list, tuple)):
+                return any(needs(item, mapping) for item in value)
+            if not isinstance(value, str):
+                return False
+            return (mapping and value.lower() == "prompt_chain") or any(
+                ref.lower() == "prompt_chain"
+                for ref in re.findall(r"\{\{(.*?)\}\}", value)
+            )
+
+        config = self.user_eval_metric.config or {}
+        return needs(config.get("mapping", {}), True) or needs(config.get("config", {}))
+
+    def record_execution_failure(
+        self, row_id, *, response=None, value=None, unavailable_reason=None
+    ):
+        """Settle this planned row's result AND reason before a terminal receipt.
+
+        Unlike the classic best-effort cell writer, persistence failures escape:
+        a canonical outcome must not seal while its reason remains RUNNING.
+        """
+        from model_hub.services.experiment_run_writes import RunWriteError
+        from model_hub.services.experiment_utils import (
+            is_experiment_cancelled,
+            is_user_eval_stopped,
+        )
+        from tfc.temporal.experiments.run_policy import (
+            experiment_write_lock,
+            write_failed_row_cells,
+        )
+
+        experiment_id = uuid.UUID(self.source_configs["experiment_id"])
+        pair = {
+            "metric_id": str(self.user_eval_metric_id),
+            "evaluator_version_id": str(self._resolved_version.id),
+        }
+        with self._native_graph_scope(), experiment_write_lock(experiment_id):
+            if is_experiment_cancelled(experiment_id):
+                raise RunWriteError(
+                    "native execution was cancelled before evaluator error recording"
+                )
+            if is_user_eval_stopped(self.user_eval_metric_id):
+                return {**pair, "status": "not_assessed", "reason": "evaluator_stopped"}
+            row = Row.no_workspace_objects.get(
+                pk=row_id, dataset=self.dataset, deleted=False
+            )
+            column = self._native_result_column()
+            reason = self._create_reason_column(self.dataset, "", parent_column=column)
+            if is_experiment_cancelled(experiment_id):
+                raise RunWriteError(
+                    "native execution was cancelled before evaluator error recording"
+                )
+            if is_user_eval_stopped(self.user_eval_metric_id):
+                return {**pair, "status": "not_assessed", "reason": "evaluator_stopped"}
+            if reason is None:
+                raise RunWriteError("native evaluator reason column is unavailable")
+            outcome = {
+                **pair,
+                "status": "not_assessed" if unavailable_reason else "error",
+                "reason": unavailable_reason or "evaluator_execution_failed",
+            }
+            message = (
+                "Native terminal prompt_chain is unavailable"
+                if unavailable_reason
+                else "Native evaluator execution failed"
+            )
+            response = response if response is not None else {"reason": message}
+            if not unavailable_reason:
+                # An error score keeps the reason text this
+                # result cell stores (value_infos below), so the grid can show it.
+                stored = (
+                    response.get("reason", response.get("explanation"))
+                    if isinstance(response, dict)
+                    else None
+                )
+                outcome["explanation"] = (
+                    stored if isinstance(stored, str) and stored.strip() else message
+                )
+            result_error = {
+                "value": CellStatus.ERROR.value if value is None else value,
+                "status": CellStatus.ERROR.value,
+                "value_infos": json.dumps(response),
+            }
+            reason_error = {
+                "value": message,
+                "status": CellStatus.ERROR.value,
+                "value_infos": json.dumps({"reason": message}),
+            }
+            # Preserve any inner refusal code/result while settling both cells.
+            # Both writes share the experiment lock and its atomic transaction.
+            # No other row, evaluator, output cell or Stop marker is reset.
+            write_failed_row_cells(self.dataset, column, [row], result_error)
+            write_failed_row_cells(self.dataset, reason, [row], reason_error)
+            if self._native_outcome is not None:
+                self._native_outcome(outcome)
+        return outcome
+
+    def evaluate_native_row(self, row_id, *, values, columns, output, messages):
+        import math
+        from copy import deepcopy
+
+        from model_hub.services.experiment_run_writes import RunWriteError
+        from model_hub.services.experiment_utils import (
+            is_experiment_cancelled,
+            is_user_eval_stopped,
+        )
+
+        if is_experiment_cancelled(uuid.UUID(self.source_configs["experiment_id"])):
+            raise RunWriteError("native execution was cancelled before evaluation")
+        pair = {
+            "metric_id": str(self.user_eval_metric_id),
+            "evaluator_version_id": str(self._resolved_version.id),
+        }
+        if is_user_eval_stopped(self.user_eval_metric_id):
+            return {**pair, "status": "not_assessed", "reason": "evaluator_stopped"}
+        if messages is None and self._requires_native_prompt():
+            # Modules/non-prompt terminals lack a single directly executed prompt.
+            # Settle result/reason + not-assessed evidence before billing or eval.
+            return self.record_execution_failure(
+                row_id, unavailable_reason="prompt_chain_unavailable"
+            )
+        row = Row.no_workspace_objects.get(
+            pk=row_id, dataset=self.dataset, deleted=False
+        )
+        self._native_values, self._native_types, self._native_row_context = {}, {}, {}
+        for column in columns:
+            value = deepcopy(values.get(column["source_id"]))
+            for key in (column["source_id"], column["snapshot_id"], column["name"]):
+                self._native_values[key] = value
+            self._native_types[column["source_id"]] = column["data_type"]
+            context_value = value
+            if isinstance(value, str):
+                try:
+                    context_value = json.loads(value)
+                except (ValueError, TypeError):
+                    pass
+            self._native_row_context[column["name"]] = context_value
+        self._native_values[str(self.column.id)] = deepcopy(output)
+        self._native_values[self.column.name] = deepcopy(output)
+        self._native_row_context[self.column.name] = deepcopy(output)
+        self._native_output, self._native_messages = (
+            deepcopy(output),
+            deepcopy(messages),
+        )
+        result_column = self._native_result_column()
+        try:
+            # Preserve the run_prompt preflight in addition to per-call billing.
+            # No global cell/error reset is appropriate for this one pinned row.
+            from sdk.utils.helpers import _get_api_call_type
+
+            try:
+                from ee.usage.services.metering import check_usage
+            except ImportError:
+                check_usage = None
+            if check_usage is not None:
+                usage = check_usage(
+                    str(self.organization_id),
+                    _get_api_call_type(
+                        self._charged_model() or ModelChoices.TURING_LARGE.value
+                    ),
+                )
+                if not usage.allowed:
+                    raise ValueError("Usage limit exceeded")
+            response, status, value = self._process_eval_result(
+                row, self.user_eval_metric.config.get("mapping", {})
+            )
+        except RunWriteError:
+            raise  # Identity/cancellation refusals are never execution scores.
+        except Exception:
+            return self.record_execution_failure(row_id)
+        if is_experiment_cancelled(uuid.UUID(self.source_configs["experiment_id"])):
+            raise RunWriteError("native execution was cancelled during evaluation")
+        if is_user_eval_stopped(self.user_eval_metric_id):
+            return {**pair, "status": "not_assessed", "reason": "evaluator_stopped"}
+        if status == CellStatus.ERROR.value:
+            return self.record_execution_failure(row_id, response=response, value=value)
+        if not self._native_graph:
+            self._create_cell(self.dataset, result_column, row, response, value, status)
+
+        def finish(outcome):
+            if self._native_graph:
+                with self._native_graph_scope():
+                    self._create_cell(
+                        self.dataset, result_column, row, response, value, status
+                    )
+                    if self._native_outcome is not None:
+                        self._native_outcome(outcome)
+            return outcome
+
+        # The parent finalizer updates classic status only after canonical seal.
+        numeric = value.get("score") if isinstance(value, dict) else value
+        if isinstance(numeric, bool):
+            numeric = int(numeric)
+        elif numeric in ("Passed", "Failed"):
+            numeric = (
+                int(numeric == "Passed")
+                if isinstance(response.get("failure"), bool)
+                else None
+            )
+        if isinstance(value, dict) and "choice" in value:
+            from model_hub.utils.scoring import apply_choice_scores
+
+            numeric = apply_choice_scores(
+                value["choice"], self._effective_choice_scores() or {}
+            )
+        elif isinstance(value, dict) and "choices" in value:
+            from model_hub.utils.scoring import apply_choice_scores
+
+            scores = [
+                apply_choice_scores(str(choice), self._effective_choice_scores() or {})
+                for choice in value["choices"]
+            ]
+            numeric = (
+                sum(scores) / len(scores)
+                if scores and all(score is not None for score in scores)
+                else None
+            )
+        if type(numeric) in (int, float) and math.isfinite(numeric):
+            return finish({**pair, "status": "assessed", "value": numeric})
+        return finish(
+            {**pair, "status": "not_assessed", "reason": "non_numeric_evaluator_output"}
+        )
 
 
 class CustomEvalTemplateCreateView(CreateAPIView):
@@ -3475,6 +4596,16 @@ class EvalUserTemplateCreateView(CreateAPIView):
             if not template:
                 return self._gm.not_found("Eval template not found")
 
+            from model_hub.utils.scoring import (
+                ChoiceScoreOverrideError,
+                validate_choice_score_override,
+            )
+
+            try:
+                validate_choice_score_override(template, validated_data.get("config"))
+            except ChoiceScoreOverrideError as e:
+                return self._gm.bad_request(str(e))
+
             if UserEvalMetric.objects.filter(
                 _request_workspace_filter(request),
                 organization=organization,
@@ -3548,7 +4679,7 @@ class DatasetEvalStatsView(APIView):
         columns = Column.objects.filter(
             id__in=column_ids, dataset__organization_id=organization_id
         ).select_related("dataset")
-        dataset_ids = set(col.dataset_id for col in columns)
+        dataset_ids = {col.dataset_id for col in columns}
 
         # If we found datasets, filter metrics by those datasets
         if dataset_ids:
@@ -3564,7 +4695,7 @@ class DatasetEvalStatsView(APIView):
             )
 
         # Create a set of column_ids for faster lookup
-        column_id_set = set(str(cid) for cid in column_ids)
+        column_id_set = {str(cid) for cid in column_ids}
 
         # Filter metrics in Python - check if any column_id is used
         return [

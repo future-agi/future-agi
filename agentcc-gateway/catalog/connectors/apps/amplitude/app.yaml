@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: amplitude
+version: 1.0.0
+name: Amplitude
+description: "Product analytics: charts, dashboards, cohorts, experiments and the tracking plan."
+vendor:
+  name: Amplitude
+  domains: [amplitude.com]
+eeCategory: data
+group: other
+categories: [data, product-analytics]
+tags: [analytics, experiments, dashboards]
+docsUrl: https://amplitude.com/docs/amplitude-ai/amplitude-mcp
+archetype: product-analytics
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://amplitude.com/docs/amplitude-ai/amplitude-mcp
+    fetchedAt: 2026-11-11

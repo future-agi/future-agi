@@ -1,4 +1,5 @@
-import { Avatar, Box, Button, Chip, Typography } from "@mui/material";
+/* eslint-disable no-restricted-syntax -- ds: data colours (avatar palette) */
+import { Avatar, Box, Button, Chip, Link, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { enqueueSnackbar } from "notistack";
@@ -15,6 +16,7 @@ import {
   removeStorage,
 } from "src/hooks/use-local-storage";
 import { useNavigate } from "react-router";
+import { Link as RouterLink } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
@@ -29,12 +31,10 @@ import BulkDeleteDialog from "./BulkDeleteDialog";
 import DisplayOptionsPopover, {
   DEFAULT_COLUMN_ORDER,
 } from "./DisplayOptionsPopover";
-import FilterPanel from "src/components/filter-panel/FilterPanel";
+import { ObjectFilterPanel } from "src/components/filter";
 import EvalTypeBadge from "./EvalTypeBadge";
 import VolumeBarChart from "src/sections/project/VolumeBarChart";
 import ErrorRateSparkline from "./ErrorRateSparkline";
-import TypeBadge from "./TypeBadge";
-import VersionBadge from "./VersionBadge";
 import { EVAL_TAGS, TAG_LOOKUP } from "../constant";
 
 // ── TagsCell ──
@@ -43,6 +43,12 @@ import { EVAL_TAGS, TAG_LOOKUP } from "../constant";
 // CustomTooltip listing the hidden tag labels.
 const TAG_GAP_PX = 4; // matches sx gap: 0.5 → 4px
 const PLUS_CHIP_RESERVE_PX = 44; // rough reservation for the "+N" chip
+
+const TAG_TEXT_SX = {
+  fontSize: 12,
+  color: "text.secondary",
+  whiteSpace: "nowrap",
+};
 
 const TagsCell = ({ tags }) => {
   const containerRef = useRef(null);
@@ -122,40 +128,32 @@ const TagsCell = ({ tags }) => {
           top: -9999,
         }}
       >
-        {allTags.map((tag) => {
+        {allTags.map((tag, i) => {
           const tagDef = TAG_LOOKUP[tag];
           return (
-            <Chip
+            <Typography
               key={`measure-${tag}`}
-              icon={
-                tagDef?.icon ? (
-                  <Iconify icon={tagDef.icon} width={12} />
-                ) : undefined
-              }
-              label={tagDef?.label || tag}
-              size="small"
-              variant="outlined"
-              sx={{ fontSize: "11px", height: 22 }}
-            />
+              component="span"
+              sx={{ ...TAG_TEXT_SX, flexShrink: 0 }}
+            >
+              {i > 0 ? "· " : ""}
+              {tagDef?.label || tag}
+            </Typography>
           );
         })}
       </Box>
 
-      {visible.map((tag) => {
+      {visible.map((tag, i) => {
         const tagDef = TAG_LOOKUP[tag];
         return (
-          <Chip
+          <Typography
             key={tag}
-            icon={
-              tagDef?.icon ? (
-                <Iconify icon={tagDef.icon} width={12} />
-              ) : undefined
-            }
-            label={tagDef?.label || tag}
-            size="small"
-            variant="outlined"
-            sx={{ fontSize: "11px", height: 22, flexShrink: 0 }}
-          />
+            component="span"
+            sx={{ ...TAG_TEXT_SX, flexShrink: 0 }}
+          >
+            {i > 0 ? "· " : ""}
+            {tagDef?.label || tag}
+          </Typography>
         );
       })}
 
@@ -166,17 +164,17 @@ const TagsCell = ({ tags }) => {
           arrow
           size="small"
         >
-          <Chip
-            label={`+${hidden.length}`}
-            size="small"
-            variant="outlined"
+          <Typography
+            component="span"
             sx={{
-              fontSize: "11px",
-              height: 22,
+              ...TAG_TEXT_SX,
+              color: "text.tertiary",
               cursor: "default",
               flexShrink: 0,
             }}
-          />
+          >
+            {`· +${hidden.length}`}
+          </Typography>
         </CustomTooltip>
       )}
     </Box>
@@ -188,6 +186,12 @@ TagsCell.propTypes = {
 };
 
 // ── Static filter fields ──
+const OUTPUT_TYPE_LABELS = {
+  pass_fail: "Pass/fail",
+  percentage: "Percentage",
+  deterministic: "Choices",
+};
+
 const STATIC_FILTER_FIELDS = [
   {
     value: "eval_type",
@@ -200,6 +204,7 @@ const STATIC_FILTER_FIELDS = [
     label: "Output Type",
     type: "enum",
     choices: ["pass_fail", "percentage", "deterministic"],
+    choiceLabels: OUTPUT_TYPE_LABELS,
   },
   {
     value: "template_type",
@@ -212,29 +217,11 @@ const STATIC_FILTER_FIELDS = [
     label: "Tags",
     type: "enum",
     choices: EVAL_TAGS.map((t) => t.value),
+    choiceLabels: Object.fromEntries(EVAL_TAGS.map((t) => [t.value, t.label])),
   },
 ];
 
 // ── Helpers ──
-
-const AVATAR_COLORS = [
-  "#7C4DFF",
-  "#FF6B6B",
-  "#5BE49B",
-  "#FFB547",
-  "#36B5FF",
-  "#FF85C0",
-  "#00BFA6",
-  "#8C9EFF",
-];
-
-function getAvatarColor(name) {
-  let hash = 0;
-  for (let i = 0; i < (name || "").length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
 
 function getInitials(name) {
   if (!name) return "?";
@@ -242,12 +229,6 @@ function getInitials(name) {
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return name.slice(0, 2).toUpperCase();
 }
-
-const OUTPUT_TYPE_LABELS = {
-  pass_fail: "Pass/fail",
-  percentage: "Percentage",
-  deterministic: "Choices",
-};
 
 const COLUMN_VISIBILITY_STORAGE_KEY = "evals-list-column-visibility";
 const COLUMN_ORDER_STORAGE_KEY = "evals-list-column-order";
@@ -300,12 +281,13 @@ const mergeColumnOrder = (stored) => {
   return [...valid, ...missing];
 };
 
-// Sort field map — frontend column id → backend sort key
+// Sort field map — frontend column id → backend sort key. Created By sorts
+// by the creator name the column shows (created_by_name).
 
 const SORT_FIELD_MAP = {
   name: "name",
   lastUpdated: "updated_at",
-  createdByName: "created_at",
+  createdByName: "created_by_name",
 };
 
 // ── Component ──
@@ -321,7 +303,7 @@ const EvalsListView = () => {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [sorting, setSorting] = useState([{ id: "lastUpdated", desc: true }]);
-  const [rowSelection, setRowSelection] = useState({});
+  const [selectedIds, setSelectedIds] = useState([]);
   const [filters, setFilters] = useState(null);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [displayAnchorEl, setDisplayAnchorEl] = useState(null);
@@ -332,6 +314,7 @@ const EvalsListView = () => {
     mergeColumnOrder(getStorage(COLUMN_ORDER_STORAGE_KEY)),
   );
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteTargets, setDeleteTargets] = useState([]);
 
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
 
@@ -500,13 +483,21 @@ const EvalsListView = () => {
     !chartsLoading &&
     (chartsTransportError || (Boolean(chartsRead) && !chartsRenderable));
 
-  // Selected rows
-  const selectedItems = useMemo(() => {
-    return Object.keys(rowSelection)
-      .filter((key) => rowSelection[key])
-      .map((key) => items[parseInt(key, 10)])
-      .filter(Boolean);
-  }, [rowSelection, items]);
+  // The controlled table contract uses these same stable record IDs.
+  const rowSelection = useMemo(
+    () => Object.fromEntries(selectedIds.map((id) => [id, true])),
+    [selectedIds],
+  );
+
+  const handleRowSelectionChange = useCallback((_selection, selected) => {
+    setSelectedIds(selected.map((item) => item.id));
+  }, []);
+
+  // Only visible, explicitly selected identities participate in bulk actions.
+  const selectedItems = useMemo(
+    () => items.filter((item) => selectedIds.includes(item.id)),
+    [items, selectedIds],
+  );
 
   // Column definitions — TanStack format
   const columns = useMemo(
@@ -517,7 +508,7 @@ const EvalsListView = () => {
         header: "Evaluation Name",
         meta: { flex: 1.5 },
         minSize: 200,
-        cell: ({ getValue }) => {
+        cell: ({ getValue, row, tabIndex }) => {
           const name = getValue();
           return (
             <CustomTooltip
@@ -528,9 +519,25 @@ const EvalsListView = () => {
               title={name || ""}
               placement="top"
             >
-              <Typography variant="s1" noWrap>
+              <Link
+                component={RouterLink}
+                to={`/dashboard/evaluations/${row.original.id}`}
+                tabIndex={tabIndex}
+                variant="s1"
+                color="inherit"
+                underline="hover"
+                noWrap
+                onClick={(event) => event.stopPropagation()}
+                sx={{
+                  "&:focus-visible": {
+                    outline: (theme) =>
+                      `2px solid ${theme.palette.border.focus}`,
+                    outlineOffset: "-2px",
+                  },
+                }}
+              >
                 {name}
-              </Typography>
+              </Link>
             </CustomTooltip>
           );
         },
@@ -651,12 +658,8 @@ const EvalsListView = () => {
                   sx={{
                     width: 24,
                     height: 24,
-                    fontSize: "10px",
-                    fontWeight: 700,
-                    bgcolor: isSystem
-                      ? "action.selected"
-                      : getAvatarColor(name),
-                    color: isSystem ? "text.secondary" : "common.white",
+                    fontSize: "12px",
+                    fontWeight: 600,
                   }}
                 >
                   {isSystem ? (
@@ -665,7 +668,7 @@ const EvalsListView = () => {
                     getInitials(name)
                   )}
                 </Avatar>
-                <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+                <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
                   {name}
                 </Typography>
               </Box>
@@ -683,7 +686,7 @@ const EvalsListView = () => {
           if (!val) return null;
           try {
             return (
-              <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+              <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
                 {formatDistanceToNow(new Date(val), { addSuffix: true })}
               </Typography>
             );
@@ -702,7 +705,15 @@ const EvalsListView = () => {
           const version = getValue();
           const isDraft = row.original.is_draft || version === "draft";
           if (isDraft || !version) return null;
-          return <VersionBadge version={version} />;
+          return (
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{ fontSize: "12px", fontVariantNumeric: "tabular-nums" }}
+            >
+              {version}
+            </Typography>
+          );
         },
       },
       {
@@ -712,7 +723,7 @@ const EvalsListView = () => {
         size: 120,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+          <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
             {OUTPUT_TYPE_LABELS[getValue()] || getValue()}
           </Typography>
         ),
@@ -723,7 +734,11 @@ const EvalsListView = () => {
         header: "Type",
         size: 110,
         enableSorting: false,
-        cell: ({ getValue }) => <TypeBadge type={getValue()} />,
+        cell: ({ getValue }) => (
+          <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
+            {getValue() === "composite" ? "Composite" : "Single"}
+          </Typography>
+        ),
       },
     ],
     [chartsData, chartsFetching, chartsLoading, chartsRead, chartsRenderable],
@@ -786,14 +801,21 @@ const EvalsListView = () => {
   }, [panelFilters]);
 
   const handleCancelSelection = useCallback(() => {
-    setRowSelection({});
+    setSelectedIds([]);
   }, []);
 
   const handleDeleteConfirm = useCallback(async () => {
+    // Preserve the existing refresh protection: require a new confirmation if
+    // any target disappeared, rather than silently deleting a smaller set.
+    if (deleteTargets.some((target) => !items.some((item) => item.id === target.id))) {
+      setDeleteDialogOpen(false);
+      handleCancelSelection();
+      return;
+    }
     // System-owned evals cannot be deleted — filter them out and warn
     // the user if any were in the selection.
-    const systemItems = selectedItems.filter((item) => item.owner === "system");
-    const deletable = selectedItems.filter((item) => item.owner !== "system");
+    const systemItems = deleteTargets.filter((item) => item.owner === "system");
+    const deletable = deleteTargets.filter((item) => item.owner !== "system");
 
     if (systemItems.length > 0) {
       enqueueSnackbar(
@@ -818,7 +840,7 @@ const EvalsListView = () => {
     await bulkDelete.mutateAsync(ids);
     setDeleteDialogOpen(false);
     handleCancelSelection();
-  }, [selectedItems, bulkDelete, handleCancelSelection]);
+  }, [deleteTargets, items, bulkDelete, handleCancelSelection]);
   return (
     <Box
       sx={{
@@ -857,13 +879,10 @@ const EvalsListView = () => {
           <Button
             size="small"
             variant="outlined"
-            startIcon={<Iconify icon="mage:filter" width={16} />}
+            startIcon={<Iconify icon="solar:filter-linear" width={16} />}
             endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
             onClick={(e) => setFilterAnchorEl(e.currentTarget)}
             sx={{
-              textTransform: "none",
-              fontSize: "13px",
-              height: "32px",
               borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
               color: activeFilterCount > 0 ? "primary.main" : "text.secondary",
             }}
@@ -876,9 +895,6 @@ const EvalsListView = () => {
             startIcon={<Iconify icon="solar:list-check-bold" width={16} />}
             onClick={(e) => setDisplayAnchorEl(e.currentTarget)}
             sx={{
-              textTransform: "none",
-              fontSize: "13px",
-              height: "32px",
               borderColor:
                 hiddenColumns.length > 0 ? "primary.main" : "divider",
               color:
@@ -894,7 +910,10 @@ const EvalsListView = () => {
           {selectedItems.length > 0 ? (
             <BulkActionsBar
               selectedCount={selectedItems.length}
-              onDelete={() => setDeleteDialogOpen(true)}
+              onDelete={() => {
+                setDeleteTargets(selectedItems.map((item) => ({ ...item })));
+                setDeleteDialogOpen(true);
+              }}
               onCancel={handleCancelSelection}
               canEditEvals={canEditEvals}
             />
@@ -902,10 +921,10 @@ const EvalsListView = () => {
             <Button
               variant="contained"
               color="primary"
-              startIcon={<Iconify icon="mingcute:add-line" width={18} />}
+              startIcon={<Iconify icon="solar:add-linear" width={20} />}
               onClick={() => navigate("/dashboard/evaluations/create")}
               disabled={!canEditEvals}
-              sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
+              sx={{ typography: "body2" }}
             >
               Create evals
             </Button>
@@ -963,7 +982,7 @@ const EvalsListView = () => {
                 }
                 setPage(0);
               }}
-              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
+              sx={{ cursor: "pointer" }}
             />
           );
         })}
@@ -980,7 +999,6 @@ const EvalsListView = () => {
               });
               setPage(0);
             }}
-            sx={{ fontSize: "11px", height: 26 }}
           />
         )}
       </Box>
@@ -996,7 +1014,7 @@ const EvalsListView = () => {
             px: 1.25,
             py: 0.5,
             border: "1px solid",
-            borderColor: "warning.main",
+            borderColor: "status.warning.border",
             borderRadius: 1,
           }}
         >
@@ -1052,7 +1070,8 @@ const EvalsListView = () => {
         sorting={sorting}
         onSortingChange={setSorting}
         rowSelection={rowSelection}
-        onRowSelectionChange={setRowSelection}
+        selectionScope={[page, pageSize, searchQuery, debouncedSearch, filters]}
+        onRowSelectionChange={handleRowSelectionChange}
         columnVisibility={columnVisibility}
         onColumnVisibilityChange={handleColumnVisibilityChange}
         onRowClick={(row) => navigate(`/dashboard/evaluations/${row.id}`)}
@@ -1074,7 +1093,7 @@ const EvalsListView = () => {
       />
 
       {/* Filter panel */}
-      <FilterPanel
+      <ObjectFilterPanel
         anchorEl={filterAnchorEl}
         open={Boolean(filterAnchorEl)}
         onClose={() => setFilterAnchorEl(null)}
@@ -1087,7 +1106,10 @@ const EvalsListView = () => {
             setPage(0);
             return;
           }
-          // Shared: split owner values into system scope + user names
+          // Shared: split owner values into system scope + user names.
+          // System with people keeps every owner and sends "System" as a
+          // creator name: the server shows and filters system evals as
+          // "System", so the list returns System rows and the people's rows.
           const normalizeOwner = (vals, isNeg, target) => {
             const hasSystem = vals.some((v) => v.toLowerCase() === "system");
             const userNames = vals.filter((v) => v.toLowerCase() !== "system");
@@ -1097,7 +1119,11 @@ const EvalsListView = () => {
             } else {
               if (hasSystem && !userNames.length) target.owner = "system";
               else if (!hasSystem && userNames.length) target.owner = "user";
-              if (userNames.length) target.created_by = userNames;
+              if (hasSystem && userNames.length) {
+                target.created_by = ["System", ...userNames];
+              } else if (userNames.length) {
+                target.created_by = userNames;
+              }
             }
           };
           if (Array.isArray(result)) {
@@ -1161,10 +1187,10 @@ const EvalsListView = () => {
       {/* Delete confirmation */}
       <BulkDeleteDialog
         open={deleteDialogOpen}
-        count={selectedItems.length}
+        count={deleteTargets.length}
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteDialogOpen(false)}
-        isLoading={bulkDelete.isLoading}
+        isLoading={bulkDelete.isPending}
       />
     </Box>
   );

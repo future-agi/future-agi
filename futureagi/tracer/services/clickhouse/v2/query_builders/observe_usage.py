@@ -1,15 +1,17 @@
-"""Observe-only usage predicates over the same totals as page hydration.
+"""Observe-only project-local roots and whole-trace usage predicates.
 
-Acquisition still walks canonical roots in its bounded order. Usage is a
+Acquisition walks canonical project-local roots in its bounded order. Usage is a
 residual predicate, evaluated only for that finite candidate batch, so a zero
 root cannot exclude a trace whose generation carries the matching usage.
 Voice, prototype, tasks and raw SPAN_ATTRIBUTE filters retain their contracts.
 """
 
 from tracer.services.clickhouse.query_builders.base import _unix_microseconds
+from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
 from tracer.services.clickhouse.query_builders.trace_usage import (
     USAGE_COLUMNS,
     usage_aggregate_sql,
+    usage_coverage_sql,
 )
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
@@ -54,10 +56,11 @@ class ObserveUsageFilterBuilderV2(ClickHouseFilterBuilderV2):
         lhs = f"({identity})" if self._org_scoped else identity
         return f"""{lhs} IN (
             SELECT {identity} FROM (
-                SELECT project_id, trace_id, {usage_aggregate_sql()}
+                SELECT project_id, trace_id, {usage_aggregate_sql(coverage="usage_coverage")}
                 FROM (
                     SELECT id, parent_span_id, name, observation_type, project_id,
-                           cost, total_tokens, prompt_tokens, completion_tokens, trace_id
+                           cost, total_tokens, prompt_tokens, completion_tokens, trace_id,
+                           {usage_coverage_sql(attrs="attrs_string", include_summary=True)} AS usage_coverage
                     FROM spans FINAL
                     PREWHERE {self._project_scope_predicate()}
                         {self._candidate_filter("trace_id")}
@@ -71,6 +74,63 @@ class ObserveUsageFilterBuilderV2(ClickHouseFilterBuilderV2):
 
 class ObserveTraceListQueryBuilderV2(TraceListQueryBuilderV2):
     _FILTER_BUILDER_CLS = ObserveUsageFilterBuilderV2
+
+    def _trace_root_condition(
+        self,
+        parent_column="parent_span_id",
+        *,
+        span_scope,
+        project_column="project_id",
+        trace_column="trace_id",
+    ):
+        """An empty parent or a parent missing from this project's live trace.
+
+        The inner set contains only parent keys referenced by this seed window
+        or finite candidate/page batch. It deliberately uses raw references:
+        stale versions add harmless lookup keys, never false absence. Replay
+        those keys across ALL times/services/project versions, collapse the
+        complete CH25 replacement key, then remove tombstones. Neither lookup
+        has a LIMIT; the caller's read/set budgets must throw, not truncate an
+        absence proof. A later parent arrival therefore reconciles on refresh.
+        """
+        parentless = super()._trace_root_condition(
+            parent_column,
+            span_scope=span_scope,
+        )
+        return f"""({parentless}
+            OR ({parent_column} IS NOT NULL AND {parent_column} != ''
+                AND (toString({project_column}), {trace_column}, {parent_column}) NOT IN (
+                    SELECT toString(project_id), trace_id, id
+                    FROM {self.TABLE}
+                    PREWHERE {self.project_filter_sql()}
+                      AND (toString(project_id), trace_id, id) IN (
+                          SELECT toString(project_id), trace_id, parent_span_id
+                          FROM {self.TABLE}
+                          PREWHERE {self.project_filter_sql()}
+                            AND ({span_scope})
+                          WHERE parent_span_id IS NOT NULL AND parent_span_id != ''
+                      )
+                    GROUP BY project_id, observation_type, service_name,
+                        toStartOfHour(start_time), trace_id, id
+                    HAVING argMax(is_deleted, _version) = 0
+                )
+            ))"""
+
+    def _root_replay_root_condition(self, prefix):
+        return self._trace_root_condition(
+            "latest_parent_span_id",
+            span_scope=f"(toString(project_id), trace_id) IN %({prefix}_trace_identities)s",
+            project_column="latest_physical_roots.project_id",
+            trace_column="latest_physical_roots.trace_id",
+        )
+
+    def build_count_query(self):
+        # The global-root materialized count cannot count project-local roots.
+        # The bounded selector normally supplies its own count; keep standalone
+        # counts and the legacy fallback consistent with initial acquisition.
+        self.start_date, self.end_date = self.parse_time_range(self.filters)
+        self.params.update(start_date=self.start_date, end_date=self.end_date)
+        return TraceListQueryBuilder.build_count_query(self)
 
     def build_usage_sorted_query(self, sort_params, *, count_only=False):
         """Exact global usage order, never a page-local/client-side sort.
@@ -112,8 +172,9 @@ class ObserveTraceListQueryBuilderV2(TraceListQueryBuilderV2):
         params.update(exclusion_params)
         time_condition = """start_time >= fromUnixTimestamp64Micro(%(usage_start_us)s)
             AND start_time < fromUnixTimestamp64Micro(%(usage_end_us)s)"""
-        root_condition = f"""(parent_span_id IS NULL OR parent_span_id = '')
+        root_condition = f"""_is_trace_root
             AND {time_condition} AND ({exclusion or "1 = 1"})"""
+        root_membership = self._trace_root_condition(span_scope=time_condition)
         fields = [
             "id",
             "start_time",
@@ -151,15 +212,19 @@ class ObserveTraceListQueryBuilderV2(TraceListQueryBuilderV2):
                     argMaxIf(tuple({root_fields}),
                         tuple(live.start_time, live.id, live.observation_type, live.service_name),
                         {root_condition}) AS root,
-                    {usage_aggregate_sql(prefix="live.")}
+                    {usage_aggregate_sql(prefix="live.", coverage="live.usage_coverage")}
                 FROM (
-                    SELECT {source_columns} FROM spans FINAL
+                    SELECT {source_columns},
+                        {root_membership} AS _is_trace_root,
+                        {usage_coverage_sql(attrs="attrs_string", include_summary=True)} AS usage_coverage
+                    FROM spans FINAL
                     PREWHERE {self.project_filter_sql()}
                         AND trace_id IN (
                             SELECT trace_id FROM spans
                             PREWHERE {self.project_filter_sql()}
                                 AND {time_condition}
-                            WHERE parent_span_id IS NULL OR parent_span_id = ''
+                            -- Raw in-window spans are only a necessary superset;
+                            -- latest local-root membership is checked above.
                         )
                     WHERE is_deleted = 0
                 ) AS live

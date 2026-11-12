@@ -20,6 +20,7 @@ import certifi
 import structlog
 import urllib3
 from minio import Minio
+from minio.error import S3Error
 from requests.utils import (
     get_auth_from_url,
     get_environ_proxies,
@@ -310,14 +311,22 @@ def ensure_bucket(client: Minio, bucket_name: str) -> None:
         # GCS buckets are pre-created via Terraform with IAM — skip
         return
     if not client.bucket_exists(bucket_name):
-        client.make_bucket(bucket_name)
-        policy = {
-            "Version": "2012-10-17",
-            "Statement": [_anonymous_read_statement(bucket_name)],
-        }
-        client.set_bucket_policy(bucket_name, json.dumps(policy))
-        _checked_bucket_policies.add(bucket_name)
-        return
+        try:
+            client.make_bucket(bucket_name)
+        except S3Error as exc:
+            # Another upload created it between our check and our create (two
+            # first uploads at once): it is ours, so carry on as for an existing
+            # bucket. A name another account owns (BucketAlreadyExists) still fails.
+            if exc.code != "BucketAlreadyOwnedByYou":
+                raise
+        else:
+            policy = {
+                "Version": "2012-10-17",
+                "Statement": [_anonymous_read_statement(bucket_name)],
+            }
+            client.set_bucket_policy(bucket_name, json.dumps(policy))
+            _checked_bucket_policies.add(bucket_name)
+            return
     # Only the bundled MinIO: an operator's own S3 bucket policy is theirs.
     if STORAGE_BACKEND == "minio" and bucket_name not in _checked_bucket_policies:
         _checked_bucket_policies.add(bucket_name)

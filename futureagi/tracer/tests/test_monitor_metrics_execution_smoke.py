@@ -65,7 +65,7 @@ EXPECTED_VALUE: dict[str, Any] = {
     "count_of_errors": 2,
     "error_rates_for_function_calling": pytest.approx(1.0),
     "error_free_session_rates": pytest.approx(0.5),
-    "service_provider_error_rates": pytest.approx(0.0),
+    "service_provider_error_rates": pytest.approx(1.0),
     "llm_api_failure_rates": pytest.approx(1 / 3),
     "span_response_time": pytest.approx(172.0),
     "llm_response_time": pytest.approx(800 / 3),
@@ -347,7 +347,7 @@ class TestMonitorMetricsExecutionSmoke:
     @pytest.mark.parametrize("metric_type", SPAN_METRICS)
     def test_historical_stats_executes(self, seeded, metric_type: str):
         sql, params = _make_builder().build_historical_stats_query(
-            metric_type, WINDOW_START, WINDOW_END, interval_kind="hour"
+            metric_type, WINDOW_START, WINDOW_END, periods=12
         )
         result = _execute(sql, params)
         assert result.row_count == 1
@@ -363,13 +363,27 @@ class TestMonitorMetricsExecutionSmoke:
         )
         row = _execute(sql, params).data[0]
         assert row["mean"] == pytest.approx(172.0)
-        # Calendar-bucketed stats: one hour bucket -> (value, 0).
+        # Per-period baseline: the window's 2 errors over its periods (one
+        # hour of 5-minute periods), not an average of non-empty buckets.
         sql, params = _make_builder().build_historical_stats_query(
-            "count_of_errors", WINDOW_START, WINDOW_END, interval_kind="hour"
+            "count_of_errors", WINDOW_START, WINDOW_END, periods=12
         )
         row = _execute(sql, params).data[0]
-        assert row["mean"] == pytest.approx(2.0)
-        assert row["stddev"] == pytest.approx(0.0)
+        assert row["mean"] == pytest.approx(2 / 12)
+        assert row["stddev"] is None
+        sql, params = _make_builder().build_historical_stats_query(
+            "token_usage", WINDOW_START, WINDOW_END, periods=2
+        )
+        assert _execute(sql, params).data[0]["mean"] == pytest.approx(175.0)
+
+    @pytest.mark.parametrize("metric_type", ["count_of_errors", "token_usage"])
+    def test_historical_stats_empty_window_is_null(self, seeded, metric_type: str):
+        """No spans in the previous period is no history (NULL), not a zero
+        baseline that a first error would read as an infinite increase."""
+        sql, params = _make_builder().build_historical_stats_query(
+            metric_type, EMPTY_START, EMPTY_END, periods=24
+        )
+        assert _execute(sql, params).data[0] == {"mean": None, "stddev": None}
 
     @pytest.mark.parametrize("eval_output_type,threshold", EVAL_VARIANTS)
     def test_eval_historical_stats_executes(
@@ -419,6 +433,96 @@ class TestMonitorMetricsExecutionSmoke:
         for row in result.data:
             assert isinstance(row["timestamp"], datetime)
             assert _not_nan(row["value"])
+
+    # ── provider errors: failure direction in every query mode ───────────────
+
+    @pytest.mark.parametrize("query_mode", ["value", "historical", "series"])
+    @pytest.mark.parametrize(
+        "start_minute,end_minute,expected_value,expected_buckets",
+        [
+            pytest.param(5, 10, 1.0, [(5, 1.0)], id="failure-only"),
+            pytest.param(0, 5, 0.0, [(0, 0.0)], id="success-only"),
+            pytest.param(0, 10, 1.0, [(0, 0.0), (5, 1.0)], id="mixed-single-provider"),
+            pytest.param(
+                0,
+                25,
+                1.0,
+                [(0, 0.0), (5, 1.0), (10, 0.0), (20, 1.0)],
+                id="both-providers-fail",
+            ),
+        ],
+    )
+    def test_service_provider_error_direction(
+        self,
+        seeded,
+        query_mode,
+        start_minute,
+        end_minute,
+        expected_value,
+        expected_buckets,
+    ):
+        """Any ERROR marks a provider as failing, not error-free.
+
+        The existing seed includes tool errors, mixed OK/ERROR traffic per
+        provider, and a blank provider, so these windows also pin population
+        and bucket behavior without changing the other metrics' fixtures.
+        """
+        metric = "service_provider_error_rates"
+        start = WINDOW_START.replace(minute=start_minute)
+        end = WINDOW_START.replace(minute=end_minute)
+        builder = _make_builder()
+        if query_mode == "value":
+            sql, params = builder.build_metric_value_query(metric, start, end)
+            result = _execute(sql, params)
+            assert result.row_count == 1
+            assert result.data[0]["value"] == pytest.approx(expected_value)
+        elif query_mode == "historical":
+            sql, params = builder.build_historical_stats_query(metric, start, end)
+            result = _execute(sql, params)
+            assert result.row_count == 1
+            assert result.data[0]["mean"] == pytest.approx(expected_value)
+            # Each window has one provider, or two providers that both fail.
+            assert result.data[0]["stddev"] == pytest.approx(0.0)
+        else:
+            sql, params = builder.build_time_series_query(
+                metric, start, end, FREQ_SECONDS
+            )
+            result = _execute(sql, params)
+            assert result.row_count == len(expected_buckets)
+            assert [
+                (row["timestamp"].replace(tzinfo=UTC), row["value"])
+                for row in result.data
+            ] == [
+                (WINDOW_START.replace(minute=minute), value)
+                for minute, value in expected_buckets
+            ]
+
+    @pytest.mark.parametrize(
+        "start,end",
+        [
+            pytest.param(EMPTY_START, EMPTY_END, id="empty-window"),
+            pytest.param(
+                WINDOW_START.replace(minute=15),
+                WINDOW_START.replace(minute=20),
+                id="blank-provider-only",
+            ),
+        ],
+    )
+    def test_service_provider_no_data_is_preserved(self, seeded, start, end):
+        metric = "service_provider_error_rates"
+        builder = _make_builder()
+        sql, params = builder.build_metric_value_query(metric, start, end)
+        result = _execute(sql, params)
+        assert result.row_count == 1
+        assert result.data[0]["value"] is None
+
+        sql, params = builder.build_historical_stats_query(metric, start, end)
+        result = _execute(sql, params)
+        assert result.row_count == 1
+        assert result.data[0] == {"mean": None, "stddev": None}
+
+        sql, params = builder.build_time_series_query(metric, start, end, FREQ_SECONDS)
+        assert _execute(sql, params).row_count == 0
 
     # ── remap composition + empty window ─────────────────────────────────────
 

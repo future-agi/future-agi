@@ -1,4 +1,6 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import React, { useCallback, useMemo, useRef, useState } from "react";
+import { format } from "date-fns";
 import {
   Box,
   Drawer,
@@ -10,6 +12,7 @@ import {
 import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
+import ErrorState from "src/components/error-state";
 import { useErrorFeedTraces } from "src/api/errorFeed/error-feed";
 import { useSharedIssue } from "../sharedIssueContext";
 import { useGetProjectDetails } from "src/api/project/project-detail";
@@ -17,6 +20,12 @@ import { useVoiceCallDetail } from "src/sections/agents/helper";
 import { PROJECT_SOURCE } from "src/utils/constants";
 import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2/VoiceDetailDrawerV2";
+import DataTablePagination from "src/components/data-table/DataTablePagination";
+import { statusColors } from "src/utils/runStatus";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+
+const TRACES_PAGE_SIZE = 200;
 
 const EMPTY_AGG = {
   total_traces: 0,
@@ -68,10 +77,10 @@ function AggregateBar({ agg, showTurns }) {
             textAlign: "center",
           }}
         >
-          <Typography fontSize="17px" fontWeight={700} color="text.primary">
+          <Typography fontSize="16px" fontWeight={600} color="text.primary">
             {item.value}
           </Typography>
-          <Typography fontSize="10px" color="text.disabled" mt={0.25}>
+          <Typography fontSize="12px" color="text.disabled" mt={0.25}>
             {item.label}
           </Typography>
         </Box>
@@ -85,21 +94,17 @@ AggregateBar.propTypes = {
 };
 
 // ── Score cell renderer — full-cell fill, green ≥ 70%, red < 70% ─────────────
-function scoreColors(pct, isDark) {
-  if (pct >= 70)
-    return {
-      backgroundColor: "rgba(90,206,109,0.12)",
-      color: isDark ? "#94DFA0" : "#3a9e50",
-    };
-  if (pct >= 50)
-    return {
-      backgroundColor: "rgba(245,166,35,0.12)",
-      color: isDark ? "#E8A13A" : "#c47d00",
-    };
-  return {
-    backgroundColor: "rgba(219,47,45,0.10)",
-    color: isDark ? "#E87876" : "#c0392b",
-  };
+function scoreColors(pct, theme) {
+  if (pct >= 70) {
+    const c = statusColors(theme, "success");
+    return { backgroundColor: c.bg, color: c.fg };
+  }
+  if (pct >= 50) {
+    // Amber stays on the cell fill; the number reads in the theme text colour.
+    return { backgroundColor: statusColors(theme, "warning").bg, color: null };
+  }
+  const c = statusColors(theme, "danger");
+  return { backgroundColor: c.bg, color: c.fg };
 }
 
 function ScoreCellRenderer({ value }) {
@@ -121,10 +126,7 @@ function ScoreCellRenderer({ value }) {
     );
   }
   const pct = Math.round(value * 100);
-  const { backgroundColor, color } = scoreColors(
-    pct,
-    theme.palette.mode === "dark",
-  );
+  const { backgroundColor, color } = scoreColors(pct, theme);
   return (
     <div
       style={{
@@ -135,7 +137,7 @@ function ScoreCellRenderer({ value }) {
         backgroundColor,
         paddingInline: 12,
         fontWeight: 500,
-        fontSize: 13,
+        fontSize: 12,
         color,
       }}
     >
@@ -157,7 +159,7 @@ function TracesGrid({ rows, onRowClick }) {
         field: "id",
         width: 155,
         sortable: true,
-        cellStyle: { fontSize: "11px" },
+        cellStyle: { fontSize: "12px" },
       },
       {
         headerName: "Input",
@@ -170,16 +172,12 @@ function TracesGrid({ rows, onRowClick }) {
       {
         headerName: "Start Time",
         field: "timestamp",
-        width: 100,
+        width: 130,
         sortable: true,
+        // Issues span days; a bare hour:minute cannot place a trace in time.
         valueFormatter: (p) =>
-          p.value
-            ? new Date(p.value).toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              })
-            : "—",
-        cellStyle: { fontSize: "11px" },
+          p.value ? format(new Date(p.value), "MMM d, HH:mm") : "—",
+        cellStyle: { fontSize: "12px" },
       },
       {
         headerName: "Duration",
@@ -206,8 +204,7 @@ function TracesGrid({ rows, onRowClick }) {
         field: "cost",
         width: 90,
         sortable: true,
-        valueFormatter: (p) =>
-          p.value != null ? `$${p.value.toFixed(4)}` : "—",
+        valueFormatter: (p) => formatExactMoney(p.value),
         cellStyle: { fontSize: "12px", textAlign: "right" },
         headerClass: "ag-right-aligned-header",
       },
@@ -248,7 +245,7 @@ function TracesGrid({ rows, onRowClick }) {
         rowData={rows}
         columnDefs={colDefs}
         defaultColDef={defaultColDef}
-        rowHeight={40}
+        rowHeight={ROW_HEIGHT.default}
         headerHeight={38}
         rowBuffer={10}
         suppressCellFocus
@@ -267,13 +264,23 @@ TracesGrid.propTypes = {
 
 // ── Main TracesTab ─────────────────────────────────────────────────────────────
 export default function TracesTab({ error }) {
+  // Reset page and drawer state before fetching a different cluster.
+  return <ClusterTracesTab key={error?.cluster_id} error={error} />;
+}
+
+function ClusterTracesTab({ error }) {
   const clusterId = error?.cluster_id;
   const projectId = error?.project_id;
   // A shared issue carries its traces; signed-out viewers can't fetch them.
   const shared = useSharedIssue();
-  const fetched = useErrorFeedTraces(shared ? null : clusterId, { limit: 200 });
+  const [page, setPage] = useState(0);
+  const fetched = useErrorFeedTraces(shared ? null : clusterId, {
+    limit: TRACES_PAGE_SIZE,
+    offset: page * TRACES_PAGE_SIZE,
+  });
   const data = shared ? shared.traces : fetched.data;
   const isLoading = shared ? false : fetched.isLoading;
+  const loadFailed = !shared && fetched.isError && !data;
   const [drawerTraceId, setDrawerTraceId] = useState(null);
 
   // Sim/voice projects need the VAPI call drawer, not the generic trace drawer.
@@ -286,6 +293,8 @@ export default function TracesTab({ error }) {
     drawerTraceId,
     { enabled: isVoiceProject && !!drawerTraceId, projectId },
   );
+  // The trace branch registers inside TraceDetailDrawerV2.
+  const voiceCovered = useDrawerCovered(isVoiceProject && !!drawerTraceId);
 
   const agg = data?.aggregates ?? EMPTY_AGG;
   const rows = useMemo(() => data?.traces ?? [], [data]);
@@ -328,6 +337,18 @@ export default function TracesTab({ error }) {
     );
   }
 
+  // Zero tiles and "Showing 0 of 0" would read as a cluster with no traces.
+  if (loadFailed) {
+    return (
+      <ErrorState
+        role="alert"
+        title="Couldn't load traces for this issue"
+        onRetry={() => fetched.refetch()}
+        sx={{ height: "auto", flexGrow: 0, py: 6 }}
+      />
+    );
+  }
+
   return (
     <Stack gap={2}>
       <AggregateBar
@@ -337,11 +358,25 @@ export default function TracesTab({ error }) {
 
       <Box>
         <TracesGrid rows={rows} onRowClick={setDrawerTraceId} />
-        <Typography fontSize="11px" color="text.disabled" mt={1}>
+        <Typography fontSize="12px" color="text.disabled" mt={1}>
           {isLoading
             ? "Loading traces…"
             : `Showing ${rows.length} of ${total.toLocaleString()} total traces in this cluster`}
         </Typography>
+        {!shared && (
+          <DataTablePagination
+            page={page}
+            pageSize={TRACES_PAGE_SIZE}
+            pageSizeOptions={[TRACES_PAGE_SIZE]}
+            total={total}
+            disabled={isLoading || fetched.isFetching}
+            loading={isLoading || fetched.isFetching}
+            onPageChange={(nextPage) => {
+              setDrawerTraceId(null);
+              setPage(nextPage);
+            }}
+          />
+        )}
       </Box>
 
       {isVoiceProject ? (
@@ -354,6 +389,7 @@ export default function TracesTab({ error }) {
           variant="persistent"
           open={!!drawerTraceId}
           onClose={() => setDrawerTraceId(null)}
+          sx={coveredDrawerSx(voiceCovered)}
           PaperProps={{
             sx: {
               width: "auto",
@@ -412,5 +448,8 @@ export default function TracesTab({ error }) {
 }
 
 TracesTab.propTypes = {
+  error: PropTypes.object,
+};
+ClusterTracesTab.propTypes = {
   error: PropTypes.object,
 };

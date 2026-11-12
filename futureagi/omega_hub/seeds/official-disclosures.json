@@ -1,0 +1,308 @@
+{
+  "schema": "omega-hub-official-disclosures/v1",
+  "about": "Draft disclosures for the Official entries, written by hand from each entry's code at writtenFrom. omega_hub_import_official --fill-missing puts one in a manifest that has no disclosure; the approving maintainer still confirms or rewrites it in review (SPEC 5.4, decision 20). codeSha256 is omega_hub/official_seed.py's fingerprint of the files the text describes: when they change, the import refuses the entry until the text is checked again.",
+  "writtenFrom": {
+    "repository": "future-agi/omega",
+    "commit": "fb99a6c25d47e8aca90c417ec8800aca11e8f8ae",
+    "folder": "hub/<id>, plus the source folder of an R11 entry"
+  },
+  "entries": {
+    "bank-voice-line": {
+      "codeSha256": "07cd88595e22512b2e6b2e99e303f5287b44ce016dec06dfa47cac97a7a9d6ed",
+      "disclosure": {
+        "summary": "A phone-line agent that reads a balance and blocks a card only after a spoken yes, with stand-in speech and a scripted model by default.",
+        "network": "Listed live: api.openai.com, api.anthropic.com, Vertex aiplatform.googleapis.com. Vertex: signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Default 8/takeCall. Sends transcript, bank instructions, balance/card results; stand-in audio stays local. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Default 8 logical calls/takeCall; 3 demo calls, third aborts pre-model. OMEGA_HUB_MAX_CALLS overrides. Auth and up to 3 replay-safe retries are extra; OMEGA_MODEL_RETRY=off disables retries.",
+        "files": "Account/card state stays in memory. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None.",
+        "background": "Exits after three demo calls. Optional in-process trace queues/timers/exit flush/retries, no daemon: FI key pair sends content by default to api.futureagi.com or FI_BASE_URL; OTLP env endpoints also select collectors. Hub keyless strips FI keys and blocks off-host egress.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Reads env secrets for masking, even scripted. Trace auth: FI_API_KEY/FI_SECRET_KEY; OTLP headers. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange."
+      }
+    },
+    "cafe-chat-page": {
+      "codeSha256": "e5748f3ea689bf2025ab48edb036a56e31c2b5e59d8d8e6fde74c1b5dbf75742",
+      "disclosure": {
+        "summary": "A cafe chat page on node:http: visitors ask about opening hours and the menu, and an agent answers from two built-in tools.",
+        "network": "127.0.0.1: demo free port; --serve 8787, PORT overrides. Live questions/tool results to OpenAI/Anthropic/Vertex; default 4 calls plus retries, OMEGA_HUB_MAX_CALLS overrides. Vertex token_uri defaults to oauth2.googleapis.com/token; signed assertion exchanged for access token. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Default 4 logical calls/server with OMEGA_LIVE_MODEL; per question with OMEGA_LIVE_VERTEX alone. OMEGA_HUB_MAX_CALLS overrides. Auth and up to 3 replay-safe retries are extra; OMEGA_MODEL_RETRY=off disables retries. FI_API_KEY/FI_SECRET_KEY enable content traces to api.futureagi.com or FI_BASE_URL; OTLP env endpoints enable a collector. Hub keyless strips FI keys and blocks off-host egress; direct/live inherits env.",
+        "files": "Reads page.html. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None.",
+        "background": "Demo stops server after two questions, prints model errors and exits non-zero on failure. With --serve, runs until Ctrl+C. Optional in-process trace queues, flush timers, exit flushing and retries; no detached trace service.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Reads env secrets for masking, even scripted. Trace auth: FI_API_KEY/FI_SECRET_KEY; OTLP headers. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange."
+      }
+    },
+    "chatbot-with-memory": {
+      "codeSha256": "5342ba89dde20024e4b59a759e629f3bad87f7f97bd0f52326f0ed33928b804c",
+      "disclosure": {
+        "summary": "A travel chatbot that remembers each user's preferences across chats, masks detected secrets before saving them, and erases a user on request.",
+        "network": "Live chat, memories/tool results to OpenAI/Anthropic/Vertex; storage masked, not prompts. Default 8 calls/chat, 24/demo plus retries; OMEGA_HUB_MAX_CALLS sets chat cap. Vertex signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic.",
+        "files": "Keeps memory.json chats/preferences in a new temp folder, not deleted. Wrapper masks emails/keys; separate runtime memory gate is off. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None.",
+        "background": "Exits after demo chats. Optional in-process trace queues/timers/exit flush/retries, no daemon: FI key pair sends content by default to api.futureagi.com or FI_BASE_URL; OTLP env endpoints also select collectors. Hub keyless strips FI keys and blocks off-host egress.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Demo AWS-style key is masked before memory save. Reads env secrets for masking, even scripted. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange. Optional trace auth: FI_API_KEY/FI_SECRET_KEY and collector headers."
+      }
+    },
+    "ci-release-gate": {
+      "codeSha256": "2c08a7e04d926e16c59af0cd359ee4e3a55530590782eea2c75828b27ac7c078",
+      "disclosure": {
+        "summary": "A CI-style release gate that runs the omega CLI on a copy of a sample agent: contract, eval, bundle, health probe, release, promote and rollback.",
+        "network": "Starts/probes 127.0.0.1 health endpoint; gate mode probes your --health-url. CLI uses echo model. A custom --gate project with semantic recall can contact its selected embedding provider independently. Optional trace egress is described under background.",
+        "files": "Copies agent and writes CLI evidence/release records (.omega) in system-temp folders, deleted at exit; gate mode uses your project. If OMEGA_TRACE_FILE is set, reads/writes persistent events at that path with temp/lock companions outside demo cleanup.",
+        "shell": "Runs node omega CLI (OMEGA_BIN can replace script), each child timeout 60s: contract, eval, framework bundle/check, deployment check, release create/promote/rollback/list. Test also runs node main.mjs.",
+        "background": "CLI children and health server stop before exit. Optional in-process trace queues/timers/exit flush/retries, no daemon: FI key pair sends content by default to api.futureagi.com or FI_BASE_URL; OTLP env endpoints also select collectors. Hub keyless strips FI keys and blocks off-host egress.",
+        "credentials": "No model key needed/stored. CLI inherits non-Google env; Google credential vars removed, HOME temporary. OMEGA_HOME/OMEGA_PROFILE still select a connect store read for masking. OMEGA_SEMANTIC_RECALL may use embedding credentials/profile files. Trace auth: FI_API_KEY/FI_SECRET_KEY or OTLP headers. Even scripted runs read credential-named env values for local request/reply masking."
+      }
+    },
+    "coding-agent": {
+      "codeSha256": "76a80ddb5084844f055e932c2f64d02665464bb4b8023c7851b419140c938fd0",
+      "disclosure": {
+        "summary": "A coding agent fixes a failing test in a throwaway copy of a small project; a policy approves each tool write and an independent test run decides.",
+        "network": "Listed live: api.openai.com, api.anthropic.com, Vertex aiplatform.googleapis.com. Vertex: signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Default 10/repair. Sends task, source/test text, test output/errors and write results. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Default 10 logical calls/repair shared across tool turns; OMEGA_HUB_MAX_CALLS overrides. Auth and up to 3 replay-safe retries are extra; OMEGA_MODEL_RETRY=off disables retries. FI_API_KEY/FI_SECRET_KEY enable content traces to api.futureagi.com or FI_BASE_URL; OTLP env endpoints enable a collector. Hub keyless strips FI keys and blocks off-host egress; direct/live inherits env.",
+        "files": "Temp sample/sandbox copies remain. Read/write tools stay inside sandbox; approved src writes only (not tests); passing fix copied back. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "Runs node test.mjs in sandbox as run_tests tool and independent check. Live tests execute model-written source with inherited env and no OS confinement: arbitrary host files/network are accessible beyond read/write-tool approval.",
+        "background": "Normally exits after independent check; check has no timeout and descendants may outlive it. Optional in-process trace queues, flush timers, exit flushing and retries; no detached trace service.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Test children inherit your environment. Reads env secrets for masking, even scripted. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange. Optional trace auth: FI_API_KEY/FI_SECRET_KEY and collector headers."
+      }
+    },
+    "data-analyst": {
+      "codeSha256": "11efae1b3d7c311a3ea2aadbe2e732924d70380de0e73817587871c630908310",
+      "disclosure": {
+        "summary": "An agent totals a sales CSV and draws a text chart, and the chart tool refuses any figure that does not match the data.",
+        "network": "Listed live: api.openai.com, api.anthropic.com, Vertex aiplatform.googleapis.com. Vertex: signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Default 8/analysis. Sends question, CSV schema/samples, totals, chart and tool errors. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Default 8 logical calls/CSV analysis; OMEGA_HUB_MAX_CALLS overrides. Auth and up to 3 replay-safe retries are extra; OMEGA_MODEL_RETRY=off disables retries.",
+        "files": "Reads its sales.csv. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None.",
+        "background": "Exits when chart is printed. Optional in-process trace queues/timers/exit flush/retries, no daemon: FI key pair sends content by default to api.futureagi.com or FI_BASE_URL; OTLP env endpoints also select collectors. Hub keyless strips FI keys and blocks off-host egress.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Reads env secrets for masking, even scripted. Trace auth: FI_API_KEY/FI_SECRET_KEY; OTLP headers. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange."
+      }
+    },
+    "document-qa": {
+      "codeSha256": "51b4618119260ffb247d131611281fc5a8d50dd349974278c80f9dd3ae835984",
+      "disclosure": {
+        "summary": "An agent answers questions from four handbook pages in its docs folder, cites the page it used and says so when nothing matches.",
+        "network": "Listed live: api.openai.com, api.anthropic.com, Vertex aiplatform.googleapis.com. Vertex: signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Default 8/question. Sends question, retrieved page ids, scores and full text. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Default 8 logical calls/question; 4 questions allow 32/demo. OMEGA_HUB_MAX_CALLS overrides. Auth and up to 3 replay-safe retries are extra; OMEGA_MODEL_RETRY=off disables retries.",
+        "files": "Reads its docs/*.txt pages. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None.",
+        "background": "Exits when answers are printed. Optional in-process trace queues/timers/exit flush/retries, no daemon: FI key pair sends content by default to api.futureagi.com or FI_BASE_URL; OTLP env endpoints also select collectors. Hub keyless strips FI keys and blocks off-host egress.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Reads env secrets for masking, even scripted. Trace auth: FI_API_KEY/FI_SECRET_KEY; OTLP headers. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange."
+      }
+    },
+    "engineering-team": {
+      "codeSha256": "9fc83ae2f0a6ff3bcbf09790f8ee28e0f140b548aa059649eba6a4ca68a96ea2",
+      "disclosure": {
+        "summary": "Three engineer agents write three helpers, a real node run of each check decides, and a run killed halfway resumes from the verified work on disk.",
+        "network": "Listed live: api.openai.com, api.anthropic.com, Vertex aiplatform.googleapis.com. Vertex: signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Default 30/runTeam, separately in child/parent. Child can select Vertex independently. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Live sends helper goals/contracts, generated helper outputs and failed-check feedback. Default 30 logical calls/runTeam independently in child and resumed parent; OMEGA_HUB_MAX_CALLS overrides. Auth and up to 3 replay-safe retries are extra; OMEGA_MODEL_RETRY=off disables retries. FI_API_KEY/FI_SECRET_KEY enable content traces to api.futureagi.com or FI_BASE_URL; OTLP env endpoints enable a collector. Hub keyless strips FI keys and blocks off-host egress; direct/live inherits env.",
+        "files": "Helpers/check scripts/verified.json stay in a new system-temp folder. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "Starts a second copy, kills it with SIGKILL, then node checks import the helpers (model-written in live runs). These Node children inherit environment and have no entry-imposed timeout or OS confinement.",
+        "background": "Only scripted child waits on third-call timer. With inherited Vertex it calls live instead. Normal demo kills child and resumes; failure paths may leave work running. Optional in-process trace queues, flush timers, exit flushing and retries; no detached trace service.",
+        "credentials": "Live OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file via OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS; signs tokens locally; no key stored. Child/checks keep keys; child drops OMEGA_LIVE_MODEL; OMEGA_LIVE_VERTEX=1 can select Vertex. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange. Optional trace auth: FI_API_KEY/FI_SECRET_KEY and collector headers. Even scripted runs read credential-named env values for local request/reply masking."
+      }
+    },
+    "first-agent": {
+      "codeSha256": "f95830c353c91b21ab8f0a2d63722d4eca65973c7803f6ebdd6f3a338ed94cbb",
+      "disclosure": {
+        "summary": "A one-file weather agent: one tool, one model and one runAgent call that answers from the tool's result.",
+        "network": "Listed live: api.openai.com, api.anthropic.com, Vertex aiplatform.googleapis.com. Vertex: signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Default 2/runFirstAgent. Sends weather question, instructions and built-in city/forecast. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Hardcoded 2 logical calls/runFirstAgent/createModel; OMEGA_HUB_MAX_CALLS has no effect. Auth and up to 3 replay-safe retries are extra; OMEGA_MODEL_RETRY=off disables retries.",
+        "files": "The lib.mjs temp-folder/JSONL helpers are unused. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None at run time. Test runs node main.mjs to check output; child inherits your environment minus OMEGA_LIVE_MODEL.",
+        "background": "Exits when answer is printed. Optional in-process trace queues/timers/exit flush/retries, no daemon: FI key pair sends content by default to api.futureagi.com or FI_BASE_URL; OTLP env endpoints also select collectors. Hub keyless strips FI keys and blocks off-host egress.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Reads env secrets for masking, even scripted. Trace auth: FI_API_KEY/FI_SECRET_KEY; OTLP headers. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange."
+      }
+    },
+    "incident-team": {
+      "codeSha256": "db024211d57fb73974289dc7bfbb139b6d288dd355722d5168fb4c7174f3a7cd",
+      "disclosure": {
+        "summary": "The keyless incident team uses fixed roles, blames the database, then grows a helper team after your quote check rejects its answer; the helper finds the bad deploy.",
+        "network": "Live built-in logs/team context to Gemini/OpenAI/Anthropic/Vertex. Planner/members each default 30 calls plus retries; OMEGA_HUB_MAX_CALLS changes both caps. Vertex signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. FI_API_KEY/FI_SECRET_KEY enable content traces to api.futureagi.com or FI_BASE_URL; OTLP env endpoints enable a collector. Hub keyless strips FI keys and blocks off-host egress; direct/live inherits env.",
+        "files": "Logs are built in. Vertex reads its credential file. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None.",
+        "background": "Exits after tree run; non-zero on failed verification, reporting any missing CAUSE, QUOTE or FIX line. Optional in-process trace queues, flush timers, exit flushing and retries; no detached trace service.",
+        "credentials": "Live: GEMINI_API_KEY/OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Reads env secrets for masking, even scripted. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange. Optional trace auth: FI_API_KEY/FI_SECRET_KEY and collector headers."
+      }
+    },
+    "local-web-gui": {
+      "codeSha256": "04920b949a5f92aa05fcfff1c1a95fcf377282581b7818349164dcbfa4ee890c",
+      "disclosure": {
+        "summary": "Starts the real omega web chat on a local model endpoint, drives its JSON and streaming API, and shows cross-site and DNS-rebinding requests refused.",
+        "network": "Servers: 127.0.0.1. Live chat history/tool results to your model: 2 calls plus retries. Web-fetch/search/optional browser may reach sites; evil.example is only a refused-request header. Before Vertex: signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for an access token. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Search sends queries to DuckDuckGo API/HTML endpoints; fetch tools send selected URLs.",
+        "files": "Uses temporary HOME and workspace folders, deleted at exit, and the existing Playwright browser cache. The agent is offered file read, write, edit, move and delete tools in the workspace. Optional OMEGA_LIVE_SPEND_LOG records model usage and errors.",
+        "shell": "Starts omega web with node; OMEGA_BIN can change the CLI path. The agent is offered shell, terminal and optional Playwright browser tools. Stops the CLI with SIGINT, or SIGKILL after a 60-second startup timeout. Its test also starts node main.mjs.",
+        "background": "omega web runs only while the demo talks to it, and is stopped before the demo exits.",
+        "credentials": "Live vendor key or Google service-account file via OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS signs tokens locally; no key stored. CLI gets PATH, temp HOME, PLAYWRIGHT_BROWSERS_PATH, offline flags, local endpoint; no provider keys. Env secrets read locally for masking. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange."
+      }
+    },
+    "mcp-notes-agent": {
+      "codeSha256": "3b0e721699fab134249f267978b0ba3279e77112acecb2e2538028bf15081d4e",
+      "disclosure": {
+        "summary": "An agent uses a local MCP notes server's tools, and every call asks an approver first because the server is untrusted.",
+        "network": "Listed live: api.openai.com, api.anthropic.com, Vertex aiplatform.googleapis.com. Vertex: signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Default 3/runNotesAgent. Sends request, MCP schemas, notes/results; stdio MCP only. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Hardcoded 3 logical calls/runNotesAgent; live CLI demo limits runtime to 1 turn. OMEGA_HUB_MAX_CALLS has no effect. Auth and up to 3 replay-safe retries are extra; OMEGA_MODEL_RETRY=off disables retries.",
+        "files": "Saves notes.json and CLI config in temp folders deleted at exit; CLI gets temp HOME. Your omega config is untouched. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup.",
+        "shell": "Runs notes-server.mjs (stdio); node omega mcp add/get/test (OMEGA_BIN overrides CLI). CLI children inherit keys/live/tracing env; temp HOME, OMEGA_HOME/OMEGA_PROFILE removed. server_env returns names, never values. Test runs node main.mjs.",
+        "background": "MCP server lives until client closes; demo closes it. Optional in-process trace queues/timers/exit flush/retries; no daemon. FI_API_KEY/FI_SECRET_KEY send content by default to api.futureagi.com or FI_BASE_URL; local sink skips OTLP/file defaults. Hub keyless strips FI keys.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. MCP server gets minimal env plus NOTES_FILE. Reads env secrets for masking, even scripted. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange."
+      }
+    },
+    "notes-plugin": {
+      "codeSha256": "da6164e92a0f4b1c473b122e52959a70ba399811b919b78150ccae1bbaf42cb1",
+      "disclosure": {
+        "summary": "An Omega plugin that adds a small MCP notes server with two tools, add_note and list_notes.",
+        "network": "None. The MCP server talks to its client over stdio only.",
+        "files": "Reads plugin/omega.plugin.json to choose its server. Saves notes to NOTES_FILE (JSON), or memory if unset. Demo uses notes.json in a new system-temp folder and leaves it there.",
+        "shell": "Its demo starts the plugin's MCP server as a node child process, the way an MCP client does.",
+        "background": "The MCP server runs while its client keeps it open; the demo stops it when done.",
+        "credentials": "Needs no key and stores none. The demo's server process gets only NOTES_FILE and PATH."
+      }
+    },
+    "omega-coding-skills": {
+      "codeSha256": "deb00e1b04ecc4187db8d75fc21bb3e5e1442dd37dbf822b135ddce06ed504eb",
+      "disclosure": {
+        "summary": "Eight skills and reference files that teach coding agents to build, test, integrate and migrate to Omega agents.",
+        "network": "The listing makes no network calls. Following the skills can fetch docs, install packages or call model vendors with prompts and tool results; those actions belong to your coding agent, not the listing.",
+        "files": "The listing reads SKILL.md in OMEGA_HUB_FILES and counts files recursively. Shipped references cover public APIs and guardrail limits. It writes nothing; following the skills can change your project.",
+        "shell": "None when run. The skills tell a coding agent to run commands such as pnpm install, pnpm build and the omega CLI inside an Omega checkout.",
+        "background": "None.",
+        "credentials": "The listing needs no key. Code an agent writes or runs from the skills may read model-vendor keys from your environment; you supply those keys. The listing stores none."
+      }
+    },
+    "payment-saga": {
+      "codeSha256": "c4ad7cee3e37f704b2e26bf1c01a712c1eb8a7232948fe7b05d21237ea105a84",
+      "disclosure": {
+        "summary": "A mock checkout survives a SIGKILL mid-shipment, replays its card charge and refunds newest-first after a failure; a reviewer writes the recovery brief.",
+        "network": "Bank/warehouse/carrier local stand-ins. Live reviewer sends stuck step, idempotency key/journal results to OpenAI/Anthropic/Vertex; max 1 call plus retries. Vertex signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. FI_API_KEY/FI_SECRET_KEY enable content traces to api.futureagi.com or FI_BASE_URL; OTLP env endpoints enable a collector. Hub keyless strips FI keys and blocks off-host egress; direct/live inherits env.",
+        "files": "Writes effects.jsonl, journal.json and review-runs.json in temp folders deleted at exit. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "Starts a second copy of main.mjs as a child process and kills it with SIGKILL while its carrier step hangs. Its test also runs node main.mjs.",
+        "background": "Child waits on timer until killed; nothing outlives normal demo. Prints reviewer errors; non-zero on review/re-drive failure or if crashed order was not charged once. Optional in-process trace queues, flush timers, exit flushing and retries; no detached trace service.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Other routes need their own keys. Children inherit your environment. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange. Optional trace auth: FI_API_KEY/FI_SECRET_KEY and collector headers. Even scripted runs read credential-named env values for local request/reply masking."
+      }
+    },
+    "research-society": {
+      "codeSha256": "d46f8b855f3993bd410891f24034f4cd1f66afdc0ba6e3746bc1985ef3385e70",
+      "disclosure": {
+        "summary": "Researchers work on one question in parallel, and a claim counts only when its quote appears word for word in the page it cites.",
+        "network": "Listed live: api.openai.com, api.anthropic.com, Vertex aiplatform.googleapis.com. Vertex: signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Default 80/investigate. Sends question, facets, built-in pages, quotes/check feedback; no web fetch. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Default 80 logical calls/investigate shared by planner/researchers/reopened facets; OMEGA_HUB_MAX_CALLS overrides. Auth and up to 3 replay-safe retries are extra; OMEGA_MODEL_RETRY=off disables retries.",
+        "files": "No entry data files. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None.",
+        "background": "Exits when answer is printed. Optional in-process trace queues/timers/exit flush/retries, no daemon: FI key pair sends content by default to api.futureagi.com or FI_BASE_URL; OTLP env endpoints also select collectors. Hub keyless strips FI keys and blocks off-host egress.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Reads env secrets for masking, even scripted. Trace auth: FI_API_KEY/FI_SECRET_KEY; OTLP headers. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange."
+      }
+    },
+    "self-improving-agent": {
+      "codeSha256": "165ac56fd9b278351224c7e5207c30123305d350de15832f7d0c39d7671d91cb",
+      "disclosure": {
+        "summary": "Fixed rules turn latency-tool errors into candidate instructions. A gate promotes only more held-out answers containing the expected p95 number, with no lost matches.",
+        "network": "Built-in latency samples. Live questions, candidate instructions/tool results to OpenAI/Anthropic/Vertex. One model: default 108 calls/run plus retries; OMEGA_HUB_MAX_CALLS overrides. Vertex signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic.",
+        "files": "Appends ledger.jsonl gate decisions in a new temp folder, left on disk. Starts with base instructions; never loads old decisions. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None.",
+        "background": "Exits after gate's decisions. Optional in-process trace queues/timers/exit flush/retries, no daemon: FI key pair sends content by default to api.futureagi.com or FI_BASE_URL; OTLP env endpoints also select collectors. Hub keyless strips FI keys and blocks off-host egress.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Reads env secrets for masking, even scripted. Trace auth: FI_API_KEY/FI_SECRET_KEY; OTLP headers. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange."
+      }
+    },
+    "serve-tools-over-mcp": {
+      "codeSha256": "e4789c6990b02c38cd9990420cc981eef6e20ad76b8518aa290f1f917848389c",
+      "disclosure": {
+        "summary": "Two order tools served over MCP on a local port, with a refund tool that only a policy handler can approve.",
+        "network": "Serves MCP over HTTP on 127.0.0.1 and calls it from a local MCP client; nothing else. The stdio server talks over standard input and output only.",
+        "files": "Reads and writes no files. The orders are built in.",
+        "shell": "None. An MCP client you configure starts stdio-server.ts with node.",
+        "background": "The demo stops its HTTP server when done. The stdio server runs while its MCP client keeps it open.",
+        "credentials": "No authentication key needed or stored. MCP reply masking locally reads credential-named environment variables."
+      }
+    },
+    "shop-browser-assistant": {
+      "codeSha256": "13ec394796a387b09194a91bce3793fd495e2ea6061716376d617a308f3883c1",
+      "disclosure": {
+        "summary": "A browser agent finds the cheapest lamp in stock on a local practice shop, and is refused when it tries to open another site.",
+        "network": "Two loopback sites plus two loopback policy proxies; browser blocks other site before contact. Optional upstream proxy. Live OpenAI/Anthropic/Vertex (aiplatform.googleapis.com), default 8 calls. Vertex key-file token_uri defaults to oauth2.googleapis.com/token. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Live sends shopping task, both local URLs, page text/title and browser results; screenshots off. Default 8 logical calls/shopping run including completion repair; OMEGA_HUB_MAX_CALLS overrides. Auth and up to 3 replay-safe retries are extra; OMEGA_MODEL_RETRY=off disables retries.",
+        "files": "Reads browser binary/cache; Playwright/browser may use temp profile/cache files. No entry files or screenshots otherwise. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "Starts a headless Chromium through Playwright for the browser tools, and closes it when done. It needs Playwright installed.",
+        "background": "Browser and both practice servers close before exit. Optional in-process trace queues/timers/exit flush/retries, no daemon: FI key pair sends content by default to api.futureagi.com or FI_BASE_URL; OTLP env endpoints also select collectors. Hub keyless strips FI keys and blocks off-host egress.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. No shop login; browser inherits proxy config/auth. Reads env secrets for masking, even scripted. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange. Optional trace auth: FI_API_KEY/FI_SECRET_KEY and collector headers."
+      }
+    },
+    "slack-and-whatsapp": {
+      "codeSha256": "bd75071ff4ed6016a72cd484d7996e120f5c0938406fefbf5351198cab4608e6",
+      "disclosure": {
+        "summary": "One HTTP server checks Slack and WhatsApp signatures, runs an agent for each message and replies through each platform's send API.",
+        "network": "127.0.0.1 webhooks; fake delivery never reaches slack.com/graph.facebook.com. Live api.openai.com/api.anthropic.com/Vertex aiplatform.googleapis.com, default 2 calls. Vertex signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Live sends decoded message text and platform on-call instructions; fake adapters receive replies. Hardcoded 2 logical calls shared across 2 authorized platform messages; OMEGA_HUB_MAX_CALLS has no effect. Auth and up to 3 replay-safe retries are extra; OMEGA_MODEL_RETRY=off disables retries.",
+        "files": "The lib.mjs temp-folder/JSONL helpers are unused. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None at run time. Test runs node main.mjs to check output; child inherits your environment minus OMEGA_LIVE_MODEL.",
+        "background": "Webhook server closes at demo end. Optional in-process trace queues/timers/exit flush/retries, no daemon: FI key pair sends content by default to api.futureagi.com or FI_BASE_URL; OTLP env endpoints also select collectors. Hub keyless strips FI keys and blocks off-host egress.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Slack/Meta secrets are fake demo values. Reads env secrets for masking, even scripted. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange. Optional trace auth: FI_API_KEY/FI_SECRET_KEY and collector headers."
+      }
+    },
+    "society-tree": {
+      "codeSha256": "83771a19c008d2a1f6ea60b49f231f7b0e1b2594df73ae917a7822bb616be8ca",
+      "disclosure": {
+        "summary": "A fixed-role vendor tree grows a helper after a rejected recommendation; a second crew writes release-note sections and retries missing ones.",
+        "network": "Vendor tree stays scripted. Live release-note writers send built-in package changes to OpenAI/Anthropic/Vertex; max 6 calls plus retries. Vertex signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Configured Node/global HTTP proxy may carry model traffic. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth.",
+        "files": "Vertex reads its credential file. Temp-folder/JSONL helpers unused. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None at run time. Test runs node main.mjs to check output; child inherits your environment minus OMEGA_LIVE_MODEL.",
+        "background": "Exits after both parts are verified. Optional in-process trace queues/timers/exit flush/retries, no daemon: FI key pair sends content by default to api.futureagi.com or FI_BASE_URL; OTLP env endpoints also select collectors. Hub keyless strips FI keys and blocks off-host egress.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Reads env secrets for masking, even scripted. Trace auth: FI_API_KEY/FI_SECRET_KEY; OTLP headers. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange."
+      }
+    },
+    "sql-analyst": {
+      "codeSha256": "0d726787827a035cd38cb634c79229e9bad9fa98b7e119b937ad6dbbb9c95426",
+      "disclosure": {
+        "summary": "An agent queries a sample SQLite shop database with guarded, capped reads. The demo auto-approves one built-in UPDATE, rejects other writes and never prompts a person.",
+        "network": "Listed live: api.openai.com, api.anthropic.com, Vertex aiplatform.googleapis.com. Vertex: signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Default 8/session. Sends question, SQL schema/counts/rows/errors and approved write results. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Default 8 logical calls/query-write session; OMEGA_HUB_MAX_CALLS overrides. Auth and up to 3 replay-safe retries are extra; OMEGA_MODEL_RETRY=off disables retries.",
+        "files": "Creates shop.sqlite in a new system-temp folder, left on disk. Approved writes change that database. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None.",
+        "background": "Exits when answers are printed. Optional in-process trace queues/timers/exit flush/retries, no daemon: FI key pair sends content by default to api.futureagi.com or FI_BASE_URL; OTLP env endpoints also select collectors. Hub keyless strips FI keys and blocks off-host egress.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Reads env secrets for masking, even scripted. Trace auth: FI_API_KEY/FI_SECRET_KEY; OTLP headers. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange."
+      }
+    },
+    "summarize-feedback": {
+      "codeSha256": "1dbb80cad05528ed75114d890f1eeddfd43ffa3dc1f918b96d8c4cd765012388",
+      "disclosure": {
+        "summary": "A workflow that summarizes ten built-in feedback notes, writes a digest and checks that every note is cited.",
+        "network": "Live ten feedback notes/summaries to OpenAI/Anthropic/Vertex; default 30-call cap plus retries, OMEGA_HUB_MAX_CALLS overrides. Vertex signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Configured Node/global HTTP proxy may carry model traffic. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. FI_API_KEY/FI_SECRET_KEY enable content traces to api.futureagi.com or FI_BASE_URL; OTLP env endpoints enable a collector. Hub keyless strips FI keys and blocks off-host egress; direct/live inherits env.",
+        "files": "Feedback is built in. Vertex reads its credential file. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None.",
+        "background": "Prints digest/citation counts and exits; non-zero if a note is missing or an unknown note is cited. Optional in-process trace queues, flush timers, exit flushing and retries; no detached trace service.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Reads env secrets for masking, even scripted. Trace auth: FI_API_KEY/FI_SECRET_KEY; OTLP headers. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange."
+      }
+    },
+    "support-org": {
+      "codeSha256": "6cdb6d4b2ecebe40ca96014a392f6ec4497ed64d6acd69619927c29dccd45e5a",
+      "disclosure": {
+        "summary": "Triage routes messages to billing or security. Small refunds append to in-memory state; large ones are rejected with handoff text, not queued to a person.",
+        "network": "Listed live: api.openai.com, api.anthropic.com, Vertex aiplatform.googleapis.com. Vertex: signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Default 30/desk. Sends customer message/history, invoice and routing/refund results. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Default 30 logical calls/createDesk shared by triage/billing; restart gets new wrapper. OMEGA_HUB_MAX_CALLS overrides. Auth and up to 3 replay-safe retries are extra; OMEGA_MODEL_RETRY=off disables retries.",
+        "files": "Keeps conversations.json in a new system-temp folder, left on disk; reads it after simulated restart. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None.",
+        "background": "Exits after demo conversations. Optional in-process trace queues/timers/exit flush/retries, no daemon: FI key pair sends content by default to api.futureagi.com or FI_BASE_URL; OTLP env endpoints also select collectors. Hub keyless strips FI keys and blocks off-host egress.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Reads env secrets for masking, even scripted. Trace auth: FI_API_KEY/FI_SECRET_KEY; OTLP headers. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange."
+      }
+    },
+    "support-skill-pack": {
+      "codeSha256": "cc7654cef8512e4949d31e265d703a8a0875c1af269b78fb878116017c0b2060",
+      "disclosure": {
+        "summary": "Three skills that tell a support agent when to refund, when to hand over to a person and how to close a ticket.",
+        "network": "The check makes no network calls. A support agent using the skills can call lookup_order; its access and data flow depend on the tool you supply.",
+        "files": "Its check reads the three SKILL.md files in its skills folder and checks each name, description and version. Writes nothing.",
+        "shell": "None. The refunds skill lets an agent call a lookup_order tool, which you provide.",
+        "background": "None. It exits after listing the skills, non-zero if any name differs from its folder or any description or version is missing.",
+        "credentials": "None. It reads no key and stores none."
+      }
+    },
+    "verified-task-tree": {
+      "codeSha256": "b8dcf1ff566e87c0b1a48677217b6917ec290f4a7b6cb191de9ba539f694e43a",
+      "disclosure": {
+        "summary": "A wrong purchase-order estimate is rejected by an executed check, so the tree splits the order into lines and verifies each one.",
+        "network": "Listed live: api.openai.com, api.anthropic.com, Vertex aiplatform.googleapis.com. Vertex: signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Default 6/priceOrder. Sends order quantities, estimation prompt and rejected-answer feedback. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Hardcoded 6 logical calls/priceOrder; root up to 2 solves, leaves local. OMEGA_HUB_MAX_CALLS has no effect. Auth and up to 3 replay-safe retries are extra; OMEGA_MODEL_RETRY=off disables retries.",
+        "files": "The lib.mjs temp-folder/JSONL helpers are unused. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None at run time. Test runs node main.mjs to check output; child inherits your environment minus OMEGA_LIVE_MODEL.",
+        "background": "Exits when tree is verified. Optional in-process trace queues/timers/exit flush/retries, no daemon: FI key pair sends content by default to api.futureagi.com or FI_BASE_URL; OTLP env endpoints also select collectors. Hub keyless strips FI keys and blocks off-host egress.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Reads env secrets for masking, even scripted. Trace auth: FI_API_KEY/FI_SECRET_KEY; OTLP headers. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange."
+      }
+    },
+    "web-chat-app": {
+      "codeSha256": "8bcf5faa8d4255c6bfb946200d13d5bd59cffbbcddef291f61bda1da695f7dfe",
+      "disclosure": {
+        "summary": "A shop chat page that streams replies, keeps each thread, and shows an approval card before the agent cancels an order.",
+        "network": "Page/API on 127.0.0.1: demo free port; --serve 8788, PORT overrides. Live api.openai.com/api.anthropic.com/Vertex aiplatform.googleapis.com, default 8 calls. Vertex signed assertion to key-file token_uri (default oauth2.googleapis.com/token) for access token. Unlisted models can use compatible/Ollama/other vendor/native endpoints and auth. Configured Node/global HTTP proxy may carry model traffic. Live sends chat history, order details and cancellation/approval results; replies stream to browser. Default 8 logical calls/server with OMEGA_LIVE_MODEL; per request with OMEGA_LIVE_VERTEX alone. OMEGA_HUB_MAX_CALLS overrides. Auth and up to 3 replay-safe retries are extra; OMEGA_MODEL_RETRY=off disables retries.",
+        "files": "Reads page.html; threads stay in memory, lost on stop. If OMEGA_LIVE_SPEND_LOG is set, creates parents/file and appends each live call's time, label, model, count, tokens/errors as JSONL; no log cleanup. If OMEGA_TRACE_FILE is set, reads/writes persistent events with temp/lock files.",
+        "shell": "None.",
+        "background": "Demo closes server; --serve runs until Ctrl+C. Optional in-process trace queues/timers/exit flush/retries, no daemon: FI key pair sends content by default to api.futureagi.com or FI_BASE_URL; OTLP env endpoints also select collectors. Hub keyless strips FI keys and blocks off-host egress.",
+        "credentials": "Live: OPENAI_API_KEY/ANTHROPIC_API_KEY or Google service-account file (first: OMEGA_VERTEX_CREDS/OMEGA_VERTEX_SA/GOOGLE_APPLICATION_CREDENTIALS); signs assertion locally for access token; no key stored. Reads env secrets for masking, even scripted. Trace auth: FI_API_KEY/FI_SECRET_KEY; OTLP headers. Other routes use their own keys: optional compatible bearer, AWS env/shared profiles, SAP service key, IBM IAM exchange."
+      }
+    }
+  }
+}

@@ -1,16 +1,14 @@
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from integrations.transformers.base import BaseTraceTransformer, register_transformer
 from tracer.utils.adapters.base import (
     extract_query,
     flatten_input_messages,
     flatten_output_messages,
-)
-from tracer.utils.adapters.base import guess_provider as _guess_provider
-from tracer.utils.adapters.base import (
     set_io_value,
 )
+from tracer.utils.adapters.base import guess_provider as _guess_provider
 from tracer.utils.langfuse_upsert import parse_langfuse_timestamp
 from tracer.utils.otel import SpanAttributes
 
@@ -191,14 +189,21 @@ class LangfuseTransformer(BaseTraceTransformer):
 
         for score in scores:
             data_type = (score.get("dataType") or "").upper()
+            output_float = score.get("value")
+            output_str = score.get("stringValue") or ""
+            # Ingestion sends category strings in value; fetched snapshots may
+            # instead carry a numeric value alongside the stringValue label.
+            if data_type == "CATEGORICAL" and isinstance(output_float, str):
+                output_str = output_float
+                output_float = None
 
             eval_dict = {
                 "langfuse_score_id": score.get("id", str(uuid.uuid4())),
                 "trace_id": trace_id,
                 "observation_id": score.get("observationId"),
                 "eval_type_id": score.get("name") or "",
-                "output_float": score.get("value"),
-                "output_str": score.get("stringValue") or "",
+                "output_float": output_float,
+                "output_str": output_str,
                 "eval_explanation": score.get("comment") or "",
                 "output_bool": (
                     score.get("value") == 1 if data_type == "BOOLEAN" else None
@@ -288,7 +293,7 @@ class LangfuseTransformer(BaseTraceTransformer):
         return parse_langfuse_timestamp(ts)
 
     @staticmethod
-    def _map_level_to_status(level: Optional[str]) -> str:
+    def _map_level_to_status(level: str | None) -> str:
         """Map Langfuse observation level to FutureAGI status.
 
         Langfuse observations that complete without errors may omit the

@@ -1,4 +1,5 @@
-import { test as base, expect, request as pwRequest } from '@playwright/test';
+import { expect, request as pwRequest } from '@playwright/test';
+import { test as base } from './trace-hygiene/fixture';
 import { E2E } from './env';
 import { provisionActor, TestActor } from './provisioning';
 import { authInitScript } from './auth';

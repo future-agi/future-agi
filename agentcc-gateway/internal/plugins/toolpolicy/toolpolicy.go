@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -13,7 +14,7 @@ import (
 )
 
 // Plugin implements tool/function filtering as a pipeline plugin.
-// Priority 60: after guardrails (50), before validation (70).
+// Priority 60: after guardrails (34), before validation (70).
 type Plugin struct {
 	enabled            bool
 	maxToolsPerRequest int
@@ -21,6 +22,7 @@ type Plugin struct {
 	allow              policyNames
 	deny               policyNames
 	tenantStore        *tenant.Store
+	native             sync.Map // request-local private prepared body/policy; finalizer removes it
 }
 
 // New creates a new tool policy plugin from config.
@@ -47,10 +49,10 @@ func New(cfg config.ToolPolicyConfig, tenantStore *tenant.Store) *Plugin {
 // different functions, and an application may legitimately call one of its own
 // "codeExecution".
 //
-// builtin holds the canonical form of the entries that name a tool the
-// provider runs itself, and such a tool is matched by that alone — two
-// spellings of google_search are one capability, so a list naming either
-// covers it.
+// builtin holds the canonical form of entries with known capability aliases —
+// two spellings of google_search are one capability, so a list naming either
+// covers it. Native built-ins without aliases use their exact protocol/version
+// identity from exact instead.
 //
 // Merging the two is what let a rule about the built-in code_execution reach a
 // custom function of the same name, in both directions.
@@ -80,7 +82,10 @@ func (p policyNames) add(name string) {
 // has reports whether this list covers the tool.
 func (p policyNames) has(tool toolRef) bool {
 	if tool.builtin {
-		return p.builtin[tool.name]
+		// Native protocol/version schemas also yield exact built-in identities
+		// outside the shared capability alias table. Match those as written;
+		// keep alias equivalence restricted to built-ins, not custom functions.
+		return p.builtin[tool.name] || p.exact[tool.name]
 	}
 	return p.exact[tool.name]
 }
@@ -96,43 +101,26 @@ type toolRef struct {
 }
 
 func (p *Plugin) Name() string  { return "toolpolicy" }
-func (p *Plugin) Priority() int { return 60 } // After guardrails (50), before validation (70).
+func (p *Plugin) Priority() int { return 60 } // After guardrails (34), before validation (70).
 
 // ProcessRequest filters tools based on policy (global → org → per-key).
 func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
 	// Embeddings, images, audio, ocr, rerank and search run the pipeline with
 	// rc.Request nil; none can carry tools, and dereferencing here 500'd them.
-	if rc.Request == nil || len(rc.Request.Tools) == 0 {
+	_, preparedNative := p.native.Load(rc)
+	if rc.Request == nil || preparedNative {
+		if err := p.PrepareNative(ctx, rc); err != nil {
+			return pipeline.ResultError(err)
+		}
+		return pipeline.ResultContinue()
+	}
+	if len(rc.Request.Tools) == 0 {
 		return pipeline.ResultContinue()
 	}
 
-	// Resolve per-org tool policy.
-	var orgAllow policyNames
-	var orgDeny policyNames
-	orgAction := ""
-	orgMaxTools := 0
-	orgEnabled := false
-
-	if p.tenantStore != nil {
-		orgID := rc.Metadata[tenant.MetadataKeyOrgID]
-		if orgID != "" {
-			orgCfg := p.tenantStore.Get(orgID)
-			if orgCfg != nil && orgCfg.ToolPolicy != nil && orgCfg.ToolPolicy.Enabled {
-				orgEnabled = true
-				orgAction = orgCfg.ToolPolicy.DefaultAction
-				orgMaxTools = orgCfg.ToolPolicy.MaxToolsPerRequest
-				if len(orgCfg.ToolPolicy.Allow) > 0 {
-					orgAllow = newPolicyNames(orgCfg.ToolPolicy.Allow)
-				}
-				if len(orgCfg.ToolPolicy.Deny) > 0 {
-					orgDeny = newPolicyNames(orgCfg.ToolPolicy.Deny)
-				}
-			}
-		}
-	}
-
-	// If neither global nor org policy is enabled, skip.
-	if !p.enabled && !orgEnabled {
+	effective := p.effective(rc)
+	orgAllow, orgDeny := effective.orgAllow, effective.orgDeny
+	if !effective.enabled {
 		return pipeline.ResultContinue()
 	}
 
@@ -140,16 +128,10 @@ func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) 
 	rc.Metadata["tools_requested"] = strconv.Itoa(toolCount)
 
 	// Effective action: org overrides global if set.
-	effectiveAction := p.defaultAction
-	if orgAction != "" {
-		effectiveAction = orgAction
-	}
+	effectiveAction := effective.action
 
 	// Check max tools per request (most restrictive wins).
-	effectiveMaxTools := p.maxToolsPerRequest
-	if orgMaxTools > 0 && (effectiveMaxTools == 0 || orgMaxTools < effectiveMaxTools) {
-		effectiveMaxTools = orgMaxTools
-	}
+	effectiveMaxTools := effective.max
 	if effectiveMaxTools > 0 && toolCount > effectiveMaxTools {
 		return pipeline.ResultError(models.ErrBadRequest(
 			"too_many_tools",
@@ -158,8 +140,7 @@ func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) 
 	}
 
 	// Build per-key allow/deny sets from auth metadata.
-	keyAllow := parseCSV(rc.Metadata["auth_allowed_tools"])
-	keyDeny := parseCSV(rc.Metadata["auth_denied_tools"])
+	keyAllow, keyDeny := effective.keyAllow, effective.keyDeny
 
 	// Filter tools: global deny → org deny → per-key deny → global allow → org allow → per-key allow.
 	filtered := make([]models.Tool, 0, len(rc.Request.Tools))

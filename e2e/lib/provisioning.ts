@@ -1,6 +1,9 @@
 import type { APIRequestContext } from '@playwright/test';
 import { ApiClient, Tokens } from './api-client';
 import { E2E } from './env';
+import { requirePublicationAdmission } from './value-free';
+import { mint } from './minted-values';
+import { createPersonalKey } from './personal-key';
 
 export interface TestActor {
   email: string; password: string;
@@ -15,19 +18,26 @@ export interface UserInfo {
   default_workspace_id: string | null;
   restrict_simulate_to_environments?: boolean;
 }
-interface KeysEnvelope { status: string; data: { api_key: string; secret_key: string } }
 
-export async function provisionActor(req: APIRequestContext, label: string): Promise<TestActor> {
-  // futureagi.com domain: belt (special-email recaptcha bypass) to the
-  // localhost-Host suspenders; also gives the auto-created org a stable name.
+export type BeforePersonalKey = (identity: Omit<TestActor, 'apiKey' | 'secretKey'>) => Promise<void>;
+
+export async function provisionActor(req: APIRequestContext, label: string, beforePersonalKey?: BeforePersonalKey,
+  domain = 'futureagi.com'): Promise<TestActor> {
+  // HR-JRN-01 structural S3: in value-free mode, nothing is signed up before the publication is admitted (lib/value-free.ts).
+  await requirePublicationAdmission('provisionActor');
+  // The domain gives the auto-created organization a stable name.
+  // `domain`: another one (HR-JRN-01's value-free ScopeActors, lib/scope-actors.ts);
+  // signup names the org after its first label (accounts/utils.py first_signup).
   // Freshness must not depend on the caller's label: parallel workers can
   // provision in the same millisecond.
   const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  const email = `e2e-${label}-${runId}@futureagi.com`;
+  const email = `e2e-${label}-${runId}@${domain}`;
+  // synthetic test value; visibly synthetic under R-LIT-2.
   const password = `E2e-${label}-${runId}`;
   const anon = new ApiClient(req, E2E.apiUrl);
 
-  await anon.post('/accounts/signup/', { email, full_name: `E2E ${label}`, password });
+  // Only the test image exposes this route. Signup flows use the public route.
+  await anon.post('/accounts/e2e/clean-signup/', { email, full_name: `E2E ${label}`, password });
   const tokens = await anon.post<Tokens>('/accounts/token/', { email, password, remember_me: true });
 
   let api = anon.withAuth(tokens);
@@ -38,8 +48,11 @@ export async function provisionActor(req: APIRequestContext, label: string): Pro
   const organizationId = info.organization.id;
   const workspaceId = info.default_workspace_id;
   api = anon.withAuth(tokens, organizationId, workspaceId);
-  const keys = await api.get<KeysEnvelope>('/accounts/keys/');
+  await beforePersonalKey?.({ email, password, tokens, organizationId, workspaceId, api });
+  const keys = await createPersonalKey(api, `e2e-${label}-${runId}`);
+  // 708 add.78: the evidence auditor matches these exactly (in memory only).
+  mint(password, tokens.access, tokens.refresh, keys.api_key, keys.secret_key);
 
   return { email, password, tokens, organizationId, workspaceId,
-           apiKey: keys.data.api_key, secretKey: keys.data.secret_key, api };
+           apiKey: keys.api_key, secretKey: keys.secret_key, api };
 }

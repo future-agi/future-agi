@@ -4,12 +4,17 @@ import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/__tests__/fixtur
 
 import {
   checksLine,
+  fixEnding,
   fixName,
   headline,
   heldToRows,
   identityLine,
   isShipped,
   outcomeLabel,
+  reviewTrialOf,
+  shipAnywayLine,
+  shipAnywayTrials,
+  shipErrorMessage,
   stepRows,
   verdictCards,
   winnerOf,
@@ -76,6 +81,155 @@ describe("headline", () => {
       "The engine stopped: the model provider refused the key.",
     );
   });
+
+  // W10-AGENT-FIX-U05
+  it("leads a fix the engine stopped with what to do next, never the engine's text", () => {
+    const fix = {
+      ...byId("fix-failed"),
+      failure: {
+        code: "fix_engine_died",
+        message:
+          "the improvement engine stopped 3 times before it finished; last error: KeyError: 'choices'",
+      },
+    };
+    expect(headline(fix)).toBe(
+      "The improvement stopped unexpectedly. Retry it, or contact support with improvement ID fix-failed.",
+    );
+    expect(headline({ ...fix, retryable: false })).toBe(
+      "The improvement stopped unexpectedly. Contact support with improvement ID fix-failed.",
+    );
+    expect(fixEnding(fix).details).toBe(fix.failure.message);
+  });
+
+  it("gives the platform's unrecoverable-error ending the same voice, with nothing extra under Details", () => {
+    const fix = {
+      ...byId("fix-failed"),
+      failure: {
+        code: "fix_engine_failed",
+        message:
+          "the improvement engine hit an error it could not recover from",
+      },
+    };
+    expect(fixEnding(fix)).toEqual({
+      text: "The improvement stopped unexpectedly. Retry it, or contact support with improvement ID fix-failed.",
+      details: null,
+    });
+  });
+});
+
+// W10-AGENT-FIX-U05, G3-UX-1
+describe("shipErrorMessage", () => {
+  it.each([
+    [
+      "fix_github_patch_failed",
+      "error: patch failed: instructions.md:3",
+      "This change could not be applied to the repository. Download the patch to apply it by hand.",
+    ],
+    [
+      "fix_github_branch_changed",
+      "the branch futureagi/fix-1a2b3c4d-3 changed on GitHub since the pull request was made",
+      "The branch for this pull request changed on GitHub. Download the patch to apply it by hand.",
+    ],
+    [
+      "fix_github_pull_request_failed",
+      'GitHub refused the pull request: {"message":"Validation Failed"}',
+      "GitHub could not open the pull request. Download the patch to apply it by hand.",
+    ],
+    [
+      "fix_candidate_not_activated",
+      "the version could not become the default: environment_busy",
+      "This version could not become the default. If the environment is updating, ship again once it finishes.",
+    ],
+  ])("says what to do instead of the raw text on %s", (code, message, copy) => {
+    expect(shipErrorMessage({ code, message, retryable: false })).toBe(copy);
+  });
+
+  it.each([
+    [
+      "fix_github_push_failed",
+      "fatal: unable to access 'https://github.com/acme/dispatch-agent.git/': The requested URL returned error: 500",
+      "This change could not be pushed to GitHub. Try again, or download the patch to apply it by hand.",
+    ],
+    [
+      "fix_github_pull_request_failed",
+      'GitHub refused the pull request: {"message":"Server Error"}',
+      "GitHub could not open the pull request. Try again, or download the patch to apply it by hand.",
+    ],
+  ])(
+    "says to try again first when the server marks %s retryable",
+    (code, message, copy) => {
+      expect(shipErrorMessage({ code, message, retryable: true })).toBe(copy);
+    },
+  );
+
+  it("keeps the server's own sentence for other codes", () => {
+    expect(
+      shipErrorMessage({
+        code: "fix_github_unreachable",
+        message: "GitHub could not be reached",
+        retryable: true,
+      }),
+    ).toBe("GitHub could not be reached");
+  });
+});
+
+// W10-AGENT-FIX-U01
+describe("a fix without a winner", () => {
+  const override = (allowed, regressions = []) => ({
+    allowed,
+    regressions,
+    reason: "",
+    by: null,
+    at: null,
+  });
+  const noWinner = () => {
+    const fix = structuredClone(byId("fix-no-improvement"));
+    fix.candidates[1].verdict.target_pass_rate = [0.33, 1.0];
+    fix.candidates[0].override = override(false);
+    fix.candidates[1].override = override(true, [
+      "refund-window: policy_cited",
+    ]);
+    return fix;
+  };
+
+  it("reviews the winner, else the trial that did best on its targets, else the first", () => {
+    const ready = byId("fix-ready-archive");
+    expect(reviewTrialOf(ready).id).toBe(winnerOf(ready).id);
+    expect(reviewTrialOf(noWinner()).attempt).toBe(2);
+    const unrated = structuredClone(byId("fix-no-improvement"));
+    unrated.candidates.forEach((c) => {
+      c.verdict.target_pass_rate = null;
+    });
+    expect(reviewTrialOf(unrated).attempt).toBe(1);
+    expect(reviewTrialOf(byId("fix-not-reproduced"))).toBeUndefined();
+  });
+
+  it("offers Ship anyway only on a finished fix with no winner, for trials the server allows", () => {
+    const fix = noWinner();
+    expect(shipAnywayTrials(fix).map((c) => c.attempt)).toEqual([2]);
+    expect(shipAnywayTrials({ ...fix, state: "running" })).toEqual([]);
+    const won = structuredClone(byId("fix-ready-archive"));
+    won.candidates[0].override = override(true, ["late-cancel: escalated"]);
+    expect(shipAnywayTrials(won)).toEqual([]);
+  });
+
+  it("names the broken must-pass checks without claiming every target case passed", () => {
+    const fix = noWinner();
+    const trial = fix.candidates[1];
+    expect(shipAnywayLine(fix, trial)).toBe(
+      "Trial 2 passed every check except must-pass: it broke 1 must-pass check (refund-window: policy_cited). You can still ship it with a reason.",
+    );
+    const shipped = {
+      ...fix,
+      environment: {
+        ...fix.environment,
+        default_agent_version_id: trial.agent_version_id,
+      },
+    };
+    expect(shipAnywayLine(shipped, trial)).toBe(
+      "Trial 2 passed every check except must-pass: it broke 1 must-pass check (refund-window: policy_cited).",
+    );
+  });
 });
 
 describe("verdict", () => {
@@ -118,6 +272,14 @@ describe("step rows", () => {
     expect(rows[1].lines[0]).toBe(
       "2 of up to 4 trials · best so far 67% on 6 target scenarios",
     );
+    expect(rows[2].lines).toEqual([
+      "2 held-back scenarios it never saw and 9 must-pass scenarios, including the 1 you protected",
+    ]);
+  });
+
+  it("counts must-pass scenarios alone when none were protected", () => {
+    const fix = byId("fix-search");
+    const rows = stepRows({ ...fix, plan: { ...fix.plan, protected: 0 } });
     expect(rows[2].lines).toEqual([
       "2 held-back scenarios it never saw and 9 must-pass scenarios",
     ]);

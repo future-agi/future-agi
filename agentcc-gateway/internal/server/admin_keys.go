@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/auth"
 	gatewayadmin "github.com/futureagi/agentcc-gateway/internal/contracts/generated"
@@ -17,6 +19,18 @@ import (
 // KeyRevocationPublisher can broadcast key revocations to other replicas.
 type KeyRevocationPublisher interface {
 	Publish(ctx context.Context, keyID string)
+}
+
+// keyRevocationErrorPublisher adds failure reporting without breaking existing
+// log-only publishers. The Redis broadcaster implements both interfaces.
+type keyRevocationErrorPublisher interface {
+	PublishWithError(ctx context.Context, keyID string) error
+}
+
+// keyRevocationCredentialPublisher persists the captured credential identity,
+// not the potentially reusable administrative/configuration slot ID.
+type keyRevocationCredentialPublisher interface {
+	PublishCredentialWithError(ctx context.Context, keyID, keyHash string) error
 }
 
 // KeyHandlers provides admin CRUD for API keys.
@@ -82,7 +96,7 @@ func (h *KeyHandlers) CreateKey(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+err.Error()))
+		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+models.DescribeJSONError(err)))
 		return
 	}
 
@@ -91,11 +105,26 @@ func (h *KeyHandlers) CreateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A key's authority is set once, when it is created, by the platform:
+	// org_id, and allow_policy_override on its playground key. The other
+	// reserved names never come through this API (PUT refuses a change to
+	// any of them), so a create that sends one is refused whole.
+	if names := auth.NotPlatformSetMetadata(req.Metadata); len(names) > 0 {
+		models.WriteError(w, models.ErrBadRequest("reserved_metadata", fmt.Sprintf(
+			"metadata %s cannot be set when a key is created here: org_id and allow_policy_override are the only reserved names this API takes",
+			strings.Join(names, ", "))))
+		return
+	}
+
 	owner := ""
 	if req.Owner != nil {
 		owner = *req.Owner
 	}
 	key, rawKey := h.keyStore.Create(req.Name, owner, req.Models, req.Providers, req.Metadata)
+	if key == nil {
+		models.WriteError(w, models.ErrBadRequest("person_required", "org_id and user_id are required"))
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -125,7 +154,7 @@ func (h *KeyHandlers) ImportKeys(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 10<<20))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+err.Error()))
+		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+models.DescribeJSONError(err)))
 		return
 	}
 	keys := make([]auth.SyncedKey, len(req.Keys))
@@ -206,14 +235,35 @@ func (h *KeyHandlers) RevokeKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.keyStore.Revoke(keyID) {
-		models.WriteError(w, models.ErrNotFound("key_not_found", "Key not found: "+keyID))
+	if h.keyStore.ConfigKeyNotRevocable(keyID) {
+		models.WriteError(w, &models.APIError{Status: http.StatusConflict, Type: models.ErrTypeInvalidRequest,
+			Code: "config_key_not_revocable", Message: "Remove deployment keys from operator configuration"})
+		return
+	}
+	revoked, keyHash := h.keyStore.RevokeWithIdentity(keyID)
+
+	// Broadcast revocation to all other replicas via Redis pub/sub, even when
+	// this replica does not hold the key: the replica that created it may be
+	// the only one that does until the next sync. Unknown IDs are a no-op there.
+	var publishErr error
+	if pub, ok := h.revocationPublisher.(keyRevocationCredentialPublisher); ok {
+		publishErr = pub.PublishCredentialWithError(r.Context(), keyID, keyHash)
+	} else if pub, ok := h.revocationPublisher.(keyRevocationErrorPublisher); ok {
+		publishErr = pub.PublishWithError(r.Context(), keyID)
+	} else if h.revocationPublisher != nil {
+		h.revocationPublisher.Publish(r.Context(), keyID)
+	}
+	if publishErr != nil {
+		// Local revocation already took effect. Unknown identity or publication
+		// failure cannot claim durable success; never expose transport details.
+		models.WriteError(w, &models.APIError{Status: http.StatusServiceUnavailable, Type: models.ErrTypeServer,
+			Code: "revocation_not_broadcast", Message: "revocation not broadcast"})
 		return
 	}
 
-	// Broadcast revocation to all other replicas via Redis pub/sub.
-	if h.revocationPublisher != nil {
-		h.revocationPublisher.Publish(r.Context(), keyID)
+	if !revoked {
+		models.WriteError(w, models.ErrNotFound("key_not_found", "Key not found: "+keyID))
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -237,12 +287,22 @@ func (h *KeyHandlers) UpdateKey(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+err.Error()))
+		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+models.DescribeJSONError(err)))
 		return
 	}
 
-	key, ok := h.keyStore.Update(keyID, req.Name, req.Owner, req.Models, req.Providers, req.Metadata)
-	if !ok {
+	key, err := h.keyStore.Update(keyID, req.Name, req.Owner, req.Models, req.Providers, req.Metadata)
+	var reserved *auth.ReservedMetadataError
+	switch {
+	case errors.As(err, &reserved):
+		models.WriteError(w, &models.APIError{
+			Status:  http.StatusConflict,
+			Type:    models.ErrTypeInvalidRequest,
+			Code:    "reserved_metadata",
+			Message: reserved.Error(),
+		})
+		return
+	case err != nil:
 		models.WriteError(w, models.ErrNotFound("key_not_found", "Key not found: "+keyID))
 		return
 	}
@@ -290,7 +350,7 @@ func (h *KeyHandlers) AddCredits(w http.ResponseWriter, r *http.Request) {
 		Amount float64 `json:"amount"` // USD
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+err.Error()))
+		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+models.DescribeJSONError(err)))
 		return
 	}
 	if req.Amount <= 0 {

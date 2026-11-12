@@ -14,7 +14,8 @@ const PortalValueLabel = ({ children, value, open }) => (
 
 PortalValueLabel.propTypes = {
   children: PropTypes.node.isRequired,
-  value: PropTypes.number.isRequired,
+  // MUI passes the valueLabelFormat output here, which callers format as text.
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.node]).isRequired,
   open: PropTypes.bool.isRequired,
 };
 
@@ -37,10 +38,6 @@ export const ModelOptionSlider = styled((props) => (
     height: theme.spacing(1.5),
     backgroundColor: theme.palette.divider,
     border: "3px solid var(--bg-paper)",
-    boxShadow: "0px 2px 4px rgba(0, 0, 0, 0.1)",
-    "&:hover, &.Mui-focusVisible": {
-      boxShadow: "0px 3px 6px rgba(0, 0, 0, 0.15)",
-    },
   },
   "& .MuiSlider-mark": {
     backgroundColor: theme.palette.action.selected,

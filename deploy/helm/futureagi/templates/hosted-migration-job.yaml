@@ -1,0 +1,51 @@
+{{- if and .Values.hosted.enabled .Values.hosted.migration.phase -}}
+{{- $op := .Values.hosted.migration -}}
+{{- $b := .Values.backend -}}
+{{- $component := dict "SERVICE_TYPE" "bootstrap" "STARTUP_DB_MUTATION_MODE" "operator" "NO_STARTUP_DB_MUTATIONS" "false" "REGISTER_TEMPORAL_SCHEDULES" "false" -}}
+# Intentionally NO Helm/Argo hook: selecting a profile never mutates a database.
+# Render/apply this Job separately for each approved phase. No arbitrary command.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "futureagi.fullname" . }}-hosted-{{ $op.phase }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" (dict "root" . "component" "bootstrap") | nindent 4 }}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ $op.activeDeadlineSeconds | int }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.componentLabels" (dict "root" . "component" "bootstrap") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "root" $ "uid" 1000 "overrides" $b.podSecurityContext) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      containers:
+        - name: hosted-migration
+          image: {{ include "futureagi.image" (dict "root" . "image" $b.image "digestKey" "backend") }}
+          command: ["python", "manage.py", "hosted_gateway_migrate"]
+          args:
+            - {{ $op.phase | quote }}
+            {{- if $op.apply }}
+            - --apply
+            - --quiesced
+            {{- if eq $op.phase "backfill" }}
+            - --compatible-runtime-revision
+            - {{ $op.compatibleRuntimeRevision | quote }}
+            {{- end }}
+            {{- end }}
+          env:
+            {{- include "futureagi.env.python" (dict "root" . "component" $component "direct" true) | trim | nindent 12 }}
+          resources:
+            {{- toYaml .Values.bootstrap.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict "root" $ "overrides" $b.containerSecurityContext) | nindent 12 }}
+          volumeMounts:
+            {{- include "futureagi.python.volumeMounts" . | trim | nindent 12 }}
+      volumes:
+        {{- include "futureagi.python.volumes" . | trim | nindent 8 }}
+{{- end -}}

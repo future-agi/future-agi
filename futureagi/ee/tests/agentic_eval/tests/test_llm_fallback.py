@@ -3,7 +3,7 @@
 Unit tests force `_get_completion_content()` to enter `_handle_final_fallback` and assert
 payload scrubbing + model selection.
 
-Includes an opt-in live test that exercises `handle_vertex_ai_fallback` end-to-end.
+Fallback payload tests use local media and completion responses.
 
 To Test:
 docker exec -it backend pip install pytest pytest-django
@@ -16,13 +16,17 @@ docker exec -it backend bash -c "export DJANGO_SETTINGS_MODULE=tfc.settings.test
 
 import asyncio
 import os
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import requests
 
+from agentic_eval.core.llm import audio_utils
 from agentic_eval.core.llm import llm as llm_module
 from agentic_eval.core.llm.audio_utils import download_audio_url_to_base64
 from agentic_eval.core.llm.llm import LLM
+from agentic_eval.core.utils import llm_payloads
 from agentic_eval.core.utils.llm_payloads import (
     build_audio_content,
     build_image_content,
@@ -30,6 +34,9 @@ from agentic_eval.core.utils.llm_payloads import (
     build_text_content,
 )
 from agentic_eval.core.utils.model_config import ModelConfigs
+from model_hub.tests.network_isolation import no_external_lookups  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("no_external_lookups")
 
 # Reuse the same static URLs as agentic_eval/tests/test_deterministic_evaluator.py
 TEST_IMAGE_URL = "https://fi-content-dev.s3.ap-south-1.amazonaws.com/images/dcc00d97-fde8-4721-bd3b-de75e2898f63/2ec84fac-886d-4fd8-be4f-e061ab070104"
@@ -135,7 +142,9 @@ def test_sync_final_fallback_vertex_then_openai_by_modality(
     def _fake_completion(**kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
-            assert kwargs.get("model") == ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
+            assert (
+                kwargs.get("model") == ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
+            )
             content = kwargs.get("messages", [{}])[0].get("content", [])
             assert any(block.get("type") == "text" for block in content)
             if modality == "image":
@@ -194,7 +203,9 @@ def test_async_final_fallback_vertex_then_openai_by_modality(
     async def _fake_acompletion(**kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
-            assert kwargs.get("model") == ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
+            assert (
+                kwargs.get("model") == ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
+            )
             raise RuntimeError("vertex failed")
 
         assert kwargs.get("model") == ModelConfigs.OPENAI_GPT_5_1.model_name
@@ -219,10 +230,29 @@ def test_async_final_fallback_vertex_then_openai_by_modality(
     assert out == "fallback ok"
 
 
+@pytest.fixture
+def local_fallback_io(monkeypatch):
+    """Stub the download and completion boundaries, not payload conversion."""
+    audio = Mock(return_value="AAAA")
+    image = Mock(return_value=b"fixture image")
+    pdf = Mock(return_value=SimpleNamespace(content=SAMPLE_PDF_BYTES))
+    completion = Mock(
+        side_effect=[
+            RuntimeError("primary unavailable"),
+            _FakeResponse("fixture reply"),
+        ]
+    )
+    monkeypatch.setattr(audio_utils, "_download_audio_to_base64", audio)
+    monkeypatch.setattr(llm_payloads, "download_image_from_url", image)
+    monkeypatch.setattr(requests, "get", pdf)
+    monkeypatch.setattr(llm_module.litellm, "completion", completion)
+    return SimpleNamespace(audio=audio, image=image, pdf=pdf, completion=completion)
+
+
 @pytest.mark.network
 @pytest.mark.serial
-def test_live_handle_vertex_ai_fallback_audio_to_openai():
-    """Live check: Vertex-style audio passed via image_url converts and completes."""
+def test_live_handle_vertex_ai_fallback_audio_to_openai(local_fallback_io):
+    """Vertex-style audio converts and reaches the completion client."""
 
     if not os.getenv("OPENAI_API_KEY"):
         pytest.skip("OPENAI_API_KEY not set")
@@ -248,17 +278,27 @@ def test_live_handle_vertex_ai_fallback_audio_to_openai():
         temperature=0,
         max_tokens=128,
     )
+    # OpenAI's normal path uses LiteLLM; the SDK client branch is for xAI.
+    completion = local_fallback_io.completion
+    completion.side_effect = None
+    completion.return_value = _FakeResponse("fixture reply")
     openai_messages = llm.handle_vertex_ai_fallback(vertex_messages)
     resp = llm._get_completion_content(messages=openai_messages, model=llm.model_name)
-    print(f"live_response={resp}")
     assert isinstance(resp, str)
     assert resp.strip()
+    assert resp == "fixture reply"
+    local_fallback_io.audio.assert_called_once_with(TEST_AUDIO_URL)
+    completion.assert_called_once()
+    assert any(
+        b.get("type") == "input_audio"
+        for b in completion.call_args.kwargs["messages"][0]["content"]
+    )
 
 
 @pytest.mark.network
 @pytest.mark.serial
-def test_live_final_fallback_vertex_then_openai_multimodal():
-    """Live check: final fallback with Vertex-formatted multimodal payload."""
+def test_live_final_fallback_vertex_then_openai_multimodal(local_fallback_io):
+    """Final fallback with Vertex-formatted multimodal payload."""
 
     if not os.getenv("OPENAI_API_KEY"):
         pytest.skip("OPENAI_API_KEY not set")
@@ -288,12 +328,18 @@ def test_live_final_fallback_vertex_then_openai_multimodal():
     resp = llm._handle_final_fallback(messages=messages, payload={"messages": messages})
     assert isinstance(resp, str)
     assert resp.strip()
+    assert resp == "fixture reply"
+    local_fallback_io.audio.assert_called_once_with(TEST_AUDIO_URL)
+    assert [c.kwargs["model"] for c in local_fallback_io.completion.call_args_list] == [
+        ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name,
+        ModelConfigs.OPENAI_GPT_5_1.model_name,
+    ]
 
 
 @pytest.mark.network
 @pytest.mark.serial
-def test_live_final_fallback_vertex_then_openai_sonnet_payload():
-    """Live check: final fallback with Sonnet-formatted multimodal payload."""
+def test_live_final_fallback_vertex_then_openai_sonnet_payload(local_fallback_io):
+    """Final fallback with Sonnet-formatted multimodal payload."""
 
     if not os.getenv("OPENAI_API_KEY"):
         pytest.skip("OPENAI_API_KEY not set")
@@ -301,6 +347,7 @@ def test_live_final_fallback_vertex_then_openai_sonnet_payload():
     base64_data, fmt = download_audio_url_to_base64(TEST_AUDIO_URL)
     audio_data_url = f"data:audio/{fmt};base64,{base64_data}"
     pdf_bytes = requests.get(TEST_PDF_URL, timeout=30).content
+    local_fallback_io.pdf.assert_called_once_with(TEST_PDF_URL, timeout=30)
 
     messages = [
         {
@@ -323,6 +370,7 @@ def test_live_final_fallback_vertex_then_openai_sonnet_payload():
             ],
         }
     ]
+    local_fallback_io.image.assert_called_once_with(TEST_IMAGE_URL)
 
     llm = LLM(
         provider="anthropic",
@@ -334,3 +382,9 @@ def test_live_final_fallback_vertex_then_openai_sonnet_payload():
     resp = llm._handle_final_fallback(messages=messages, payload={"messages": messages})
     assert isinstance(resp, str)
     assert resp.strip()
+    assert resp == "fixture reply"
+    local_fallback_io.audio.assert_called_once_with(TEST_AUDIO_URL)
+    assert [c.kwargs["model"] for c in local_fallback_io.completion.call_args_list] == [
+        ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name,
+        ModelConfigs.OPENAI_GPT_5_1.model_name,
+    ]

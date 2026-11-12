@@ -4,9 +4,25 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-DASHBOARD_BASE_URL = os.environ.get(
-    "DASHBOARD_BASE_URL", "https://app.futureagi.com"
-).rstrip("/")
+
+def _dashboard_base_url() -> str:
+    """This install's UI, for links in tool output shown in the browser.
+
+    DASHBOARD_BASE_URL when set; else FRONTEND_BASE_URL (FRONTEND_URL, else
+    APP_URL: the base emails use, app.futureagi.com on Future AGI Cloud);
+    else empty, so the link is root-relative and opens on the page's own
+    origin. Never another install's host.
+
+    Tool output reaches the browser (Falcon's chat, trace-analysis findings)
+    or a model's context (the agent evaluator), never a page off the UI. With
+    neither variable set the install's emails have no UI host either.
+    """
+    explicit = os.environ.get("DASHBOARD_BASE_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    from django.conf import settings
+
+    return (getattr(settings, "FRONTEND_BASE_URL", "") or "").rstrip("/")
 
 
 def markdown_table(headers: list[str], rows: list[list[Any]]) -> str:
@@ -67,7 +83,7 @@ def dashboard_link(
         "trace": "dashboard/observe",
     }
     path = path_map.get(entity_type, "dashboard/get-started")
-    url = f"{DASHBOARD_BASE_URL}/{path}"
+    url = f"{_dashboard_base_url()}/{path}"
     display = label or f"{entity_type} {str(entity_id)}"
     return f"[{display}]({url})"
 

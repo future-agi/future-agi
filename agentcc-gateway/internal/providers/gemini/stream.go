@@ -3,8 +3,6 @@ package gemini
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -30,12 +28,6 @@ func newStreamState(model string) *streamState {
 
 // parseStreamData parses a Gemini SSE data payload and returns a StreamChunk.
 func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) {
-	// A failing upstream sends an error object in place of a chunk. Returned
-	// as an APIError so the read loop ends the stream with it.
-	if strings.HasPrefix(strings.TrimSpace(data), `{"error"`) {
-		return nil, parseGeminiError(http.StatusBadGateway, []byte(data))
-	}
-
 	var resp geminiResponse
 	if err := json.Unmarshal([]byte(data), &resp); err != nil {
 		return nil, err
@@ -134,15 +126,17 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 		}
 
 		chunk.Choices = []models.StreamChoice{sc}
+	} else if resp.promptBlocked() {
+		// The blocked prompt's only frame finishes the stream, so its usage
+		// is metered and the stream closes as a finished, empty answer.
+		reason := promptBlockedFinish
+		chunk.Choices = []models.StreamChoice{{Index: 0, FinishReason: &reason}}
 	}
 
 	if resp.UsageMetadata != nil {
-		chunk.Usage = &models.Usage{
-			PromptTokens:     resp.UsageMetadata.PromptTokenCount,
-			CompletionTokens: resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount,
-			TotalTokens:      resp.UsageMetadata.TotalTokenCount,
-		}
+		chunk.Usage = resp.UsageMetadata.toUsage(resp.terminal())
 	}
 
+	attachMedia(&chunk.Usage, &resp, true)
 	return chunk, nil
 }

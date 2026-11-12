@@ -2,10 +2,15 @@ package logging
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/capability"
 	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/credentials"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/payloads"
 	"github.com/futureagi/agentcc-gateway/internal/privacy"
@@ -51,6 +56,14 @@ type TraceRecord struct {
 	// Error context.
 	ErrorMessage string `json:"error_message,omitempty"`
 	ErrorCode    string `json:"error_code,omitempty"`
+	// ErrorFromUpstream is APIError.UpstreamStatus > 0. The openai and azure
+	// adapters set it when they pass a provider's own error.code through, and
+	// models.ErrUpstreamProvider sets it on every error it makes with a
+	// nonzero status; the request log leaves ErrorCode out for these
+	// (flusher.go). It does not mark every provider error: on this release
+	// the anthropic, gemini, bedrock and cohere adapters' parsed errors and
+	// the speech relay's refusals leave it false, with their provider_ codes.
+	ErrorFromUpstream bool `json:"-"`
 
 	// Optional bodies.
 	RequestBody      *models.ChatCompletionRequest  `json:"request_body,omitempty"`
@@ -144,6 +157,27 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 			if rc.OCRResponse != nil {
 				rec.StatusCode = 200
 			}
+		case "decision":
+			if rc.DecisionResponse != nil {
+				rec.StatusCode = 200
+			}
+		case "anthropic_count_tokens", "genai_count_tokens", "genai_embed", "assistants", "vector_stores", "files":
+			// The handler passes the provider's answer through as it is (or,
+			// for the Files API, serves it from the gateway's file store), so
+			// rc holds no answer: it records the status it answered with,
+			// the provider's own when the provider refused the call. A
+			// count's tokens stay 0 here (it consumes none); the count is in
+			// the metadata (models.CountedTokensMetadataKey).
+			if status, err := strconv.Atoi(rc.Metadata[models.ResponseStatusMetadataKey]); err == nil && status > 0 {
+				rec.StatusCode = status
+			}
+		}
+	}
+	// A capability call keeps its response on the core's call record, not on
+	// rc.
+	if rec.StatusCode == 0 {
+		if call, ok := capability.CallOf(rc); ok && call.Response() != nil {
+			rec.StatusCode = 200
 		}
 	}
 	if rec.ResolvedModel == "" && rec.StatusCode > 0 {
@@ -153,10 +187,17 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 	// Determine status code from errors.
 	if len(rc.Errors) > 0 {
 		lastErr := rc.Errors[len(rc.Errors)-1]
-		if apiErr, ok := lastErr.(*models.APIError); ok {
+		var apiErr *models.APIError
+		if errors.As(lastErr, &apiErr) {
 			rec.StatusCode = apiErr.Status
 			rec.ErrorMessage = apiErr.Message
 			rec.ErrorCode = apiErr.Code
+			rec.ErrorFromUpstream = apiErr.UpstreamStatus > 0
+			if rc.EndpointType == "decision" {
+				// A vendor's error text can quote the decision's content back;
+				// the code and status say what happened.
+				rec.ErrorMessage = http.StatusText(apiErr.Status)
+			}
 		} else {
 			if rec.StatusCode == 0 {
 				rec.StatusCode = 500
@@ -207,7 +248,24 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 		}
 	}
 
+	// A decision always logs its summary — question IDs and types, the state's
+	// size, the answers and usage — and its full bodies only where bodies are
+	// recorded and privacy mode allows them.
+	if rc.EndpointType == "decision" {
+		rec.RequestBodyJSON, rec.ResponseBodyJSON = payloads.ForEndpoint(rc)
+		if cfg.IncludeBodies && decisionBodiesAllowed(rc) {
+			rec.RequestBodyJSON, rec.ResponseBodyJSON = payloads.DecisionBodies(rc)
+		}
+	}
+
 	return rec
+}
+
+// decisionBodiesAllowed reports whether privacy mode lets a decision's full
+// bodies into the log. Any privacy setting keeps them out: the redactor walks
+// chat messages, not a decision's state.
+func decisionBodiesAllowed(rc *models.RequestContext) bool {
+	return rc.Metadata["org_privacy_enabled"] != "true" && rc.Metadata["org_privacy_mode"] == "" && rc.Metadata["privacy_mode"] == ""
 }
 
 // redactRecord applies privacy redaction to message content in the trace record.
@@ -235,12 +293,7 @@ func redactMessages(msgs []models.Message, r *privacy.Redactor, mode string) []m
 
 	out := make([]models.Message, len(msgs))
 	for i, m := range msgs {
-		out[i] = m
-
-		// Redact content (json.RawMessage — could be string or structured).
-		if len(m.Content) > 0 {
-			out[i].Content = redactContent(m.Content, r, mode)
-		}
+		out[i] = redactMessage(m, r, mode)
 	}
 	return out
 }
@@ -253,35 +306,56 @@ func redactChoices(choices []models.Choice, r *privacy.Redactor, mode string) []
 	out := make([]models.Choice, len(choices))
 	for i, c := range choices {
 		out[i] = c
-		if len(c.Message.Content) > 0 {
-			out[i].Message.Content = redactContent(c.Message.Content, r, mode)
-		}
+		out[i].Message = redactMessage(c.Message, r, mode)
 	}
 	return out
 }
 
-// sensitiveHeaderKeys never reach a request log. The gateway accepts a
-// credential in each of these, so a missing entry publishes it to everyone
-// with access to the logs — x-goog-api-key was missing, and the GenAI route
-// reads a caller's Google key from it (handlers_genai.go).
-var sensitiveHeaderKeys = map[string]bool{
-	"authorization":                  true,
-	"proxy-authorization":            true,
-	"x-api-key":                      true,
-	"api-key":                        true,
-	"x-goog-api-key":                 true,
-	"x-goog-iam-authorization-token": true,
-	"x-amz-security-token":           true,
-	"x-auth-token":                   true,
-	"cookie":                         true,
-	"set-cookie":                     true,
-	"x-webhook-secret":               true,
+func redactMessage(m models.Message, r *privacy.Redactor, mode string) models.Message {
+	if len(m.Content) > 0 {
+		m.Content = redactContent(m.Content, r, mode)
+	}
+	if m.Refusal != nil {
+		refusal := r.RedactForMode(*m.Refusal, mode)
+		m.Refusal = &refusal
+	}
+	if m.Audio != nil {
+		audio := *m.Audio
+		audio.Transcript = r.RedactForMode(audio.Transcript, mode)
+		// A pattern cannot inspect encoded audio, and its reusable ID can
+		// retrieve it. Never keep either in a privacy-redacted body.
+		if r.ShouldRedact() || mode == privacy.ModeFull || mode == privacy.ModePatterns {
+			if audio.Data != "" {
+				audio.Data = "[REDACTED]"
+			}
+			if audio.ID != "" {
+				audio.ID = "[REDACTED]"
+			}
+		}
+		m.Audio = &audio
+	}
+	if len(m.ToolCalls) > 0 {
+		m.ToolCalls = append([]models.ToolCall(nil), m.ToolCalls...)
+		for i := range m.ToolCalls {
+			tc := &m.ToolCalls[i]
+			tc.ID = r.RedactForMode(tc.ID, mode)
+			tc.Function.Name = r.RedactForMode(tc.Function.Name, mode)
+			tc.Function.Arguments = redactToolArguments(tc.Function.Arguments, r, mode)
+		}
+	}
+	return m
 }
 
+// sanitizeHeaders is h as the request log keeps it: the value of every
+// credential header (credentials.IsHeader, the list the trace export never
+// exports) is "***", so the log shows that the header was sent and never
+// what it held. x-agentcc-provider-key, an internal caller's own provider key
+// for one decision call (models.ProviderKeyHeader), is named here as well, so
+// no change to the credential word rules can ever log it.
 func sanitizeHeaders(h map[string][]string) map[string][]string {
 	out := make(map[string][]string, len(h))
 	for k, v := range h {
-		if sensitiveHeaderKeys[strings.ToLower(k)] {
+		if credentials.IsHeader(k) || strings.EqualFold(k, models.ProviderKeyHeader) {
 			out[k] = []string{"***"}
 		} else {
 			out[k] = v

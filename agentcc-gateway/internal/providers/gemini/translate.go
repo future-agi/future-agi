@@ -272,15 +272,25 @@ type geminiFuncDecl struct {
 }
 
 type geminiResponse struct {
-	Candidates    []geminiCandidate    `json:"candidates"`
-	UsageMetadata *geminiUsageMetadata `json:"usageMetadata,omitempty"`
-	ModelVersion  string               `json:"modelVersion,omitempty"`
+	Candidates []geminiCandidate `json:"candidates"`
+	// PromptFeedback.BlockReason is set when the prompt itself was blocked:
+	// no candidate is generated and usageMetadata counts the prompt only.
+	PromptFeedback *geminiPromptFeedback `json:"promptFeedback,omitempty"`
+	UsageMetadata  *geminiUsageMetadata  `json:"usageMetadata,omitempty"`
+	ModelVersion   string                `json:"modelVersion,omitempty"`
+}
+
+type geminiPromptFeedback struct {
+	BlockReason string `json:"blockReason,omitempty"`
 }
 
 type geminiCandidate struct {
-	Content           geminiContent            `json:"content"`
-	FinishReason      string                   `json:"finishReason,omitempty"`
-	GroundingMetadata *geminiGroundingMetadata `json:"groundingMetadata,omitempty"`
+	Content      geminiContent `json:"content"`
+	FinishReason string        `json:"finishReason,omitempty"`
+	// GroundingMetadata is the candidate's grounding (Google Search or
+	// Maps), kept as sent: translateResponse meters it (groundingUsage) and
+	// hands it to the caller unmodified (groundingAnnotations).
+	GroundingMetadata json.RawMessage `json:"groundingMetadata,omitempty"`
 }
 
 // geminiGroundingMetadata is what googleSearch returns beside the text: the
@@ -315,14 +325,19 @@ type urlCitationBody struct {
 	Title      string `json:"title,omitempty"`
 }
 
-// groundingAnnotations maps the grounded sources onto the message text.
+// groundingCitations maps the grounded web sources onto the message text, as
+// OpenAI url_citation annotations.
 //
 // Gemini reports which span each source supports separately, in
 // groundingSupports. That is not mapped: a source here spans the whole answer,
 // which is true but coarser than Gemini knows. Narrowing it is worth doing
 // when a caller needs the spans.
-func groundingAnnotations(meta *geminiGroundingMetadata, textLen int) json.RawMessage {
-	if meta == nil || len(meta.GroundingChunks) == 0 {
+func groundingCitations(raw json.RawMessage, textLen int) []urlCitation {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var meta geminiGroundingMetadata
+	if err := json.Unmarshal(raw, &meta); err != nil || len(meta.GroundingChunks) == 0 {
 		return nil
 	}
 	citations := make([]urlCitation, 0, len(meta.GroundingChunks))
@@ -339,26 +354,19 @@ func groundingAnnotations(meta *geminiGroundingMetadata, textLen int) json.RawMe
 			},
 		})
 	}
-	if len(citations) == 0 {
-		return nil
-	}
-	encoded, err := json.Marshal(citations)
-	if err != nil {
-		slog.Warn("gemini: could not encode grounding sources, dropping them", "error", err)
-		return nil
-	}
-	return encoded
+	return citations
 }
 
 type geminiUsageMetadata struct {
 	CachedContentTokenCount *int `json:"cachedContentTokenCount,omitempty"`
-	PromptTokenCount        int  `json:"promptTokenCount"`
-	CandidatesTokenCount    int  `json:"candidatesTokenCount"`
+	PromptTokenCount        *int `json:"promptTokenCount"`
+	CandidatesTokenCount    *int `json:"candidatesTokenCount"`
 	// Gemini reports thinking tokens separately from candidatesTokenCount but
 	// bills them as output. Fold them into CompletionTokens so thinking-on runs
 	// aren't under-billed (OpenAI's completion_tokens includes reasoning too).
-	ThoughtsTokenCount int `json:"thoughtsTokenCount"`
-	TotalTokenCount    int `json:"totalTokenCount"`
+	ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
+	TotalTokenCount         int `json:"totalTokenCount"`
+	ToolUsePromptTokenCount int `json:"toolUsePromptTokenCount"`
 }
 
 type geminiErrorResponse struct {
@@ -940,7 +948,8 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 			msg.ReasoningContent = strings.Join(reasoningParts, "")
 		}
 		// Sources for a grounded answer, measured against the text the model
-		// produced rather than any multipart wrapper around it.
+		// produced rather than any multipart wrapper around it, beside the
+		// groundingMetadata as sent.
 		msg.Annotations = groundingAnnotations(candidate.GroundingMetadata, len(strings.Join(textParts, "")))
 
 		result.Choices = []models.Choice{
@@ -950,22 +959,120 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 				FinishReason: mapGeminiFinishReasonWithToolCalls(candidate.FinishReason, len(toolCalls) > 0),
 			},
 		}
+	} else if resp.promptBlocked() {
+		// A blocked prompt is a finished, empty answer, as SAFETY on a
+		// candidate is, rather than a response with no choice to read.
+		result.Choices = []models.Choice{{Index: 0, Message: models.Message{Role: "assistant"}, FinishReason: promptBlockedFinish}}
 	}
 
 	if resp.UsageMetadata != nil {
-		result.Usage = &models.Usage{
-			PromptTokens:     resp.UsageMetadata.PromptTokenCount,
-			CompletionTokens: resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount,
-			TotalTokens:      resp.UsageMetadata.TotalTokenCount,
+		// A non-streamed response is complete: it closes generation.
+		result.Usage = resp.UsageMetadata.toUsage(true)
+	}
+	if stu := groundingUsage(resp.Candidates); stu != nil {
+		if result.Usage == nil {
+			result.Usage = &models.Usage{}
 		}
-		if cached := resp.UsageMetadata.CachedContentTokenCount; cached != nil {
-			details, _ := json.Marshal(map[string]int{"cached_tokens": *cached})
-			raw := json.RawMessage(details)
-			result.Usage.PromptTokensDetails = &raw
-		}
+		result.Usage.ServerToolUse = stu
 	}
 
+	attachMedia(&result.Usage, resp, false)
 	return result
+}
+
+// groundingAnnotationType is the annotation that carries a candidate's
+// groundingMetadata on the translated message.
+const groundingAnnotationType = "grounding_metadata"
+
+// groundingAnnotations is a grounded candidate's annotations: one OpenAI
+// url_citation per web source (groundingCitations), which is the shape an
+// OpenAI client already reads, and then the candidate's groundingMetadata
+// itself, unmodified, as one annotation ({"type": "grounding_metadata",
+// "grounding_metadata": {...}}). The Gemini API terms require the Search
+// Suggestion (searchEntryPoint) to be shown with the Grounded Results and
+// forbid modifying them, so the metadata is passed through as sent, and the
+// gateway never touches the text. nil when the candidate was not grounded.
+func groundingAnnotations(metadata json.RawMessage, textLen int) json.RawMessage {
+	if len(metadata) == 0 || string(metadata) == "null" {
+		return nil
+	}
+	type groundingAnnotation struct {
+		Type              string          `json:"type"`
+		GroundingMetadata json.RawMessage `json:"grounding_metadata"`
+	}
+	citations := groundingCitations(metadata, textLen)
+	list := make([]any, 0, len(citations)+1)
+	for _, c := range citations {
+		list = append(list, c)
+	}
+	list = append(list, groundingAnnotation{Type: groundingAnnotationType, GroundingMetadata: metadata})
+	b, err := json.Marshal(list)
+	if err != nil {
+		slog.Warn("gemini: could not encode grounding annotations, dropping them", "error", err)
+		return nil
+	}
+	return b
+}
+
+// geminiGrounding is the part of a candidate's groundingMetadata that is
+// billed: the search queries it ran and the kind of each source.
+type geminiGrounding struct {
+	WebSearchQueries []string `json:"webSearchQueries"`
+	GroundingChunks  []struct {
+		Web  json.RawMessage `json:"web"`
+		Maps json.RawMessage `json:"maps"`
+	} `json:"groundingChunks"`
+}
+
+// groundingUsage counts the response's grounding into server-tool usage
+// (plan V2): the search queries, summed over the candidates (Gemini 3 and
+// later bill each), and whether the prompt was grounded with Google Search
+// or Google Maps, that is whether a candidate cites a source of that kind
+// (Gemini 2.5 bills each grounded prompt; with dynamic retrieval a
+// response without a source is not charged). nil when nothing was grounded.
+func groundingUsage(candidates []geminiCandidate) *models.ServerToolUsage {
+	var u models.ServerToolUsage
+	for i := range candidates {
+		raw := candidates[i].GroundingMetadata
+		if len(raw) == 0 {
+			continue
+		}
+		var g geminiGrounding
+		if err := json.Unmarshal(raw, &g); err != nil {
+			continue
+		}
+		u.WebSearchQueries += len(g.WebSearchQueries)
+		for _, c := range g.GroundingChunks {
+			if len(c.Web) > 0 && string(c.Web) != "null" {
+				u.GroundedPrompts = 1
+			}
+			if len(c.Maps) > 0 && string(c.Maps) != "null" {
+				u.MapsGroundedPrompts = 1
+			}
+		}
+	}
+	if u.WebSearchQueries+u.GroundedPrompts+u.MapsGroundedPrompts == 0 {
+		return nil
+	}
+	return &u
+}
+
+// setTokenDetails records Gemini's cached-content and thinking tokens in u's
+// detail sidecars (cached and reasoning tokens) and writes them through to the
+// raw details, keeping every subfield already there. promptTokenCount already
+// counts the cached content, and the completion count includes the thoughts.
+// A reported cached count goes out even when it is 0, as it always has.
+func setTokenDetails(u *models.Usage, cached *int, thoughts int) {
+	if cached != nil {
+		if u.PromptTokensDetails == nil {
+			details, _ := json.Marshal(map[string]int{"cached_tokens": *cached})
+			raw := json.RawMessage(details)
+			u.PromptTokensDetails = &raw
+		}
+		u.PromptDetails.CachedTokens = *cached
+	}
+	u.CompletionDetails.ReasoningTokens = thoughts
+	u.MergeDetails()
 }
 
 func mapRoleToGemini(role string) string {
@@ -1006,11 +1113,18 @@ func mapGeminiFinishReasonWithToolCalls(reason string, hasToolCalls bool) string
 func parseGeminiError(status int, body []byte) *models.APIError {
 	var errResp geminiErrorResponse
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
+		// An answer with no RPC status is coded by its HTTP status:
+		// "provider_" alone names nothing.
+		code := "provider_" + errResp.Error.Status
+		if errResp.Error.Status == "" {
+			code = fmt.Sprintf("provider_%d", status)
+		}
 		return &models.APIError{
-			Status:  mapGeminiStatus(errResp.Error.Status),
-			Type:    mapGeminiErrorType(errResp.Error.Status),
-			Code:    "provider_" + errResp.Error.Status,
-			Message: errResp.Error.Message,
+			Status:         mapGeminiStatus(errResp.Error.Status),
+			Type:           mapGeminiErrorType(errResp.Error.Status),
+			Code:           code,
+			Message:        errResp.Error.Message,
+			ProviderStatus: status,
 		}
 	}
 
@@ -1018,7 +1132,9 @@ func parseGeminiError(status int, body []byte) *models.APIError {
 	if len(msg) > 500 {
 		msg = msg[:500] + "..."
 	}
-	return models.ErrUpstreamProvider(status, fmt.Sprintf("gemini error (HTTP %d): %s", status, msg))
+	e := models.ErrUpstreamProvider(status, fmt.Sprintf("gemini error (HTTP %d): %s", status, msg))
+	e.ProviderStatus = status // A real HTTP refusal, not a synthetic gateway failure.
+	return e
 }
 
 func mapGeminiStatus(status string) int {

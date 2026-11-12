@@ -1,6 +1,8 @@
 import React, { useMemo } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Box, Button, Skeleton, Stack, Typography } from "@mui/material";
+import { format, isValid } from "date-fns";
+import OverflowCellText from "src/components/data-table/OverflowCellText";
 import EmptyState from "src/sections/simulate/environments/components/EmptyState";
 import StatusChip from "src/sections/simulate/environments/workspace/runs/StatusChip";
 import { runStateFor } from "src/sections/simulate/environments/workspace/runs/runs.constants";
@@ -25,10 +27,10 @@ const text = (typography, width, props) => (
   </Typography>
 );
 const SKELETON_CELLS = {
-  run: text("s2", 44, { "data-testid": "run-row-skeleton" }),
+  run: text("s1", 44, { "data-testid": "run-row-skeleton" }),
   status: <Skeleton variant="rounded" width={88} height={22} />,
-  environment: text("s2", 120),
-  version: text("s3", 20),
+  environment: text("s1", 120),
+  version: text("s1", 20),
   passRate: (
     <Stack
       direction="row"
@@ -40,11 +42,19 @@ const SKELETON_CELLS = {
       <LineSkeleton width={56} />
     </Stack>
   ),
-  when: text("s3", 48),
+  when: text("s1", 48),
 };
 const SKELETON_DATA = Array.from({ length: SKELETON_ROWS }, (_, i) => ({
   testExecutionId: `skeleton-${i}`,
 }));
+
+// The exact time behind a run's short "ago", for its tooltip; none for a
+// time that does not parse.
+const exactTime = (iso) => {
+  const date = iso ? new Date(iso) : null;
+  if (!date || !isValid(date)) return undefined;
+  return format(date, "dd-MM-yyyy, h:mm a");
+};
 
 /** Overview: the agent's newest runs, across environments and Simulate. */
 export default function AgentOverviewTab() {
@@ -74,9 +84,12 @@ export default function AgentOverviewTab() {
       {
         id: "run",
         header: "Run",
-        size: 100,
+        // Every column's minimum (754 px) fits the 792 px a 1024 px window
+        // leaves the table (1024 - 200 menu - 2 x 16 padding); wider
+        // windows give the room to Environment.
+        size: 80,
         cell: ({ row: { original: r } }) => (
-          <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
+          <Typography noWrap sx={{ typography: "s1", fontWeight: 500 }}>
             {`Run ${r.runNumber}`}
           </Typography>
         ),
@@ -84,7 +97,7 @@ export default function AgentOverviewTab() {
       {
         id: "status",
         header: "Status",
-        size: 140,
+        size: 130,
         cell: ({ row: { original: r } }) => (
           <Box
             data-testid={`run-status-${r.testExecutionId}`}
@@ -98,7 +111,7 @@ export default function AgentOverviewTab() {
         id: "environment",
         header: "Environment",
         meta: { flex: 1.2 },
-        minSize: 180,
+        minSize: 160,
         cell: ({ row: { original: r } }) => {
           const name = r.environment?.name ?? r.runTestName;
           return (
@@ -108,9 +121,9 @@ export default function AgentOverviewTab() {
               spacing={0.75}
               sx={{ minWidth: 0 }}
             >
-              <Typography noWrap title={name} sx={{ typography: "s2" }}>
-                {name || "—"}
-              </Typography>
+              {/* A long name ends in an ellipsis and shows whole on hover
+                  or when its cell takes focus. */}
+              <OverflowCellText text={name || "—"} sx={{ typography: "s1" }} />
               {r.kind === "simulate" && <QuietTag>Simulate</QuietTag>}
             </Stack>
           );
@@ -119,11 +132,11 @@ export default function AgentOverviewTab() {
       {
         id: "version",
         header: "Agent version",
-        size: 140,
+        size: 110,
         cell: ({ row: { original: r } }) => (
           <Typography
             noWrap
-            sx={{ typography: "s3", fontWeight: 600, fontFamily: MONO }}
+            sx={{ typography: "s1", fontWeight: 500, fontFamily: MONO }}
           >
             {r.agentVersion ? `v${r.agentVersion.number}` : "—"}
           </Typography>
@@ -132,18 +145,26 @@ export default function AgentOverviewTab() {
       {
         id: "passRate",
         header: "Pass rate",
-        size: 200,
+        size: 150,
         cell: ({ row: { original: r } }) => <PassRateCell run={r} />,
       },
       {
         id: "when",
         header: "When",
-        size: 130,
-        cell: ({ row: { original: r } }) => (
-          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-            {r.completedAt ? ago(r.completedAt) : `started ${ago(r.startedAt)}`}
-          </Typography>
-        ),
+        // "started yesterday", the widest value (99.5 px at 12 px/400
+        // Inter), whole with room to spare. The exact time shows on hover
+        // and when the cell takes focus.
+        size: 124,
+        cell: ({ row: { original: r } }) => {
+          const at = r.completedAt || r.startedAt;
+          return (
+            <OverflowCellText
+              text={r.completedAt ? ago(at) : `started ${ago(at)}`}
+              detail={exactTime(at)}
+              sx={{ typography: "s1", color: "text.subtitle" }}
+            />
+          );
+        },
       },
     ],
     [],
@@ -199,7 +220,7 @@ export default function AgentOverviewTab() {
 
   return (
     <Stack spacing={0.5}>
-      <Typography sx={{ typography: "s1", fontWeight: 700 }}>
+      <Typography sx={{ typography: "m3", fontWeight: 500 }}>
         Recent runs
       </Typography>
       {body}

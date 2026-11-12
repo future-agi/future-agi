@@ -3,6 +3,7 @@ import uuid
 
 from rest_framework import serializers
 
+from common.utils.page_limits import PageSizeIntegerField
 from model_hub.models.choices import DataTypeChoices, SourceChoices
 from simulate.models import Scenarios
 from tracer.serializers.filters import StrictInputSerializer
@@ -37,7 +38,7 @@ class ScenarioFilterSerializer(serializers.Serializer):
     agent_definition_id = serializers.UUIDField(required=False, allow_null=True)
     agent_type = serializers.CharField(required=False, allow_null=True)
     page = serializers.IntegerField(required=False, default=1, min_value=1)
-    limit = serializers.IntegerField(required=False, min_value=1)
+    limit = PageSizeIntegerField(required=False, min_value=1)
 
 
 class ScenarioMultiDatasetFilterSerializer(serializers.Serializer):
@@ -164,6 +165,25 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 "Dataset not found or not accessible."
             ) from e
 
+    def validate_personas(self, value):
+        if not value:
+            return value
+        request = self.context.get("request")
+        if not request:
+            raise serializers.ValidationError("Request context is required.")
+        from simulate.views.persona import accessible_persona_queryset
+
+        wanted = {str(persona_id) for persona_id in value}
+        found = {
+            str(persona_id)
+            for persona_id in accessible_persona_queryset(request)
+            .filter(id__in=wanted, deleted=False)
+            .values_list("id", flat=True)
+        }
+        if found != wanted:
+            raise serializers.ValidationError("Persona not found or not accessible.")
+        return value
+
     def validate_agent_definition_id(self, value):
         if not value:
             return value
@@ -257,9 +277,8 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 {"script_url": "script_url is required for script kind."}
             )
 
-        if (
-            source_type == Scenarios.SourceTypes.AGENT_DEFINITION
-            and not data.get("agent_definition_id")
+        if source_type == Scenarios.SourceTypes.AGENT_DEFINITION and not data.get(
+            "agent_definition_id"
         ):
             raise serializers.ValidationError(
                 {

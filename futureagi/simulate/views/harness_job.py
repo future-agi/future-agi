@@ -11,6 +11,7 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from simulate.selectors.held_back import coding_agent_key, coding_agent_run
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
 )
@@ -33,6 +34,7 @@ from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationMessageCreateSerializer,
     HarnessConversationReadSerializer,
 )
+from simulate.services.github_app_tenancy import platform_github_app_refused
 from simulate.services.harness_credentials import (
     HOSTED_FILE_KEY_PREFIX,
     credential_file_ref,
@@ -295,7 +297,15 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @swagger_auto_schema(responses={200: HarnessJobReadSerializer})
     def retrieve(self, request, pk=None):
-        return get_harness_provider().retrieve(request, pk)
+        """One harness job. A coding agent key reads its own run narrowly, outside
+        this schema: only `status` (its failure as domain, stage, code and a fixed
+        message), `receipts`, `consumption`, `platform`, and `job` with its ids and
+        five metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or
+        `job.source`, which name every case of the suite."""
+        response = get_harness_provider().retrieve(request, pk)
+        if coding_agent_key(request) is None or response.status_code != 200:
+            return response
+        return Response(coding_agent_run(response.data))
 
     @validated_request(
         request_serializer=HarnessJobActionSerializer,
@@ -361,4 +371,14 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def health(self, request):
-        return Response(get_harness_provider().health())
+        """The provider's health, and whether a private GitHub source is offered.
+
+        ``private_github_available`` is false exactly where job creation refuses a
+        private GitHub source, so the source panel can say so before a submit.
+        """
+        return Response(
+            {
+                **get_harness_provider().health(),
+                "private_github_available": not platform_github_app_refused(),
+            }
+        )

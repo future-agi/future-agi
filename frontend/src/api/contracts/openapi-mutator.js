@@ -15,6 +15,19 @@ const headersToObject = (headers) => {
   return headers;
 };
 
+/**
+ * @typedef {{ data: unknown, status: number, headers: Headers }} ApiResponse
+ */
+
+/**
+ * Orval supplies the operation's response union as T. Keep the Axios transport
+ * and its metadata, but expose the Fetch Headers interface the client declares.
+ * This is a transport adapter, not a replacement for response-schema validation.
+ * @template [T=ApiResponse]
+ * @param {string} url
+ * @param {RequestInit} options
+ * @returns {Promise<T>}
+ */
 export const apiMutator = async (url, options) => {
   const { body, headers, method, signal } = options;
   const data = parseJsonBody(body);
@@ -54,7 +67,14 @@ export const apiMutator = async (url, options) => {
       throw new Error(`Unsupported OpenAPI method: ${method || "<missing>"}`);
   }
 
-  return response;
+  const responseHeaders = new Headers();
+  for (const [name, value] of Object.entries(response.headers || {})) {
+    if (value === undefined || value === null || value === false) continue;
+    for (const entry of Array.isArray(value) ? value : [value]) {
+      responseHeaders.append(name, String(entry));
+    }
+  }
+  return /** @type {T} */ ({ ...response, headers: responseHeaders });
 };
 
 export default apiMutator;

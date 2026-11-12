@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: supabase
+version: 1.0.0
+name: Supabase
+description: "Projects, databases, SQL, edge functions and branches."
+vendor:
+  name: Supabase
+  domains: [supabase.com]
+eeCategory: developer
+group: other
+categories: [developer, database]
+tags: [postgres, database, backend]
+docsUrl: https://supabase.com/docs/guides/ai-tools/mcp
+defaultProvider: pat
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://supabase.com/docs/guides/ai-tools/mcp
+    fetchedAt: 2026-10-21

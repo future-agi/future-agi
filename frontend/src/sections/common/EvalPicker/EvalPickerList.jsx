@@ -42,25 +42,8 @@ import { evalDetailQuery } from "src/sections/evals/hooks/useEvalDetail";
 import { useEvalPickerData } from "./hooks/useEvalPickerData";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
 import { useCompositeDetail } from "src/sections/evals/hooks/useCompositeEval";
-
-const AVATAR_COLORS = [
-  "#7C4DFF",
-  "#FF6B6B",
-  "#5BE49B",
-  "#FFB547",
-  "#36B5FF",
-  "#FF85C0",
-  "#00BFA6",
-  "#8C9EFF",
-];
-
-function getAvatarColor(name) {
-  let hash = 0;
-  for (let i = 0; i < (name || "").length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
+import { typedEvalLabel } from "src/sections/common/EvalTypes/typedEvalTypes";
+import TypedEvalPickerSummary from "src/sections/common/EvalTypes/TypedEvalPickerSummary";
 
 function getInitials(name) {
   if (!name) return "?";
@@ -90,7 +73,7 @@ const LabeledValue = ({ label, value }) => (
     <Typography
       variant="caption"
       color="text.disabled"
-      sx={{ fontSize: "10px" }}
+      sx={{ fontSize: "12px" }}
     >
       {label}
     </Typography>
@@ -108,24 +91,21 @@ const SectionLabel = ({ children }) => (
   <Typography
     variant="caption"
     color="text.disabled"
-    sx={{ fontSize: "10px", mb: 0.5, display: "block" }}
+    sx={{ fontSize: "12px", mb: 0.5, display: "block" }}
   >
     {children}
   </Typography>
 );
 SectionLabel.propTypes = { children: PropTypes.node };
 
-const CodeBlock = ({ content, theme }) => (
+const CodeBlock = ({ content }) => (
   <Box
     sx={{
       p: 1,
-      borderRadius: 0.5,
+      borderRadius: "4px",
       maxHeight: 160,
       overflow: "auto",
-      bgcolor:
-        theme.palette.mode === "dark"
-          ? "rgba(255,255,255,0.04)"
-          : "rgba(0,0,0,0.03)",
+      bgcolor: "background.neutral",
       border: "1px solid",
       borderColor: "divider",
     }}
@@ -133,7 +113,7 @@ const CodeBlock = ({ content, theme }) => (
     <Typography
       variant="body2"
       sx={{
-        fontSize: "11px",
+        fontSize: "12px",
         fontFamily: "monospace",
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
@@ -160,8 +140,6 @@ const VariablesList = ({ variables }) => {
             label={`{{${v}}}`}
             size="small"
             sx={{
-              fontSize: "10px",
-              height: 20,
               fontFamily: "monospace",
               bgcolor: "action.hover",
               color: "primary.main",
@@ -254,10 +232,7 @@ const EvalDetailPanel = ({ evalData }) => {
 
   const panelSx = {
     p: 2,
-    bgcolor:
-      theme.palette.mode === "dark"
-        ? "rgba(255,255,255,0.02)"
-        : "rgba(0,0,0,0.015)",
+    bgcolor: "background.neutral",
     display: "flex",
     flexDirection: "column",
     gap: 1.5,
@@ -285,7 +260,7 @@ const EvalDetailPanel = ({ evalData }) => {
           <Typography
             variant="body2"
             color="text.secondary"
-            sx={{ fontSize: "11px" }}
+            sx={{ fontSize: "12px" }}
           >
             {description}
           </Typography>
@@ -300,7 +275,7 @@ const EvalDetailPanel = ({ evalData }) => {
               gap: 0.5,
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: 0.5,
+              borderRadius: "4px",
               p: 1,
               maxHeight: 200,
               overflow: "auto",
@@ -328,15 +303,16 @@ const EvalDetailPanel = ({ evalData }) => {
                   >
                     {c.name || c.child_name || c.child_id}
                   </Typography>
-                  <Chip
-                    label={`weight ${c.weight ?? 1}`}
-                    size="small"
+                  <Typography
+                    variant="caption"
                     sx={{
-                      fontSize: "10px",
-                      height: 18,
-                      "& .MuiChip-label": { px: 0.75 },
+                      fontSize: "12px",
+                      color: "text.tertiary",
+                      fontVariantNumeric: "tabular-nums",
                     }}
-                  />
+                  >
+                    {`weight ${c.weight ?? 1}`}
+                  </Typography>
                 </Box>
               ))
             )}
@@ -370,7 +346,7 @@ const EvalDetailPanel = ({ evalData }) => {
           <Typography
             variant="body2"
             color="text.secondary"
-            sx={{ fontSize: "11px" }}
+            sx={{ fontSize: "12px" }}
           >
             {description}
           </Typography>
@@ -399,15 +375,25 @@ const EvalDetailPanel = ({ evalData }) => {
         {model && <LabeledValue label="Model" value={model} />}
         <LabeledValue
           label="Kind"
-          value={evalType === "agent" ? "Agent" : "LLM-as-a-judge"}
+          value={
+            typedEvalLabel(evalType) ??
+            (evalType === "agent" ? "Agent" : "LLM-as-a-judge")
+          }
         />
       </Box>
+      {/* integration S9: a typed eval's definition, read-only. It gets the
+          description shown below, so a tree described by its own summary
+          line says it once (M10, W7 review SF6). */}
+      <TypedEvalPickerSummary
+        evalType={evalType}
+        evalData={configData && { ...configData, description }}
+      />
 
       {description && (
         <Typography
           variant="body2"
           color="text.secondary"
-          sx={{ fontSize: "11px" }}
+          sx={{ fontSize: "12px" }}
         >
           {description}
         </Typography>
@@ -426,8 +412,6 @@ const EvalDetailPanel = ({ evalData }) => {
                 size="small"
                 variant="outlined"
                 sx={{
-                  fontSize: "10px",
-                  height: 20,
                   "& .MuiChip-label": { px: 0.5 },
                 }}
               />
@@ -557,30 +541,19 @@ const AddedEvalsSection = ({ addedEvals, searchQuery, action }) => {
           width={16}
           sx={{ color: "text.secondary" }}
         />
-        <Typography sx={{ fontSize: "13px", fontWeight: 600 }}>
+        <Typography sx={{ fontSize: "12px", fontWeight: 600 }}>
           Added evaluations
         </Typography>
-        <Box
+        <Typography
           sx={{
-            px: 0.75,
-            height: 18,
-            minWidth: 18,
-            borderRadius: 0.75,
-            display: "grid",
-            placeItems: "center",
-            bgcolor: "action.selected",
+            fontSize: "12px",
+            fontWeight: 400,
+            color: "text.tertiary",
+            fontVariantNumeric: "tabular-nums",
           }}
         >
-          <Typography
-            sx={{
-              fontSize: "11px",
-              fontWeight: 700,
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {q ? `${shown.length}/${addedEvals.length}` : addedEvals.length}
-          </Typography>
-        </Box>
+          {q ? `${shown.length}/${addedEvals.length}` : addedEvals.length}
+        </Typography>
       </ButtonBase>
       <Collapse in={expanded} timeout={150} unmountOnExit>
         <Box
@@ -611,9 +584,9 @@ const AddedEvalsSection = ({ addedEvals, searchQuery, action }) => {
                   alignItems: "center",
                   gap: 1,
                   px: 1.5,
-                  py: 0.875,
+                  py: 0.75,
                   borderTop: i ? "1px solid" : "none",
-                  borderColor: "divider",
+                  borderColor: "border.subtle",
                 }}
               >
                 <Iconify
@@ -623,7 +596,7 @@ const AddedEvalsSection = ({ addedEvals, searchQuery, action }) => {
                 />
                 <Typography
                   noWrap
-                  sx={{ fontSize: "13px", fontWeight: 500, minWidth: 0 }}
+                  sx={{ fontSize: "12px", fontWeight: 500, minWidth: 0 }}
                 >
                   {e.name}
                 </Typography>
@@ -633,7 +606,7 @@ const AddedEvalsSection = ({ addedEvals, searchQuery, action }) => {
                     noWrap
                     sx={{
                       fontSize: "12px",
-                      color: "text.secondary",
+                      color: "text.tertiary",
                       flexShrink: 0,
                     }}
                   >
@@ -646,14 +619,7 @@ const AddedEvalsSection = ({ addedEvals, searchQuery, action }) => {
                     variant="outlined"
                     disabled={action.disabled}
                     onClick={() => action.onClick(e)}
-                    sx={{
-                      position: "relative",
-                      flexShrink: 0,
-                      height: 24,
-                      fontSize: 11,
-                      textTransform: "none",
-                      px: 1,
-                    }}
+                    sx={{ position: "relative", flexShrink: 0 }}
                   >
                     <Box
                       component="span"
@@ -712,6 +678,7 @@ const EvalPickerList = ({ onSelectEval }) => {
     onToggleSelect,
     addedEvals,
     addedEvalAction,
+    formatEvalName,
   } = useEvalPickerContext();
   const useScopedEvals = source === "dataset" || source === "experiment";
   const {
@@ -780,6 +747,8 @@ const EvalPickerList = ({ onSelectEval }) => {
     if (filters.eval_type?.length) count += filters.eval_type.length;
     if (filters.output_type?.length) count += filters.output_type.length;
     if (filters.owner) count += 1;
+    if (filters.template_type) count += 1;
+    if (filters.search) count += 1;
     if (filters.tags?.length) count += filters.tags.length;
     return count;
   }, [filters]);
@@ -808,7 +777,7 @@ const EvalPickerList = ({ onSelectEval }) => {
     borderColor: "divider",
   };
   const bodyCellSx = {
-    fontSize: "13px",
+    fontSize: "12px",
     py: 0.75,
     px: 1,
     borderBottom: "1px solid",
@@ -869,12 +838,9 @@ const EvalPickerList = ({ onSelectEval }) => {
           <Button
             size="small"
             variant="outlined"
-            startIcon={<Iconify icon="mage:filter" width={14} />}
+            startIcon={<Iconify icon="solar:filter-linear" width={14} />}
             onClick={(e) => setFilterAnchorEl(e.currentTarget)}
             sx={{
-              textTransform: "none",
-              fontSize: "12px",
-              height: "32px",
               borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
               color: activeFilterCount > 0 ? "primary.main" : "text.secondary",
             }}
@@ -933,7 +899,7 @@ const EvalPickerList = ({ onSelectEval }) => {
                 setPage(0);
                 setExpandedEvalId(null);
               }}
-              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
+              sx={{ cursor: "pointer" }}
             />
           );
         })}
@@ -952,7 +918,6 @@ const EvalPickerList = ({ onSelectEval }) => {
               setPage(0);
               setExpandedEvalId(null);
             }}
-            sx={{ fontSize: "11px", height: 26 }}
           />
         ) : null}
       </Box>
@@ -970,7 +935,7 @@ const EvalPickerList = ({ onSelectEval }) => {
         <Table size="small" stickyHeader sx={{ tableLayout: "fixed" }}>
           <TableHead>
             <TableRow>
-              {multiSelect && <TableCell sx={{ ...headerCellSx, width: 36 }} />}
+              {multiSelect && <TableCell sx={{ ...headerCellSx, width: 44 }} />}
               <TableCell sx={{ ...headerCellSx, width: 36 }} />
               <TableCell sx={{ ...headerCellSx, width: 72 }} />
               <TableCell sx={{ ...headerCellSx }}>
@@ -1081,10 +1046,6 @@ const EvalPickerList = ({ onSelectEval }) => {
                         }}
                         sx={{
                           minWidth: 50,
-                          height: 24,
-                          fontSize: "11px",
-                          textTransform: "none",
-                          px: 1,
                         }}
                       >
                         {added ? "Added" : "Add"}
@@ -1103,9 +1064,11 @@ const EvalPickerList = ({ onSelectEval }) => {
                         <Typography
                           variant="body2"
                           noWrap
-                          sx={{ fontWeight: 500, fontSize: "13px" }}
+                          sx={{ fontWeight: 500, fontSize: "12px" }}
                         >
-                          {evalItem.name}
+                          {formatEvalName
+                            ? formatEvalName(evalItem.name)
+                            : evalItem.name}
                         </Typography>
                         {evalItem.current_version &&
                           !evalItem.is_draft &&
@@ -1151,20 +1114,14 @@ const EvalPickerList = ({ onSelectEval }) => {
                             sx={{
                               width: 20,
                               height: 20,
-                              fontSize: "8px",
-                              fontWeight: 700,
-                              bgcolor: isSystem
-                                ? "action.selected"
-                                : getAvatarColor(createdBy),
-                              color: isSystem
-                                ? "text.secondary"
-                                : "common.white",
+                              fontSize: "12px",
+                              fontWeight: 600,
                             }}
                           >
                             {isSystem ? (
                               <Iconify
                                 icon="solar:shield-check-bold"
-                                width={10}
+                                width={12}
                               />
                             ) : (
                               getInitials(createdBy)
@@ -1173,7 +1130,7 @@ const EvalPickerList = ({ onSelectEval }) => {
                           <Typography
                             variant="body2"
                             noWrap
-                            sx={{ fontSize: "11px" }}
+                            sx={{ fontSize: "12px" }}
                           >
                             {createdBy}
                           </Typography>

@@ -1,0 +1,55 @@
+{
+  "about": "Vendor specs the REST generator's tests read. Each .gz holds the exact bytes its commit-pinned URL served (gzip -9n); sha256 and bytes are of those decompressed bytes. Fetched 2026-10-21 between 08:50Z and 10:50Z; re-verified against the URLs (sha256 and size of the bytes served) at 2026-10-21T10:50:03Z (Graph) and 2026-10-21T11:49:07Z (the other four). The tests never fetch anything. Each licence file is the repository's licence at the same commit. A secret-shape scan (the catalog loader's rules) of every decompressed file found nothing.",
+  "specs": [
+    {
+      "file": "gmail-v1.discovery.json.gz",
+      "format": "google-discovery",
+      "url": "https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/gmail/v1/gmail-api.json",
+      "sha256": "f651441dcc942f428d92768e8b20c94a28ff82bf485b79872d9eef267a894225",
+      "bytes": 217715,
+      "revision": "20261005",
+      "licence": "BSD-3-Clause (googleapis/google-api-go-client)",
+      "licenceFile": "LICENSES/googleapis-google-api-go-client.txt",
+      "note": "Google's Gmail API Discovery document as mirrored in Google's Go client at that commit. The live discovery service (https://gmail.googleapis.com/$discovery/rest?version=v1) returns the same document with its keys in a different order on each fetch, so its raw bytes cannot be pinned reproducibly; the mirror's can."
+    },
+    {
+      "file": "calendar-v3.discovery.json.gz",
+      "format": "google-discovery",
+      "url": "https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/calendar/v3/calendar-api.json",
+      "sha256": "e0a0bdacc2879f7777e6adb0f400f01b19f949160946b36113624c3eae1c17b9",
+      "bytes": 170207,
+      "revision": "20260925",
+      "licence": "BSD-3-Clause (googleapis/google-api-go-client)",
+      "licenceFile": "LICENSES/googleapis-google-api-go-client.txt"
+    },
+    {
+      "file": "graph-v1.0-openapi.yaml.gz",
+      "format": "openapi-3",
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/8c562525694550601a232cb54014e48c6c7f6da0/openapi/v1.0/openapi.yaml",
+      "sha256": "533f6d86985584327109ba2c52c0e51454ce1ba2153c11f4d841e898b88c5b1b",
+      "bytes": 44387283,
+      "licence": "MIT (microsoftgraph/msgraph-metadata)",
+      "licenceFile": "LICENSES/microsoftgraph-msgraph-metadata.txt",
+      "note": "Microsoft Graph v1.0, the full description (17,885 operations), with the /me/... paths Outlook and Teams tools use; the per-module files Microsoft also publishes carry /users/{user-id}/... paths only. Its operation summaries are not reliable (GET /me/messages says 'Get open extension'), so every tool's description comes from the overlay."
+    },
+    {
+      "file": "slack-web-api.swagger.json.gz",
+      "format": "swagger-2",
+      "url": "https://raw.githubusercontent.com/slackapi/slack-api-specs/bc08db49625630e3585bf2f1322128ea04f2a7f3/web-api/slack_web_openapi_v2_without_examples.json",
+      "sha256": "8b92da26a3c5b11d20042a9f36d81f1fa6fc9382c5ddc471babb68b91936bc3a",
+      "bytes": 1039581,
+      "licence": "MIT (slackapi/slack-api-specs)",
+      "licenceFile": "LICENSES/slackapi-slack-api-specs.txt",
+      "note": "The variant without examples: the variant with examples holds token-shaped sample values the secret scan refuses."
+    },
+    {
+      "file": "adyen-transfers-v4.postman.json.gz",
+      "format": "postman-2.1",
+      "url": "https://raw.githubusercontent.com/Adyen/adyen-postman/b3db00765bdffef013eab5912cd6fe94968cfb8b/postman/TransferService-v4.json",
+      "sha256": "0ad32a74b560dafa332172bf0493a55b9950c458aa88ff00038ffb8cea4b31da",
+      "bytes": 125629,
+      "licence": "MIT (Adyen/adyen-postman)",
+      "licenceFile": "LICENSES/adyen-adyen-postman.txt"
+    }
+  ]
+}

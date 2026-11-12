@@ -1,0 +1,26 @@
+{
+  "vendor": "mapbox",
+  "capability": "data",
+  "skus": [
+    {
+      "sku": "mapbox.temporary_geocode",
+      "unit": "request",
+      "usd_per_unit": 0.00075,
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "byok_only",
+  "resale_terms_ref": "",
+  "terms_url": "https://cdn.prod.website-files.com/609ed46055e27a02ffc0749b/68dddd2815cb3d82685f0096_Mapbox%20Product%20Terms%20(October%201,%202025).pdf",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": false,
+  "trains_on_input": "no",
+  "improvement_license": false,
+  "regions": [],
+  "results_retention": "full",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}

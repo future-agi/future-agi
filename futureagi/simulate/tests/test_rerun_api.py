@@ -23,6 +23,7 @@ from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import (
     AgentDefinition,
     HostedHarnessJob,
+    SandboxHarnessJob,
     Scenarios,
     SimulateEvalConfig,
 )
@@ -35,6 +36,28 @@ from simulate.models.test_execution import (
     TestExecution,
 )
 from simulate.services.harness_run_evals import queue_eval_for_finished_calls
+from simulate.tests.test_harness_provider import _v1_payload
+
+
+def _submit_owned_sandbox_job(client, run_test, job_id):
+    """Establish ownership via create, not a hosted row or execution metadata."""
+    document = {"job": {"job_id": str(job_id)}, "status": {"stage": "queued"}}
+    with patch(
+        "simulate.services.harness_sandbox.HarnessSandboxClient.submit",
+        return_value=document,
+    ) as submit:
+        created = client.post(
+            "/simulate/api/harness-jobs/",
+            _v1_payload(),
+            format="json",
+            HTTP_X_WORKSPACE_ID=str(run_test.workspace_id),
+        )
+    assert created.status_code == status.HTTP_202_ACCEPTED, created.content
+    submit.assert_called_once()
+    binding = SandboxHarnessJob.objects.get(job_id=str(job_id))
+    assert binding.organization_id == run_test.organization_id
+    assert binding.workspace_id == run_test.workspace_id
+
 
 # ============================================================================
 # Fixtures
@@ -390,8 +413,10 @@ class TestCallExecutionRerunView:
             run_test=test_execution.run_test,
             test_execution=test_execution,
         )
+        _submit_owned_sandbox_job(auth_client, test_execution.run_test, job_id)
         rerun_saved_job.return_value = {
-            "status": {"stage": "queued", "detail": "waiting to restart"}
+            "job": {"job_id": str(job_id)},
+            "status": {"stage": "queued", "detail": "waiting to restart"},
         }
         original_metadata = dict(call_execution.call_metadata)
 
@@ -410,9 +435,7 @@ class TestCallExecutionRerunView:
         rerun_saved_job.assert_called_once_with(
             str(job_id),
             {
-                "environment_values": {
-                    "LIVEKIT_URL": "wss://example.invalid"
-                },
+                "environment_values": {"LIVEKIT_URL": "wss://example.invalid"},
                 "secret_refs": {},
                 "only": [],
             },
@@ -466,9 +489,7 @@ class TestRerunParallelismAdmission:
         HARNESS_PARALLEL_SNAPSHOT_DIGESTS=[],
         ALK_DAYTONA_DOCKERFILE="",
     )
-    def test_saved_w4_job_reruns_at_w1_when_flag_off(
-        self, db, organization, workspace
-    ):
+    def test_saved_w4_job_reruns_at_w1_when_flag_off(self, db, organization, workspace):
         from simulate.services.hosted_harness import register_attempt
 
         job = self._saved_w4_job(organization, workspace)
@@ -533,7 +554,11 @@ class TestRepositoryRunAgainView:
         test_execution.execution_metadata = {"harness_job_id": str(job_id)}
         test_execution.scenario_ids = [str(scenario.id)]
         test_execution.save(update_fields=["execution_metadata", "scenario_ids"])
-        rerun_saved_job.return_value = {"status": {"stage": "queued"}}
+        _submit_owned_sandbox_job(auth_client, run_test, job_id)
+        rerun_saved_job.return_value = {
+            "job": {"job_id": str(job_id)},
+            "status": {"stage": "queued"},
+        }
         execution_count = TestExecution.objects.count()
 
         response = auth_client.post(
@@ -714,7 +739,11 @@ class TestTestExecutionRerunView:
         run_test.agent_definition.save(update_fields=["agent_type"])
         test_execution.execution_metadata = {"harness_job_id": str(job_id)}
         test_execution.save(update_fields=["execution_metadata"])
-        rerun_saved_job.return_value = {"status": {"stage": "queued"}}
+        _submit_owned_sandbox_job(auth_client, run_test, job_id)
+        rerun_saved_job.return_value = {
+            "job": {"job_id": str(job_id)},
+            "status": {"stage": "queued"},
+        }
         original_metadata = dict(call_execution.call_metadata)
 
         response = auth_client.post(
@@ -2349,7 +2378,6 @@ class TestTestExecutionRuntimeContracts:
             execution.refresh_from_db()
             assert execution.status == TestExecution.ExecutionStatus.COMPLETED
 
-
     def _suite_eval_on_a_finished_harness_run(self, run_test, test_execution):
         self._hosted_job_for(test_execution, HostedHarnessJob.State.COMPLETED)
         template = EvalTemplate.objects.create(
@@ -2733,9 +2761,7 @@ class TestTestExecutionDeleteView:
 class TestEvalExplanationSummaryRefreshView:
     """Tests for POST /simulate/test-executions/<uuid>/eval-explanation-summary/refresh/"""
 
-    URL_TEMPLATE = (
-        "/simulate/test-executions/{}/eval-explanation-summary/refresh/"
-    )
+    URL_TEMPLATE = "/simulate/test-executions/{}/eval-explanation-summary/refresh/"
 
     @patch(
         "simulate.views.run_test.run_eval_summary_task.apply_async",
@@ -2798,7 +2824,10 @@ class TestOptimiserAnalysisRefreshView:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["status"] is True
-        assert response.data["result"]["status"] == AgentOptimiserRun.OptimiserStatus.FAILED
+        assert (
+            response.data["result"]["status"]
+            == AgentOptimiserRun.OptimiserStatus.FAILED
+        )
         mock_task.delay.assert_called_once()
 
         run = AgentOptimiserRun.objects.order_by("-created_at").first()

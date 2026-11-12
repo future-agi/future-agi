@@ -1,0 +1,15 @@
+{
+  "http": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": true,
+    "result": {
+      "agent_key_id": "key_3c9f1a7e5b2d8c4f6a0e1b9d",
+      "revoked": true
+    }
+  }
+}

@@ -31,10 +31,15 @@ import { environmentVersionsKey } from "src/api/simulate-environments/versions";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
+import {
+  isHiddenFromRestrictedOrgs,
+  useRestrictSimulateToEnvironments,
+} from "src/hooks/useRestrictSimulateToEnvironments";
 
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { useEnvState } from "../store/envState";
 import { BUILD_STATUS } from "../myEnvironments.constants";
+import { ENTRY_TAB, REBUILD_PARAM } from "../environmentOptions";
 import ChatSplitPane from "../components/ChatSplitPane";
 import EmptyState from "../components/EmptyState";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
@@ -64,6 +69,10 @@ const IMPROVEMENT_PATTERN = {
   end: false,
 };
 
+// Said instead of opening Run Simulation, for an organization that sees only
+// Environments, when this environment has no run of its own to open.
+const RUN_SIMULATION_UNAVAILABLE =
+  "Simulations for this environment start in Run Simulation, which your organization doesn't have.";
 
 // Why the platform left observability off; the Environment builds either way.
 function refusalReason(refusal) {
@@ -90,6 +99,7 @@ function refusalReason(refusal) {
  */
 export default function EnvironmentWorkspace() {
   const navigate = useNavigate();
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
   const { envId } = useParams();
   const { env, source, bootstrapState, notFound, error, refetch, chatSaving } =
     useEnvironment(envId);
@@ -194,7 +204,30 @@ export default function EnvironmentWorkspace() {
   // pre-selects the versions it ran with.
   const startRun = (ids, trials, { initialPicks } = {}) => {
     if (source !== "harness") {
-      navigate(runSimulationTarget(env));
+      const target = runSimulationTarget(env);
+      // Run Simulation's pages are not registered for an organization that
+      // sees only Environments: a run this environment already has opens on
+      // its own run page there, and without one a line says why nothing opens.
+      if (
+        restrictSimulateToEnvironments &&
+        isHiddenFromRestrictedOrgs(target)
+      ) {
+        const runTestId = env?.platform?.runTestId;
+        const testExecutionId = env?.platform?.testExecutionId;
+        if (runTestId && testExecutionId) {
+          navigate(
+            paths.dashboard.simulate.environments.execution(
+              env.id,
+              runTestId,
+              testExecutionId,
+            ),
+          );
+        } else {
+          enqueueSnackbar(RUN_SIMULATION_UNAVAILABLE, { variant: "info" });
+        }
+        return;
+      }
+      navigate(target);
       return;
     }
     if (env?.versioning?.enabled) {
@@ -333,9 +366,19 @@ export default function EnvironmentWorkspace() {
   // build stage (console + hero/pipeline). A failed build keeps this layout —
   // the chat stays usable and the pipeline shows which stage failed — but the
   // hero animation freezes and the header reads "Failed" (LivePill), rather than
-  // a dead-end error page. Run is gated off and Fork is hidden (locked) until it
-  // goes Live, at which point buildStatus flips and the branch below takes over.
+  // a dead-end error page. Run is gated off until it goes Live, at which point
+  // buildStatus flips and the branch below takes over; the overflow is hidden
+  // (locked) while it builds. Once the build has failed or been canceled the
+  // overflow comes back with Delete, and the pane offers a new build of the same
+  // source (the Build tab, reopened on the draft that built this environment).
   if (building || buildFailed) {
+    const startNewBuild = () =>
+      navigate(
+        `${paths.dashboard.simulate.environments.root}?${new URLSearchParams({
+          tab: ENTRY_TAB.BUILD,
+          [REBUILD_PARAM]: env.id,
+        })}`,
+      );
     return (
       <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
         <WorkspaceHeader
@@ -343,7 +386,8 @@ export default function EnvironmentWorkspace() {
           envState={envState}
           canRun={false}
           runBlockedReason={buildFailed ? WORKSPACE_COPY.failedTooltip : WORKSPACE_COPY.buildingTooltip}
-          locked
+          locked={building}
+          backed={backed}
         />
         {creditBanner}
         {refusalLine}
@@ -357,6 +401,7 @@ export default function EnvironmentWorkspace() {
             primed={false}
             source={env.name}
             world={derivedWorld}
+            onStartNewBuild={buildFailed ? startNewBuild : undefined}
           />
         </Box>
       </Box>

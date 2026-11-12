@@ -3,6 +3,16 @@ missing/malformed header yields 0.0 without raising."""
 
 from unittest.mock import MagicMock
 
+import pytest
+
+
+@pytest.fixture(autouse=True, params=["licensed", "cloud"])
+def gateway_credentials(request, settings):
+    settings.EE_LICENSE_KEY = "fixture-license" if request.param == "licensed" else ""
+    settings.AGENTCC_INTERNAL_API_KEY = (
+        "fixture-internal-key" if request.param == "cloud" else ""
+    )
+
 
 def _raw(headers):
     raw = MagicMock()

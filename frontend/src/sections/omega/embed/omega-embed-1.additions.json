@@ -1,0 +1,330 @@
+{
+  "protocol": "omega-embed/1",
+  "about": "Console-only messages and fields added to omega-embed/1 (CP P7, P8, P15, P19; learning service P1-03; RL 1275A; PL-38). Studio does not participate in the document probe/proof extension; this is not the shared canonical omega-embed-1.json. A key must echo this Console document's doc or it is ignored and the Console keeps asking, then reports needs-key. Safe hello-before-load authentication and post-load recovery require the coordinated host probe/child proof exchange: a host suspends readiness on load and accepts only a fresh live-document proof, never queued hello/gate as load attribution. The host must validate these closed document message shapes and mirror this additions fixture; omega-embed-1.additions.test.ts holds the Console to it.",
+  "messages": {
+    "embed.hello": {
+      "direction": "child-to-parent",
+      "addedFields": {
+        "doc": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+          "required": true,
+          "rule": "The frame's document nonce: base64url without padding of 16 bytes from crypto.getRandomValues (128 bits), drawn once per document load of the frame; an in-place reload is a new document with a new doc. Every embed.hello, embed.gate and embed.proof a document sends carries its doc, to an exact origin only (never \"*\"). It is not a secret from the host, but it is never put in a URL, a log line, storage or telemetry, and no other child message carries it."
+        },
+        "build": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "required": false
+        },
+        "want": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 8,
+          "required": false,
+          "rule": "Ask for this many keys in one mint (CP P7). Absent means one. A host that ignores it answers with one key, as before."
+        }
+      },
+      "example": {
+        "type": "embed.hello",
+        "protocol": "omega-embed/1",
+        "doc": "AAECAwQFBgcICQoLDA0ODw",
+        "build": "a929c2ccffc5"
+      },
+      "exampleWithWant": {
+        "type": "embed.hello",
+        "protocol": "omega-embed/1",
+        "doc": "AAECAwQFBgcICQoLDA0ODw",
+        "build": "a929c2ccffc5",
+        "want": 4
+      }
+    },
+    "embed.key": {
+      "direction": "parent-to-child",
+      "rule": "Only type, token, doc and optional left are allowed. A message with any unknown field is ignored as a whole: no key is handed on, no origin is locked and hello continues.",
+      "addedFields": {
+        "left": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7,
+          "required": false,
+          "rule": "How many more embed.key messages this answer to one hello carries. Absent or 0: the answer is complete, so the child may say hello again. Send the keys of one answer back to back."
+        },
+        "doc": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+          "required": true,
+          "rule": "Echo the doc of the accepted embed.hello or fresh embed.proof this key answers, on every key of that answer. The console uses a key only when its doc is the console's own document's: a key with another doc (an answer minted for the document before an in-place reload, a replay) or with no doc is ignored; it opens nothing and the console keeps asking. Mint for the hello/proof you read the doc from: never re-use a doc from an earlier document."
+        }
+      },
+      "example": {
+        "type": "embed.key",
+        "token": "<token>",
+        "doc": "AAECAwQFBgcICQoLDA0ODw",
+        "left": 3
+      }
+    },
+    "embed.gate": {
+      "direction": "child-to-parent",
+      "rule": "The console's gate, named by the document that sends it: ready only after this document received a key bearing its own doc and its first authenticated API read (GET /workspace/capabilities, using that opening key once) succeeded with a compatible, available capabilities answer. Receipt of a key alone never means ready. A 401 or 403 on that read means refused; other failures or a read that never completes keep waiting, then mean needs-key at the existing 6-second session bound. A response after that bound cannot mean ready. A later API refusal can still mean refused. A host counts a gate only for its active document, established by an accepted hello or fresh one-use proof; a gate with another doc changes nothing. While a load suspends that candidate, ordinary queued hello/gate cannot restore readiness; only the living document's fresh probe response can revalidate it.",
+      "addedFields": {
+        "doc": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+          "required": true,
+          "rule": "As on embed.hello: the doc of the document that sends the gate."
+        }
+      },
+      "example": {
+        "type": "embed.gate",
+        "state": "ready",
+        "doc": "AAECAwQFBgcICQoLDA0ODw"
+      }
+    },
+    "embed.probe": {
+      "scope": "console-only",
+      "direction": "parent-to-child",
+      "allowedFields": ["type", "challenge"],
+      "rule": "A fresh one-use host challenge for an ambiguous iframe load, not a document identity or a key. The host draws 16 cryptographic random bytes on each load that suspends a candidate, invalidates the previous challenge, and accepts a matching proof only from the frame's own window at its exact expected origin. The child accepts only these two fields, from window.parent at an exact allowed origin (and its keyed origin once locked), and answers only to that requesting origin. A probe never stops hello, locks an origin, authenticates a session or emits a gate.",
+      "fields": {
+        "challenge": {
+          "type": "string",
+          "bytes": 16,
+          "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+          "required": true
+        }
+      },
+      "example": {
+        "type": "embed.probe",
+        "challenge": "_____________________w"
+      }
+    },
+    "embed.proof": {
+      "scope": "console-only",
+      "direction": "child-to-parent",
+      "allowedFields": [
+        "type",
+        "protocol",
+        "doc",
+        "build",
+        "want",
+        "challenge",
+        "state"
+      ],
+      "rule": "A live response built only by the bridge for a validated embed.probe. Echo its challenge with this document's doc, the same protocol/build/opening want as hello, and only the last actual gate this bridge reported. Before any gate, omit state entirely; a key alone never supplies ready. This is not a new authentication verdict and does not extend the 6000 ms boot bound. The host consumes only its current outstanding challenge once, rejects retired document nonces, and remints for the proved document before restoring admission. A supplied ready cannot override mint failure or a newer gate received during that mint. No unknown fields are allowed. Send only to the exact requesting parent origin, never to all configured origins or '*'; never put doc or challenge in a URL, storage, logs or telemetry.",
+      "fields": {
+        "protocol": {
+          "type": "string",
+          "enum": ["omega-embed/1"],
+          "required": true
+        },
+        "doc": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+          "required": true
+        },
+        "build": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "required": false
+        },
+        "want": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 8,
+          "required": false,
+          "rule": "The opening hello's batch request; absent means one key."
+        },
+        "challenge": {
+          "type": "string",
+          "bytes": 16,
+          "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+          "required": true
+        },
+        "state": {
+          "type": "string",
+          "enum": ["needs-key", "refused", "ready"],
+          "required": false,
+          "rule": "The last actual gate reported by this document's bridge; absent before any gate. Never infer ready from a probe or key receipt."
+        }
+      },
+      "example": {
+        "type": "embed.proof",
+        "protocol": "omega-embed/1",
+        "doc": "AAECAwQFBgcICQoLDA0ODw",
+        "build": "a929c2ccffc5",
+        "want": 4,
+        "challenge": "_____________________w",
+        "state": "ready"
+      },
+      "exampleWithoutState": {
+        "type": "embed.proof",
+        "protocol": "omega-embed/1",
+        "doc": "AAECAwQFBgcICQoLDA0ODw",
+        "build": "a929c2ccffc5",
+        "want": 4,
+        "challenge": "_____________________w"
+      }
+    },
+    "embed.telemetry": {
+      "direction": "child-to-parent",
+      "variants": {
+        "error": {
+          "fields": {
+            "kind": "error",
+            "name": ["render", "load", "chunk", "stale-build"],
+            "routeTemplate": {
+              "type": "string",
+              "rule": "A page template the console declares (/agents/:agentId) or *, never a concrete path"
+            },
+            "release": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "code": {
+              "type": "string",
+              "pattern": "^http_(?:0|[1-5][0-9]{2})$",
+              "or": [
+                "render_error",
+                "malformed_response",
+                "chunk_load",
+                "stale_build",
+                "key_timeout",
+                "assertion_invalid",
+                "assertion_expired",
+                "assertion_replayed",
+                "identity_not_connected",
+                "role_out_of_date",
+                "verification_unavailable",
+                "host_delegation_scope_denied",
+                "route_not_in_manifest"
+              ]
+            },
+            "requestId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{5,127}$",
+              "required": false
+            }
+          },
+          "example": {
+            "type": "embed.telemetry",
+            "kind": "error",
+            "name": "load",
+            "routeTemplate": "/agents/:agentId",
+            "release": "a929c2ccffc5",
+            "code": "http_502",
+            "requestId": "req_6f1c2b9e0a7d4c3b8e5f"
+          }
+        },
+        "vital": {
+          "fields": {
+            "kind": "vital",
+            "name": ["shell-painted", "route-data"],
+            "routeTemplate": {
+              "type": "string",
+              "rule": "As for errors"
+            },
+            "release": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "valueMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 600000
+            }
+          },
+          "example": {
+            "type": "embed.telemetry",
+            "kind": "vital",
+            "name": "route-data",
+            "routeTemplate": "/agents",
+            "release": "a929c2ccffc5",
+            "valueMs": 412
+          }
+        }
+      },
+      "hostRule": "Forward errors to the host's error tracker tagged product=omega-console and vitals to its performance view. Never add free text: every field is already closed."
+    },
+    "embed.badge": {
+      "direction": "child-to-parent",
+      "fields": {
+        "inbox": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9999
+        }
+      },
+      "example": {
+        "type": "embed.badge",
+        "inbox": 1
+      }
+    },
+    "embed.score": {
+      "direction": "child-to-parent",
+      "rule": "Learning service P1-03. The viewer scores one run in the embedded Console; the host writes the Score on that run's trace AS THE VIEWER (the viewer's own session, never a workspace key) and answers with embed.scored carrying the same id. The child sends it only to the origin that delivered its key. agentId and runId are the EE agent and task ids the run's spans carry (omega.agent.id, omega.task.id). At least one of thumb, rating or comment; nothing else is sent. A host that ignores it sends no answer, and the Console then shows the score as not saved.",
+      "fields": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{5,63}$"
+        },
+        "agentId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+        },
+        "thumb": {
+          "type": "string",
+          "enum": ["up", "down"],
+          "required": false
+        },
+        "rating": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "required": false
+        },
+        "comment": {
+          "type": "string",
+          "maxLength": 2000,
+          "required": false,
+          "rule": "What the viewer typed, trimmed; no control characters other than tab and line breaks; a blank comment is left out."
+        }
+      },
+      "example": {
+        "type": "embed.score",
+        "id": "score_7f3a9c21",
+        "agentId": "agt-1",
+        "runId": "task_42",
+        "thumb": "down",
+        "comment": "Picked the wrong invoice."
+      }
+    },
+    "embed.scored": {
+      "direction": "parent-to-child",
+      "rule": "The host's answer to one embed.score, to the frame that sent it: saved when it wrote the Score as the viewer, refused otherwise (no session, no such run in the viewer's projects, a write the viewer may not make). Send exactly one answer per score.",
+      "fields": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{5,63}$",
+          "rule": "The id of the embed.score it answers."
+        },
+        "state": {
+          "type": "string",
+          "enum": ["saved", "refused"]
+        }
+      },
+      "example": {
+        "type": "embed.scored",
+        "id": "score_7f3a9c21",
+        "state": "saved"
+      }
+    }
+  },
+  "frame": {
+    "allow": "clipboard-write lets the frame's Copy reference button write the clipboard; without it the reference stays selectable"
+  },
+  "hostRule": "A hello with want is answered with at most want keys minted in one exchange call; each key stays one-use and short-lived. The child drops a pooled key 5 s before it expires."
+}

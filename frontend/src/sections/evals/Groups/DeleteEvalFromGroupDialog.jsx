@@ -66,19 +66,21 @@ const DeleteEvalFromGroupDialog = ({
   };
   return (
     <ModalWrapper
-      title="Delete Evaluation"
+      // L7c g7 (groups:detail): the last member's delete deletes the group,
+      // and the dialog says so before it does.
+      title={rowCount === 1 ? "Delete the group?" : "Delete Evaluation"}
       open={open}
       onClose={onClose}
       onSubmit={handleDelete}
-      modalWidth="480px"
+      modalWidth="560px"
       isLoading={isUpdatingGroupEvalList || isDeletingGroup}
       isValid={true}
-      actionBtnTitle="Delete Evaluation"
+      actionBtnTitle={rowCount === 1 ? "Delete group" : "Delete Evaluation"}
       cancelBtnTitle="Cancel"
       actionBtnSx={{
-        backgroundColor: "red.500",
+        backgroundColor: "status.danger.solid",
         ":hover": {
-          backgroundColor: "red.500",
+          backgroundColor: "status.danger.solid",
         },
       }}
       cancelBtnSx={{
@@ -91,15 +93,27 @@ const DeleteEvalFromGroupDialog = ({
       }}
     >
       <Typography
-        fontSize="14px"
+        fontSize="13px"
         color="text.primary"
         fontWeight="fontWeightRegular"
         sx={{ lineHeight: 1.5 }}
       >
-        Are you sure you want to delete evaluations from this group?
-        <br />
-        <strong>Note:</strong> The evaluation will be deleted only from this
-        group. The evaluation applied will still be visible.
+        {rowCount === 1 ? (
+          <>
+            This is the group&apos;s last evaluation. Deleting it deletes the
+            group too.
+            <br />
+            <strong>Note:</strong> The evaluation itself stays in your
+            evaluations.
+          </>
+        ) : (
+          <>
+            Are you sure you want to delete evaluations from this group?
+            <br />
+            <strong>Note:</strong> The evaluation will be deleted only from this
+            group. The evaluation applied will still be visible.
+          </>
+        )}
       </Typography>
 
       {/* No children needed here unless you want to add more UI */}

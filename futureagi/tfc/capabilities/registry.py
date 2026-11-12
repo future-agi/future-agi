@@ -31,13 +31,22 @@ class FeatureDefinition:
     # Two-tier gating: requires_license=True features are cloud-plan products
     # by default and run FREE on self-hosted deployments (OSS or EE, any
     # license state). Setting oss_locked=True additionally requires a valid
-    # license off-cloud — reserved for managed compute and the error feed.
+    # license off-cloud — reserved for managed compute, the error feed and
+    # EE-only evaluator models (Jev).
     oss_locked: bool = False
     required_service: str | None = None
     metering_dimension: str | None = None
     air_gap_behavior: AirGapBehavior = AirGapBehavior.AVAILABLE
     allowed_during_grace: bool = True
     quota_key: str | None = None
+    # A hosted Omega product under controlled rollout (READINESS 3.13, 1.10): its decision is the
+    # rollout step in service.check() (omega_rollout), combined by AND with any plan row, never the
+    # license path. The product id is omega_rollout.products' (console, sandboxes, ...).
+    rollout_product: str | None = None
+    # One part of a hosted Omega product that is shown only when it works today (omega_rollout
+    # readiness: a released CLI command, a configured Hub checker). Decided by readiness alone, for
+    # every org; the part's product keeps its own rollout gate.
+    readiness_part: str | None = None
 
 
 # --- OSS Baseline Features (always available, may have quota) ---
@@ -102,6 +111,19 @@ FEATURE_TURING_MODELS = FeatureDefinition(
     air_gap_behavior=AirGapBehavior.UNAVAILABLE,
 )
 
+# Jev runs on the org's own TypeSafe key (Settings -> AI Providers), so no
+# FutureAGI service or managed credits are involved; it still needs TypeSafe.
+# Community: every self-hosted install runs it, licensed or not. It stays a
+# paid feature so Cloud resolves it through the plan (has_jev_models).
+FEATURE_JEV_MODELS = FeatureDefinition(
+    id="jev_models",
+    display_name="Jev Models",
+    oss_baseline=False,
+    requires_license=True,
+    execution_location=ExecutionLocation.LOCAL,
+    air_gap_behavior=AirGapBehavior.UNAVAILABLE,
+)
+
 FEATURE_PROTECT = FeatureDefinition(
     id="protect",
     oss_locked=True,
@@ -153,6 +175,26 @@ FEATURE_ERROR_FEED = FeatureDefinition(
     id="error_feed",
     oss_locked=True,
     display_name="Error Feed",
+    oss_baseline=False,
+    requires_license=True,
+    execution_location=ExecutionLocation.LOCAL,
+)
+
+# Instant eval and Insights are Enterprise-only, like the error feed:
+# self-hosted needs a licence that lists them, Cloud a plan that does.
+FEATURE_INSTANT_EVAL = FeatureDefinition(
+    id="instant_eval",
+    oss_locked=True,
+    display_name="Instant eval",
+    oss_baseline=False,
+    requires_license=True,
+    execution_location=ExecutionLocation.LOCAL,
+)
+
+FEATURE_INSIGHTS = FeatureDefinition(
+    id="insights",
+    oss_locked=True,
+    display_name="Insights",
     oss_baseline=False,
     requires_license=True,
     execution_location=ExecutionLocation.LOCAL,
@@ -256,6 +298,77 @@ FEATURE_REQUIRED_LABELS = FeatureDefinition(
 )
 
 
+# --- Hosted Omega products (controlled rollout, READINESS 3.13) ---
+# Not plan features and not license features: each ships dark and enters each stage by a server-side
+# rollout flag. `/api/capabilities/` reports them with PRODUCT_NOT_ADMITTED or PRODUCT_PAUSED.
+
+
+def _omega_product(product: str, display_name: str) -> FeatureDefinition:
+    return FeatureDefinition(
+        id=f"omega_{product}",
+        display_name=display_name,
+        oss_baseline=False,
+        requires_license=False,
+        execution_location=ExecutionLocation.FUTUREAGI_SERVICE,
+        air_gap_behavior=AirGapBehavior.UNAVAILABLE,
+        rollout_product=product,
+    )
+
+
+FEATURE_OMEGA_CONSOLE = _omega_product("console", "Omega Console")
+FEATURE_OMEGA_SANDBOXES = _omega_product("sandboxes", "Sandboxes")
+FEATURE_OMEGA_DEPLOYMENTS = _omega_product("deployments", "Deployments")
+FEATURE_OMEGA_STUDIO_TAB = _omega_product("studio_tab", "Studio")
+FEATURE_OMEGA_HUB = _omega_product("hub", "Omega Hub")
+
+
+# --- Parts of the hosted Omega products, shown only when they work today (omega_rollout.readiness) ---
+# PRODUCT_NOT_ADMITTED until the part is released (declared) or usable (observed), so the UI hides it.
+
+
+def _omega_part(part: str, display_name: str) -> FeatureDefinition:
+    return FeatureDefinition(
+        id=f"omega_part_{part}",
+        display_name=display_name,
+        oss_baseline=False,
+        requires_license=False,
+        execution_location=ExecutionLocation.FUTUREAGI_SERVICE,
+        air_gap_behavior=AirGapBehavior.UNAVAILABLE,
+        readiness_part=part,
+    )
+
+
+FEATURE_OMEGA_PART_HUB_CLI = _omega_part("hub_cli", "Omega Hub from the CLI")
+FEATURE_OMEGA_PART_HUB_PUBLISH = _omega_part("hub_publish", "Publish to the Omega Hub")
+FEATURE_OMEGA_PART_DEPLOY_CLI = _omega_part("deploy_cli", "Deploy from the CLI")
+FEATURE_OMEGA_PART_DEPLOYMENT_STUDIO = _omega_part(
+    "deployment_studio", "Open a deployment in Studio"
+)
+# The parity program's hide switches (omega_rollout/readiness.py SWITCH_PARTS).
+FEATURE_OMEGA_PART_DEPLOY_NO_DOWNTIME = _omega_part(
+    "deploy_no_downtime", "Revision switches without downtime"
+)
+FEATURE_OMEGA_PART_DEPLOY_LANGGRAPH_JS = _omega_part(
+    "deploy_langgraph_js", "Deploy LangGraph.js projects"
+)
+FEATURE_OMEGA_PART_SDK_PYTHON = _omega_part("sdk_python", "Python SDK published")
+FEATURE_OMEGA_PART_SDK_TYPESCRIPT = _omega_part(
+    "sdk_typescript", "TypeScript SDK published"
+)
+FEATURE_OMEGA_PART_HOSTED_SANDBOXES = _omega_part(
+    "hosted_sandboxes", "Sandboxes on hosted Future AGI"
+)
+FEATURE_OMEGA_PART_HOSTED_DEPLOYMENTS = _omega_part(
+    "hosted_deployments", "Deployments on hosted Future AGI"
+)
+# The managed learning service's parts (omega_rollout/readiness.py LEARNING_PARTS).
+FEATURE_OMEGA_PART_AGENT_OBSERVE = _omega_part(
+    "agent_observe", "An Observe project for each Console agent"
+)
+FEATURE_OMEGA_PART_LEARNING_CURVES = _omega_part(
+    "learning_curves", "Learning curves for each Console agent"
+)
+
 _ALL_FEATURES: tuple[FeatureDefinition, ...] = (
     FEATURE_KNOWLEDGE_BASE,
     FEATURE_REVIEW_WORKFLOW,
@@ -269,6 +382,8 @@ _ALL_FEATURES: tuple[FeatureDefinition, ...] = (
     FEATURE_SYNTHETIC_DATA,
     FEATURE_SCENARIOS,
     FEATURE_ERROR_FEED,
+    FEATURE_INSTANT_EVAL,
+    FEATURE_INSIGHTS,
     FEATURE_FIX_MY_AGENT,
     FEATURE_OPTIMIZATION,
     FEATURE_SCIM,
@@ -281,6 +396,24 @@ _ALL_FEATURES: tuple[FeatureDefinition, ...] = (
     FEATURE_DEDICATED_SUPPORT,
     FEATURE_AGREEMENT_METRICS,
     FEATURE_REQUIRED_LABELS,
+    FEATURE_OMEGA_CONSOLE,
+    FEATURE_OMEGA_SANDBOXES,
+    FEATURE_OMEGA_DEPLOYMENTS,
+    FEATURE_OMEGA_STUDIO_TAB,
+    FEATURE_OMEGA_HUB,
+    FEATURE_OMEGA_PART_HUB_CLI,
+    FEATURE_OMEGA_PART_HUB_PUBLISH,
+    FEATURE_OMEGA_PART_DEPLOY_CLI,
+    FEATURE_OMEGA_PART_DEPLOYMENT_STUDIO,
+    FEATURE_OMEGA_PART_DEPLOY_NO_DOWNTIME,
+    FEATURE_OMEGA_PART_DEPLOY_LANGGRAPH_JS,
+    FEATURE_OMEGA_PART_SDK_PYTHON,
+    FEATURE_OMEGA_PART_SDK_TYPESCRIPT,
+    FEATURE_OMEGA_PART_HOSTED_SANDBOXES,
+    FEATURE_OMEGA_PART_HOSTED_DEPLOYMENTS,
+    FEATURE_OMEGA_PART_AGENT_OBSERVE,
+    FEATURE_OMEGA_PART_LEARNING_CURVES,
+    FEATURE_JEV_MODELS,
 )
 
 
@@ -295,8 +428,9 @@ PAID_FEATURES: frozenset[str] = frozenset(
     f.id for f in _ALL_FEATURES if f.requires_license
 )
 
-# Paid features that stay license-gated even off-cloud (managed compute +
-# the error feed). Everything else in PAID_FEATURES is free on self-hosted.
+# Paid features that stay license-gated even off-cloud (managed compute, the
+# error feed, Instant eval and Insights). Everything else in PAID_FEATURES,
+# Jev included, is free on self-hosted.
 OSS_LOCKED_FEATURES: frozenset[str] = frozenset(
     f.id for f in _ALL_FEATURES if f.oss_locked
 )
@@ -305,6 +439,18 @@ MANAGED_SERVICE_FEATURES: frozenset[str] = frozenset(
     f.id
     for f in _ALL_FEATURES
     if f.execution_location == ExecutionLocation.FUTUREAGI_SERVICE
+    and f.rollout_product is None
+    and f.readiness_part is None
+)
+
+# The hosted Omega products, decided by the rollout step.
+ROLLOUT_FEATURES: frozenset[str] = frozenset(
+    f.id for f in _ALL_FEATURES if f.rollout_product is not None
+)
+
+# Parts of those products, decided by readiness.
+READINESS_FEATURES: frozenset[str] = frozenset(
+    f.id for f in _ALL_FEATURES if f.readiness_part is not None
 )
 
 

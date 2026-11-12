@@ -1,0 +1,105 @@
+# A Snowflake-managed MCP server with Snowflake OAuth, the method Snowflake
+# recommends. The server "doesn't support dynamic client registration": the
+# customer creates a Snowflake OAuth security integration (OAUTH_CLIENT =
+# CUSTOM, confidential, with our callback as OAUTH_REDIRECT_URI) and stores
+# its client id and secret as the org's own client, so the client is
+# BYO by design. The authorize and token endpoints live on the account URL,
+# which the org fills once for both the server and OAuth. Without a role
+# scope, the session uses the user's DEFAULT_ROLE, as Snowflake recommends.
+#
+# EE needs a default for every OAuth URL variable and OSS a fixed URL, so
+# neither receives this provider.
+schema: "connector-manifest/v1#provider"
+app: snowflake
+id: oauth
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://{accountUrl}/api/v2/databases/{database}/schemas/{schema}/mcp-servers/{serverName}
+  urlVariables:
+    accountUrl:
+      description: "Your account URL's host in lowercase, orgname-account_name with hyphens for underscores, such as myorg-myaccount.snowflakecomputing.com."
+      pattern: '^[a-z][a-z0-9]*-[a-z][a-z0-9-]*\.snowflakecomputing\.com$'
+      scope: org
+    database:
+      description: "The database that holds the MCP SERVER object."
+      pattern: "^[A-Za-z_][A-Za-z0-9_]{0,252}$"
+      scope: org
+    schema:
+      description: "The schema that holds the MCP SERVER object."
+      pattern: "^[A-Za-z_][A-Za-z0-9_]{0,252}$"
+      scope: org
+    serverName:
+      description: "The MCP SERVER object's name."
+      pattern: "^[A-Za-z_][A-Za-z0-9_]{0,252}$"
+      scope: org
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://{accountUrl}/oauth/authorize
+    tokenUrl: https://{accountUrl}/oauth/token-request
+    scopes: [refresh_token]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    urlVariables:
+      accountUrl:
+        description: "Your account URL's host in lowercase, orgname-account_name with hyphens for underscores, such as myorg-myaccount.snowflakecomputing.com."
+        pattern: '^[a-z][a-z0-9]*-[a-z][a-z0-9-]*\.snowflakecomputing\.com$'
+        scope: org
+    registration: [preregistered]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.accountUrl
+    url: https://docs.snowflake.com/en/user-guide/admin-account-identifier
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.accountUrl
+    url: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.database
+    url: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.schema
+    url: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.serverName
+    url: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://docs.snowflake.com/en/user-guide/oauth-custom
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://docs.snowflake.com/en/user-guide/oauth-custom
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://docs.snowflake.com/en/user-guide/oauth-custom
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://docs.snowflake.com/en/user-guide/oauth-custom
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://docs.snowflake.com/en/user-guide/oauth-custom
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.urlVariables.accountUrl
+    url: https://docs.snowflake.com/en/user-guide/oauth-custom
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

@@ -2,12 +2,29 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from ee.evals.localizer.error_localizer import (
     ErrorLocalizer,
     _enforce_verdict,
     _is_chunkable,
     _normalise_images,
 )
+from model_hub.tests.network_isolation import no_external_lookups  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("no_external_lookups")
+
+
+@pytest.fixture
+def local_input_blocks():
+    # Localization builds the full input after it prepares the mocked chunks.
+    with patch(
+        "ee.evals.localizer.error_localizer.AgentEvaluator.build_eval_input_blocks",
+        return_value=("", []),
+    ) as build:
+        yield build
+        build.assert_called_once()
+        assert build.call_args.kwargs["rule_prompt"] == ""
+        assert build.call_args.kwargs["tag_keys"] is True
 
 
 def _make_localizer(input_data, input_type, **overrides):
@@ -239,7 +256,7 @@ def test_localize_text_empty_response_falls_back_to_verdict(mock_split, mock_run
 @pytest.mark.unit
 @patch("ee.evals.localizer.error_localizer.asyncio.run")
 @patch("ee.evals.localizer.error_localizer._create_audio_segments")
-def test_localize_audio_attaches_orgSegment(mock_segs, mock_run):
+def test_localize_audio_attaches_orgSegment(mock_segs, mock_run, local_input_blocks):
     mock_segs.return_value = {
         "segment_1": {
             "url": "s3://b/1.mp3",
@@ -309,7 +326,9 @@ def test_localize_audio_empty_segments_skips_without_calling_llm(mock_segs, mock
 @patch("ee.evals.localizer.error_localizer.asyncio.run")
 @patch("ee.evals.localizer.error_localizer._build_full_image_block")
 @patch("ee.evals.localizer.error_localizer._create_overlapping_patches")
-def test_localize_image_attaches_orgPatch(mock_patches, mock_thumb, mock_run):
+def test_localize_image_attaches_orgPatch(
+    mock_patches, mock_thumb, mock_run, local_input_blocks
+):
     mock_patches.return_value = {
         "patch_1": {
             "url": "s3://b/1.jpg",
@@ -354,7 +373,7 @@ def test_localize_image_attaches_orgPatch(mock_patches, mock_thumb, mock_run):
 @patch("ee.evals.localizer.error_localizer._build_full_image_block")
 @patch("ee.evals.localizer.error_localizer._create_overlapping_patches")
 def test_localize_image_empty_llm_synthesises_whole_image(
-    mock_patches, mock_thumb, mock_run
+    mock_patches, mock_thumb, mock_run, local_input_blocks
 ):
     mock_patches.return_value = {
         "patch_1": {
@@ -381,7 +400,9 @@ def test_localize_image_empty_llm_synthesises_whole_image(
 @pytest.mark.unit
 @patch("ee.evals.localizer.error_localizer.asyncio.run")
 @patch("ee.evals.localizer.error_localizer._create_overlapping_patches")
-def test_localize_image_thumbnail_failure_degrades_gracefully(mock_patches, mock_run):
+def test_localize_image_thumbnail_failure_degrades_gracefully(
+    mock_patches, mock_run, local_input_blocks
+):
     mock_patches.return_value = {
         "patch_1": {
             "url": "s3://b/1.jpg",
@@ -485,7 +506,7 @@ def test_localize_text_whole_text_from_llm_synthesises_orgSen(mock_split, mock_r
 @patch("ee.evals.localizer.error_localizer.asyncio.run")
 @patch("ee.evals.localizer.error_localizer._create_audio_segments")
 def test_localize_audio_whole_audio_from_llm_synthesises_orgSegment(
-    mock_segs, mock_run
+    mock_segs, mock_run, local_input_blocks
 ):
     mock_segs.return_value = {
         "segment_1": {
@@ -535,7 +556,7 @@ def test_localize_audio_whole_audio_from_llm_synthesises_orgSegment(
 @patch("ee.evals.localizer.error_localizer._build_full_image_block")
 @patch("ee.evals.localizer.error_localizer._create_overlapping_patches")
 def test_localize_image_whole_image_from_llm_synthesises_orgPatch(
-    mock_patches, mock_thumb, mock_run
+    mock_patches, mock_thumb, mock_run, local_input_blocks
 ):
     mock_patches.return_value = {
         "patch_1": {

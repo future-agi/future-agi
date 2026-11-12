@@ -1,0 +1,21 @@
+# Fixture for the live-smoke runner's tests (scripts/connector-smoke), not
+# catalog data. Facts are illustrative.
+schema: "connector-manifest/v1#app"
+id: gmail
+version: 1.0.0
+name: Gmail
+description: "Read, search and send email."
+vendor: { name: Google, domains: [google.com, googleapis.com] }
+eeCategory: communication
+group: google
+categories: [communication, email]
+tags: [email]
+docsUrl: https://developers.google.com/workspace/gmail/api
+archetype: mailbox
+defaultProvider: futureagi-rest
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.google.com/workspace/gmail/api
+    fetchedAt: 2026-10-19
+x-omega: { eeId: gmail, envPrefix: OMEGA_INTEGRATION_GMAIL }

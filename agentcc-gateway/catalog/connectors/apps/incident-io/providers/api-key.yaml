@@ -1,0 +1,43 @@
+# incident.io's remote MCP server with an incident.io API key as the bearer,
+# the form incident.io's page gives for automated systems. The key is made
+# under Settings > API keys with the scopes the agent needs. Team, Pro and
+# Enterprise plans only.
+schema: "connector-manifest/v1#provider"
+app: incident-io
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.incident.io/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+      help: "An incident.io API key from Settings > API keys, with the scopes the agent needs."
+      helpUrl: https://docs.incident.io/ai/remote-mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.incident.io/ai/remote-mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://docs.incident.io/ai/remote-mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.credentialParts
+    url: https://docs.incident.io/ai/remote-mcp
+    fetchedAt: 2026-11-11
+x-omega: { oss: exclude }

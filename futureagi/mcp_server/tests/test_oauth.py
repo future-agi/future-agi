@@ -1,5 +1,6 @@
 """Tests for MCP OAuth utilities and models."""
 
+import base64
 import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -118,6 +119,39 @@ class TestInvalidToken:
 
     def test_empty_string_returns_none(self):
         assert decrypt_oauth_token("") is None
+
+
+class TestCanonicalOAuthText:
+    @pytest.mark.parametrize("size", [1, 2, 3, 4, 31, 32, 33, 256])
+    def test_encoder_output_is_canonical(self, size):
+        from mcp_server.oauth_utils import is_canonical_oauth_token
+
+        encoded = base64.urlsafe_b64encode(bytes(range(size))).decode("ascii")
+        assert is_canonical_oauth_token(encoded)
+
+    @pytest.mark.parametrize("token", [None, b"bytes", "", "not base64!", "café"])
+    def test_invalid_text_is_rejected(self, token):
+        from mcp_server.oauth_utils import is_canonical_oauth_token
+
+        assert not is_canonical_oauth_token(token)
+
+    def test_decodable_text_requires_exact_reencoding(self):
+        from mcp_server.oauth_utils import is_canonical_oauth_token
+
+        # Exercise the equality boundary with a stub, not a bearer mutation.
+        encoded = base64.urlsafe_b64encode(b"format-fixture").decode("ascii")
+        with patch(
+            "mcp_server.oauth_utils.base64.urlsafe_b64encode",
+            return_value=b"different-canonical-text",
+        ) as reencode:
+            assert not is_canonical_oauth_token(encoded)
+        reencode.assert_called_once_with(b"format-fixture")
+
+    def test_invalid_text_never_reaches_decryption(self):
+        with patch("mcp_server.oauth_utils._get_fernet") as get_fernet:
+            get_fernet.return_value.decrypt.return_value = b'{"type":"mcp_refresh"}'
+            assert decrypt_oauth_token("not base64!") is None
+        get_fernet.assert_not_called()
 
 
 class TestClientSecretHashing:

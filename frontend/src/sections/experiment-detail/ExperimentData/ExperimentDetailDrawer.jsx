@@ -7,7 +7,8 @@ import axios, { endpoints } from "src/utils/axios";
 import { useParams } from "react-router";
 import { enqueueSnackbar } from "notistack";
 import { readLegacyExperimentRow } from "./legacy_experiment_row_read";
-import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { getInlineLoadErrorMessage } from "src/utils/errorUtils";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 // const ExperimentDetailSection = ({ col, individualCols, row, columnConfigs, index, refreshGrid }) => {
 //   const evalsData = useMemo(() => {
@@ -67,7 +68,7 @@ import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 //           padding: 2,
 //           textAlign: "center",
 //           color: "text.primary",
-//           fontSize: 14,
+//           fontSize: 13,
 //           fontWeight:400
 //         }}
 //       >
@@ -157,7 +158,7 @@ import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 //           {String.fromCharCode(65 + index)}
 //           {/* E{index} */}
 //         </Box>
-//         <Typography fontWeight={600} fontSize={14} color="text.primary">
+//         <Typography fontWeight={600} fontSize={13} color="text.primary">
 //           {col?.group?.name}
 //         </Typography>
 //       </Box>
@@ -194,7 +195,7 @@ import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 //                   width: "0px",
 //                 },
 //                 headerBackgroundColor: "background.paper",
-//                 fontSize:"14px"
+//                 fontSize:"13px"
 //               })}
 //               columnDefs={TabColumnDefs(setOpenDetailRow)}
 //               defaultColDef={defaultColDef}
@@ -229,7 +230,7 @@ import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 //               component={"img"}
 //               src="/assets/icons/ic_dragger.svg"
 //             />
-//             {/* <Iconify icon="oui:grab" width={16} sx={{ color: "text.disabled" }} /> */}
+//             {/* <Iconify icon="solar:grip-vertical-linear" width={16} sx={{ color: "text.disabled" }} /> */}
 //           </Box>
 //         </Box>
 //         <Box
@@ -388,7 +389,7 @@ import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 //             Prev
 //             <Iconify
 //               sx={{ marginLeft: theme.spacing(1.25) }}
-//               icon="material-symbols:expand-less-rounded"
+//               icon="solar:alt-arrow-up-linear"
 //             />
 //           </LoadingButton>
 //           <LoadingButton
@@ -408,11 +409,11 @@ import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 //             Next
 //             <Iconify
 //               sx={{ marginLeft: theme.spacing(1.25) }}
-//               icon="material-symbols:expand-more-rounded"
+//               icon="solar:alt-arrow-down-linear"
 //             />
 //           </LoadingButton>
 //           <IconButton aria-label="close-experiment-detail" onClick={onClose} size="small">
-//             <Iconify icon="mingcute:close-line" color="text.primary" />
+//             <Iconify icon="solar:close-linear" color="text.primary" />
 //           </IconButton>
 //         </Box>
 //     </Box>
@@ -474,6 +475,43 @@ import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 //   refreshGrid: PropTypes.func,
 // };
 
+// Grid rows carry row_id (the rows API); rowId is the older client-side key.
+const rowIdOf = (rowData) => rowData?.row_id ?? rowData?.rowId;
+
+const parseInfos = (value) => {
+  if (typeof value !== "string") return value ?? {};
+  try {
+    return JSON.parse(value) ?? {};
+  } catch {
+    return {};
+  }
+};
+
+// row-diff returns each cell's raw value_infos ({reason, metadata}); the rows
+// API, and every renderer and the eval detail modal here, read the processed
+// shape (metadata.cell_metadata, see _process_exp_dataset_cell). Without this
+// rows reached through row-diff showed "Unable to fetch explanation".
+const toGridCells = (cells = {}) =>
+  Object.fromEntries(
+    Object.entries(cells).map(([columnId, cell]) => {
+      const infos = parseInfos(cell?.value_infos);
+      const meta = parseInfos(infos?.metadata);
+      return [
+        columnId,
+        {
+          ...cell,
+          metadata: {
+            response_time_ms: meta?.response_time ?? 0,
+            token_count: meta?.usage?.total_tokens ?? 0,
+            cost: meta?.cost ?? {},
+            cell_metadata: meta,
+            reason: infos?.reason ?? null,
+          },
+        },
+      ];
+    }),
+  );
+
 const ExperimentDetailDrawer = ({
   open,
   onClose,
@@ -504,16 +542,16 @@ const ExperimentDetailDrawer = ({
   //   });
 
   const updateRowFromApiResult = (rowId, apiResult) => {
-    const apiDataForRow = apiResult[rowId];
-    if (!apiDataForRow) return;
+    if (!apiResult?.[rowId]) return;
+    const apiDataForRow = toGridCells(apiResult[rowId]);
 
     setAllRows((prev) =>
       prev.map((row) => {
-        if (row.data.rowId === rowId) {
+        if (rowIdOf(row.data) === rowId) {
           return {
             ...row,
             data: {
-              rowId: rowId,
+              row_id: rowId,
               ...apiDataForRow, // the actual cell objects
             },
           };
@@ -543,12 +581,14 @@ const ExperimentDetailDrawer = ({
     onSuccess: (newIds) => {
       setNextId(newIds.length > 0 ? newIds[0] : null);
       setAllRows((prev) => {
-        const seenIds = new Set(prev.map((item) => String(item?.data?.rowId)));
+        const seenIds = new Set(
+          prev.map((item) => String(rowIdOf(item?.data))),
+        );
         const appended = newIds
           .filter((rowId) => !seenIds.has(String(rowId)))
           .map((rowId, index) => ({
             rowIndex: prev.length + index,
-            data: { rowId },
+            data: { row_id: rowId },
           }));
         return [...prev, ...appended];
       });
@@ -644,13 +684,13 @@ const ExperimentDetailDrawer = ({
 
       const next = data?.data?.result;
       const nextIndex = row?.index + 1;
-      setNextId(allRows[nextIndex + 1]?.data?.rowId);
-      if (next && row?.rowId) {
+      setNextId(rowIdOf(allRows[nextIndex + 1]?.data));
+      if (next && rowIdOf(row)) {
         setExpandRow((pre) => {
           return {
             ...pre,
-            ...data?.data?.result[variables.row_ids[0]],
-            rowId: variables.row_ids[0],
+            ...toGridCells(data?.data?.result[variables.row_ids[0]]),
+            row_id: variables.row_ids[0],
             index: nextIndex,
           };
         });
@@ -677,14 +717,15 @@ const ExperimentDetailDrawer = ({
       setExpandRow((pre) => {
         return {
           ...pre,
-          ...data?.data?.result[variables.row_ids[0]],
-          rowId: variables.row_ids[0],
+          ...toGridCells(data?.data?.result[variables.row_ids[0]]),
+          row_id: variables.row_ids[0],
         };
       });
       setIsApiLoading(false);
     },
   });
 
+  const currentRowId = rowIdOf(row);
   const handleToggleDiff = () => {
     setShowDiff((prev) => !prev);
   };
@@ -696,7 +737,7 @@ const ExperimentDetailDrawer = ({
         ([_, value]) =>
           typeof value === "object" &&
           value !== null &&
-          "cellDiffValue" in value,
+          ("cell_diff_value" in value || "cellDiffValue" in value),
       );
 
     if (hasDiffValues) {
@@ -706,21 +747,21 @@ const ExperimentDetailDrawer = ({
       setIsApiLoading(true);
       //@ts-ignore
       updateDiffData({
-        experiment_id: `{{${experimentId}}}`,
+        experiment_id: experimentId,
         column_ids: columnConfig.map((i) => i.id),
         compare_column_ids: columnConfig
-          ?.filter((i) => i?.originType == "experiment")
+          ?.filter((i) => (i?.origin_type ?? i?.originType) === "experiment")
           .map((i) => i?.id),
-        row_ids: [row?.rowId],
+        row_ids: [rowIdOf(row)],
       });
     }
-  }, [showDiff, row?.rowId, diffMode]);
+  }, [showDiff, currentRowId, diffMode]);
 
   const handleFetchNextRow = () => {
     const nextIndex = row?.index + 1;
     const nextData = allRows.find((i) => i.rowIndex == nextIndex)?.data;
     const continuationRowId =
-      nextId || allRows[allRows?.length - 1]?.data?.rowId;
+      nextId || rowIdOf(allRows[allRows?.length - 1]?.data);
     if (!nextId && continuationRowId) setNextId(continuationRowId);
     if (nextIndex >= allRows.length - 1 && continuationRowId) {
       setNextItem(continuationRowId);
@@ -729,10 +770,10 @@ const ExperimentDetailDrawer = ({
       // getCellData(payload);
       setIsApiLoading(true);
       getDiffData({
-        experiment_id: `{{${experimentId}}}`,
+        experiment_id: experimentId,
         column_ids: columnConfig.map((i) => i.id),
         compare_column_ids: columnConfig
-          ?.filter((i) => i?.originType == "experiment")
+          ?.filter((i) => (i?.origin_type ?? i?.originType) === "experiment")
           .map((i) => i?.id),
         row_ids: [continuationRowId],
       });
@@ -788,17 +829,19 @@ const ExperimentDetailDrawer = ({
   const nextRowId = row?.index >= totalCount - 1;
   const prevRowId = row?.index <= 0;
 
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           overflowX: "hidden",
         },
@@ -819,7 +862,7 @@ const ExperimentDetailDrawer = ({
                 size="small"
                 onClick={() => {
                   const retryRowId =
-                    nextId || allRows[allRows?.length - 1]?.data?.rowId;
+                    nextId || rowIdOf(allRows[allRows?.length - 1]?.data);
                   if (retryRowId) setNextItem(retryRowId);
                 }}
                 disabled={isLoadingNextRows}
@@ -828,7 +871,7 @@ const ExperimentDetailDrawer = ({
               </Button>
             }
           >
-            {getSafeActionErrorMessage(
+            {getInlineLoadErrorMessage(
               nextRowsError,
               "More experiment rows could not be loaded.",
             )}{" "}

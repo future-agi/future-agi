@@ -129,7 +129,7 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
             return self._get_masked_api_key(creds)
         if creds and creds.provider_type == "livekit":
             return ""
-        return mask_key(obj.api_key or "")
+        return mask_key(obj.get_api_key())
 
     @staticmethod
     def _get_masked_api_key(creds):
@@ -232,6 +232,21 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
             return obj._latest_version_id
         version = obj.latest_version
         return version.id if version else None
+
+
+class AgentDefinitionListPageSerializer(serializers.Serializer):
+    """Paginated response for GET /simulate/agent-definitions/.
+
+    The view answers ``ExtendedPageNumberPagination.get_paginated_response``
+    directly, not the success envelope.
+    """
+
+    count = serializers.IntegerField(read_only=True)
+    next = serializers.CharField(read_only=True, allow_null=True)
+    previous = serializers.CharField(read_only=True, allow_null=True)
+    results = AgentDefinitionListResponseSerializer(many=True, read_only=True)
+    total_pages = serializers.IntegerField(read_only=True)
+    current_page = serializers.IntegerField(read_only=True)
 
 
 class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer):

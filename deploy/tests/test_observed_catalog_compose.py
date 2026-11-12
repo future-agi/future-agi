@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shlex
@@ -18,8 +19,17 @@ SCHEMA = ROOT / "futureagi/tracer/services/clickhouse/v2/observed_catalog/schema
 PRODUCTION_PINS = {key: "contract-test" for key in (
     "FUTURE_AGI_VERSION", "FRONTEND_VERSION", "FI_COLLECTOR_VERSION",
     "AGENTCC_GATEWAY_VERSION", "SERVING_VERSION", "CODE_EXECUTOR_VERSION",
-    "SIMULATION_RUNNER_VERSION",
+    "SIMULATION_RUNNER_VERSION", "OMEGA_HUB_CHECKER_VERSION",
 )}
+# The production overlay's other Omega Hub inputs: its token, URLs and runner host.
+PRODUCTION_HUB = {
+    "OMEGA_HUB_CHECKER_TOKEN": "contract-test-hub-checker-token",
+    "OMEGA_HUB_APP_URL": "https://app.example.com/dashboard/hub",
+    "OMEGA_HUB_PUBLIC_API_URL": "https://api.example.com/omega-hub/v1",
+    "OMEGA_HUB_RUNNER_IMAGE": "registry.example.com/omega-hub-runner@sha256:" + "0" * 64,
+    "OMEGA_HUB_RUNNER_DOCKER_HOST": "tcp://hub-runner.example.internal:2376",
+    "OMEGA_HUB_RUNNER_TLS_DIR": "/etc/futureagi/hub-runner-client",
+}
 
 
 # The dev overlay carries an unrelated agent-harness sandbox whose credentials
@@ -40,8 +50,22 @@ def compose(
     env = {key: value for key, value in os.environ.items() if key in ("PATH", "HOME")}
     if "docker-compose.distributed.dev.yml" in overlays:
         env.update(DEV_OVERLAY_ENV)
+    if any(
+        Path(name).name in ("docker-compose.e2e.yml", "docker-compose.standalone-e2e.yml")
+        for name in (base_file, *overlays)
+    ):
+        # Rendering needs valid runtime keys, not committed or inherited values.
+        # Apply explicit overrides last so required-value refusal tests still work.
+        env.update({
+            name: base64.urlsafe_b64encode(os.urandom(32)).decode()
+            for name in ("INTEGRATION_ENCRYPTION_KEY", "WEBHOOKS_ENCRYPTION_KEYS")
+        })
     env.update(overrides)
-    args = ["docker", "compose", "--env-file", os.devnull, "-f", base_file]
+    try:
+        from .compose_test_tools import compose_command
+    except ImportError:
+        from compose_test_tools import compose_command
+    args = [*compose_command(), "--env-file", os.devnull, "-f", base_file]
     for overlay in overlays:
         args.extend(["-f", overlay])
     result = subprocess.run(
@@ -125,6 +149,8 @@ class ComposeContractTests(unittest.TestCase):
             key: "packaging-contract-only"
             for key in (
                 "SECRET_KEY",
+                "FI_API_SECRET_PEPPER",
+                "INTEGRATION_ENCRYPTION_KEY",
                 "AGENTCC_INTERNAL_API_KEY",
                 "AGENTCC_ADMIN_TOKEN",
                 "PG_PASSWORD",
@@ -135,6 +161,8 @@ class ComposeContractTests(unittest.TestCase):
         }
         production_env.update(
             **PRODUCTION_PINS,
+            **PRODUCTION_HUB,
+            INTEGRATION_ENCRYPTION_KEY=base64.urlsafe_b64encode(os.urandom(32)).decode(),
             FRONTEND_URL="http://localhost:3100", VITE_HOST_API="http://localhost:8100",
         )
         for overlays in (
@@ -144,10 +172,11 @@ class ComposeContractTests(unittest.TestCase):
             ("e2e/stack/docker-compose.e2e.yml",),
         ):
             with self.subTest(overlays=overlays):
-                services = compose(*overlays, **production_env)["services"]
+                services = compose(*overlays, COMPOSE_PROFILES="hub", **production_env)["services"]
+                # Opt in to the checker; the code executor's root is read-only too.
                 self.assertEqual(
                     {name for name, svc in services.items() if svc.get("read_only")},
-                    {"fi-collector", "fi-property-catalog-consumer"},
+                    {"fi-collector", "fi-property-catalog-consumer", "hub-checker", "code-executor"},
                 )
                 collector = services["fi-collector"]
                 self.assertEqual(
@@ -404,6 +433,8 @@ class ComposeContractTests(unittest.TestCase):
                 "fi-property-catalog-consumer",
                 "mock-llm",
                 "mock-slack",
+                "webhook-sink",
+                "smtp-sink",
                 "peerdb-server",
                 "peerdb-flow-worker",
                 "peerdb-flow-snapshot-worker",
@@ -478,6 +509,8 @@ class ProductionCatalogContractTests(unittest.TestCase):
             key: "production-contract-only"
             for key in (
                 "SECRET_KEY",
+                "FI_API_SECRET_PEPPER",
+                "INTEGRATION_ENCRYPTION_KEY",
                 "AGENTCC_INTERNAL_API_KEY",
                 "AGENTCC_ADMIN_TOKEN",
                 "PG_PASSWORD",
@@ -487,6 +520,7 @@ class ProductionCatalogContractTests(unittest.TestCase):
         # Distinct synthetic inputs, including characters needing shell/SQL care.
         self.env.update(
             **PRODUCTION_PINS,
+            **PRODUCTION_HUB,
             FRONTEND_URL="https://app.example.com",
             VITE_HOST_API="https://api.example.com",
             PROPERTY_CATALOG_API_PASSWORD="reader '\"\\$${not_an_env}\n\t ü",
@@ -512,6 +546,7 @@ class ProductionCatalogContractTests(unittest.TestCase):
             "serving": "futureagi/serving:contract-test",
             "code-executor": "futureagi/code-executor:contract-test",
             "worker-simulation-runner": "futureagi/future-agi-simulation-runner:contract-test",
+            "hub-checker": "futureagi/omega-hub-checker:contract-test",
         }
         for name in ("backend", "postgres-schema-bootstrap", "clickhouse-native-bootstrap",
                      "clickhouse-cdc-bootstrap", "peerdb-init", "peerdb-temporal-init"):
@@ -522,9 +557,23 @@ class ProductionCatalogContractTests(unittest.TestCase):
         for name, image in expected.items():
             self.assertEqual(services[name]["image"], image, name)
         # Requiring production pins must not change root local defaults.
-        root = compose()["services"]
+        root = compose(COMPOSE_PROFILES="hub")["services"]
         self.assertEqual(root["backend"]["image"], "futureagi/future-agi:latest")
         self.assertEqual(root["frontend"]["image"], "futureagi/frontend:latest")
+        # The Hub checker dials the dedicated runner host; no runner daemon runs here.
+        self.assertNotIn("hub-runner", services)
+        self.assertFalse(services["hub-checker"].get("build"))
+        checker = services["hub-checker"]["environment"]
+        self.assertEqual(checker["DOCKER_HOST"], PRODUCTION_HUB["OMEGA_HUB_RUNNER_DOCKER_HOST"])
+        self.assertEqual(checker["OMEGA_HUB_RUNNER_WAIT"], "0")
+        self.assertEqual(root["hub-checker"]["environment"]["DOCKER_HOST"], "tcp://hub-runner:2376")
+        for key in PRODUCTION_HUB:
+            if key in ("OMEGA_HUB_APP_URL", "OMEGA_HUB_PUBLIC_API_URL"):
+                continue
+            with self.subTest(required=key):
+                env = {k: v for k, v in self.env.items() if k != key}
+                with self.assertRaisesRegex(AssertionError, key):
+                    compose("deploy/docker-compose.production.yml", **env)
 
     def test_production_requires_explicit_collector_image_and_removes_source_build(self):
         services = compose("deploy/docker-compose.production.yml", **self.env)["services"]

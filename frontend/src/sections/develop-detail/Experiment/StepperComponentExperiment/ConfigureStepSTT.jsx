@@ -26,16 +26,43 @@ const ConfigureStepSTT = ({
     }
   };
 
+  // v2.1 (stt:voice-input): STT transcribes an audio column; a dataset
+  // without one says so instead of an empty column select.
+  const hasAudio = (allColumns ?? []).some((c) => c?.dataType === "audio");
+
   return (
     <Stack spacing={2}>
-      <PromptSTTInput
-        allColumns={allColumns}
-        control={control}
-        getValues={getValues}
-        setValue={setValue}
-        messageFieldPrefix={`promptConfig.0.messages`}
-        fieldPrefix={`promptConfig.0.voiceInputColumnId`}
-      />
+      {hasAudio ? (
+        <PromptSTTInput
+          allColumns={allColumns}
+          control={control}
+          getValues={getValues}
+          setValue={setValue}
+          messageFieldPrefix={`promptConfig.0.messages`}
+          fieldPrefix={`promptConfig.0.voiceInputColumnId`}
+        />
+      ) : (
+        <Box
+          data-testid="stt-needs-audio"
+          sx={{
+            px: 1.5,
+            py: 1.25,
+            borderRadius: 0.5,
+            border: "1px solid",
+            borderColor: "warning.light",
+            bgcolor: "warning.lighter",
+          }}
+        >
+          <Typography typography="s1" fontWeight="fontWeightMedium">
+            STT needs an audio column
+          </Typography>
+          <Typography typography="s2" color="text.secondary">
+            This dataset has no audio column, so there is nothing to transcribe.
+            Add an audio column on the Data tab, or choose LLM or TTS under
+            Experiment type.
+          </Typography>
+        </Box>
+      )}
       <Box>
         <Typography
           sx={{ display: "flex", flexDirection: "row", alignItems: "center" }}
@@ -43,7 +70,7 @@ const ConfigureStepSTT = ({
           fontWeight={"fontWeightMedium"}
         >
           Select Models
-          <Typography type="span" sx={{ color: "red.500" }}>
+          <Typography type="span" sx={{ color: "status.danger.fg" }}>
             *
           </Typography>
         </Typography>

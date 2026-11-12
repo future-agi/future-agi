@@ -1,0 +1,47 @@
+# Zapier MCP with a connection token as the bearer, the method Zapier's
+# authentication page gives for a client that is not on its supported list.
+# A person first creates a Zapier MCP server at mcp.zapier.com and chooses
+# its apps and actions, then picks Other as the client and generates the
+# token; the token runs that server's tools, so one connection is one Zapier
+# MCP server. Zapier also accepts the token as a token query parameter on
+# the same URL; the header form is the one Zapier recommends. Listed clients
+# get a client-specific server URL instead, which is not this record.
+schema: "connector-manifest/v1#provider"
+app: zapier
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.zapier.com/api/v1/connect
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Connection token
+      help: "A Zapier MCP connection token: at mcp.zapier.com open your server, choose Other as the client, and generate a token. Treat it like a password."
+      helpUrl: https://docs.zapier.com/mcp/get-started/authentication
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.zapier.com/mcp/get-started/authentication
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://docs.zapier.com/mcp/get-started/authentication
+    fetchedAt: 2026-11-11
+  - fact: auth.credentialParts
+    url: https://docs.zapier.com/mcp/get-started/authentication
+    fetchedAt: 2026-11-11
+x-omega: { oss: exclude }

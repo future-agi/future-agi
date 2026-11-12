@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: semgrep
+version: 1.0.0
+name: Semgrep
+description: "AppSec findings, triage, fixes, scans and policies in Semgrep AppSec Platform."
+vendor:
+  name: Semgrep
+  domains: [semgrep.dev]
+eeCategory: developer
+group: other
+categories: [developer, security]
+tags: [appsec, findings, sast]
+docsUrl: https://docs.semgrep.dev/semgrep-appsec-platform/mcp
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.semgrep.dev/semgrep-appsec-platform/mcp
+    fetchedAt: 2026-11-11

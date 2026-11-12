@@ -4,10 +4,12 @@ import React, {
   useCallback,
   useMemo,
   useRef,
+  useId,
 } from "react";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
+import Alert from "@mui/material/Alert";
 import IconButton from "@mui/material/IconButton";
 import TextField from "@mui/material/TextField";
 import InputAdornment from "@mui/material/InputAdornment";
@@ -19,8 +21,13 @@ import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import { alpha, useTheme } from "@mui/material/styles";
+import { LoadingButton } from "@mui/lab";
 import Iconify from "src/components/iconify";
+import { importWithRecovery } from "src/utils/chunkRecovery";
 import CustomTooltip from "src/components/tooltip";
+import { ConfirmDialog } from "src/components/custom-dialog";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { buildConnectorSavePayload } from "src/sections/settings/falcon-ai-connectors/utils";
 import {
   listSkills,
   fetchConnectors,
@@ -29,6 +36,7 @@ import {
   discoverConnectorTools,
 } from "../hooks/useFalconAPI";
 import useFalconStore from "../store/useFalconStore";
+import { captureFalconRequest } from "../store/falconRequestGuard";
 import ToolsSkeleton from "./ToolsSkeleton";
 import ConnectorDetailError from "./ConnectorDetailError";
 import { useConnectorToolPermissions } from "../hooks/useConnectorToolPermissions";
@@ -50,6 +58,15 @@ const CONNECTOR_CATEGORIES = {
   Custom: [],
 };
 
+// Under the connector editor's OAuth client ID and secret, which are shown
+// turned off: the connector API doesn't store them.
+const NOT_IN_RELEASE = "Not available in this release";
+
+// The sign-in window opens after a server round trip, which a pop-up blocker
+// may refuse; without this the connector would just sit at Pending.
+const SIGN_IN_BLOCKED =
+  "Your browser blocked the sign-in window. Allow pop-ups for this site, then click Re-authenticate.";
+
 function categorizeConnector(connector) {
   const name = (connector.name || connector.type || "").toLowerCase();
   for (const [category, keywords] of Object.entries(CONNECTOR_CATEGORIES)) {
@@ -67,14 +84,14 @@ function getConnectorIcon(connector) {
   if (name.includes("jira")) return "mdi:jira";
   if (name.includes("slack")) return "mdi:slack";
   if (name.includes("notion")) return "simple-icons:notion";
-  if (name.includes("postgres")) return "mdi:database";
-  if (name.includes("mysql")) return "mdi:database-outline";
-  if (name.includes("redis")) return "mdi:database-arrow-right";
+  if (name.includes("postgres")) return "solar:database-linear";
+  if (name.includes("mysql")) return "solar:database-linear";
+  if (name.includes("redis")) return "solar:database-linear";
   if (name.includes("aws")) return "mdi:aws";
   if (name.includes("gcp")) return "mdi:google-cloud";
   if (name.includes("azure")) return "mdi:microsoft-azure";
   if (name.includes("vscode")) return "mdi:microsoft-visual-studio-code";
-  return "mdi:puzzle-outline";
+  return "solar:widget-linear";
 }
 
 // ---------------------------------------------------------------------------
@@ -88,10 +105,11 @@ function Panel1NavItem({ icon, label, active, onClick }) {
       selected={active}
       onClick={onClick}
       sx={{
-        borderRadius: "8px",
+        borderRadius: "6px",
         mb: "2px",
         px: 1.5,
-        py: "7px",
+        py: 0,
+        height: 28,
         minHeight: 0,
         color: active ? "text.primary" : "text.secondary",
         bgcolor: active ? theme.palette.action.selected : "transparent",
@@ -103,14 +121,14 @@ function Panel1NavItem({ icon, label, active, onClick }) {
         },
       }}
     >
-      <ListItemIcon sx={{ minWidth: 28, color: "inherit" }}>
-        <Iconify icon={icon} width={18} />
+      <ListItemIcon sx={{ minWidth: 24, color: "inherit" }}>
+        <Iconify icon={icon} width={16} />
       </ListItemIcon>
       <ListItemText
         primary={label}
         primaryTypographyProps={{
           fontSize: 13,
-          fontWeight: active ? 600 : 500,
+          fontWeight: active ? 500 : 400,
         }}
       />
     </ListItemButton>
@@ -128,21 +146,16 @@ Panel1NavItem.propTypes = {
 // Panel 1: Navigation sidebar
 // ---------------------------------------------------------------------------
 function NavigationPanel({ selectedTab, onTabChange }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-
   return (
     <Box
       sx={{
-        width: 200,
-        minWidth: 200,
+        width: 224,
+        minWidth: 224,
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
-        borderRight: (t) => `solid 1px ${t.palette.divider}`,
-        bgcolor: isDark
-          ? alpha(theme.palette.primary.main, 0.04)
-          : alpha(theme.palette.primary.main, 0.02),
+        borderRight: "1px solid",
+        borderColor: "border.default",
         height: "100%",
       }}
     >
@@ -160,14 +173,14 @@ function NavigationPanel({ selectedTab, onTabChange }) {
         <IconButton
           size="small"
           onClick={() => useFalconStore.getState().setShowCustomize(false)}
-          sx={{ width: 24, height: 24, color: "text.secondary" }}
+          sx={{ color: "text.secondary" }}
         >
-          <Iconify icon="mdi:arrow-left" width={18} />
+          <Iconify icon="solar:arrow-left-linear" width={20} />
         </IconButton>
         <Typography
           sx={{
-            fontSize: 14,
-            fontWeight: 700,
+            fontSize: 13,
+            fontWeight: 600,
             color: "text.primary",
           }}
         >
@@ -178,13 +191,13 @@ function NavigationPanel({ selectedTab, onTabChange }) {
       {/* Nav items */}
       <Box sx={{ px: 0.75, flex: 1 }}>
         <Panel1NavItem
-          icon="mdi:lightning-bolt"
+          icon="solar:bolt-linear"
           label="Skills"
           active={selectedTab === "skills"}
           onClick={() => onTabChange("skills")}
         />
         <Panel1NavItem
-          icon="mdi:puzzle-outline"
+          icon="solar:widget-linear"
           label="Connectors"
           active={selectedTab === "connectors"}
           onClick={() => onTabChange("connectors")}
@@ -201,7 +214,7 @@ function NavigationPanel({ selectedTab, onTabChange }) {
       >
         <Typography
           sx={{
-            fontSize: 11,
+            fontSize: 12,
             color: "text.disabled",
             lineHeight: 1.4,
           }}
@@ -228,8 +241,6 @@ function SkillsListPanel({
   onCreateClick,
   loading,
 }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const [search, setSearch] = useState("");
 
   const filtered = useMemo(() => {
@@ -245,12 +256,13 @@ function SkillsListPanel({
   return (
     <Box
       sx={{
-        width: 250,
-        minWidth: 250,
+        width: 224,
+        minWidth: 224,
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
-        borderRight: (t) => `solid 1px ${t.palette.divider}`,
+        borderRight: "1px solid",
+        borderColor: "border.default",
         height: "100%",
       }}
     >
@@ -266,7 +278,7 @@ function SkillsListPanel({
         }}
       >
         <Typography
-          sx={{ fontSize: 13, fontWeight: 700, color: "text.primary" }}
+          sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
         >
           Skills
         </Typography>
@@ -275,9 +287,9 @@ function SkillsListPanel({
             size="small"
             onClick={onCreateClick}
             title="Create skill"
-            sx={{ width: 24, height: 24, color: "text.secondary" }}
+            sx={{ color: "text.secondary" }}
           >
-            <Iconify icon="mdi:plus" width={18} />
+            <Iconify icon="solar:add-linear" width={20} />
           </IconButton>
         </Box>
       </Box>
@@ -294,7 +306,7 @@ function SkillsListPanel({
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="mdi:magnify"
+                  icon="solar:magnifier-linear"
                   width={14}
                   sx={{ color: "text.disabled" }}
                 />
@@ -309,9 +321,7 @@ function SkillsListPanel({
               bgcolor: "transparent",
             },
             "& .MuiOutlinedInput-notchedOutline": {
-              borderColor: isDark
-                ? alpha(theme.palette.common.white, 0.06)
-                : alpha(theme.palette.common.black, 0.06),
+              borderColor: "divider",
             },
           }}
         />
@@ -328,7 +338,7 @@ function SkillsListPanel({
         {!loading && filtered.length === 0 && (
           <Typography
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               color: "text.disabled",
               textAlign: "center",
               py: 3,
@@ -349,48 +359,37 @@ function SkillsListPanel({
                 borderRadius: "6px",
                 mb: "1px",
                 px: 1,
-                py: "6px",
+                py: 0,
+                height: 28,
                 minHeight: 0,
-                color: isActive ? "primary.main" : "text.primary",
-                bgcolor: isActive
-                  ? alpha(theme.palette.primary.main, 0.08)
-                  : "transparent",
+                color: "text.primary",
+                bgcolor: isActive ? "action.selected" : "transparent",
                 "&:hover": {
-                  bgcolor: isActive
-                    ? alpha(theme.palette.primary.main, 0.12)
-                    : theme.palette.action.hover,
+                  bgcolor: isActive ? "action.selected" : "action.hover",
                 },
                 "&.Mui-selected": {
-                  bgcolor: alpha(theme.palette.primary.main, 0.08),
+                  bgcolor: "action.selected",
+                  "&:hover": { bgcolor: "action.selected" },
                 },
               }}
             >
               <ListItemIcon sx={{ minWidth: 26, color: "inherit" }}>
-                <Iconify icon={skill.icon || "mdi:star-outline"} width={16} />
+                <Iconify icon={skill.icon || "solar:star-linear"} width={16} />
               </ListItemIcon>
               <ListItemText
                 primary={
                   <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                    <Typography
-                      noWrap
-                      sx={{ fontSize: 12, fontWeight: isActive ? 600 : 500 }}
-                    >
+                    <Typography variant="body2" noWrap>
                       {skill.name}
                     </Typography>
                     {(skill.is_builtin || skill.is_system) && (
-                      <Chip
-                        label="SYS"
-                        size="small"
-                        variant="outlined"
-                        sx={{
-                          height: 14,
-                          fontSize: 8,
-                          fontWeight: 700,
-                          borderColor: alpha(theme.palette.info.main, 0.4),
-                          color: "info.main",
-                          "& .MuiChip-label": { px: 0.4 },
-                        }}
-                      />
+                      <Typography
+                        component="span"
+                        variant="caption"
+                        color="text.tertiary"
+                      >
+                        SYS
+                      </Typography>
                     )}
                   </Box>
                 }
@@ -413,7 +412,7 @@ function SkillsListPanel({
           }}
         >
           <ListItemIcon sx={{ minWidth: 26, color: "primary.main" }}>
-            <Iconify icon="mdi:plus" width={16} />
+            <Iconify icon="solar:add-linear" width={16} />
           </ListItemIcon>
           <ListItemText
             primary="Create Skill"
@@ -458,8 +457,6 @@ function ConnectorsListPanel({
   onCreateClick,
   loading,
 }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const [search, setSearch] = useState("");
 
   const grouped = useMemo(() => {
@@ -486,12 +483,13 @@ function ConnectorsListPanel({
   return (
     <Box
       sx={{
-        width: 250,
-        minWidth: 250,
+        width: 224,
+        minWidth: 224,
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
-        borderRight: (t) => `solid 1px ${t.palette.divider}`,
+        borderRight: "1px solid",
+        borderColor: "border.default",
         height: "100%",
       }}
     >
@@ -507,7 +505,7 @@ function ConnectorsListPanel({
         }}
       >
         <Typography
-          sx={{ fontSize: 13, fontWeight: 700, color: "text.primary" }}
+          sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
         >
           Connectors
         </Typography>
@@ -515,9 +513,9 @@ function ConnectorsListPanel({
           size="small"
           onClick={onCreateClick}
           title="Add connector"
-          sx={{ width: 24, height: 24, color: "text.secondary" }}
+          sx={{ color: "text.secondary" }}
         >
-          <Iconify icon="mdi:plus" width={18} />
+          <Iconify icon="solar:add-linear" width={20} />
         </IconButton>
       </Box>
 
@@ -533,7 +531,7 @@ function ConnectorsListPanel({
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="mdi:magnify"
+                  icon="solar:magnifier-linear"
                   width={14}
                   sx={{ color: "text.disabled" }}
                 />
@@ -548,9 +546,7 @@ function ConnectorsListPanel({
               bgcolor: "transparent",
             },
             "& .MuiOutlinedInput-notchedOutline": {
-              borderColor: isDark
-                ? alpha(theme.palette.common.white, 0.06)
-                : alpha(theme.palette.common.black, 0.06),
+              borderColor: "divider",
             },
           }}
         />
@@ -572,10 +568,10 @@ function ConnectorsListPanel({
               <React.Fragment key={cat}>
                 <Typography
                   sx={{
-                    fontSize: 10,
+                    fontSize: 12,
                     fontWeight: 600,
-                    color: "text.disabled",
-                    textTransform: "uppercase",
+                    color: "text.tertiary",
+                    textTransform: "none",
                     letterSpacing: 0.5,
                     px: 0.5,
                     pt: 1.5,
@@ -596,19 +592,19 @@ function ConnectorsListPanel({
                         borderRadius: "6px",
                         mb: "1px",
                         px: 1,
-                        py: "6px",
+                        py: 0,
+                        height: 28,
                         minHeight: 0,
-                        color: isActive ? "primary.main" : "text.primary",
-                        bgcolor: isActive
-                          ? alpha(theme.palette.primary.main, 0.08)
-                          : "transparent",
+                        color: "text.primary",
+                        bgcolor: isActive ? "action.selected" : "transparent",
                         "&:hover": {
                           bgcolor: isActive
-                            ? alpha(theme.palette.primary.main, 0.12)
-                            : theme.palette.action.hover,
+                            ? "action.selected"
+                            : "action.hover",
                         },
                         "&.Mui-selected": {
-                          bgcolor: alpha(theme.palette.primary.main, 0.08),
+                          bgcolor: "action.selected",
+                          "&:hover": { bgcolor: "action.selected" },
                         },
                       }}
                     >
@@ -625,10 +621,8 @@ function ConnectorsListPanel({
                             }}
                           >
                             <Typography
+                              variant="body2"
                               sx={{
-                                fontSize: 12,
-                                fontWeight: isActive ? 600 : 500,
-                                noWrap: true,
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
                               }}
@@ -636,23 +630,13 @@ function ConnectorsListPanel({
                               {conn.name}
                             </Typography>
                             {isCustom && (
-                              <Chip
-                                label="CUSTOM"
-                                size="small"
-                                variant="outlined"
-                                sx={{
-                                  height: 16,
-                                  fontSize: 9,
-                                  fontWeight: 700,
-                                  letterSpacing: 0.3,
-                                  borderColor: alpha(
-                                    theme.palette.warning.main,
-                                    0.5,
-                                  ),
-                                  color: "warning.main",
-                                  "& .MuiChip-label": { px: 0.5 },
-                                }}
-                              />
+                              <Typography
+                                component="span"
+                                variant="caption"
+                                color="text.tertiary"
+                              >
+                                CUSTOM
+                              </Typography>
                             )}
                           </Box>
                         }
@@ -667,7 +651,7 @@ function ConnectorsListPanel({
         {!loading && Object.keys(grouped).length === 0 && (
           <Box sx={{ textAlign: "center", py: 4, px: 2 }}>
             <Iconify
-              icon="mdi:puzzle-outline"
+              icon="solar:widget-linear"
               width={32}
               sx={{ color: "text.disabled", mb: 1 }}
             />
@@ -675,16 +659,7 @@ function ConnectorsListPanel({
               {search ? "No matching connectors" : "No connectors added yet"}
             </Typography>
             {!search && (
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={onCreateClick}
-                sx={{
-                  fontSize: 11,
-                  textTransform: "none",
-                  borderRadius: "8px",
-                }}
-              >
+              <Button size="small" variant="outlined" onClick={onCreateClick}>
                 Add connector
               </Button>
             )}
@@ -714,6 +689,41 @@ ConnectorsListPanel.propTypes = {
 // ---------------------------------------------------------------------------
 // Panel 3: Skill detail + inline editor
 // ---------------------------------------------------------------------------
+
+// Same rules and messages as the Create Skill window (validateSkillForm in
+// SkillEditorDialog.jsx), which also has an Icon field. Change both together.
+function withPendingPhrase(phrases, pending) {
+  const phrase = pending.trim();
+  return phrase && !phrases.includes(phrase) ? [...phrases, phrase] : phrases;
+}
+
+function validateSkillForm(form, phrases) {
+  const name = form.name.trim();
+  const instructions = form.instructions.trim();
+  if (!name) {
+    return { field: "name", message: "Name is required" };
+  }
+  if (name.length < 2) {
+    return { field: "name", message: "Name must be at least 2 characters" };
+  }
+  if (!instructions) {
+    return { field: "instructions", message: "Instructions are required" };
+  }
+  if (instructions.length < 10) {
+    return {
+      field: "instructions",
+      message: "Instructions should be at least 10 characters",
+    };
+  }
+  if (phrases.length === 0) {
+    return {
+      field: "trigger_phrases",
+      message: "Add at least one trigger phrase",
+    };
+  }
+  return null;
+}
+
 function SkillDetailPanel({
   skill,
   isEditing,
@@ -723,27 +733,27 @@ function SkillDetailPanel({
   onCancelEdit,
 }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const isSystem = skill?.is_builtin || skill?.is_system;
 
   // ── Inline editor state ──
   const [form, setForm] = useState({
     name: "",
     description: "",
-    icon: "mdi:star-outline",
+    icon: "solar:star-linear",
     instructions: "",
     trigger_phrases: [],
   });
   const [phraseInput, setPhraseInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   useEffect(() => {
     if (isEditing && skill) {
       setForm({
         name: skill.name || "",
         description: skill.description || "",
-        icon: skill.icon || "mdi:star-outline",
+        icon: skill.icon || "solar:star-linear",
         instructions: skill.instructions || "",
         trigger_phrases: skill.trigger_phrases || [],
       });
@@ -751,7 +761,7 @@ function SkillDetailPanel({
       setForm({
         name: "",
         description: "",
-        icon: "mdi:star-outline",
+        icon: "solar:star-linear",
         instructions: "",
         trigger_phrases: [],
       });
@@ -778,53 +788,67 @@ function SkillDetailPanel({
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) {
-      setError("Name is required");
+    const phrases = withPendingPhrase(form.trigger_phrases, phraseInput);
+    const invalid = validateSkillForm(form, phrases);
+    if (invalid) {
+      setError(invalid);
       return;
     }
-    if (!form.instructions.trim()) {
-      setError("Instructions are required");
-      return;
-    }
-    if (form.trigger_phrases.length === 0) {
-      setError("At least one trigger phrase is required");
-      return;
-    }
+    const payload = { ...form, trigger_phrases: phrases };
+    const isCurrent = captureFalconRequest();
     setSaving(true);
     setError(null);
     try {
-      const { createSkill, updateSkill } = await import(
-        "../hooks/useFalconAPI"
+      const { createSkill, updateSkill } = await importWithRecovery(
+        () => import("../hooks/useFalconAPI"),
       );
+      if (!isCurrent()) return;
       if (skill?.id && !skill.is_builtin && !skill.is_system) {
-        await updateSkill(skill.id, form);
+        await updateSkill(skill.id, payload);
       } else {
-        await createSkill(form);
+        await createSkill(payload);
       }
+      if (!isCurrent()) return;
       onSaved?.();
     } catch (err) {
-      setError(
-        err?.response?.data?.error ||
+      setError({
+        field: null,
+        message:
+          err?.response?.data?.error ||
           err?.response?.data?.detail ||
           err?.message ||
-          "Failed to save",
-      );
+          "Failed to save skill.",
+      });
     } finally {
       setSaving(false);
     }
   };
 
+  // Runs only from the confirm dialog; the Delete button just opens it.
   const handleDelete = async () => {
     if (!skill?.id || isSystem) return;
+    const isCurrent = captureFalconRequest();
     setSaving(true);
+    setError(null);
     try {
-      const { deleteSkill } = await import("../hooks/useFalconAPI");
+      const { deleteSkill } = await importWithRecovery(
+        () => import("../hooks/useFalconAPI"),
+      );
+      if (!isCurrent()) return;
       await deleteSkill(skill.id);
+      if (!isCurrent()) return;
       onSaved?.();
-    } catch {
-      /* silent */
+    } catch (err) {
+      setError({
+        field: null,
+        message: getSafeActionErrorMessage(
+          err,
+          "Skill could not be deleted. Try again.",
+        ),
+      });
     } finally {
       setSaving(false);
+      setConfirmDeleteOpen(false);
     }
   };
 
@@ -842,11 +866,11 @@ function SkillDetailPanel({
         }}
       >
         <Iconify
-          icon="mdi:lightning-bolt"
+          icon="solar:bolt-linear"
           width={48}
           sx={{ color: "text.disabled", mb: 2 }}
         />
-        <Typography sx={{ fontSize: 15, fontWeight: 600, mb: 0.5 }}>
+        <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 0.5 }}>
           Create new skills
         </Typography>
         <Typography
@@ -876,13 +900,13 @@ function SkillDetailPanel({
           p: 3,
         }}
       >
-        <Typography sx={{ fontSize: 16, fontWeight: 700, mb: 2.5 }}>
+        <Typography sx={{ fontSize: 16, fontWeight: 600, mb: 2.5 }}>
           {skill?.id ? "Edit Skill" : "Create Skill"}
         </Typography>
 
         {error && (
           <Typography sx={{ fontSize: 12, color: "error.main", mb: 1.5 }}>
-            {error}
+            {error.message}
           </Typography>
         )}
 
@@ -906,7 +930,7 @@ function SkillDetailPanel({
           required
           value={form.name}
           onChange={handleChange("name")}
-          error={!!error && !form.name.trim()}
+          error={error?.field === "name"}
           sx={{
             mb: 2,
             "& .MuiInputBase-root": { fontSize: 13, borderRadius: "8px" },
@@ -958,7 +982,7 @@ function SkillDetailPanel({
           placeholder="Write detailed instructions for how Falcon should behave when this skill is active..."
           value={form.instructions}
           onChange={handleChange("instructions")}
-          error={!!error && !form.instructions.trim()}
+          error={error?.field === "instructions"}
           sx={{
             mb: 2,
             "& .MuiInputBase-root": {
@@ -983,7 +1007,7 @@ function SkillDetailPanel({
           </Typography>{" "}
           <Typography
             component="span"
-            sx={{ fontSize: 11, color: "text.disabled" }}
+            sx={{ fontSize: 12, color: "text.disabled" }}
           >
             (press Enter to add)
           </Typography>
@@ -992,7 +1016,7 @@ function SkillDetailPanel({
           size="small"
           fullWidth
           placeholder="e.g. /build-dataset"
-          error={!!error && form.trigger_phrases.length === 0}
+          error={error?.field === "trigger_phrases"}
           value={phraseInput}
           onChange={(e) => setPhraseInput(e.target.value)}
           onKeyDown={handleAddPhrase}
@@ -1016,7 +1040,6 @@ function SkillDetailPanel({
                     ),
                   }))
                 }
-                sx={{ fontSize: 11, height: 24 }}
               />
             ))}
           </Box>
@@ -1028,21 +1051,10 @@ function SkillDetailPanel({
             size="small"
             onClick={handleSave}
             disabled={saving}
-            sx={{
-              textTransform: "none",
-              borderRadius: "8px",
-              fontSize: 13,
-              px: 3,
-            }}
           >
             {saving ? "Saving..." : "Save"}
           </Button>
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={onCancelEdit}
-            sx={{ textTransform: "none", borderRadius: "8px", fontSize: 13 }}
-          >
+          <Button variant="outlined" size="small" onClick={onCancelEdit}>
             Cancel
           </Button>
           {skill?.id && !isSystem && (
@@ -1050,12 +1062,9 @@ function SkillDetailPanel({
               variant="text"
               size="small"
               color="error"
-              onClick={handleDelete}
+              onClick={() => setConfirmDeleteOpen(true)}
               disabled={saving}
               sx={{
-                textTransform: "none",
-                borderRadius: "8px",
-                fontSize: 13,
                 ml: "auto",
               }}
             >
@@ -1063,6 +1072,32 @@ function SkillDetailPanel({
             </Button>
           )}
         </Box>
+
+        <ConfirmDialog
+          open={confirmDeleteOpen}
+          onClose={() => {
+            if (!saving) setConfirmDeleteOpen(false);
+          }}
+          closeDisabled={saving}
+          title="Delete skill?"
+          content={
+            <Typography typography="s1" color="text.secondary">
+              <strong>{skill?.name}</strong> and its instructions are removed,
+              and Falcon stops using it. You can&apos;t undo this.
+            </Typography>
+          }
+          action={
+            <LoadingButton
+              size="small"
+              variant="contained"
+              color="error"
+              loading={saving}
+              onClick={handleDelete}
+            >
+              Delete skill
+            </LoadingButton>
+          }
+        />
       </Box>
     );
   }
@@ -1092,7 +1127,7 @@ function SkillDetailPanel({
             sx={{
               width: 40,
               height: 40,
-              borderRadius: "10px",
+              borderRadius: "8px",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -1100,11 +1135,11 @@ function SkillDetailPanel({
               color: "primary.main",
             }}
           >
-            <Iconify icon={skill.icon || "mdi:star-outline"} width={22} />
+            <Iconify icon={skill.icon || "solar:star-linear"} width={20} />
           </Box>
           <Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography sx={{ fontSize: 16, fontWeight: 700 }}>
+              <Typography sx={{ fontSize: 16, fontWeight: 600 }}>
                 {skill.name}
               </Typography>
               {isSystem && (
@@ -1113,9 +1148,6 @@ function SkillDetailPanel({
                   size="small"
                   variant="outlined"
                   sx={{
-                    height: 18,
-                    fontSize: 9,
-                    fontWeight: 700,
                     letterSpacing: 0.5,
                     borderColor: alpha(theme.palette.info.main, 0.4),
                     color: "info.main",
@@ -1138,9 +1170,8 @@ function SkillDetailPanel({
             <Button
               size="small"
               variant="outlined"
-              startIcon={<Iconify icon="mdi:content-copy" width={14} />}
+              startIcon={<Iconify icon="solar:copy-linear" width={14} />}
               onClick={() => onDuplicate(skill)}
-              sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
             >
               Duplicate
             </Button>
@@ -1151,7 +1182,7 @@ function SkillDetailPanel({
               title="Edit"
               sx={{ color: "text.secondary" }}
             >
-              <Iconify icon="mdi:pencil-outline" width={18} />
+              <Iconify icon="solar:pen-linear" width={20} />
             </IconButton>
           )}
         </Box>
@@ -1162,7 +1193,7 @@ function SkillDetailPanel({
         <Box>
           <Typography
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.disabled",
               mb: 0.25,
@@ -1181,7 +1212,7 @@ function SkillDetailPanel({
         <Box sx={{ mb: 2 }}>
           <Typography
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.disabled",
               mb: 0.5,
@@ -1196,10 +1227,6 @@ function SkillDetailPanel({
                 label={phrase}
                 size="small"
                 variant="outlined"
-                sx={{
-                  fontSize: 11,
-                  height: 24,
-                }}
               />
             ))}
           </Box>
@@ -1211,7 +1238,7 @@ function SkillDetailPanel({
         <Box sx={{ mb: 2 }}>
           <Typography
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 600,
               color: "text.disabled",
               mb: 0.5,
@@ -1231,7 +1258,7 @@ function SkillDetailPanel({
       <Box sx={{ mb: 2 }}>
         <Typography
           sx={{
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.disabled",
             mb: 0.5,
@@ -1244,9 +1271,7 @@ function SkillDetailPanel({
             sx={{
               p: 2,
               borderRadius: "8px",
-              bgcolor: isDark
-                ? alpha(theme.palette.common.white, 0.03)
-                : alpha(theme.palette.common.black, 0.02),
+              bgcolor: "background.neutral",
               border: (t) => `1px solid ${t.palette.divider}`,
             }}
           >
@@ -1284,9 +1309,8 @@ function SkillDetailPanel({
           <Button
             fullWidth
             variant="outlined"
-            startIcon={<Iconify icon="mdi:pencil-outline" width={16} />}
+            startIcon={<Iconify icon="solar:pen-linear" width={16} />}
             onClick={() => onEdit(skill)}
-            sx={{ textTransform: "none", borderRadius: "8px", fontSize: 13 }}
           >
             Edit skill
           </Button>
@@ -1321,8 +1345,9 @@ SkillDetailPanel.propTypes = {
 function ConnectorDetailPanel({
   connector,
   isEditing,
-  onDisconnect,
+  onDelete,
   onReauth,
+  connecting,
   onToolToggle,
   onToolsAllow,
   toolError,
@@ -1335,63 +1360,96 @@ function ConnectorDetailPanel({
   onEdit,
 }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
+  const oauthClientReasonId = useId();
 
   // ── Inline editor state ──
+  // Only the fields the connector API stores, as the Settings editor sends
+  // them. The API never returns a saved secret, so that field starts blank.
   const [form, setForm] = useState({
     name: "",
     server_url: "",
-    api_key: "",
-    oauth_client_id: "",
-    oauth_client_secret: "",
+    auth_type: "none",
+    auth_header_name: "",
+    auth_header_value: "",
   });
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  // Kept with the connector it belongs to, so it never shows on another one.
+  const [deleteError, setDeleteError] = useState(null);
 
   useEffect(() => {
     if (isEditing && connector?.id) {
       setForm({
         name: connector.name || "",
         server_url: connector.server_url || connector.serverUrl || "",
-        api_key: "",
-        oauth_client_id:
-          connector.oauth_client_id || connector.oauthClientId || "",
-        oauth_client_secret: "",
+        auth_type: connector.auth_type || "none",
+        auth_header_name: connector.auth_header_name || "",
+        auth_header_value: "",
       });
-      setShowAdvanced(!!(connector.oauth_client_id || connector.oauthClientId));
     } else if (isEditing) {
       setForm({
         name: "",
         server_url: "",
-        api_key: "",
-        oauth_client_id: "",
-        oauth_client_secret: "",
+        auth_type: "none",
+        auth_header_name: "",
+        auth_header_value: "",
       });
-      setShowAdvanced(false);
     }
     setError(null);
-  }, [isEditing, connector]);
+    // Keyed on the id, not the object: a connection answer or an OAuth
+    // callback replaces this connector's record while the user may be typing,
+    // and refilling the form then would throw their changes away.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditing, connector?.id]);
 
   const handleChange = (field) => (e) =>
     setForm((p) => ({ ...p, [field]: e.target.value }));
+
+  const usesSecret =
+    form.auth_type === "api_key" || form.auth_type === "bearer";
+  // A blank key keeps the saved one only if one of this kind was saved.
+  const keepsSavedSecret =
+    usesSecret &&
+    Boolean(connector?.id) &&
+    (connector.auth_type || "none") === form.auth_type;
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.server_url.trim()) {
       setError("Name and Server URL are required");
       return;
     }
+    if (form.auth_type === "api_key" && !form.auth_header_name.trim()) {
+      setError("Enter the header name for the API key");
+      return;
+    }
+    if (usesSecret && !keepsSavedSecret && !form.auth_header_value.trim()) {
+      setError(
+        form.auth_type === "api_key"
+          ? "Enter the API key"
+          : "Enter the bearer token",
+      );
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      const { createConnector, updateConnector } = await import(
-        "../hooks/useFalconAPI"
+      const { createConnector, updateConnector } = await importWithRecovery(
+        () => import("../hooks/useFalconAPI"),
       );
-      const payload = { ...form };
-      // Don't send empty optional fields
-      if (!payload.api_key) delete payload.api_key;
-      if (!payload.oauth_client_id) delete payload.oauth_client_id;
-      if (!payload.oauth_client_secret) delete payload.oauth_client_secret;
+      const fields = {
+        name: form.name,
+        server_url: form.server_url,
+        auth_type: form.auth_type,
+      };
+      if (form.auth_type === "api_key") {
+        fields.auth_header_name = form.auth_header_name;
+      }
+      if (usesSecret) fields.auth_header_value = form.auth_header_value;
+      const payload = buildConnectorSavePayload(fields, {
+        preserveEmptySecret: Boolean(connector?.id),
+      });
 
       let result;
       if (connector?.id) {
@@ -1400,31 +1458,9 @@ function ConnectorDetailPanel({
         result = await createConnector(payload);
       }
 
-      const connectorData = result?.result || result;
-      onSaved?.();
-
-      // After creating/updating, auto-trigger authentication
-      if (connectorData?.id) {
-        try {
-          const { authenticateConnector } = await import(
-            "../hooks/useFalconAPI"
-          );
-          const authResult = await authenticateConnector(connectorData.id);
-          const authUrl =
-            authResult?.authorization_url ||
-            authResult?.auth_url ||
-            authResult?.oauth_url;
-          if (authUrl) {
-            window.open(
-              authUrl,
-              "falcon_oauth",
-              "width=600,height=700,popup=yes",
-            );
-          }
-        } catch {
-          // Auth will be retried via Re-authenticate button
-        }
-      }
+      // The panel selects the saved connector and authenticates it there, so
+      // a failed connection is shown on it instead of being dropped.
+      onSaved?.(result?.result || result);
     } catch (err) {
       setError(
         err?.response?.data?.error ||
@@ -1434,6 +1470,27 @@ function ConnectorDetailPanel({
       );
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Runs only from the confirm dialog; the Delete connector button opens it.
+  const handleConfirmDelete = async () => {
+    const id = connector.id;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDelete(id);
+    } catch (err) {
+      setDeleteError({
+        id,
+        message: getSafeActionErrorMessage(
+          err,
+          "Connector could not be deleted. Try again.",
+        ),
+      });
+    } finally {
+      setDeleting(false);
+      setConfirmDeleteOpen(false);
     }
   };
 
@@ -1451,11 +1508,11 @@ function ConnectorDetailPanel({
         }}
       >
         <Iconify
-          icon="mdi:puzzle-outline"
+          icon="solar:widget-linear"
           width={48}
           sx={{ color: "text.disabled", mb: 2 }}
         />
-        <Typography sx={{ fontSize: 15, fontWeight: 600, mb: 0.5 }}>
+        <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 0.5 }}>
           Connect your tools
         </Typography>
         <Typography
@@ -1476,20 +1533,18 @@ function ConnectorDetailPanel({
   // ── Inline editor ──
   if (isEditing) {
     const isNew = !connector?.id;
+    const secretLabel =
+      form.auth_type === "api_key" ? "API key" : "Bearer token";
     const inputSx = {
       mb: 2,
       "& .MuiInputBase-root": {
-        fontSize: 14,
-        borderRadius: "10px",
+        fontSize: 13,
+        borderRadius: "8px",
         height: 48,
-        bgcolor: isDark
-          ? alpha(theme.palette.common.white, 0.04)
-          : alpha(theme.palette.common.black, 0.02),
+        bgcolor: "background.neutral",
       },
       "& .MuiOutlinedInput-notchedOutline": {
-        borderColor: isDark
-          ? alpha(theme.palette.common.white, 0.12)
-          : alpha(theme.palette.common.black, 0.15),
+        borderColor: "border.default",
       },
     };
 
@@ -1505,7 +1560,7 @@ function ConnectorDetailPanel({
         }}
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
-          <Typography sx={{ fontSize: 20, fontWeight: 700 }}>
+          <Typography sx={{ fontSize: 20, fontWeight: 600 }}>
             {isNew ? "Add custom connector" : "Edit connector"}
           </Typography>
           {isNew && (
@@ -1514,9 +1569,6 @@ function ConnectorDetailPanel({
               size="small"
               variant="outlined"
               sx={{
-                height: 20,
-                fontSize: 10,
-                fontWeight: 700,
                 borderColor: alpha(theme.palette.info.main, 0.4),
                 color: "info.main",
               }}
@@ -1558,54 +1610,95 @@ function ConnectorDetailPanel({
           sx={inputSx}
         />
 
-        {/* Advanced settings — collapsible */}
-        <Box
-          onClick={() => setShowAdvanced(!showAdvanced)}
+        <Typography
           sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: 0.75,
-            mb: 2,
-            cursor: "pointer",
-            userSelect: "none",
+            fontSize: 12,
+            fontWeight: 600,
+            color: "text.secondary",
+            mb: 0.5,
           }}
         >
-          <Iconify
-            icon={showAdvanced ? "mdi:chevron-up" : "mdi:chevron-down"}
-            width={20}
-            sx={{ color: "text.secondary" }}
-          />
-          <Typography sx={{ fontSize: 14, fontWeight: 600 }}>
-            Advanced settings
-          </Typography>
-        </Box>
+          Authentication
+        </Typography>
+        <TextField
+          select
+          fullWidth
+          value={form.auth_type}
+          onChange={handleChange("auth_type")}
+          SelectProps={{ native: true }}
+          inputProps={{ "aria-label": "Authentication" }}
+          sx={inputSx}
+        >
+          <option value="none">None</option>
+          <option value="oauth">OAuth 2.0</option>
+          <option value="api_key">API Key</option>
+          <option value="bearer">Bearer Token</option>
+        </TextField>
 
-        {showAdvanced && (
+        {form.auth_type === "oauth" && (
           <>
+            <Typography
+              sx={{ fontSize: 12, color: "text.secondary", mt: -1, mb: 2 }}
+            >
+              After you save, Falcon registers itself with the server and opens
+              its sign-in page in a new window.
+            </Typography>
+            {/* Your own OAuth client, shown turned off: the connector API
+                doesn't store a client ID or secret, so these send nothing. */}
             <TextField
               fullWidth
+              disabled
               placeholder="OAuth Client ID (optional)"
-              value={form.oauth_client_id}
-              onChange={handleChange("oauth_client_id")}
+              inputProps={{
+                "aria-label": "OAuth Client ID (optional)",
+                "aria-describedby": oauthClientReasonId,
+              }}
               sx={inputSx}
             />
             <TextField
               fullWidth
+              disabled
+              type="password"
               placeholder="OAuth Client Secret (optional)"
-              type="password"
-              value={form.oauth_client_secret}
-              onChange={handleChange("oauth_client_secret")}
+              inputProps={{
+                "aria-label": "OAuth Client Secret (optional)",
+                "aria-describedby": oauthClientReasonId,
+              }}
               sx={inputSx}
             />
-            <TextField
-              fullWidth
-              placeholder="API Key / Bearer Token (optional)"
-              type="password"
-              value={form.api_key}
-              onChange={handleChange("api_key")}
-              sx={inputSx}
-            />
+            <Typography
+              id={oauthClientReasonId}
+              sx={{ fontSize: 12, color: "text.secondary", mt: -1, mb: 2 }}
+            >
+              {NOT_IN_RELEASE}
+            </Typography>
           </>
+        )}
+
+        {form.auth_type === "api_key" && (
+          <TextField
+            fullWidth
+            placeholder="Header name, e.g. X-API-Key"
+            value={form.auth_header_name}
+            onChange={handleChange("auth_header_name")}
+            sx={inputSx}
+          />
+        )}
+
+        {usesSecret && (
+          <TextField
+            fullWidth
+            type="password"
+            autoComplete="new-password"
+            placeholder={
+              keepsSavedSecret
+                ? `${secretLabel} (leave blank to keep the saved one)`
+                : secretLabel
+            }
+            value={form.auth_header_value}
+            onChange={handleChange("auth_header_value")}
+            sx={inputSx}
+          />
         )}
 
         {/* Trust warning */}
@@ -1623,11 +1716,6 @@ function ConnectorDetailPanel({
             variant="outlined"
             onClick={onCancelEdit}
             sx={{
-              textTransform: "none",
-              borderRadius: "10px",
-              fontSize: 14,
-              px: 3,
-              py: 1,
               minWidth: 100,
             }}
           >
@@ -1638,11 +1726,6 @@ function ConnectorDetailPanel({
             onClick={handleSave}
             disabled={saving}
             sx={{
-              textTransform: "none",
-              borderRadius: "10px",
-              fontSize: 14,
-              px: 3,
-              py: 1,
               minWidth: 100,
             }}
           >
@@ -1654,6 +1737,7 @@ function ConnectorDetailPanel({
   }
 
   const tools = connector.tools || connector.discovered_tools || [];
+  const toolCount = tools.length || connector.tool_count || 0;
   const enabledNames = connector.enabled_tool_names || [];
   const isVerified = connector.is_verified ?? false;
   const isActive = connector.is_active ?? true;
@@ -1706,7 +1790,7 @@ function ConnectorDetailPanel({
             sx={{
               width: 40,
               height: 40,
-              borderRadius: "10px",
+              borderRadius: "8px",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -1714,11 +1798,11 @@ function ConnectorDetailPanel({
               color: "primary.main",
             }}
           >
-            <Iconify icon={getConnectorIcon(connector)} width={22} />
+            <Iconify icon={getConnectorIcon(connector)} width={20} />
           </Box>
           <Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Typography sx={{ fontSize: 16, fontWeight: 700 }}>
+              <Typography sx={{ fontSize: 16, fontWeight: 600 }}>
                 {connector.name}
               </Typography>
               <Chip
@@ -1734,7 +1818,6 @@ function ConnectorDetailPanel({
                       ? "warning"
                       : "default"
                 }
-                sx={{ height: 20, fontSize: 10, fontWeight: 600 }}
               />
             </Box>
             {connector.description && (
@@ -1754,12 +1837,10 @@ function ConnectorDetailPanel({
           mb: 2,
           p: 1.5,
           borderRadius: "8px",
-          bgcolor: isDark
-            ? alpha(theme.palette.common.white, 0.03)
-            : alpha(theme.palette.common.black, 0.02),
+          bgcolor: "background.neutral",
         }}
       >
-        <Typography sx={{ fontSize: 11, color: "text.disabled", mb: 0.25 }}>
+        <Typography sx={{ fontSize: 12, color: "text.disabled", mb: 0.25 }}>
           Server URL
         </Typography>
         <Typography
@@ -1773,7 +1854,7 @@ function ConnectorDetailPanel({
         </Typography>
         {authType !== "none" && (
           <Box sx={{ mt: 0.75 }}>
-            <Typography sx={{ fontSize: 11, color: "text.disabled", mb: 0.25 }}>
+            <Typography sx={{ fontSize: 12, color: "text.disabled", mb: 0.25 }}>
               Authentication
             </Typography>
             <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
@@ -1789,52 +1870,84 @@ function ConnectorDetailPanel({
 
       {/* Error banner */}
       {lastError && (
-        <Box
-          sx={{
-            mb: 2,
-            p: 1.5,
-            borderRadius: "8px",
-            bgcolor: alpha(theme.palette.error.main, 0.08),
-            border: `1px solid ${alpha(theme.palette.error.main, 0.2)}`,
-          }}
-        >
-          <Typography sx={{ fontSize: 12, color: "error.main" }}>
-            {lastError}
-          </Typography>
-        </Box>
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {lastError}
+        </Alert>
       )}
 
-      {/* Action buttons */}
+      {deleteError?.id === connector.id && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {deleteError.message}
+        </Alert>
+      )}
+
+      {/* Action buttons. Edit waits for a connection in flight: its answer
+          would land on the record being edited, after the new settings. */}
       <Box sx={{ display: "flex", gap: 1, mb: 3 }}>
         <Button
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="mdi:pencil-outline" width={14} />}
+          startIcon={<Iconify icon="solar:pen-linear" width={14} />}
           onClick={() => onEdit(connector)}
-          sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
+          disabled={connecting}
         >
           Edit
         </Button>
         <Button
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="mdi:refresh" width={14} />}
+          startIcon={
+            connecting ? (
+              <CircularProgress size={12} color="inherit" />
+            ) : (
+              <Iconify icon="solar:refresh-linear" width={14} />
+            )
+          }
           onClick={() => onReauth?.(connector.id)}
-          sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
+          disabled={connecting}
         >
-          Re-authenticate
+          {connecting ? "Connecting..." : "Re-authenticate"}
         </Button>
         <Button
           size="small"
           variant="outlined"
           color="error"
-          startIcon={<Iconify icon="mdi:link-variant-off" width={14} />}
-          onClick={() => onDisconnect(connector.id)}
-          sx={{ textTransform: "none", borderRadius: "8px", fontSize: 12 }}
+          startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={14} />}
+          onClick={() => setConfirmDeleteOpen(true)}
         >
-          Disconnect
+          Delete connector
         </Button>
       </Box>
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        onClose={() => {
+          if (!deleting) setConfirmDeleteOpen(false);
+        }}
+        closeDisabled={deleting}
+        title="Delete connector?"
+        content={
+          <Typography typography="s1" color="text.secondary">
+            Falcon AI will lose access to <strong>{connector.name}</strong>
+            {toolCount > 0
+              ? ` and its ${toolCount} tool${toolCount === 1 ? "" : "s"}`
+              : ""}
+            . Its saved settings and credentials are removed and cannot be
+            recovered.
+          </Typography>
+        }
+        action={
+          <LoadingButton
+            size="small"
+            variant="contained"
+            color="error"
+            loading={deleting}
+            onClick={handleConfirmDelete}
+          >
+            Delete connector
+          </LoadingButton>
+        }
+      />
 
       {/* Tool permissions */}
       {tools.length > 0 && (
@@ -1869,7 +1982,7 @@ function ConnectorDetailPanel({
               >
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
                   <Iconify
-                    icon="mdi:cursor-default-click"
+                    icon="solar:cursor-linear"
                     width={14}
                     sx={{ color: "text.disabled" }}
                   />
@@ -1886,7 +1999,6 @@ function ConnectorDetailPanel({
                     label={interactiveTools.length}
                     size="small"
                     variant="outlined"
-                    sx={{ height: 18, fontSize: 10 }}
                   />
                 </Box>
                 <Chip
@@ -1894,9 +2006,6 @@ function ConnectorDetailPanel({
                   size="small"
                   variant="outlined"
                   sx={{
-                    height: 22,
-                    fontSize: 10,
-                    borderRadius: "6px",
                     cursor: "pointer",
                   }}
                   onClick={() =>
@@ -1923,8 +2032,6 @@ function ConnectorDetailPanel({
                     pending={pendingNames.includes(tool.name)}
                     onToggle={() => onToolToggle(connector.id, tool.name)}
                     isLast={idx === interactiveTools.length - 1}
-                    isDark={isDark}
-                    theme={theme}
                   />
                 ))}
               </Box>
@@ -1944,7 +2051,7 @@ function ConnectorDetailPanel({
               >
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
                   <Iconify
-                    icon="mdi:eye-outline"
+                    icon="solar:eye-linear"
                     width={14}
                     sx={{ color: "text.disabled" }}
                   />
@@ -1961,7 +2068,6 @@ function ConnectorDetailPanel({
                     label={readOnlyTools.length}
                     size="small"
                     variant="outlined"
-                    sx={{ height: 18, fontSize: 10 }}
                   />
                 </Box>
                 <Chip
@@ -1969,9 +2075,6 @@ function ConnectorDetailPanel({
                   size="small"
                   variant="outlined"
                   sx={{
-                    height: 22,
-                    fontSize: 10,
-                    borderRadius: "6px",
                     cursor: "pointer",
                   }}
                   onClick={() =>
@@ -1998,8 +2101,6 @@ function ConnectorDetailPanel({
                     pending={pendingNames.includes(tool.name)}
                     onToggle={() => onToolToggle(connector.id, tool.name)}
                     isLast={idx === readOnlyTools.length - 1}
-                    isDark={isDark}
-                    theme={theme}
                   />
                 ))}
               </Box>
@@ -2019,13 +2120,14 @@ function ConnectorDetailPanel({
       {!loading && !detailError && tools.length === 0 && (
         <Box sx={{ textAlign: "center", py: 3 }}>
           <Iconify
-            icon="mdi:tools"
+            icon="solar:toolbox-linear"
             width={28}
             sx={{ color: "text.disabled", mb: 1 }}
           />
           <Typography sx={{ fontSize: 13, color: "text.disabled" }}>
-            No tools discovered yet. Tools will appear after the connector
-            successfully connects.
+            {connecting
+              ? "Connecting to the server. Tools will appear here once it answers."
+              : "No tools discovered yet. Tools will appear after the connector successfully connects."}
           </Typography>
         </Box>
       )}
@@ -2057,12 +2159,13 @@ ConnectorDetailPanel.propTypes = {
     is_custom: PropTypes.bool,
     last_error: PropTypes.string,
     auth_type: PropTypes.string,
-    oauth_client_id: PropTypes.string,
-    oauthClientId: PropTypes.string,
+    auth_header_name: PropTypes.string,
+    tool_count: PropTypes.number,
   }),
   isEditing: PropTypes.bool,
-  onDisconnect: PropTypes.func,
+  onDelete: PropTypes.func,
   onReauth: PropTypes.func,
+  connecting: PropTypes.bool,
   onToolToggle: PropTypes.func,
   onToolsAllow: PropTypes.func,
   toolError: PropTypes.string,
@@ -2076,16 +2179,7 @@ ConnectorDetailPanel.propTypes = {
 };
 
 // Tool row component for clean per-item rendering
-function ToolRow({
-  tool,
-  enabled,
-  onlyEnabled,
-  pending,
-  onToggle,
-  isLast,
-  isDark,
-  theme,
-}) {
+function ToolRow({ tool, enabled, onlyEnabled, pending, onToggle, isLast }) {
   return (
     <Box
       sx={{
@@ -2094,11 +2188,10 @@ function ToolRow({
         justifyContent: "space-between",
         px: 2,
         py: 1,
-        borderBottom: isLast ? "none" : (t) => `1px solid ${t.palette.divider}`,
+        borderBottom: isLast ? "none" : "1px solid",
+        borderColor: "border.subtle",
         "&:hover": {
-          bgcolor: isDark
-            ? alpha(theme.palette.common.white, 0.02)
-            : alpha(theme.palette.common.black, 0.01),
+          bgcolor: "action.hover",
         },
       }}
     >
@@ -2110,7 +2203,7 @@ function ToolRow({
           <Typography
             noWrap
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               color: "text.secondary",
               mt: 0.15,
               maxWidth: 400,
@@ -2138,7 +2231,6 @@ function ToolRow({
             title={onlyEnabled ? undefined : enabled ? "Allowed" : "Denied"}
             sx={{
               width: 26,
-              height: 26,
               color: enabled ? "success.main" : "text.disabled",
             }}
           >
@@ -2146,8 +2238,12 @@ function ToolRow({
               <CircularProgress size={16} role="status" aria-label="Saving" />
             ) : (
               <Iconify
-                icon={enabled ? "mdi:check-circle" : "mdi:close-circle-outline"}
-                width={18}
+                icon={
+                  enabled
+                    ? "solar:check-circle-bold"
+                    : "solar:close-circle-linear"
+                }
+                width={20}
               />
             )}
           </IconButton>
@@ -2169,17 +2265,12 @@ ToolRow.propTypes = {
   pending: PropTypes.bool,
   onToggle: PropTypes.func.isRequired,
   isLast: PropTypes.bool,
-  isDark: PropTypes.bool,
-  theme: PropTypes.object,
 };
 
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 export default function CustomizePanel() {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-
   const [selectedTab, setSelectedTab] = useState("skills");
   const [skills, setSkills] = useState([]);
   const [connectors, setConnectors] = useState([]);
@@ -2217,6 +2308,15 @@ export default function CustomizePanel() {
   const [loadingConnectors, setLoadingConnectors] = useState(false);
   const [isEditingSkill, setIsEditingSkill] = useState(false);
   const [isEditingConnector, setIsEditingConnector] = useState(false);
+  // Connectors whose authenticate request is in flight; their pane says so.
+  const [connectingIds, setConnectingIds] = useState([]);
+
+  // Read by the OAuth callback, which lands seconds after it starts:
+  // re-selecting the connector would close an editor opened meanwhile.
+  const editingConnectorRef = useRef(false);
+  useEffect(() => {
+    editingConnectorRef.current = isEditingConnector;
+  }, [isEditingConnector]);
 
   // Monotonic ticket for the detail fetch kicked off by handleSelectItem.
   // Bumped whenever the selection is cleared/changed out from under it, so a
@@ -2233,9 +2333,11 @@ export default function CustomizePanel() {
 
   // ---- Load data ----
   const loadSkills = useCallback(async () => {
+    const isCurrent = captureFalconRequest();
     setLoadingSkills(true);
     try {
       const data = await listSkills();
+      if (!isCurrent()) return;
       const results = data.results || data || [];
       const skillList = Array.isArray(results) ? results : [];
       setSkills(skillList);
@@ -2302,7 +2404,9 @@ export default function CustomizePanel() {
       // render what it is for.
       setConnectorDetailLoading(selectedTab === "connectors");
       try {
-        const api = await import("../hooks/useFalconAPI");
+        const api = await importWithRecovery(
+          () => import("../hooks/useFalconAPI"),
+        );
         if (selectedTab === "skills") {
           const resp = await api.getSkill(item.id);
           if (isStale()) return;
@@ -2377,13 +2481,6 @@ export default function CustomizePanel() {
     [abandonDetailRequest],
   );
 
-  const handleConnectorSaved = useCallback(() => {
-    abandonDetailRequest();
-    loadConnectors();
-    setSelectedItem(null);
-    setIsEditingConnector(false);
-  }, [loadConnectors, abandonDetailRequest]);
-
   // Listen for OAuth callback postMessage from popup
   useEffect(() => {
     const handler = async (event) => {
@@ -2416,7 +2513,20 @@ export default function CustomizePanel() {
           const data = await fetchConnectors();
           const results = data.results || data || [];
           const updated = results.find((c) => c.id === connectorId);
-          if (updated) await handleSelectItem(updated);
+          if (updated && !editingConnectorRef.current) {
+            await handleSelectItem(updated);
+          } else if (updated) {
+            // Re-selecting would close the editor and lose what the user
+            // typed in it. Refresh the record under it instead, so Cancel
+            // shows the signed-in connector; the form keeps its fields.
+            const { getConnector } = await importWithRecovery(
+              () => import("../hooks/useFalconAPI"),
+            );
+            const detail = await getConnector(connectorId);
+            setSelectedItem((prev) =>
+              prev?.id === connectorId ? detail : prev,
+            );
+          }
         } catch {
           // silent — loadConnectors already refreshed the list
         }
@@ -2428,8 +2538,11 @@ export default function CustomizePanel() {
 
   const handleReauth = useCallback(
     async (connectorId) => {
+      setConnectingIds((prev) => [...prev, connectorId]);
       try {
-        const { authenticateConnector } = await import("../hooks/useFalconAPI");
+        const { authenticateConnector } = await importWithRecovery(
+          () => import("../hooks/useFalconAPI"),
+        );
         const result = await authenticateConnector(connectorId);
         // Check for OAuth authorization URL (API may return camelCase or snake_case)
         const authUrl =
@@ -2440,10 +2553,18 @@ export default function CustomizePanel() {
           result?.result?.authorizationUrl ||
           result?.result?.authorization_url;
         if (authUrl) {
-          window.open(
+          const popup = window.open(
             authUrl,
             "falcon_oauth",
             "width=600,height=700,popup=yes",
+          );
+          // A blocked window comes back null: say so on the connector, and
+          // drop that note once a later try gets the window open.
+          setSelectedItem((prev) =>
+            prev?.id === connectorId &&
+            (!popup || prev.last_error === SIGN_IN_BLOCKED)
+              ? { ...prev, last_error: popup ? "" : SIGN_IN_BLOCKED }
+              : prev,
           );
           return; // postMessage handler will refresh when popup completes
         }
@@ -2451,34 +2572,56 @@ export default function CustomizePanel() {
         loadConnectors();
         const updatedConnector = result?.result || result;
         if (updatedConnector?.id) {
-          setSelectedItem(updatedConnector);
+          // A slow answer must not replace a connector picked since.
+          setSelectedItem((prev) =>
+            prev?.id === updatedConnector.id ? updatedConnector : prev,
+          );
         }
       } catch (err) {
-        const connector = connectors.find((c) => c.id === connectorId);
-        if (connector) {
-          setSelectedItem({
-            ...connector,
-            last_error:
-              err?.response?.data?.error ||
-              err?.response?.data?.message ||
-              "Authentication failed",
-          });
-        }
+        // Mark the record on screen, which keeps its tools; the list row has
+        // none, and a connector saved a moment ago is not in the list yet.
+        setSelectedItem((prev) =>
+          prev?.id === connectorId
+            ? {
+                ...prev,
+                last_error: toolActionErrorMessage(
+                  err,
+                  "Authentication failed.",
+                ),
+              }
+            : prev,
+        );
+      } finally {
+        setConnectingIds((prev) => prev.filter((id) => id !== connectorId));
       }
     },
-    [loadConnectors, connectors],
+    [loadConnectors],
   );
 
-  const handleDisconnect = useCallback(
+  // Select what was just saved (the save answers with the full record) and
+  // authenticate it there: an OAuth sign-in opens, and a failed connection
+  // shows on the connector instead of vanishing with the editor.
+  const handleConnectorSaved = useCallback(
+    (saved) => {
+      abandonDetailRequest();
+      loadConnectors();
+      setIsEditingConnector(false);
+      setToolError(null);
+      setDetailError(null);
+      setSelectedItem(saved?.id ? saved : null);
+      if (saved?.id) handleReauth(saved.id);
+    },
+    [loadConnectors, abandonDetailRequest, handleReauth, setToolError],
+  );
+
+  // Asked for by the confirm dialog. A failure reaches the dialog, which
+  // shows it on the connector.
+  const handleDeleteConnector = useCallback(
     async (connectorId) => {
-      try {
-        await deleteConnector(connectorId);
-        abandonDetailRequest();
-        setConnectors((prev) => prev.filter((c) => c.id !== connectorId));
-        setSelectedItem(null);
-      } catch {
-        // silent
-      }
+      await deleteConnector(connectorId);
+      abandonDetailRequest();
+      setConnectors((prev) => prev.filter((c) => c.id !== connectorId));
+      setSelectedItem(null);
     },
     [abandonDetailRequest],
   );
@@ -2491,9 +2634,7 @@ export default function CustomizePanel() {
           display: "flex",
           height: "100%",
           width: "100%",
-          bgcolor: isDark
-            ? alpha(theme.palette.background.default, 0.6)
-            : theme.palette.background.default,
+          bgcolor: "background.default",
         }}
       >
         {/* Panel 1: Navigation */}
@@ -2535,8 +2676,9 @@ export default function CustomizePanel() {
           <ConnectorDetailPanel
             connector={selectedItem}
             isEditing={isEditingConnector}
-            onDisconnect={handleDisconnect}
+            onDelete={handleDeleteConnector}
             onReauth={handleReauth}
+            connecting={connectingIds.includes(selectedItem?.id)}
             onToolToggle={handleToolToggle}
             onToolsAllow={handleToolsAllow}
             toolError={toolError}

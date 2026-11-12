@@ -1,0 +1,53 @@
+# Gateway config template for 64_m8_identity.sh section 6: gateway.yaml with
+# no mcp.static.org_id. Request auth OFF, the same two config keys, and the
+# static YAML MCP server "primary" on the mock scn_mcp_up started as
+# "primary", bound to no org.
+#
+# This is the release line's MCP setup with request auth off:
+# a request with no credential is served the operator's servers,
+# while a credential that is sent is still checked by the MCP identity.
+#
+# scn_mcp_gateway_template (lib_mcp.sh) renders @@MCP_<NAME>_URL@@ and adds
+# the fixed test state key under `mcp:`; scn_up renders base.yaml's
+# placeholders and appends `redis:`. Every key and token below is a fake value
+# for the local mocks.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: false
+  keys:
+    - name: "acme-app"
+      key: "scn-test-key-acme"
+      owner: "acme"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+    - name: "acme-revocable"
+      key: "scn-test-key-m8-revocable"
+      owner: "acme"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+providers:
+  operator-openai:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-operator-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["gpt-4o"]
+logging:
+  level: "info"
+mcp:
+  enabled: true
+  # No mcp.static.org_id: the YAML servers are bound to no org, so a principal
+  # with no org, a keyless request with request auth off among them, gets them.
+  servers:
+    primary:
+      url: "@@MCP_PRIMARY_URL@@"
+      transport: "http"
+      auth:
+        type: "bearer"
+        token: "scn-test-mcp-upstream-token"

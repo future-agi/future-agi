@@ -316,7 +316,14 @@ class TestErrorClusterDetailAPI:
         cluster = make_feed_group(project, "DEEP-CACHED", priority=Priority.HIGH)
         trace = Trace.objects.create(project=project, name="Cached analysis trace")
         ErrorClusterTraces.objects.create(cluster=cluster, trace=trace)
-        TraceErrorAnalysis.objects.create(trace=trace, project=project)
+        from tracer.queries import background_analysis_state
+        from tracer.services.analysis_result_binding import attempt_scope
+
+        generation = background_analysis_state.begin(project.pk, trace.pk)
+        assert background_analysis_state.admit(project.pk, trace.pk, generation)
+        with attempt_scope(project.pk, trace.pk, generation):
+            TraceErrorAnalysis.drafts.create(trace=trace, project=project)
+        assert background_analysis_state.complete(project.pk, trace.pk, generation)
         trace.error_analysis_status = TraceErrorAnalysisStatus.COMPLETED
         trace.save(update_fields=["error_analysis_status"])
         delay = mocker.patch("tracer.tasks.run_deep_analysis_on_demand.delay")

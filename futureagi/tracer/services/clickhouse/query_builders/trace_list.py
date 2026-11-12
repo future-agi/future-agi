@@ -5,7 +5,7 @@ Replaces the ``list_traces()`` method in ``tracer.views.trace`` with a
 two-phase ClickHouse query strategy:
 
 Phase 1 -- Paginated trace IDs + root span data from the denormalized
-``spans`` table (``WHERE parent_span_id IS NULL``).
+``spans`` table (global roots by default; Observe opts into project-local roots).
 
 Phase 2 -- Eval scores from ``tracer_eval_logger FINAL`` for those
 trace IDs, grouped by ``(trace_id, custom_eval_config_id)``.
@@ -3353,8 +3353,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         This is not latest membership: stale live/root versions may produce
         false positives, which the unchanged classifier rejects. A completed
-        NULL proves only this interval empty. Never attach any-span attributes
-        or child timestamps, FINAL, sorting, per-trace sets, or sampling here.
+        NULL proves only this interval empty. Never attach any-span attributes,
+        FINAL, sorting, or sampling here. Observe's root hook may look up only
+        the parent keys referenced by this interval, under the same read caps.
         """
 
         request_start, request_end = self.parse_time_range(self.filters)
@@ -3382,7 +3383,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
               AND start_time >= fromUnixTimestamp64Micro(%(root_discovery_start_us)s)
               AND start_time < fromUnixTimestamp64Micro(%(root_discovery_end_us)s)
             WHERE is_deleted = 0
-              AND (parent_span_id IS NULL OR parent_span_id = '')
+              AND {self._trace_root_window_condition("root_discovery_start_us", "root_discovery_end_us")}
             """,
             params,
         )
@@ -3686,7 +3687,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
           {project_version_fragment}
           {trace_id_prewhere_fragment}
           {candidate_membership_fragment}
-          AND (parent_span_id IS NULL OR parent_span_id = '')
+          AND {self._trace_root_window_condition("filter_slice_start_us", "filter_slice_end_us")}
           AND start_time >= fromUnixTimestamp64Micro(%(filter_slice_start_us)s)
           AND start_time < fromUnixTimestamp64Micro(%(filter_slice_end_us)s)
         WHERE 1 = 1
@@ -4083,7 +4084,10 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             deduplicated_root_fragment = (
                 ""
                 if any_span_plans
-                else "AND (parent_span_id IS NULL OR parent_span_id = '')"
+                else "AND "
+                + self._trace_root_window_condition(
+                    "filter_slice_start_us", "filter_slice_end_us"
+                )
             )
             query = f"""
         SELECT project_id, trace_id, witness_start_time AS start_time
@@ -4125,7 +4129,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 if self.project_ids is not None
                 else "trace_id, id AS root_span_id, start_time"
             )
-            root_fragment = "AND (parent_span_id IS NULL OR parent_span_id = '')"
+            root_fragment = "AND " + self._trace_root_window_condition(
+                "filter_slice_start_us", "filter_slice_end_us"
+            )
             order_fragment = (
                 "ORDER BY start_time DESC, trace_id DESC, toString(project_id) DESC"
                 if self.project_ids is not None
@@ -4348,20 +4354,29 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if any(not alias for alias in root_aggregate_aliases):
             raise AssertionError("root latest-state aggregate requires an alias")
 
+        # Compute membership once per physical winner. Repeating a bounded
+        # parent lookup in every argMaxIf would duplicate the candidate sets
+        # for every presentation column and exceed the SQL parser budget.
+        root_membership = self._trace_root_condition(
+            "latest_parent_span_id",
+            span_scope=(
+                "(project_id, trace_id) IN %(candidate_trace_identities)s"
+                if org_scope
+                else "trace_id IN %(candidate_trace_ids)s"
+            ),
+            project_column=(
+                "grouped_project_id" if org_scope else "toUUID(%(project_id)s)"
+            ),
+            trace_column="grouped_trace_id",
+        )
         if scope_to_request_window:
             canonical_root_condition = f"""(
                     latest_start_time >= fromUnixTimestamp64Micro(%(candidate_start_date_us)s)
                     AND latest_start_time < fromUnixTimestamp64Micro(%(candidate_end_date_us)s){datetime_root_fragment}
-                    AND (
-                        latest_parent_span_id IS NULL
-                        OR latest_parent_span_id = ''
-                    )
+                    AND _is_trace_root
                 )"""
         else:
-            canonical_root_condition = """(
-                    latest_parent_span_id IS NULL
-                    OR latest_parent_span_id = ''
-                )"""
+            canonical_root_condition = "_is_trace_root"
         if self.project_version_id and not self._filter_project_version_is_immutable():
             canonical_root_condition += (
                 " AND _latest_root_project_version = %(project_version_id)s"
@@ -4726,7 +4741,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                     {grouped_project_select_fragment}
                     id AS grouped_id,
                     trace_id AS grouped_trace_id,
-                    {latest_state_sql}
+                    {latest_state_sql},
+                    {root_membership} AS _is_trace_root
                 FROM {self.TABLE}
                 PREWHERE {self.project_filter_sql()}
                   {project_version_fragment}
@@ -5061,6 +5077,29 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             f"          AND {column} < %(end_date)s + INTERVAL 1 DAY"
         )
 
+    def _trace_root_condition(
+        self,
+        parent_column: str = "parent_span_id",
+        *,
+        span_scope: str,
+        project_column: str = "project_id",
+        trace_column: str = "trace_id",
+    ) -> str:
+        """Root membership; Observe can widen it within a bounded span scope.
+
+        Scope/column arguments are compiler-owned SQL, never request values.
+        Legacy, prototype, voice and task readers keep global-root semantics.
+        """
+        return f"({parent_column} IS NULL OR {parent_column} = '')"
+
+    def _trace_root_window_condition(self, start_param: str, end_param: str) -> str:
+        return self._trace_root_condition(
+            span_scope=(
+                f"start_time >= fromUnixTimestamp64Micro(%({start_param})s) "
+                f"AND start_time < fromUnixTimestamp64Micro(%({end_param})s)"
+            )
+        )
+
     # ------------------------------------------------------------------
     # Phase 1: Paginated trace list
     # ------------------------------------------------------------------
@@ -5200,7 +5239,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             {select_clause}
         FROM {self.TABLE}
         {self.project_where()}
-          AND (parent_span_id IS NULL OR parent_span_id = '')
+          AND {self._trace_root_condition(span_scope=f"{TIME_FILTER_COLUMN} >= %(start_date)s AND {TIME_FILTER_COLUMN} < %(end_date)s")}
           AND {TIME_FILTER_COLUMN} >= %(start_date)s
           AND {TIME_FILTER_COLUMN} < %(end_date)s{datetime_fragment}
           {pv_fragment}
@@ -5289,7 +5328,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         SELECT trace_id
         FROM {self.TABLE}
         {self.project_where()}
-          AND (parent_span_id IS NULL OR parent_span_id = '')
+          AND {self._trace_root_condition(span_scope=time_where.removeprefix("AND "))}
           {time_where}{datetime_fragment}
           {pv_fragment}
           {search_fragment}
@@ -5516,7 +5555,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         SELECT {count_identity} AS total
         FROM {self.TABLE}
         {self.project_where()}
-          AND (parent_span_id IS NULL OR parent_span_id = '')
+          AND {self._trace_root_condition(span_scope=f"{TIME_FILTER_COLUMN} >= %(start_date)s AND {TIME_FILTER_COLUMN} < %(end_date)s")}
           AND {TIME_FILTER_COLUMN} >= %(start_date)s
           AND {TIME_FILTER_COLUMN} < %(end_date)s{datetime_fragment}
           {pv_fragment}

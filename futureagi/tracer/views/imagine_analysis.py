@@ -6,6 +6,7 @@ GET  /tracer/imagine-analysis/  — poll for results
 """
 
 import structlog
+from django.core.exceptions import ValidationError
 from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -16,6 +17,7 @@ from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.imagine_analysis import ImagineAnalysis
 from tracer.models.saved_view import SavedView
+from tracer.models.trace import Trace
 
 logger = structlog.get_logger(__name__)
 
@@ -37,6 +39,7 @@ class TriggerAnalysisSerializer(serializers.Serializer):
     trace_id = serializers.CharField(max_length=255)
     project_id = serializers.UUIDField()
     widgets = WidgetAnalysisSerializer(many=True)
+    force = serializers.BooleanField(default=False)
 
 
 class ImagineAnalysisQuerySerializer(serializers.Serializer):
@@ -74,6 +77,37 @@ class ImagineAnalysisView(APIView):
             queryset = queryset.filter(project_id=project_id)
         return queryset.get()
 
+    def _get_scoped_trace(self, saved_view, trace_id, organization):
+        from tracer.services.clickhouse.v2 import get_reader
+
+        if saved_view.project.organization_id != organization.id:
+            raise Trace.DoesNotExist
+
+        # PG metadata is optional for collector-ingested traces. If it exists,
+        # retain the legacy identity check before consulting ClickHouse.
+        trace = (
+            Trace.no_workspace_objects.only("id", "project_id")
+            .filter(id=trace_id, deleted=False)
+            .first()
+        )
+        if trace is not None:
+            if trace.project_id != saved_view.project_id:
+                raise Trace.DoesNotExist
+            return trace
+
+        reader = get_reader()
+        try:
+            spans = reader.list_by_trace(
+                str(trace_id),
+                project_id=str(saved_view.project_id),
+                include_heavy=False,
+            )
+            if not spans:
+                raise Trace.DoesNotExist
+        finally:
+            reader.close()
+        return None
+
     @validated_request(
         request_serializer=TriggerAnalysisSerializer,
         responses={200: ImagineAnalysisResponseSerializer, **ERROR_RESPONSES},
@@ -93,6 +127,13 @@ class ImagineAnalysisView(APIView):
         except SavedView.DoesNotExist:
             return self._gm.not_found("Saved view not found")
 
+        # Validate before creating records, returning cached content, or
+        # starting workflows. The authorized saved view owns the binding.
+        try:
+            self._get_scoped_trace(saved_view, data["trace_id"], org)
+        except (Trace.DoesNotExist, ValidationError):
+            return self._gm.not_found("Trace not found")
+
         results = []
         for widget in data["widgets"]:
             # Check if analysis already exists for this trace+widget
@@ -101,7 +142,7 @@ class ImagineAnalysisView(APIView):
                 widget_id=widget["widget_id"],
                 trace_id=data["trace_id"],
                 defaults={
-                    "project_id": data["project_id"],
+                    "project_id": saved_view.project_id,
                     "organization": org,
                     "prompt": widget["prompt"],
                     "status": "pending",
@@ -109,7 +150,12 @@ class ImagineAnalysisView(APIView):
             )
 
             if not created:
-                if analysis.status == "completed" and analysis.content:
+                if (
+                    not data["force"]
+                    and analysis.status == "completed"
+                    and analysis.content
+                    and (analysis.workflow_id or "").startswith("imagine-pb1-")
+                ):
                     results.append(
                         {
                             "id": str(analysis.id),
@@ -139,7 +185,8 @@ class ImagineAnalysisView(APIView):
                     )
                     continue
 
-                # Failed, stale, or pending — reset and re-run
+                # Explicit reruns, failed/stale/pending rows, and unversioned
+                # completions reset. Active runs remain deduplicated above.
                 analysis.prompt = widget["prompt"]
                 analysis.status = "pending"
                 analysis.content = None
@@ -150,15 +197,28 @@ class ImagineAnalysisView(APIView):
 
             from tfc.temporal.imagine.client import start_imagine_analysis
 
+            # Match the starter's versioned ID before dispatch: a fast worker
+            # must see its persisted provenance when saving the result.
+            workflow_id = f"imagine-pb1-{analysis.id}"
+            bound_analysis = ImagineAnalysis.objects.filter(
+                id=analysis.id,
+                saved_view=saved_view,
+                project_id=saved_view.project_id,
+                organization=org,
+            )
+            bound_analysis.update(workflow_id=workflow_id)
+
             try:
-                workflow_id = start_imagine_analysis(
+                start_imagine_analysis(
                     analysis_id=str(analysis.id),
                     trace_id=data["trace_id"],
                     org_id=str(org.id),
+                    project_id=str(saved_view.project_id),
                     prompt=widget["prompt"],
                 )
-                ImagineAnalysis.objects.filter(id=analysis.id).update(
-                    status="running", workflow_id=workflow_id
+                # Do not overwrite a result saved before dispatch returned.
+                bound_analysis.filter(workflow_id=workflow_id, status="pending").update(
+                    status="running"
                 )
                 result_status = "running"
             except Exception as e:
@@ -167,7 +227,7 @@ class ImagineAnalysisView(APIView):
                     error=str(e),
                     analysis_id=str(analysis.id),
                 )
-                ImagineAnalysis.objects.filter(id=analysis.id).update(
+                bound_analysis.filter(workflow_id=workflow_id, status="pending").update(
                     status="failed", error=str(e)[:500]
                 )
                 result_status = "failed"
@@ -197,13 +257,27 @@ class ImagineAnalysisView(APIView):
         except SavedView.DoesNotExist:
             return self._gm.not_found("Saved view not found")
 
+        # Old rows may have been admitted with a trace from another project.
+        # Do not expose their stored content merely because the view is local.
+        try:
+            self._get_scoped_trace(saved_view, trace_id, org)
+        except (Trace.DoesNotExist, ValidationError):
+            return self._gm.not_found("Trace not found")
+
         analyses = ImagineAnalysis.no_workspace_objects.filter(
             saved_view=saved_view,
             trace_id=trace_id,
             project=saved_view.project,
             organization=org,
             deleted=False,
-        ).values("id", "widget_id", "status", "content", "error")
+        ).values("id", "widget_id", "status", "content", "error", "workflow_id")
+
+        for analysis in analyses:
+            if not (analysis["workflow_id"] or "").startswith("imagine-pb1-"):
+                # Status cannot certify legacy content or diagnostics, even
+                # for running rows. Polling stays read-only; POST retains its
+                # existing wait/reset rules for unmarked analyses.
+                analysis.update(status="pending", content=None, error=None)
 
         return Response(
             {

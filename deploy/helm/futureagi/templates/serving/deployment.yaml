@@ -73,7 +73,7 @@ spec:
               protocol: TCP
           env:
             {{- range $name := keys $env | sortAlpha }}
-            - name: {{ $name }}
+            - name: {{ $name | quote }}
               value: {{ get $env $name | toString | quote }}
             {{- end }}
           # Models load on first use; the server itself starts in seconds.

@@ -1,0 +1,13 @@
+{
+  "DocumentMetadata": { "Pages": 1 },
+  "DetectDocumentTextModelVersion": "1.0",
+  "Blocks": [
+    { "BlockType": "PAGE", "Id": "{{id}}-page", "Confidence": 99.9 },
+    {
+      "BlockType": "LINE",
+      "Id": "{{id}}-line",
+      "Text": "Capmock document",
+      "Confidence": 99.1
+    }
+  ]
+}

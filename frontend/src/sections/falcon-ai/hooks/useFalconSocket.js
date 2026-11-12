@@ -1,8 +1,35 @@
 import { useEffect, useRef, useCallback } from "react";
 import { useAuthContext } from "src/auth/hooks";
-import { HOST_API } from "src/config-global";
+import { requestWebSocketUrl } from "src/components/websocket/use-socket";
+import {
+  MAX_SOCKET_FAILURES,
+  useSocketResume,
+  useSocketSessionToken,
+} from "src/components/websocket/socket-recovery";
+import { importWithRecovery } from "src/utils/chunkRecovery";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
+import { WORKSPACE_UNAVAILABLE_EVENT } from "src/contexts/workspaceUnavailableEvent";
 import useFalconStore from "../store/useFalconStore";
+import { captureFalconRequest } from "../store/falconRequestGuard";
+import {
+  beginFalconSubmission,
+  bindFalconSubmission,
+  clearFalconSubmission,
+} from "../store/falconSubmission";
+
+// What a failed reply says. Limits and refusals arrive in the server's own
+// words and are shown as sent; a raw exception ("Agent error: ...", "LLM
+// error: ...", the latter under `message`) or no text at all is not.
+const REPLY_FAILED = "Falcon couldn't answer this time.";
+const NOT_CONNECTED =
+  "Falcon isn't connected right now. Wait a moment, then ask again.";
+
+function replyErrorText(data) {
+  const text = data?.error || data?.message;
+  if (typeof text !== "string" || !text.trim()) return REPLY_FAILED;
+  if (/^(Agent|LLM) error:/.test(text)) return REPLY_FAILED;
+  return text;
+}
 
 /**
  * WebSocket hook for Falcon AI streaming chat.
@@ -13,12 +40,18 @@ import useFalconStore from "../store/useFalconStore";
  */
 export const useFalconSocket = () => {
   const { user } = useAuthContext();
+  const token = useSocketSessionToken(user?.accessToken);
   const { currentWorkspaceId } = useWorkspace();
   const socketRef = useRef(null);
   const retriesRef = useRef(0);
   const timerRef = useRef(null);
   const pingRef = useRef(null);
   const mountedRef = useRef(true);
+  const generationRef = useRef(0);
+  const pendingRef = useRef(false);
+  const scopeRetiredRef = useRef(false);
+  // Only the ID lives here; HTTP creation and socket delivery share one draft.
+  const submissionIdRef = useRef(null);
 
   const {
     appendTextDelta,
@@ -29,9 +62,16 @@ export const useFalconSocket = () => {
     setActiveSkill,
   } = useFalconStore.getState();
 
-  const connect = useCallback(() => {
-    const token = user?.accessToken;
-    if (!token) return;
+  const connect = useCallback(async () => {
+    if (
+      !token ||
+      !mountedRef.current ||
+      scopeRetiredRef.current ||
+      pendingRef.current ||
+      retriesRef.current >= MAX_SOCKET_FAILURES
+    )
+      return;
+    timerRef.current = null;
 
     // Don't open a second socket if one is already connecting/open
     if (
@@ -42,25 +82,65 @@ export const useFalconSocket = () => {
       return;
     }
 
-    const isSecure = HOST_API.includes("https");
-    const wsHost = HOST_API.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-    const protocol = isSecure ? "wss" : "ws";
-    const wsParams = new URLSearchParams({ token });
-    if (currentWorkspaceId) {
-      wsParams.set("workspace_id", currentWorkspaceId);
+    const resetGeneration = useFalconStore.getState().resetGeneration;
+    const isCurrent = captureFalconRequest();
+    const generation = generationRef.current;
+    pendingRef.current = true;
+    let ws;
+    try {
+      const query = currentWorkspaceId
+        ? { workspace_id: String(currentWorkspaceId) }
+        : {};
+      const url = await requestWebSocketUrl(token, "/ws/falcon-ai/", query);
+      if (
+        !mountedRef.current ||
+        generation !== generationRef.current ||
+        !isCurrent()
+      )
+        return;
+      ws = new WebSocket(url);
+    } catch (error) {
+      if (
+        mountedRef.current &&
+        generation === generationRef.current &&
+        isCurrent()
+      ) {
+        if (error?.retryable === false) {
+          retriesRef.current = MAX_SOCKET_FAILURES;
+          return;
+        }
+        const delay = Math.min(1000 * 2 ** retriesRef.current++, 30000);
+        timerRef.current = setTimeout(() => {
+          if (
+            mountedRef.current &&
+            generation === generationRef.current &&
+            isCurrent()
+          )
+            connect();
+        }, delay);
+      }
+      return;
+    } finally {
+      if (generation === generationRef.current) pendingRef.current = false;
     }
-    const url = `${protocol}://${wsHost}/ws/falcon-ai/?${wsParams.toString()}`;
-
-    const ws = new WebSocket(url);
     socketRef.current = ws;
 
     ws.onopen = () => {
+      if (
+        socketRef.current !== ws ||
+        useFalconStore.getState().resetGeneration !== resetGeneration
+      )
+        return;
       retriesRef.current = 0;
 
       // Keep connection alive — proxies/load balancers drop idle WebSockets after ~100s
       clearInterval(pingRef.current);
       pingRef.current = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
+        if (
+          socketRef.current === ws &&
+          isCurrent() &&
+          ws.readyState === WebSocket.OPEN
+        ) {
           ws.send(JSON.stringify({ type: "ping" }));
         }
       }, 30000);
@@ -78,9 +158,39 @@ export const useFalconSocket = () => {
     };
 
     ws.onmessage = (event) => {
+      if (
+        socketRef.current !== ws ||
+        useFalconStore.getState().resetGeneration !== resetGeneration
+      )
+        return;
       try {
         const parsed = JSON.parse(event.data);
         const { type, data } = parsed;
+
+        // This refusal invalidates the socket's workspace, not just one turn.
+        // Recover even if the user changed conversations before the reply.
+        if (type === "error" && data?.code === "workspace_unavailable") {
+          const pending = useFalconStore.getState().pendingDraft;
+          const submissionId =
+            pending &&
+            pending.id === submissionIdRef.current &&
+            data.client_message_id &&
+            pending.clientMessageId === data.client_message_id &&
+            pending.conversationId === data.conversation_id
+              ? pending.id
+              : undefined;
+          window.dispatchEvent(
+            new CustomEvent(WORKSPACE_UNAVAILABLE_EVENT, {
+              detail: { workspaceId: currentWorkspaceId, submissionId },
+            }),
+          );
+          clearFalconSubmission(submissionIdRef.current);
+          submissionIdRef.current = null;
+          // Recovery synchronously resets the store. Do not mutate the new chat
+          // with the remainder of this old-scope error handler.
+          if (useFalconStore.getState().resetGeneration !== resetGeneration)
+            return;
+        }
 
         // Filter: ignore events from a different conversation
         if (data?.conversation_id) {
@@ -92,6 +202,14 @@ export const useFalconSocket = () => {
             // Event belongs to a different conversation — ignore it
             return;
           }
+        }
+
+        if (
+          data?.message_id ||
+          ["done", "stopped", "cancelled", "error"].includes(type)
+        ) {
+          clearFalconSubmission(submissionIdRef.current);
+          submissionIdRef.current = null;
         }
 
         // Map backend message_id to frontend's placeholder message
@@ -117,6 +235,8 @@ export const useFalconSocket = () => {
             addToolCall(data.message_id, {
               call_id: data.call_id,
               tool_name: data.tool_name,
+              // IT-R3 G2 P4 (additive): a plain label when the server sends one.
+              tool_label: data.tool_label,
               tool_description: data.tool_description,
               params: data.params,
               status: "running",
@@ -178,12 +298,24 @@ export const useFalconSocket = () => {
             break;
           }
 
-          case "error":
+          case "error": {
+            const store = useFalconStore.getState();
+            // Pre-turn refusals have no server message yet. Correlate the
+            // local placeholder, without stopping a newer turn on a late error.
+            if (
+              data.client_message_id &&
+              store.isStreaming &&
+              data.client_message_id !== store.streamingMessageId
+            )
+              break;
+            const messageId =
+              data.message_id ||
+              data.client_message_id ||
+              store.streamingMessageId;
+            updateMessage(messageId, { error: replyErrorText(data) });
             setStreaming(false);
-            updateMessage(data.message_id, {
-              error: data.error || "An error occurred",
-            });
             break;
+          }
 
           case "skill_activated":
             if (data.skill) {
@@ -191,18 +323,32 @@ export const useFalconSocket = () => {
             }
             break;
 
-          case "reconnect_status":
+          case "reconnect_status": {
+            // Every status but "none" is followed by a replay of the answer
+            // from its first event. Clear what already arrived live, so the
+            // replay does not show it twice.
+            const { streamingMessageId } = useFalconStore.getState();
+            if (data.status && data.status !== "none" && streamingMessageId) {
+              updateMessage(streamingMessageId, {
+                content: "",
+                blocks: [],
+                tool_calls: [],
+                completion_card: null,
+              });
+            }
             if (data.status === "running") {
               // Stream is still active — replayed events will follow, then live events
-              setStreaming(true, useFalconStore.getState().streamingMessageId);
+              setStreaming(true, streamingMessageId);
             } else if (data.status === "done") {
               // Stream completed while disconnected — events will replay, then done
               // (the "done" event is part of the buffered events)
-            } else if (data.status === "none" || data.status === "cancelled") {
-              // No active stream — stop any loading indicators
+            } else if (["none", "cancelled", "error"].includes(data.status)) {
+              // Nothing is running (a failed run sends no "done") — stop any
+              // loading indicators and give the message box back
               setStreaming(false);
             }
             break;
+          }
 
           case "navigate":
             // Agent wants to navigate the user to a page
@@ -212,25 +358,25 @@ export const useFalconSocket = () => {
             break;
 
           case "widget_render": {
-            import("src/components/imagine/useImagineStore").then(
-              ({ default: useImagineStore }) => {
-                const store = useImagineStore.getState();
-                const action = data.action || "add";
-                if (action === "add" && data.widget) {
-                  store.addWidget(data.widget);
-                } else if (action === "update" && data.widget) {
-                  store.updateWidget(data.widget.id, data.widget);
-                } else if (action === "replace_all") {
-                  store.replaceAll(
-                    data.widgets || (data.widget ? [data.widget] : []),
-                  );
-                } else if (action === "remove" && data.widget?.id) {
-                  store.removeWidget(data.widget.id);
-                } else if (data.widget) {
-                  store.addWidget(data.widget);
-                }
-              },
-            );
+            importWithRecovery(
+              () => import("src/components/imagine/useImagineStore"),
+            ).then(({ default: useImagineStore }) => {
+              const store = useImagineStore.getState();
+              const action = data.action || "add";
+              if (action === "add" && data.widget) {
+                store.addWidget(data.widget);
+              } else if (action === "update" && data.widget) {
+                store.updateWidget(data.widget.id, data.widget);
+              } else if (action === "replace_all") {
+                store.replaceAll(
+                  data.widgets || (data.widget ? [data.widget] : []),
+                );
+              } else if (action === "remove" && data.widget?.id) {
+                store.removeWidget(data.widget.id);
+              } else if (data.widget) {
+                store.addWidget(data.widget);
+              }
+            });
             break;
           }
 
@@ -247,23 +393,27 @@ export const useFalconSocket = () => {
     };
 
     ws.onclose = (event) => {
-      clearInterval(pingRef.current);
       if (socketRef.current !== ws) return;
+      clearInterval(pingRef.current);
+      clearFalconSubmission(submissionIdRef.current);
+      submissionIdRef.current = null;
       socketRef.current = null;
 
       // Auth-related errors - do NOT retry
-      if ([4001, 4401, 4403, 1008].includes(event.code)) {
+      if ([4001, 4003, 4401, 4403, 1008].includes(event.code)) {
         return;
       }
 
       if (mountedRef.current) {
         const delay = Math.min(1000 * 2 ** retriesRef.current, 30000);
         retriesRef.current += 1;
-        timerRef.current = setTimeout(connect, delay);
+        timerRef.current = setTimeout(() => {
+          if (mountedRef.current && isCurrent()) connect();
+        }, delay);
       }
     };
   }, [
-    user?.accessToken,
+    token,
     currentWorkspaceId,
     appendTextDelta,
     addToolCall,
@@ -273,45 +423,106 @@ export const useFalconSocket = () => {
     setActiveSkill,
   ]);
 
+  useSocketResume(() => {
+    if (socketRef.current?.readyState === WebSocket.OPEN || pendingRef.current)
+      return;
+    clearTimeout(timerRef.current);
+    retriesRef.current = 0;
+    connect();
+  });
+
   useEffect(() => {
+    const retire = () => {
+      scopeRetiredRef.current = true;
+      generationRef.current += 1;
+      pendingRef.current = false;
+      clearFalconSubmission(submissionIdRef.current);
+      submissionIdRef.current = null;
+      clearTimeout(timerRef.current);
+      clearInterval(pingRef.current);
+      const socket = socketRef.current;
+      socketRef.current = null;
+      socket?.close();
+    };
+    // Invalidate synchronously; waiting for the workspace effect cleanup leaves
+    // already queued reconnect/heartbeat callbacks a chance to use old scope.
+    const unsubscribe = useFalconStore.subscribe((state, previous) => {
+      if (state.resetGeneration !== previous.resetGeneration) retire();
+    });
     mountedRef.current = true;
+    scopeRetiredRef.current = false;
+    retriesRef.current = 0;
     connect();
     return () => {
       mountedRef.current = false;
-      clearTimeout(timerRef.current);
-      clearInterval(pingRef.current);
-      if (socketRef.current) {
-        socketRef.current.close();
-        socketRef.current = null;
-      }
+      unsubscribe();
+      retire();
     };
   }, [connect]);
 
-  const sendChat = useCallback((message, conversationId, context, fileIds) => {
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      const store = useFalconStore.getState();
-      const selectedCtx = store.selectedContext;
-      const activeSkill = store.activeSkill;
+  const sendChat = useCallback(
+    (message, conversationId, context, fileIds, files = [], submissionId) => {
+      const id = submissionId || beginFalconSubmission(message, files);
+      if (
+        socketRef.current &&
+        socketRef.current.readyState === WebSocket.OPEN
+      ) {
+        const store = useFalconStore.getState();
+        const selectedCtx = store.selectedContext;
+        const activeSkill = store.activeSkill;
 
-      // Build the context payload — override page if user chose a specific context
-      const contextPayload =
-        selectedCtx && selectedCtx !== "auto"
-          ? { ...context, page: selectedCtx }
-          : context;
+        // Build the context payload — override page if user chose a specific context
+        const contextPayload =
+          selectedCtx && selectedCtx !== "auto"
+            ? { ...context, page: selectedCtx }
+            : context;
 
-      const payload = {
-        type: "chat",
-        message,
-        conversation_id: conversationId,
-        context: contextPayload,
-        file_ids: fileIds || [],
-      };
+        const payload = {
+          type: "chat",
+          message,
+          conversation_id: conversationId,
+          client_message_id: store.streamingMessageId,
+          context: contextPayload,
+          file_ids: fileIds || [],
+        };
 
-      if (activeSkill) {
-        payload.skill_id = activeSkill.id;
+        if (activeSkill) {
+          payload.skill_id = activeSkill.id;
+        }
+
+        if (!bindFalconSubmission(id, conversationId, store.streamingMessageId))
+          return;
+        submissionIdRef.current = id;
+        try {
+          socketRef.current.send(JSON.stringify(payload));
+        } catch {
+          clearFalconSubmission(id);
+          store.updateMessage(store.streamingMessageId, {
+            error: NOT_CONNECTED,
+          });
+          store.setStreaming(false);
+        }
+      } else {
+        // Not sent: the connection is still opening or is reconnecting.
+        clearFalconSubmission(id);
+        const store = useFalconStore.getState();
+        store.updateMessage(store.streamingMessageId, {
+          error: NOT_CONNECTED,
+        });
+        store.setStreaming(false);
       }
+    },
+    [],
+  );
 
-      socketRef.current.send(JSON.stringify(payload));
+  // Ask for a replay of an answer still being written for a chat the user
+  // just reopened. A socket that is not open yet asks when it opens (onopen
+  // sends the same request while the chat is streaming).
+  const sendReconnect = useCallback((conversationId) => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(
+        JSON.stringify({ type: "reconnect", conversation_id: conversationId }),
+      );
     }
   }, []);
 
@@ -324,6 +535,8 @@ export const useFalconSocket = () => {
   }, []);
 
   const sendStop = useCallback(() => {
+    clearFalconSubmission(submissionIdRef.current);
+    submissionIdRef.current = null;
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({ type: "stop" }));
     }
@@ -337,13 +550,15 @@ export const useFalconSocket = () => {
         JSON.stringify({
           type: "feedback",
           message_id: messageId,
+          client_message_id: messageId,
+          conversation_id: useFalconStore.getState().currentConversationId,
           feedback,
         }),
       );
     }
   }, []);
 
-  return { sendChat, sendStop, sendFeedback, sendActivateSkill };
+  return { sendChat, sendStop, sendFeedback, sendActivateSkill, sendReconnect };
 };
 
 export default useFalconSocket;

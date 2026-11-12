@@ -10,6 +10,11 @@ import { ShowComponent } from "src/components/show";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { useNavigate } from "react-router-dom";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import {
+  OPEN_SETTINGS_LABEL,
+  SELF_HOST_USAGE_LIMIT_MESSAGE,
+} from "src/constants/usageCopy";
 
 // Error codes emitted by backend's usage pre-check (see CheckResult.error_code).
 const USAGE_LIMIT_CTA = {
@@ -46,14 +51,19 @@ const ErrorCellRenderer = ({
   onRerun,
 }) => {
   const navigate = useNavigate();
+  // Use the same deployment answer as the router's cloud-only pricing gate.
+  const { isCloud } = useDeploymentMode();
   const canRerunAtCell = props?.originOfColumn === ORIGIN_OF_COLUMNS.EXPERIMENT;
+  // Experiment grid columns carry the raw column_config (origin_type) and its
+  // rows the rows-API row_id; the camelCase keys are the dataset grid's.
+  const col = props?.colDef?.col;
   const showRerun = ["experiment", "evaluation"].includes(
-    props?.colDef?.col?.originType,
+    col?.originType ?? col?.origin_type,
   );
 
-  const columnId = props?.colDef?.col?.id;
+  const columnId = col?.id;
 
-  const rowId = props?.data?.rowId;
+  const rowId = props?.data?.row_id ?? props?.data?.rowId;
 
   const cellData = props?.data?.[props?.column?.colId];
   const valueInfos = parseValueInfos(
@@ -62,15 +72,20 @@ const ErrorCellRenderer = ({
   const errorCode = valueInfos?.error_code;
   const isUsageLimit = USAGE_LIMIT_ERROR_CODES.has(errorCode);
   const upgradeCta = valueInfos?.upgrade_cta || valueInfos?.upgradeCta;
-  const ctaText =
-    USAGE_LIMIT_CTA[errorCode] || upgradeCta?.text || "Upgrade for more usage";
+  const ctaText = isCloud
+    ? USAGE_LIMIT_CTA[errorCode] || upgradeCta?.text || "Upgrade for more usage"
+    : SELF_HOST_USAGE_LIMIT_MESSAGE;
   const limitMessage =
     valueInfos?.reason ||
     (typeof cellData?.value === "string" ? cellData.value : "Limit reached");
 
   const handleUpgrade = (e) => {
     e.stopPropagation();
-    navigate(paths.dashboard.settings.pricing);
+    navigate(
+      isCloud
+        ? paths.dashboard.settings.pricing
+        : paths.dashboard.settings.root,
+    );
   };
 
   if (isUsageLimit) {
@@ -96,7 +111,7 @@ const ErrorCellRenderer = ({
           }}
         >
           <Iconify
-            icon="mdi:lock-outline"
+            icon="solar:lock-linear"
             width={16}
             sx={{ flexShrink: 0, color: "text.primary" }}
           />
@@ -106,9 +121,7 @@ const ErrorCellRenderer = ({
             variant="text"
             onClick={handleUpgrade}
             sx={{
-              textTransform: "none",
               minWidth: 0,
-              padding: 0,
               color: "primary.main",
               textDecoration: "underline",
               whiteSpace: "nowrap",
@@ -118,7 +131,7 @@ const ErrorCellRenderer = ({
               },
             }}
           >
-            Upgrade
+            {isCloud ? "Upgrade" : OPEN_SETTINGS_LABEL}
           </Button>
         </Box>
       </CustomTooltip>
@@ -132,7 +145,7 @@ const ErrorCellRenderer = ({
           width: "100%",
           height: "100%",
           border: "1px solid",
-          borderColor: "red.100",
+          borderColor: "status.danger.border",
           boxSizing: "border-box",
         }}
       >
@@ -174,10 +187,8 @@ const ErrorCellRenderer = ({
             <IconButton
               sx={{
                 width: "36px",
-                height: "28px",
                 border: "1px solid",
                 color: "primary.main",
-                borderRadius: 1,
               }}
               onClick={(e) => {
                 window["__reRunClick"] = true;

@@ -20,6 +20,9 @@ import { enqueueSnackbar } from "notistack";
 import { useCreateSavedView } from "src/api/project/saved-views";
 import useImagineStore from "./useImagineStore";
 import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
+import { captureFalconRequest } from "src/sections/falcon-ai/store/falconRequestGuard";
+import useFalconDeferredAction from "src/sections/falcon-ai/hooks/useFalconDeferredAction";
+import { getConversation } from "src/sections/falcon-ai/hooks/useFalconAPI";
 import WidgetCanvas from "./WidgetCanvas";
 import ImagineChatPanel from "./ImagineChatPanel";
 import SuggestedPrompts from "./SuggestedPrompts";
@@ -43,27 +46,137 @@ export default function ImagineTab({
   suggestedPrompts,
 }) {
   const widgets = useImagineStore((s) => s.widgets);
+  const boundSavedViewId = useImagineStore((s) => s._savedViewId);
   const replaceAll = useImagineStore((s) => s.replaceAll);
   const [chatWidth, setChatWidth] = useState(360);
   const [showChat, setShowChat] = useState(!readOnly);
 
   const chatRef = useRef(null);
+  const schedule = useFalconDeferredAction();
+  // Bind saved props when selected, not when a later widget update reruns the
+  // hydration effect. Recovery must not make an old saved conversation current.
+  const savedScope = useMemo(
+    () => captureFalconRequest(),
+    [savedViewId, savedConversationId, traceId, projectId],
+  );
   const { mutate: createSavedView, isPending: isSaving } =
     useCreateSavedView(projectId);
+
+  const tabScopeRef = useRef(savedScope);
+  const draftAttemptRef = useRef(null);
+  useEffect(() => {
+    tabScopeRef.current = savedScope;
+    if (draftAttemptRef.current?.scope !== savedScope) {
+      draftAttemptRef.current = null;
+    }
+    return () => {
+      tabScopeRef.current = null;
+    };
+  }, [savedScope]);
+
+  const bindSavedView = useCallback(
+    (response) => {
+      if (tabScopeRef.current !== savedScope || !savedScope()) return false;
+      const id = response?.data?.result?.id;
+      if (!id) return false;
+      const store = useImagineStore.getState();
+      draftAttemptRef.current = null;
+      store.setSavedViewId(id);
+      // A successful explicit save also recovers widgets whose draft failed.
+      store.widgets
+        .filter((w) => w.dynamicAnalysis)
+        .forEach((w) => {
+          store.setAnalysis(traceId, w.id, null);
+        });
+      return true;
+    },
+    [savedScope, traceId],
+  );
+
+  // Dynamic analyses require a persisted identity, even in a newly authored
+  // tab. Make a private draft once; the analysis hook waits for its returned ID.
+  useEffect(() => {
+    if (
+      readOnly ||
+      savedViewId ||
+      boundSavedViewId ||
+      !projectId ||
+      !traceId ||
+      !widgets.some((w) => w.dynamicAnalysis?.prompt) ||
+      draftAttemptRef.current ||
+      !savedScope()
+    )
+      return;
+    const attempt = { scope: savedScope };
+    draftAttemptRef.current = attempt;
+    const isCurrent = () =>
+      draftAttemptRef.current === attempt &&
+      tabScopeRef.current === savedScope &&
+      savedScope();
+    const fail = () => {
+      if (!isCurrent()) return;
+      const store = useImagineStore.getState();
+      store.widgets
+        .filter((w) => w.dynamicAnalysis)
+        .forEach((w) => {
+          store.setAnalysis(
+            traceId,
+            w.id,
+            "*Analysis could not start. Use Save View to retry.*",
+          );
+        });
+      enqueueSnackbar(
+        "Could not create analysis draft. Use Save View to retry.",
+        { variant: "error" },
+      );
+    };
+    createSavedView(
+      {
+        project_id: projectId,
+        name: `Imagine draft ${crypto.randomUUID()}`,
+        tab_type: "imagine",
+        visibility: "personal",
+        config: {
+          widgets: consolidateAnalysisPrompts(
+            widgets,
+            useFalconStore.getState().messages,
+          ),
+          conversation_id: useImagineStore.getState().conversationId,
+        },
+      },
+      {
+        onSuccess: (response) => {
+          if (isCurrent() && !bindSavedView(response)) fail();
+        },
+        onError: fail,
+      },
+    );
+  }, [
+    readOnly,
+    savedViewId,
+    boundSavedViewId,
+    projectId,
+    traceId,
+    widgets,
+    savedScope,
+    createSavedView,
+    bindSavedView,
+  ]);
 
   // Load saved widgets when tab changes (savedViewId changes)
   const prevViewIdRef = useRef(savedViewId);
   useEffect(() => {
+    if (!savedScope()) return;
     const viewChanged = savedViewId !== prevViewIdRef.current;
     prevViewIdRef.current = savedViewId;
 
     if (savedWidgets?.length && (viewChanged || widgets.length === 0)) {
       replaceAll(savedWidgets);
     }
-    if (savedConversationId) {
-      useImagineStore.getState().setConversationId(savedConversationId);
-    }
-    if (savedViewId) {
+    if (
+      savedViewId &&
+      (viewChanged || !useImagineStore.getState()._savedViewId)
+    ) {
       useImagineStore.getState().setSavedViewId(savedViewId);
     }
   }, [
@@ -72,16 +185,36 @@ export default function ImagineTab({
     savedConversationId,
     widgets.length,
     replaceAll,
+    savedScope,
   ]);
 
+  // Saved-view props can outlive recovery in a parent/query cache, including
+  // across remounts. An ID alone is not proof of access in the current scope.
+  useEffect(() => {
+    if (!savedConversationId || !savedScope()) return undefined;
+    const isCurrent = captureFalconRequest({ conversation: true });
+    let active = true;
+    getConversation(savedConversationId)
+      .then(() => {
+        if (!active || !savedScope() || !isCurrent()) return;
+        useImagineStore.getState().setConversationId(savedConversationId);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [savedConversationId, savedScope]);
+
   // Handle prompt chip selection — sends directly to chat
-  const handlePromptSelect = useCallback((text) => {
-    setShowChat(true);
-    // Small delay to let chat panel mount if it was hidden
-    setTimeout(() => {
-      chatRef.current?.send(text);
-    }, 100);
-  }, []);
+  const handlePromptSelect = useCallback(
+    (text) => {
+      setShowChat(true);
+      // Small delay to let chat panel mount if it was hidden. Scope is captured
+      // now; capturing it inside ImagineChatPanel.send would be too late.
+      schedule(() => chatRef.current?.send(text), 100, { conversation: true });
+    },
+    [schedule],
+  );
 
   // Horizontal resize handler
   const handleResizeStart = useCallback(
@@ -138,6 +271,7 @@ export default function ImagineTab({
   );
 
   const handleSaveConfirm = useCallback(() => {
+    if (isSaving || !savedScope()) return;
     if (!projectId) {
       enqueueSnackbar("Cannot save — project context is missing", {
         variant: "error",
@@ -160,7 +294,14 @@ export default function ImagineTab({
         },
       },
       {
-        onSuccess: () => {
+        onSuccess: (response) => {
+          if (tabScopeRef.current !== savedScope || !savedScope()) return;
+          if (!bindSavedView(response)) {
+            enqueueSnackbar("Saved view identity is missing. Please retry.", {
+              variant: "error",
+            });
+            return;
+          }
           enqueueSnackbar("View saved as new tab", { variant: "success" });
           setSaveAnchorEl(null);
           onSaved?.();
@@ -170,7 +311,17 @@ export default function ImagineTab({
         },
       },
     );
-  }, [saveName, suggestedName, widgets, projectId, createSavedView, onSaved]);
+  }, [
+    saveName,
+    suggestedName,
+    widgets,
+    projectId,
+    createSavedView,
+    onSaved,
+    isSaving,
+    savedScope,
+    bindSavedView,
+  ]);
 
   // Empty state with suggested prompts
   const emptyState = (
@@ -197,10 +348,14 @@ export default function ImagineTab({
           opacity: 0.8,
         }}
       >
-        <Iconify icon="mdi:creation" width={32} sx={{ color: "#fff" }} />
+        <Iconify
+          icon="solar:stars-minimalistic-linear"
+          width={32}
+          sx={{ color: "common.white" }}
+        />
       </Box>
 
-      <Typography fontSize={15} fontWeight={600} color="text.primary">
+      <Typography fontSize={13} fontWeight={600} color="text.primary">
         Imagine with Falcon
       </Typography>
 
@@ -259,7 +414,7 @@ export default function ImagineTab({
             borderRadius: "4px",
             border: "1px solid",
             borderColor: "border.hover",
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: 500,
             color: widgets.length ? "text.primary" : "text.disabled",
             "&:hover": {
@@ -268,7 +423,7 @@ export default function ImagineTab({
             },
           }}
         >
-          <Iconify icon="mdi:content-save-outline" width={14} />
+          <Iconify icon="solar:diskette-linear" width={14} />
           {isSaving ? "Saving..." : "Save View"}
         </ButtonBase>
 
@@ -284,16 +439,16 @@ export default function ImagineTab({
             borderRadius: "4px",
             border: "1px solid",
             borderColor: showChat ? "primary.main" : "divider",
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: 500,
             color: showChat ? "primary.main" : "text.secondary",
-            bgcolor: showChat ? "rgba(123,86,219,0.04)" : "transparent",
+            bgcolor: showChat ? "action.hover" : "transparent",
             "&:hover": {
-              bgcolor: showChat ? "rgba(123,86,219,0.08)" : "action.hover",
+              bgcolor: showChat ? "action.selected" : "action.hover",
             },
           }}
         >
-          <Iconify icon="mdi:creation" width={14} />
+          <Iconify icon="solar:stars-minimalistic-linear" width={14} />
           Falcon
         </ButtonBase>
       </Box>
@@ -316,6 +471,7 @@ export default function ImagineTab({
             emptyState={emptyState}
             chatRef={chatRef}
             traceId={traceId}
+            projectId={projectId}
           />
         </Box>
 
@@ -382,11 +538,10 @@ export default function ImagineTab({
         slotProps={{
           paper: {
             sx: {
-              width: 280,
-              borderRadius: "4px",
+              width: 320,
+              borderRadius: "8px",
               border: "1px solid",
               borderColor: "divider",
-              boxShadow: "1px 1px 12px 10px rgba(0,0,0,0.04)",
               p: 1,
               mt: 0.5,
             },
@@ -396,7 +551,7 @@ export default function ImagineTab({
         <Box sx={{ px: 0.5, py: 0.25 }}>
           <Typography
             sx={{
-              fontSize: 14,
+              fontSize: 13,
               fontWeight: 600,
               color: "text.primary",
               fontFamily: "'IBM Plex Sans', sans-serif",
@@ -406,7 +561,7 @@ export default function ImagineTab({
           </Typography>
           <Typography
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               color: "text.secondary",
               fontFamily: "'IBM Plex Sans', sans-serif",
               mt: 0.25,
@@ -455,14 +610,8 @@ export default function ImagineTab({
             variant="outlined"
             onClick={() => setSaveAnchorEl(null)}
             sx={{
-              textTransform: "none",
-              fontSize: 12,
-              fontWeight: 500,
               borderColor: "divider",
               color: "text.primary",
-              borderRadius: "2px",
-              px: 2,
-              py: 0.25,
             }}
           >
             Cancel
@@ -473,13 +622,7 @@ export default function ImagineTab({
             onClick={handleSaveConfirm}
             disabled={!saveName.trim() || isSaving}
             sx={{
-              textTransform: "none",
-              fontSize: 12,
-              fontWeight: 500,
               fontFamily: "'IBM Plex Sans', sans-serif",
-              borderRadius: "2px",
-              px: 2,
-              py: 0.25,
               ...(saveName.trim()
                 ? {}
                 : {

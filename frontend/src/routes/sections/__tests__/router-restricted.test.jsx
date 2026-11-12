@@ -1,3 +1,4 @@
+import React from "react";
 import { render, screen } from "@testing-library/react";
 import { HelmetProvider } from "react-helmet-async";
 import { MemoryRouter, Outlet, useLocation } from "react-router-dom";
@@ -32,6 +33,22 @@ vi.mock("src/hooks/useDeploymentMode", () => ({
     isLoading: false,
   }),
   usePostLoginPath: () => "/dashboard/develop",
+}));
+
+vi.mock("src/hooks/useCapabilities", async (original) => ({
+  .../** @type {typeof import("src/hooks/useCapabilities")} */ (
+    await original()
+  ),
+  useFeatureAllowed: () => ({
+    allowed: false,
+    isLoading: false,
+    isError: false,
+  }),
+  useCapabilities: () => ({
+    data: { features: {} },
+    isLoading: false,
+    isError: false,
+  }),
 }));
 
 function CurrentUrl() {

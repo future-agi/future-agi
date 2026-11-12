@@ -945,8 +945,9 @@ def _partial_group_config():
     return config
 
 
-def _prepare_partial_groups(config):
+def _prepare_partial_groups(config, *, include_period_aggregate=False):
     builder = _builder(config)
+    builder.include_period_aggregate = include_period_aggregate
     return builder, view.DashboardViewSet._prepare_metric_queries(builder)
 
 
@@ -1018,8 +1019,11 @@ def test_actual_public_disjoint_fetches_order_labels_deadline_and_capped_series(
 ):
     config = _partial_group_config()
     original = deepcopy(config)
-    builder, queries = _prepare_partial_groups(config)
+    # Compile the same period-aware contract as the public and exact-worker
+    # paths; bucket-only SQL is still covered by the compiler tests above.
+    builder, queries = _prepare_partial_groups(config, include_period_aggregate=True)
     groups = builder.group_prepared_metric_queries(queries)
+    assert [indices for indices, _ in groups] == [(0, 3), (1, 4), (2,)]
     by_sql = {
         plan.sql if plan else queries[indices[0]][1]: (indices, plan)
         for indices, plan in groups
@@ -1044,13 +1048,23 @@ def test_actual_public_disjoint_fetches_order_labels_deadline_and_capped_series(
             return []
         return [
             {
+                # Reuse a real bucket timestamp for the period row: its
+                # discriminator, not its timestamp, must keep values separate.
                 "time_bucket": END.replace(hour=0),
+                "is_period_aggregate": int(is_period),
                 "breakdown_value": f"series_{series:03}",
                 **{
-                    column: (None if series == 0 else float(index - 3))
+                    column: (
+                        None
+                        if series == 0
+                        else float(1000 + index + series)
+                        if is_period
+                        else float(index - 3)
+                    )
                     for column, index in zip(plan.value_columns, indices, strict=True)
                 },
             }
+            for is_period in (False, True)
             for series in range(257)
         ]
 
@@ -1070,6 +1084,7 @@ def test_actual_public_disjoint_fetches_order_labels_deadline_and_capped_series(
     for index, metric in enumerate(metrics):
         if index == 2:
             assert all(point["value"] is None for point in metric["series"][0]["data"])
+            assert metric["series"][0]["aggregate_value"] is None
         else:
             assert len(metric["series"]) == settings.DASHBOARD_BREAKDOWN_MAX_SERIES
             assert metric["series_total"] == 257
@@ -1077,7 +1092,20 @@ def test_actual_public_disjoint_fetches_order_labels_deadline_and_capped_series(
             assert {s["name"] for s in metric["series"]} <= {
                 f"series_{i:03}" for i in range(257)
             }
+            # Every bucket value is equal, so summed buckets cannot tell the
+            # series apart; the exact period value (rising with the series
+            # index) decides the cut. series_000 has no period value and ranks
+            # by its empty buckets, last.
+            expected_names = [f"series_{i:03}" for i in range(256, 0, -1)]
+            expected_names.append("series_000")
+            assert [series["name"] for series in metric["series"]] == expected_names[
+                : settings.DASHBOARD_BREAKDOWN_MAX_SERIES
+            ]
             for series in metric["series"]:
+                series_index = int(series["name"].rsplit("_", 1)[1])
+                assert series["aggregate_value"] == (
+                    None if series_index == 0 else float(1000 + index + series_index)
+                )
                 values = [p["value"] for p in series["data"] if p["value"] is not None]
                 assert values == (
                     [] if series["name"] == "series_000" else [float(index - 3)]
@@ -1179,9 +1207,23 @@ def test_native_disjoint_groups_against_unfiltered_whole_final(
         datetime.fromisoformat(config["time_range"][key])
         for key in ("custom_start", "custom_end")
     ]
+
+    def aggregate(values, operation):
+        return (
+            sum(values) / len(values)
+            if operation == "avg"
+            else min(values)
+            if operation == "min"
+            else max(values)
+            if operation == "max"
+            else sorted(values)[int(len(values) * {"p25": 0.25, "p50": 0.5}[operation])]
+        )
+
     expected_rows = []
+    expected_period_values = []
     for metric in config["metrics"]:
         grain_values = defaultdict(list)
+        period_values = defaultdict(list)
         for row in winners:
             time = datetime.fromisoformat(row["start_time"]).replace(tzinfo=UTC)
             numbers, strings = row["attrs_number"], row["attrs_string"]
@@ -1200,23 +1242,23 @@ def test_native_disjoint_groups_against_unfiltered_whole_final(
             grain_values[(time.date().isoformat(), strings["session.id"])].append(
                 numbers[metric["attribute_key"]]
             )
+            period_values[strings["session.id"]].append(
+                numbers[metric["attribute_key"]]
+            )
         expected = []
         for (day, breakdown), values in sorted(grain_values.items()):
-            op = metric["aggregation"]
-            value = (
-                sum(values) / len(values)
-                if op == "avg"
-                else min(values)
-                if op == "min"
-                else max(values)
-                if op == "max"
-                else sorted(values)[int(len(values) * {"p25": 0.25, "p50": 0.5}[op])]
-            )
+            value = aggregate(values, metric["aggregation"])
             expected.append(
                 {"time_bucket": day, "breakdown_value": breakdown, "value": value}
             )
         expected_rows.append(expected)
-    builder, queries = _prepare_partial_groups(config)
+        expected_period_values.append(
+            {
+                breakdown: aggregate(values, metric["aggregation"])
+                for breakdown, values in period_values.items()
+            }
+        )
+    builder, queries = _prepare_partial_groups(config, include_period_aggregate=True)
     groups = builder.group_prepared_metric_queries(queries)
     assert [indices for indices, _ in groups] == [(0, 3), (1, 4), (2,)]
     by_sql = {
@@ -1235,14 +1277,21 @@ def test_native_disjoint_groups_against_unfiltered_whole_final(
         for index, (_, actual) in zip(indices, results, strict=True):
             normalized = [
                 {
-                    **row,
+                    "breakdown_value": row["breakdown_value"],
+                    "value": row["value"],
                     "time_bucket": datetime.fromisoformat(row["time_bucket"])
                     .date()
                     .isoformat(),
                 }
                 for row in actual
+                if not row["is_period_aggregate"]
             ]
             assert normalized == expected_rows[index]
+            periods = [row for row in actual if row["is_period_aggregate"]]
+            assert len(periods) == len(expected_period_values[index])
+            assert {
+                row["breakdown_value"]: row["value"] for row in periods
+            } == expected_period_values[index]
         return rows
 
     # Session transport owns one local RMT; do not concurrently call its client.
@@ -1283,21 +1332,39 @@ def test_native_dashboard_fallback_resolves_winners_before_exact_time(
     run, insert = root_final_native
     start, end = END.replace(minute=15), END.replace(minute=30)
     base = {
-        "project_id": PROJECT, "start_time": END.replace(minute=20),
-        "attrs_bool": {"ready": 0}, "attrs_number": {"ready": 0},
-        "attrs_string": {"ready": "zero"}, "latency_ms": 90,
+        "project_id": PROJECT,
+        "start_time": END.replace(minute=20),
+        "attrs_bool": {"ready": 0},
+        "attrs_number": {"ready": 0},
+        "attrs_string": {"ready": "zero"},
+        "latency_ms": 90,
     }
 
     def add(name, **changes):
         insert(**{**base, "id": name, **changes})
 
-    for name, time in (("before", start - timedelta(minutes=5)),
-                       ("after", end + timedelta(minutes=10))):
+    for name, time in (
+        ("before", start - timedelta(minutes=5)),
+        ("after", end + timedelta(minutes=10)),
+    ):
         add(name)
         add(name, _version=2, start_time=time)
     add("clear")
-    add("clear", _version=2, attrs_bool={}, attrs_number={}, attrs_string={}, latency_ms=70)
-    add("wrong-type", attrs_bool={}, attrs_number={}, attrs_string={"ready": "other"}, latency_ms=20)
+    add(
+        "clear",
+        _version=2,
+        attrs_bool={},
+        attrs_number={},
+        attrs_string={},
+        latency_ms=70,
+    )
+    add(
+        "wrong-type",
+        attrs_bool={},
+        attrs_number={},
+        attrs_string={"ready": "other"},
+        latency_ms=20,
+    )
     add("child", parent_span_id="parent")
     add("nil-parent", parent_span_id="00000000-0000-0000-0000-000000000000")
     add("root-to-child")
@@ -1309,8 +1376,13 @@ def test_native_dashboard_fallback_resolves_winners_before_exact_time(
     for positive in (False, True):
         if positive:
             add("zero", latency_ms=10, parent_span_id="")
-            add("one", attrs_bool={"ready": 1}, attrs_number={"ready": 1},
-                attrs_string={"ready": "one"}, latency_ms=30)
+            add(
+                "one",
+                attrs_bool={"ready": 1},
+                attrs_number={"ready": 1},
+                attrs_string={"ready": "one"},
+                latency_ms=30,
+            )
             add("reverse", start_time=start - timedelta(minutes=5))
             add("reverse", _version=2, latency_ms=50)
             add("zero", service_name="other-service", latency_ms=17)
@@ -1320,13 +1392,24 @@ def test_native_dashboard_fallback_resolves_winners_before_exact_time(
             add("nullable", latency_ms=None)
 
         # Complete physical winners, materialized before ANY mutable filter.
-        winners = run("SELECT project_id,start_time,is_deleted,parent_span_id,"
-                      "attrs_bool,attrs_number,attrs_string,latency_ms FROM spans FINAL")
-        roots = [r for r in winners if r["project_id"] == PROJECT and not r["is_deleted"]
-                 and r["parent_span_id"] in (None, "")
-                 and start <= r["start_time"].replace(tzinfo=UTC) < end]
+        winners = run(
+            "SELECT project_id,start_time,is_deleted,parent_span_id,"
+            "attrs_bool,attrs_number,attrs_string,latency_ms FROM spans FINAL"
+        )
+        roots = [
+            r
+            for r in winners
+            if r["project_id"] == PROJECT
+            and not r["is_deleted"]
+            and r["parent_span_id"] in (None, "")
+            and start <= r["start_time"].replace(tzinfo=UTC) < end
+        ]
         if kind:
-            column = {"boolean": "attrs_bool", "number": "attrs_number", "text": "attrs_string"}[kind]
+            column = {
+                "boolean": "attrs_bool",
+                "number": "attrs_number",
+                "text": "attrs_string",
+            }[kind]
 
             def matches(row, column=column):
                 attrs = row[column]
@@ -1346,14 +1429,39 @@ def test_native_dashboard_fallback_resolves_winners_before_exact_time(
             roots = [r for r in roots if matches(r)]
         values = [r["latency_ms"] for r in roots if r["latency_ms"] is not None]
         body = _config(filtered=False)
-        body.update(breakdowns=[], time_range={"custom_start": start.isoformat(), "custom_end": end.isoformat()})
-        filters = [{"column_id": "ready", "filter_config": {
-            "col_type": "SPAN_ATTRIBUTE", "filter_type": kind,
-            "filter_op": operation, "filter_value": value,
-        }}] if kind else []
+        body.update(
+            breakdowns=[],
+            time_range={
+                "custom_start": start.isoformat(),
+                "custom_end": end.isoformat(),
+            },
+        )
+        filters = (
+            [
+                {
+                    "column_id": "ready",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        "filter_type": kind,
+                        "filter_op": operation,
+                        "filter_value": value,
+                    },
+                }
+            ]
+            if kind
+            else []
+        )
         body["filters"] = [] if per_metric else filters
-        body["metrics"] = [{"id": "latency", "name": "latency", "type": "system_metric",
-            "source": "traces", "aggregation": "avg", "filters": filters if per_metric else []}]
+        body["metrics"] = [
+            {
+                "id": "latency",
+                "name": "latency",
+                "type": "system_metric",
+                "source": "traces",
+                "aggregation": "avg",
+                "filters": filters if per_metric else [],
+            }
+        ]
         builder = _builder(body)
         sql, params = builder.build_metric_query(builder.metrics[0])
         assert "parent_span_id" in sql and "avg(latency_ms)" in sql

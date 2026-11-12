@@ -3,6 +3,8 @@ package tenant
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -200,5 +202,22 @@ func TestSyncFromControlPlane_DropsOmittedOrgWithoutUnbuiltList(t *testing.T) {
 	}
 	if store.Get("org-2") == nil {
 		t.Error("org-2 should be loaded")
+	}
+}
+
+type publicationSyncTransport struct{}
+
+func (publicationSyncTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"status":true,"result":{"org":{}}}`)), Header: make(http.Header)}, nil
+}
+func TestSyncPublicationRefusalDoesNotSetReadiness(t *testing.T) {
+	s, g := boundStore(t)
+	requireMutation(t, g.Close())
+	old := syncHTTPClient
+	syncHTTPClient = &http.Client{Transport: publicationSyncTransport{}}
+	defer func() { syncHTTPClient = old }()
+	err := SyncFromControlPlane(context.Background(), "http://synthetic.invalid", "", s)
+	if !errors.Is(err, ErrNativeLifecycle) || s.InitialSyncComplete() || s.Count() != 0 {
+		t.Fatal("rejected sync acknowledged success")
 	}
 }

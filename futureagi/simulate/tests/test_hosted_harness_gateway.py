@@ -19,23 +19,37 @@ from unittest.mock import patch
 from urllib.parse import quote, urlparse
 
 import pytest
+from django.db import DatabaseError
 from django.test import override_settings
 from django.utils import timezone
 
-from simulate.models import HostedHarnessAttempt, HostedHarnessJob
+from simulate.models import (
+    HostedHarnessAttempt,
+    HostedHarnessExecution,
+    HostedHarnessJob,
+    HostedHarnessReceipt,
+    HostedHarnessScenario,
+)
+from simulate.models.test_execution import CallExecution
+from simulate.selectors.agent_fix import ran_at
 from simulate.services.harness_capacity import SandboxCapacity
 from simulate.services.harness_provider import serialize_job
 from simulate.services.hosted_harness import (
     HostedHarnessError,
+    begin_scenarios,
     create_hosted_job,
+    provision_scenarios,
     record_cleanup,
     register_attempt,
     request_cancellation,
+    scope_dispatch_to_rerun,
+    update_execution_counts,
 )
 from simulate.services.hosted_harness_diagnostics import cached_attempt_redaction_values
 from simulate.services.hosted_harness_gateway import (
     _ADJUSTMENTS_PATH,
     _SIMULATOR_SECRETS_PATH,
+    GitHubAppTokenProvider,
     HostedHarnessGateway,
     HostedSourceAcquirer,
     _add_scoped_guest_pin_policy,
@@ -66,6 +80,16 @@ from simulate.services.hosted_sandbox import (
     SandboxConflictError,
     SandboxNotFoundError,
     SandboxProviderError,
+)
+
+try:  # New module: on the pre-containment tree these tests fail one by one.
+    from simulate.services import github_app_tenancy
+except ImportError:
+    github_app_tenancy = None
+
+PRIVATE_GITHUB_UNAVAILABLE_MESSAGE = (
+    "Private GitHub repositories are not available on Future AGI cloud. "
+    "Use a public repository or upload the code."
 )
 
 
@@ -1228,6 +1252,219 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
         names = set(tar.getnames())
     assert "source/agent.py" in names
     assert all(".git" not in name for name in names)
+
+
+_GITHUB_ACCESS_TOKENS = "https://api.github.com/app/installations/{}/access_tokens"
+
+
+class _GitHubApp:
+    """Stands in for the App JWT signer and GitHub's token endpoints, recording each
+    call and answering as GitHub does."""
+
+    def __init__(self):
+        self.signed = []
+        self.posts = []
+        self.deletes = []
+
+    def encode(self, claims, _key, algorithm):
+        self.signed.append((claims["iss"], algorithm))
+        return "synthetic-app-jwt"
+
+    def post(self, url, **kwargs):
+        self.posts.append((url, kwargs["headers"]["Authorization"]))
+        return SimpleNamespace(
+            status_code=201, json=lambda: {"token": "synthetic-installation-token"}
+        )
+
+    def delete(self, url, **kwargs):
+        self.deletes.append((url, kwargs["headers"]["Authorization"]))
+        return SimpleNamespace(status_code=204)
+
+
+@pytest.fixture
+def github_app(monkeypatch):
+    app = _GitHubApp()
+    gateway = "simulate.services.hosted_harness_gateway"
+    monkeypatch.setattr(f"{gateway}.jwt.encode", app.encode)
+    monkeypatch.setattr(f"{gateway}.requests.post", app.post)
+    monkeypatch.setattr(f"{gateway}.requests.delete", app.delete)
+    return app
+
+
+def _configure_github_app(settings, deployment=""):
+    settings.CLOUD_DEPLOYMENT = deployment
+    settings.GITHUB_APP_ID = "12345"
+    settings.GITHUB_APP_PRIVATE_KEY = "synthetic-app-private-key"
+
+
+def _live_orgs(monkeypatch, answer):
+    """Answer the organization query with ``answer`` ids, or raise it if it is an
+    exception, recording each time it is asked."""
+    asked = []
+
+    def live_org_ids():
+        asked.append(True)
+        if isinstance(answer, BaseException):
+            raise answer
+        return list(answer)
+
+    monkeypatch.setattr(github_app_tenancy, "_live_org_ids", live_org_ids)
+    return asked
+
+
+# (CLOUD_DEPLOYMENT, the organization query's answer) where the platform App serves,
+# or may serve, more than one organization.
+_MULTI_TENANT = (
+    pytest.param("", ("org-a", "org-b"), id="two-orgs-not-cloud"),
+    pytest.param("US", ("org-a",), id="cloud-US-one-org"),
+    pytest.param("eu", ("org-a",), id="cloud-lowercase-eu-one-org"),
+    pytest.param(" DEV ", ("org-a",), id="cloud-padded-DEV-one-org"),
+    pytest.param("", DatabaseError("synthetic outage"), id="org-query-fails"),
+)
+
+
+def _assert_private_github_refused(refused):
+    assert refused.value.code == "github_private_unavailable"
+    assert refused.value.message == PRIVATE_GITHUB_UNAVAILABLE_MESSAGE
+    assert refused.value.message == (
+        "Private GitHub repositories are not available on Future AGI cloud. "
+        "Use a public repository or upload the code."
+    )
+    assert refused.value.status_code == 422
+    assert refused.value.retryable is False
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("deployment", ["US", "EU", "DEV"])
+def test_cloud_mints_no_token_for_a_stored_installation(
+    organization, settings, monkeypatch, github_app, deployment
+):
+    """A job already stored with an installation id, which on Cloud may be another
+    organization's, clones nothing: the refusal comes before the App JWT is signed or
+    GitHub's access-token endpoint is asked, though only one organization exists."""
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="stored-installation"
+    )
+    assert job.payload["source"]["installation_id"] == "installation-1"
+    _configure_github_app(settings, deployment)
+    commands = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        return SimpleNamespace(returncode=1, stdout="", stderr="no clone in this test")
+
+    monkeypatch.setattr("simulate.services.hosted_harness_gateway.subprocess.run", run)
+
+    with pytest.raises(HostedHarnessError) as refused:
+        HostedSourceAcquirer().acquire(job)
+
+    assert github_app.posts == []
+    assert github_app.signed == []
+    assert github_app.deletes == []
+    assert commands == []
+    _assert_private_github_refused(refused)
+
+
+@pytest.mark.parametrize(("deployment", "orgs"), _MULTI_TENANT)
+@pytest.mark.parametrize("entry", ["installation_token", "credential"])
+def test_multi_tenant_refuses_the_mint_before_github_is_asked(
+    settings, monkeypatch, github_app, deployment, orgs, entry
+):
+    _configure_github_app(settings, deployment)
+    _live_orgs(monkeypatch, orgs)
+    provider = GitHubAppTokenProvider.from_settings()
+
+    with pytest.raises(HostedHarnessError) as refused:
+        if entry == "credential":
+            with provider.credential("installation-of-another-organization"):
+                pass
+        else:
+            provider.installation_token("installation-of-another-organization")
+
+    assert github_app.posts == []
+    assert github_app.signed == []
+    assert github_app.deletes == []
+    _assert_private_github_refused(refused)
+
+
+def _assert_minted_and_revoked(github_app, installation_id):
+    assert github_app.signed == [("12345", "RS256")]
+    assert github_app.posts == [
+        (_GITHUB_ACCESS_TOKENS.format(installation_id), "Bearer synthetic-app-jwt")
+    ]
+    assert github_app.deletes == [
+        (
+            "https://api.github.com/installation/token",
+            "Bearer synthetic-installation-token",
+        )
+    ]
+
+
+@pytest.mark.parametrize("deployment", ["", "false", "SELF_HOSTED"])
+def test_single_org_self_hosted_still_mints_and_revokes_the_installation_token(
+    settings, monkeypatch, github_app, deployment
+):
+    """A self-hosted install with one organization configured its own App, so the mint
+    is unchanged there; the organizations are asked afresh on each mint."""
+    _configure_github_app(settings, deployment)
+    asked = _live_orgs(monkeypatch, ("only-org",))
+    provider = GitHubAppTokenProvider.from_settings()
+
+    with provider.credential("installation-1") as token:
+        assert token == "synthetic-installation-token"
+        assert github_app.deletes == []
+
+    _assert_minted_and_revoked(github_app, "installation-1")
+    assert asked == [True]
+
+
+@pytest.mark.parametrize(
+    "deployment",
+    [
+        pytest.param("", id="unset"),
+        pytest.param("false", id="false"),
+        pytest.param("SELF_HOSTED", id="SELF_HOSTED"),
+        pytest.param("US", id="US"),
+    ],
+)
+@pytest.mark.parametrize("missing", ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"])
+def test_without_the_platform_app_configured_the_mint_is_unchanged(
+    settings, monkeypatch, github_app, deployment, missing
+):
+    """A provider built with its own credentials while the platform App is not
+    configured mints as before, and no organization is counted."""
+    _configure_github_app(settings, deployment)
+    setattr(settings, missing, "")
+    asked = _live_orgs(monkeypatch, ("org-a", "org-b"))
+    provider = GitHubAppTokenProvider(
+        app_id="12345", private_key="synthetic-app-private-key"
+    )
+
+    with provider.credential("installation-1") as token:
+        assert token == "synthetic-installation-token"
+
+    _assert_minted_and_revoked(github_app, "installation-1")
+    assert asked == []
+
+
+@pytest.mark.django_db
+def test_live_organizations_are_counted_from_the_database(
+    organization, settings, github_app
+):
+    """The seam itself: a second organization makes the deployment multi-tenant."""
+    from accounts.models import Organization
+
+    _configure_github_app(settings)
+    Organization.objects.create(name="Second synthetic organization")
+
+    ids = github_app_tenancy._live_org_ids()
+
+    assert len(ids) == 2
+    assert github_app_tenancy.platform_github_app_refused() is True
+    with pytest.raises(HostedHarnessError) as refused:
+        GitHubAppTokenProvider.from_settings().installation_token("installation-1")
+    assert github_app.posts == []
+    _assert_private_github_refused(refused)
 
 
 class _Filesystem:
@@ -2759,7 +2996,7 @@ def test_reconcile_waits_when_daytona_deletion_is_already_in_progress(
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("exit_code", [0, 3, 78])
+@pytest.mark.parametrize("exit_code", [3, 78])
 def test_reconcile_terminal_and_authoring_exits_never_retry(
     organization, monkeypatch, exit_code
 ):
@@ -2920,6 +3157,317 @@ def test_reconcile_exit0_refreshes_terminal_delivery_flags(organization, monkeyp
     assert refreshed.manifest_acked is True
     assert refreshed.terminal_stage == "completed"
     assert refreshed.terminal_failure is None
+
+
+def _delivered_run(
+    organization, key: str, *, receipts: int, parallelism: int = 1
+) -> HostedHarnessAttempt:
+    """A two-call Run of a saved environment holding its first ``receipts`` results and no
+    acknowledged manifest."""
+    environment, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=f"{key}-environment"
+    )
+    payload = _payload()
+    payload["scenario_count"] = 2
+    # Enough CPU for that many worlds side by side.
+    payload["runtime"].update(parallelism=parallelism, cpu_units=2 * parallelism)
+    job, _ = create_hosted_job(organization, payload, idempotency_key=key)
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example", provider_ref="sandbox-1"
+    ).attempt
+    keys = ["scenario-1", "scenario-2"]
+    provisioned = provision_scenarios(
+        attempt,
+        {
+            "operation": "provision",
+            "name": "Delivered run",
+            "personas": [
+                {"scenario_key": name, "name": name, "description": name}
+                for name in keys
+            ],
+        },
+    )
+    attempt.job.refresh_from_db()
+    begin_scenarios(
+        attempt,
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["result"]["run_test_id"],
+            "scenario_keys": keys,
+        },
+    )
+    registrations = HostedHarnessScenario.no_workspace_objects.filter(job=job).order_by(
+        "scenario_key"
+    )
+    for number, registration in enumerate(registrations):
+        # A Run's call hangs off its execution, not off the scenario it was built from.
+        call = registration.call_execution
+        HostedHarnessScenario.no_workspace_objects.filter(id=registration.id).update(
+            call_execution=None
+        )
+        execution = HostedHarnessExecution.no_workspace_objects.create(
+            job=job,
+            source_scenario=registration,
+            execution_key=f"{registration.scenario_key}:0",
+            trial_index=0,
+            call_execution=call,
+        )
+        if number < receipts:
+            _receive(attempt, execution)
+    job.refresh_from_db()
+    # The executions a Run sends its guest, which a relaunch can narrow.
+    metadata = {
+        **(job.payload.get("metadata") or {}),
+        "execution_manifest": [
+            {"execution_key": f"{name}:0", "scenario_key": name, "trial_index": 0}
+            for name in keys
+        ],
+    }
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+        environment=environment, payload={**job.payload, "metadata": metadata}
+    )
+    return attempt
+
+
+def _receive(attempt: HostedHarnessAttempt, execution: HostedHarnessExecution) -> None:
+    HostedHarnessReceipt.no_workspace_objects.create(
+        job_id=attempt.job_id,
+        attempt=attempt,
+        scenario=execution.source_scenario,
+        execution=execution,
+        attempt_number=attempt.attempt_number,
+        digest=f"sha256:{uuid.uuid4().hex * 2}",
+        status="passed",
+        body={},
+    )
+    CallExecution.objects.filter(id=execution.call_execution_id).update(
+        status=CallExecution.CallStatus.COMPLETED
+    )
+
+
+def _deliver_terminal(attempt: HostedHarnessAttempt, stage: str) -> None:
+    HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+        terminal_event_received=True,
+        terminal_stage=stage,
+        state=HostedHarnessAttempt.State.FINALIZING,
+    )
+
+
+def _exited_cleanly(monkeypatch) -> tuple[HostedHarnessGateway, dict]:
+    """A gateway whose guest exited 0 and whose offline spool holds nothing more."""
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    captured = {}
+
+    def fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", fake_delete)
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {"exit_code": 0, "logs": "", "process_logs": ""},
+    )
+    monkeypatch.setattr(gateway, "_recover_offline_delivery", lambda _: False)
+    return gateway, captured
+
+
+@pytest.mark.django_db
+def test_reconcile_exit0_keeps_a_scored_run_whose_manifest_was_lost(
+    organization, monkeypatch
+):
+    attempt = _delivered_run(organization, "scored-run-lost-manifest", receipts=2)
+    _deliver_terminal(attempt, "completed")
+    gateway, captured = _exited_cleanly(monkeypatch)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert captured["retry_pending"] is False
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    assert attempt.state == HostedHarnessAttempt.State.COMPLETED
+    assert attempt.terminal_failure is None
+    # Nothing stands in for the manifest: the attempt still records that it never came.
+    assert attempt.manifest_acked is False
+    assert not attempt.manifests.exists()
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
+@pytest.mark.django_db
+def test_reconcile_exit0_completes_a_scored_run_whose_terminal_event_was_lost(
+    organization, monkeypatch
+):
+    attempt = _delivered_run(organization, "scored-run-lost-terminal", receipts=2)
+    gateway, captured = _exited_cleanly(monkeypatch)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    # Kept as a Run whose manifest was lost is kept. No relaunch, so no call runs or
+    # is charged a second time.
+    assert captured["retry_pending"] is False
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    assert job.attempts.count() == 1
+    assert attempt.state == HostedHarnessAttempt.State.COMPLETED
+    assert attempt.terminal_failure is None
+    # The ending is the platform's conclusion and says so; no guest sent it.
+    assert attempt.terminal_event_received is False
+    assert (attempt.terminal_stage, attempt.terminal_reason) == (
+        "completed",
+        "terminal_event_lost",
+    )
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("terminal_stage", "receipts", "retried"),
+    [
+        ("completed", 1, True),  # a result never arrived
+        (None, 1, True),  # neither a result nor the terminal event arrived
+        ("canceled", 2, False),  # the guest's own ending is not retried
+    ],
+)
+def test_reconcile_exit0_retries_a_run_only_when_its_results_are_missing(
+    organization, monkeypatch, terminal_stage, receipts, retried
+):
+    attempt = _delivered_run(
+        organization, f"run-missing-{terminal_stage}", receipts=receipts
+    )
+    if terminal_stage:
+        _deliver_terminal(attempt, terminal_stage)
+    gateway, captured = _exited_cleanly(monkeypatch)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "terminal_delivery_incomplete"
+    assert captured["retry_pending"] is retried
+    assert job.state == (
+        HostedHarnessJob.State.RETRY_WAIT if retried else HostedHarnessJob.State.FAILED
+    )
+
+
+@pytest.mark.django_db
+def test_reconcile_exit0_relaunches_only_the_calls_without_a_result(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-missing-relaunch", receipts=1)
+    _deliver_terminal(first, "completed")
+    gateway, _ = _exited_cleanly(monkeypatch)
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    # Launch sends the guest what scope_dispatch_to_rerun leaves of the job's document:
+    # the call whose result was lost, not the call that already has its result.
+    job = HostedHarnessJob.no_workspace_objects.get(id=first.job_id)
+    dispatched = scope_dispatch_to_rerun(job.payload)
+    assert [
+        entry["execution_key"] for entry in dispatched["metadata"]["execution_manifest"]
+    ] == ["scenario-2:0"]
+    assert dispatched["scenario_count"] == 1
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    _receive(
+        second,
+        HostedHarnessExecution.no_workspace_objects.get(
+            job_id=first.job_id, execution_key="scenario-2:0"
+        ),
+    )
+    _deliver_terminal(second, "completed")
+
+    job = gateway.reconcile_completed(second)
+
+    # The first attempt's result and the relaunch's together finish the Run.
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    update_execution_counts(job)
+    job.refresh_from_db()
+    assert (job.completed_count, job.failed_count) == (2, 0)
+
+
+@override_settings(
+    HARNESS_PARALLELISM_ENABLED=True, ALK_DAYTONA_DOCKERFILE="/hosted/Dockerfile"
+)
+@pytest.mark.django_db
+def test_relaunch_of_one_lost_call_keeps_the_runs_parallelism(
+    organization, monkeypatch
+):
+    first = _delivered_run(
+        organization, "run-missing-relaunch-w2", receipts=1, parallelism=2
+    )
+    _deliver_terminal(first, "completed")
+    gateway, _ = _exited_cleanly(monkeypatch)
+    gateway.reconcile_completed(first)
+
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    )
+    _receive(
+        second.attempt,
+        HostedHarnessExecution.no_workspace_objects.get(
+            job_id=first.job_id, execution_key="scenario-2:0"
+        ),
+    )
+    _deliver_terminal(second.attempt, "completed")
+    job = gateway.reconcile_completed(second.attempt)
+
+    # The relaunch runs its one call alone, but the Run's calls ran two at a time:
+    # running fewer calls is no clamp.
+    assert second.admitted_parallelism == 1
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert ran_at(job) == 2
+    assert "parallelism_clamped" not in job.payload["metadata"]
+
+
+@pytest.mark.django_db
+def test_reconcile_exit0_scores_the_run_from_its_calls_when_the_relaunch_runs_out(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-missing-relaunch-spent", receipts=1)
+    _deliver_terminal(first, "completed")
+    gateway, _ = _exited_cleanly(monkeypatch)
+    gateway.reconcile_completed(first)
+    # The relaunch, the last the budget allows, loses the one call it was sent.
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    _deliver_terminal(second, "completed")
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.FAILED
+    assert job.failure["code"] == "terminal_delivery_incomplete"
+    calls = {
+        execution.execution_key: execution.call_execution
+        for execution in HostedHarnessExecution.no_workspace_objects.filter(
+            job=job
+        ).select_related("call_execution")
+    }
+    assert calls["scenario-1:0"].status == CallExecution.CallStatus.COMPLETED
+    assert calls["scenario-2:0"].status == CallExecution.CallStatus.FAILED
+    assert calls["scenario-2:0"].ended_reason == job.failure["message"]
+    # The Run is not failed: it is scored from the call that has its result, as after
+    # an in-run re-run.
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -3452,8 +4000,14 @@ class _ExportWorld:
             sys.modules, "simulate.services.agent_setup", summary_module
         )
 
+        # These historical tests exercise the dormant export planner with a
+        # synthetic credential provider, not today's production OFF policy.
+        # The real OFF launch is covered separately below; no deployment flag
+        # or real key issuer is enabled by this fixture.
         ingest_module = ModuleType("tracer.services.collector_ingest")
         ingest_module.ExportCredentials = _ExportCredentials
+        ingest_module.SANDBOX_EXPORT_STATE = "ON"
+        ingest_module.DISABLED_REASON = "run_token_unavailable"
 
         # Keyword-only, like the real one, so a positional call fails here too.
         def get_or_create_export_credentials(
@@ -3594,6 +4148,47 @@ def _assert_launched_without_export(world, declared_secrets=None):
     assert "collector.example.com" not in world.domains
     assert _EXPORT_API_KEY.encode() not in world.uploads["/work/job.json"]
     assert _LEAK_SENTINEL not in world.logs.text()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("instrumentation", ["opentelemetry", "traceai"])
+def test_real_platform_export_is_off_and_launches_with_zero_keys(
+    organization, workspace, user, settings, monkeypatch, instrumentation
+):
+    from importlib import import_module
+    from unittest.mock import Mock
+
+    from accounts.models import OrgApiKey
+    from tracer.models.project import Project
+
+    real_ingest = import_module("tracer.services.collector_ingest")
+    assert real_ingest.SANDBOX_EXPORT_STATE == "OFF"
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        instrumentation=instrumentation,
+    )
+    # Restore the production OFF provider instead of the dormant planner stub.
+    monkeypatch.setitem(sys.modules, "tracer.services.collector_ingest", real_ingest)
+    log = Mock()
+    monkeypatch.setattr(real_ingest, "logger", log)
+    keys_before = OrgApiKey._base_manager.count()
+    projects_before = set(Project.with_simulation.values_list("id", flat=True))
+    world.launch()
+
+    _assert_launched_without_export(world)
+    assert OrgApiKey._base_manager.count() == keys_before == 0
+    assert set(Project.with_simulation.values_list("id", flat=True)) == projects_before
+    assert world.credential_calls == []
+    assert world.hidden_calls == []
+    assert world.summary_calls == []
+    log.info.assert_called_once_with(
+        "sandbox_span_export_off", state="OFF", reason="run_token_unavailable"
+    )
+    assert world.export_log() == []
 
 
 @pytest.mark.django_db
@@ -4627,6 +5222,12 @@ def test_diagnostics_redaction_fallback_holds_every_ingest_key_switched_off_dele
         type="ingest",
     )
     before = OrgApiKey._base_manager.filter(type="ingest").count()
+    # READINESS L03 (integration round 7): the stored rows keep no plaintext, so the
+    # fallback reads each ingest secret back from its encrypted copy.
+    for key in (ingest, switched_off, deleted):
+        stored = OrgApiKey._base_manager.get(pk=key.pk)
+        assert stored.secret_key == "" and stored.secret_key_ciphertext
+        assert stored.reveal_secret() == key.secret_key
     seen = {}
 
     def poll(_attempt, _sandbox, **kwargs):
@@ -4646,6 +5247,56 @@ def test_diagnostics_redaction_fallback_holds_every_ingest_key_switched_off_dele
     assert not {stranger.api_key, stranger.secret_key} & values
     # Read, never created.
     assert OrgApiKey._base_manager.filter(type="ingest").count() == before
+
+
+@pytest.mark.django_db
+def test_diagnostics_redaction_fallback_keeps_no_logs_when_an_ingest_copy_cannot_be_opened(
+    organization, workspace, monkeypatch
+):
+    # Round 7 (L03 x dev's ingest keys): a secret the fallback cannot read back cannot be
+    # redacted, so no diagnostics are kept; a hash-only row (never handed out) holds its
+    # api_key only and does not stop the capture.
+    from accounts.models.user import OrgApiKey
+    from simulate.services.hosted_harness_diagnostics import (
+        forget_attempt_redaction_values,
+    )
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=f"redact-{uuid.uuid4().hex[:8]}"
+    )
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example"
+    ).attempt
+    forget_attempt_redaction_values(attempt.id)
+    hash_only = OrgApiKey.no_workspace_objects.create(
+        organization=organization, workspace=workspace, name="hash only", type="ingest"
+    )
+    OrgApiKey._base_manager.filter(pk=hash_only.pk).update(secret_key_ciphertext="")
+    polls = []
+    monkeypatch.setattr(
+        f"{_GATEWAY}.poll_sandbox_diagnostics",
+        lambda _attempt, _sandbox, **kwargs: polls.append(kwargs),
+    )
+
+    HostedHarnessGateway._capture_diagnostics(attempt, object(), final=True)
+
+    values = set(polls[0]["secret_values"])
+    assert hash_only.api_key in values and hash_only.secret_key not in values
+
+    sealed = OrgApiKey.no_workspace_objects.create(
+        organization=organization, workspace=workspace, name="sealed", type="ingest"
+    )
+    OrgApiKey._base_manager.filter(pk=sealed.pk).update(
+        secret_key_ciphertext="gAAAAAB-not-a-fernet-token"
+    )
+
+    result = HostedHarnessGateway._capture_diagnostics(attempt, object(), final=True)
+
+    assert result is None
+    assert len(polls) == 1
+    attempt.refresh_from_db()
+    assert attempt.diagnostics_error == "redaction:ApiSecretNotRecoverable"
+    assert cached_attempt_redaction_values(attempt.id) is None
 
 
 class _StoredObject(io.BytesIO):

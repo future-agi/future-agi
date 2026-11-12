@@ -13,20 +13,23 @@ import Popover from "@mui/material/Popover";
 import TextField from "@mui/material/TextField";
 import InputAdornment from "@mui/material/InputAdornment";
 import ListItemButton from "@mui/material/ListItemButton";
-import { alpha, useTheme } from "@mui/material/styles";
+import { useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import { enqueueSnackbar } from "src/components/snackbar";
+import { importWithRecovery } from "src/utils/chunkRecovery";
 import useFalconStore from "../store/useFalconStore";
+import { captureFalconRequest } from "../store/falconRequestGuard";
 import { useFalconContext } from "../hooks/useFalconContext";
 import { fetchConversations, getConversation } from "../hooks/useFalconAPI";
 import SkillEditorDialog from "./SkillEditorDialog";
 
 const CONTEXT_ICONS = {
-  datasets: "mdi:database-outline",
-  evaluations: "mdi:clipboard-check-outline",
-  tracing: "mdi:chart-timeline-variant",
-  experiments: "mdi:flask-outline",
-  prompts: "mdi:code-braces",
-  settings: "mdi:cog-outline",
+  datasets: "solar:database-linear",
+  evaluations: "solar:checklist-minimalistic-linear",
+  tracing: "solar:chart-2-linear",
+  experiments: "solar:test-tube-linear",
+  prompts: "solar:code-linear",
+  settings: "solar:settings-linear",
   general: null,
 };
 
@@ -40,24 +43,35 @@ const CONTEXT_LABELS = {
   general: null,
 };
 
+// A chat deleted elsewhere, or kept in another workspace, answers "not found".
+const CHAT_UNAVAILABLE =
+  "This chat isn't available. It may have been deleted, or it may be in another workspace.";
+
 export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const context = useFalconContext();
 
   const resetChat = useFalconStore((s) => s.resetChat);
   const setCurrentConversation = useFalconStore(
     (s) => s.setCurrentConversation,
   );
+  const setStreaming = useFalconStore((s) => s.setStreaming);
   const currentConversationId = useFalconStore((s) => s.currentConversationId);
   const conversations = useFalconStore((s) => s.conversations);
   const skills = useFalconStore((s) => s.skills);
 
-  // Get current conversation title
+  // Get current conversation title. Before one exists, the full page is the
+  // Chat page from the left menu (Falcon AI is the assistant on it); the
+  // sidebar is opened as Falcon AI, so it keeps that name.
   const currentConv = conversations.find((c) => c.id === currentConversationId);
-  const headerTitle =
-    currentConv?.title && currentConv.title !== "New conversation"
-      ? currentConv.title
+  const hasConvTitle = Boolean(
+    currentConv?.title && currentConv.title !== "New conversation",
+  );
+  const showChatTitle = mode === "fullpage" && !hasConvTitle;
+  const headerTitle = hasConvTitle
+    ? currentConv.title
+    : showChatTitle
+      ? "Chat"
       : "Falcon AI";
   const setPendingPrompt = useFalconStore((s) => s.setPendingPrompt);
   const skillsMenuTrigger = useFalconStore((s) => s.skillsMenuTrigger);
@@ -75,9 +89,27 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
   const skillsMenuOpen = Boolean(skillsAnchor);
   const historyOpen = Boolean(historyAnchor);
 
+  const historyRequestRef = useRef(null);
+
+  useEffect(
+    () =>
+      useFalconStore.subscribe((state, previous) => {
+        if (state.resetGeneration === previous.resetGeneration) return;
+        historyRequestRef.current = null;
+        setHistoryAnchor(null);
+        setHistoryItems([]);
+        setHistorySearch("");
+        setHistoryHasMore(true);
+        setHistoryLoading(false);
+      }),
+    [],
+  );
+
   const PAGE_SIZE = 20;
 
   const loadHistory = useCallback(async (offset = 0, search = "") => {
+    const isCurrent = captureFalconRequest();
+    historyRequestRef.current = isCurrent;
     setHistoryLoading(true);
     try {
       const data = await fetchConversations({
@@ -85,6 +117,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
         offset,
         search,
       });
+      if (!isCurrent() || historyRequestRef.current !== isCurrent) return;
       const results = data.results || [];
       if (offset === 0) {
         setHistoryItems(results);
@@ -95,7 +128,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
     } catch {
       // silent
     } finally {
-      setHistoryLoading(false);
+      if (historyRequestRef.current === isCurrent) setHistoryLoading(false);
     }
   }, []);
 
@@ -108,9 +141,15 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
 
   const handleHistorySelect = async (conv) => {
     setHistoryAnchor(null);
+    // An answer may still be written in the chat being left. It does not
+    // show in another chat, and Stop would cancel it there, so the chosen
+    // chat starts with its message box usable.
+    setStreaming(false);
     setCurrentConversation(conv.id);
+    const isCurrent = captureFalconRequest({ conversation: true });
     try {
       const data = await getConversation(conv.id);
+      if (!isCurrent()) return;
       const c = data.result || data;
       const msgs = (c.messages || []).map((m) => ({
         ...m,
@@ -119,8 +158,13 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
         created_at: m.created_at,
       }));
       useFalconStore.getState().setMessages(msgs);
-    } catch {
-      // silent
+    } catch (error) {
+      // Not found: the chat was deleted (or is in another workspace). Say so
+      // and start a new chat, so the next message is not sent to it.
+      if (!isCurrent() || error?.statusCode !== 404) return;
+      enqueueSnackbar(CHAT_UNAVAILABLE, { variant: "error" });
+      resetChat();
+      setCurrentConversation(null);
     }
   };
 
@@ -135,7 +179,10 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
   // Debounced search for history
   useEffect(() => {
     if (!historyOpen) return undefined;
-    const t = setTimeout(() => loadHistory(0, historySearch), 300);
+    const isCurrent = captureFalconRequest();
+    const t = setTimeout(() => {
+      if (isCurrent()) loadHistory(0, historySearch);
+    }, 300);
     return () => clearTimeout(t);
   }, [historySearch, historyOpen, loadHistory]);
 
@@ -182,13 +229,18 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
             variant="subtitle1"
             sx={{
               fontWeight: 600,
-              fontSize: 15,
+              fontSize: 13,
               color: "text.primary",
               letterSpacing: "-0.01em",
             }}
           >
             {headerTitle}
           </Typography>
+          {showChatTitle && (
+            <Typography sx={{ fontSize: 13, color: "text.secondary" }}>
+              with Falcon AI
+            </Typography>
+          )}
           {mode === "sidebar" &&
             context.page !== "general" &&
             CONTEXT_LABELS[context.page] && (
@@ -202,12 +254,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
                 label={CONTEXT_LABELS[context.page]}
                 variant="outlined"
                 sx={{
-                  height: 22,
-                  fontSize: 11,
-                  fontWeight: 500,
-                  borderColor: isDark
-                    ? alpha(theme.palette.common.white, 0.16)
-                    : alpha(theme.palette.common.black, 0.12),
+                  borderColor: "border.default",
                   color: "text.secondary",
                   "& .MuiChip-icon": {
                     color: "text.secondary",
@@ -229,7 +276,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               "&:hover": { color: "text.primary" },
             }}
           >
-            <Iconify icon="mdi:puzzle-outline" width={18} />
+            <Iconify icon="solar:widget-linear" width={20} />
           </IconButton>
           <IconButton
             size="small"
@@ -240,7 +287,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               "&:hover": { color: "text.primary" },
             }}
           >
-            <Iconify icon="mdi:history" width={18} />
+            <Iconify icon="solar:history-linear" width={20} />
           </IconButton>
           <IconButton
             size="small"
@@ -251,7 +298,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               "&:hover": { color: "text.primary" },
             }}
           >
-            <Iconify icon="mdi:pencil-box-outline" width={18} />
+            <Iconify icon="solar:pen-new-square-linear" width={20} />
           </IconButton>
           {onClose && (
             <IconButton
@@ -263,7 +310,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
                 "&:hover": { color: "text.primary" },
               }}
             >
-              <Iconify icon="mdi:close" width={18} />
+              <Iconify icon="solar:close-linear" width={20} />
             </IconButton>
           )}
         </Box>
@@ -286,9 +333,6 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               borderRadius: "12px",
               border: 1,
               borderColor: "divider",
-              boxShadow: isDark
-                ? `0 8px 24px ${alpha(theme.palette.common.black, 0.4)}`
-                : `0 8px 24px ${alpha(theme.palette.common.black, 0.12)}`,
             },
           },
         }}
@@ -299,9 +343,9 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
             sx={{
               color: "text.disabled",
               fontWeight: 600,
-              fontSize: 10,
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
+              fontSize: 12,
+              textTransform: "none",
+              letterSpacing: 0,
             }}
           >
             Skills
@@ -324,8 +368,8 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
           >
             <ListItemIcon sx={{ minWidth: 28 }}>
               <Iconify
-                icon={skill.icon || "mdi:star-outline"}
-                width={18}
+                icon={skill.icon || "solar:star-linear"}
+                width={16}
                 sx={{ color: "text.secondary" }}
               />
             </ListItemIcon>
@@ -333,7 +377,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               primary={skill.name}
               secondary={skill.description || null}
               primaryTypographyProps={{ fontSize: 13 }}
-              secondaryTypographyProps={{ fontSize: 11, noWrap: true }}
+              secondaryTypographyProps={{ fontSize: 12, noWrap: true }}
             />
           </MenuItem>
         ))}
@@ -352,8 +396,8 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
         >
           <ListItemIcon sx={{ minWidth: 28 }}>
             <Iconify
-              icon="mdi:plus"
-              width={18}
+              icon="solar:add-linear"
+              width={16}
               sx={{ color: "text.disabled" }}
             />
           </ListItemIcon>
@@ -383,9 +427,6 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               borderRadius: "12px",
               border: 1,
               borderColor: "divider",
-              boxShadow: isDark
-                ? `0 8px 24px ${alpha(theme.palette.common.black, 0.4)}`
-                : `0 8px 24px ${alpha(theme.palette.common.black, 0.12)}`,
               display: "flex",
               flexDirection: "column",
             },
@@ -405,7 +446,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="mdi:magnify"
+                    icon="solar:magnifier-linear"
                     width={16}
                     sx={{ color: "text.disabled" }}
                   />
@@ -446,10 +487,11 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
               selected={conv.id === currentConversationId}
               onClick={() => handleHistorySelect(conv)}
               sx={{
-                borderRadius: "8px",
+                borderRadius: "6px",
                 mb: "1px",
                 px: 1.5,
-                py: "6px",
+                py: 0,
+                height: 28,
                 minHeight: 0,
                 "&.Mui-selected": { bgcolor: theme.palette.action.selected },
                 "&:hover": { bgcolor: theme.palette.action.hover },
@@ -459,8 +501,8 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
                 primary={conv.title || "Untitled"}
                 primaryTypographyProps={{
                   noWrap: true,
-                  fontSize: 12,
-                  fontWeight: conv.id === currentConversationId ? 600 : 400,
+                  fontSize: 13,
+                  fontWeight: conv.id === currentConversationId ? 500 : 400,
                 }}
               />
             </ListItemButton>
@@ -471,7 +513,7 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
                 textAlign: "center",
                 py: 1,
                 color: "text.disabled",
-                fontSize: 11,
+                fontSize: 12,
               }}
             >
               Loading...
@@ -485,9 +527,14 @@ export default function FalconAIHeader({ onClose, mode = "sidebar" }) {
         skill={null}
         onClose={() => setEditorOpen(false)}
         onSaved={async () => {
+          const isCurrent = captureFalconRequest();
           try {
-            const { listSkills } = await import("../hooks/useFalconAPI");
+            const { listSkills } = await importWithRecovery(
+              () => import("../hooks/useFalconAPI"),
+            );
+            if (!isCurrent()) return;
             const data = await listSkills();
+            if (!isCurrent()) return;
             const results = data.results || data || [];
             const skillList = Array.isArray(results) ? results : [];
             useFalconStore.getState().setSkills(skillList);

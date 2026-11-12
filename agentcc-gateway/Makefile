@@ -1,4 +1,4 @@
-.PHONY: build run test test-race lint clean docker update-pricing
+.PHONY: build run test test-race lint clean docker update-pricing update-catalog scenarios
 
 BINARY=agentcc-gateway
 BUILD_DIR=bin
@@ -12,10 +12,10 @@ run: build
 	$(BUILD_DIR)/$(BINARY) --config config.yaml
 
 test:
-	go test ./... -v -count=1
+	go test ./... -v -count=1 -timeout 30m
 
 test-race:
-	go test ./... -v -race -count=1
+	go test ./... -v -race -count=1 -timeout 30m
 
 test-cover:
 	go test ./... -coverprofile=coverage.out
@@ -38,3 +38,12 @@ docker-run: docker
 
 update-pricing:
 	bash scripts/update-litellm-pricing.sh
+
+update-catalog:
+	bash scripts/update-openrouter-catalog.sh
+
+# Real-binary scenarios against the mock upstream (scripts/scenarios).
+# SCN_REDIS and SCN_REDIS_DB (your lane's DB, never 0) are required:
+# run_all.sh exits 1 without them.
+scenarios:
+	bash scripts/scenarios/run_all.sh

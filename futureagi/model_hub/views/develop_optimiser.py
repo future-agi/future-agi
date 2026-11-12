@@ -43,6 +43,7 @@ from model_hub.models.develop_optimisation import OptimizationDataset
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.run_prompt import RunPrompter
 from model_hub.serializers.develop_optimisation import OptimizationDetailSerializer
+from model_hub.services import credit_ledger_port as credit_ledger
 from model_hub.utils.workspace_scope import scoped_optimization_queryset
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.prompt_template import replace_ids_with_column_name
@@ -489,6 +490,16 @@ class DevelopOptimizer:
             config = self.model_config
             time.time()
 
+            # One key (OK-E, R4-17): this legacy optimizer's model calls cannot
+            # be held and settled per call, so a Future AGI credits route is
+            # refused before any of them. BYOK runs are unchanged.
+            credit_ledger.refuse_legacy_managed_optimizer(
+                organization=self.dataset.organization,
+                workspace=self.dataset.workspace,
+                model_name=config["model_name"],
+                surface="develop-optimiser",
+            )
+
             model_manager = LiteLLMModelManager(config["model_name"])
             provider = model_manager.get_provider(
                 model_name=config["model_name"], organization_id=None
@@ -645,7 +656,7 @@ class OptimizationDetailView(RetrieveAPIView):
         # Replace column IDs with column names in the optimized prompts
         if obj.optimized_k_prompts:
             obj.optimized_k_prompts = [
-                replace_ids_with_column_name(prompt)
+                replace_ids_with_column_name(prompt, self.request)
                 for prompt in obj.optimized_k_prompts
             ]
         return obj

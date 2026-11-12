@@ -1,0 +1,24 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "llama-3.3-70b-versatile",
+      "object": "model",
+      "created": 1733447754,
+      "owned_by": "Meta",
+      "active": true,
+      "context_window": 131072,
+      "public_apps": null,
+      "max_completion_tokens": 32768
+    },
+    {
+      "id": "qwen/qwen3-32b",
+      "object": "model",
+      "created": 1748396646,
+      "owned_by": "Alibaba Cloud",
+      "active": true,
+      "context_window": 131072,
+      "max_completion_tokens": 40960
+    }
+  ]
+}

@@ -4,13 +4,14 @@ from django.db.models import Avg, Case, Count, Q, When
 from django.db.models.functions import JSONObject, NullIf
 
 from accounts.models import Organization, User
-from tfc.middleware.workspace_context import get_current_organization
-
-logger = structlog.get_logger(__name__)
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.evaluation import Evaluation, StatusChoices
 from sdk.utils.async_evaluations import _handle_async_eval
+from sdk.utils.template_lookup import find_cicd_template
+from tfc.middleware.workspace_context import get_current_organization
 from tracer.models.eval_ci_cd import EvaluationResult, EvaluationRun
+
+logger = structlog.get_logger(__name__)
 
 
 def create_evaluations(evaluation_run_id, organization_id, user_id, eval_data_list):
@@ -28,11 +29,16 @@ def create_evaluations(evaluation_run_id, organization_id, user_id, eval_data_li
         all_eval_ids = []
         with transaction.atomic():
             for item in eval_data_list:
-                eval_template_name = item["eval_template"]
-                eval_template = EvalTemplate.no_workspace_objects.get(
-                    Q(name=eval_template_name)
-                    & (Q(organization=organization) | Q(organization__isnull=True))
-                )
+                in_scope = Q(organization=organization) | Q(organization__isnull=True)
+                if item.get("eval_template_id"):
+                    # The template the request check accepted.
+                    eval_template = EvalTemplate.no_workspace_objects.get(
+                        Q(pk=item["eval_template_id"]) & in_scope
+                    )
+                else:
+                    eval_template = find_cicd_template(
+                        item["eval_template"], organization, None
+                    )
 
                 # _handle_async_eval now triggers Temporal workflows internally
                 result = _handle_async_eval(
@@ -89,6 +95,7 @@ def create_evaluation_run(validated_data, user):
     eval_data_for_task = [
         {
             "eval_template": item["eval_template"],
+            "eval_template_id": item.get("eval_template_id"),
             "inputs": item["inputs"],
             "model_name": item.get("model_name"),
             "config": item.get("config", {}),

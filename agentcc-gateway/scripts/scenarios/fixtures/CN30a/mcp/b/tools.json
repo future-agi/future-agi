@@ -1,0 +1,16 @@
+[
+  {
+    "name": "lookup",
+    "description": "Org B's notes lookup (97a_cn_release_proof_static.sh).",
+    "inputSchema": { "type": "object", "properties": { "q": { "type": "string" } } },
+    "annotations": { "readOnlyHint": true },
+    "result": { "content": [{ "type": "text", "text": "org-b notes" }] }
+  },
+  {
+    "name": "archive",
+    "description": "Org B's notes archive: a write, and org B's only.",
+    "inputSchema": { "type": "object" },
+    "annotations": { "readOnlyHint": false, "destructiveHint": false },
+    "result": { "content": [{ "type": "text", "text": "org-b archived" }] }
+  }
+]

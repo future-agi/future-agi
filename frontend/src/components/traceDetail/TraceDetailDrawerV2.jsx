@@ -1,15 +1,19 @@
 import React, { useState, useCallback, useEffect, useMemo } from "react";
-import { getRequestErrorMessage } from "src/utils/errorUtils";
 import PropTypes from "prop-types";
 import {
+  Alert,
+  AlertTitle,
   Box,
   Button,
-  CircularProgress,
   Drawer,
   Menu,
   MenuItem,
+  Portal,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
 import { useSharedIssueTrace } from "src/api/shared-links";
@@ -20,19 +24,15 @@ import { useCreatePromptDraft } from "src/api/develop/prompt";
 import { getOutputFormatFromCatalogType } from "src/sections/develop-detail/RunPrompt/common";
 import logger from "src/utils/logger";
 import DrawerHeader from "./DrawerHeader";
+import { CaptureCoverageNotice } from "./TraceDetailPanel";
 import DrawerToolbar from "./DrawerToolbar";
 import TraceDisplayPanel, { DEFAULT_VIEW_CONFIG } from "./TraceDisplayPanel";
 import {
   useGetSavedViews,
-  useCreateSavedView,
   useUpdateSavedView,
   useDeleteSavedView,
   useReorderSavedViews,
-  getOwnViewNames,
-  DEFAULT_VIEW_NAME,
-  findOwnDefaultView,
 } from "src/api/project/saved-views";
-import { useAuthContext } from "src/auth/hooks";
 import SpanTreeTimeline from "./SpanTreeTimeline";
 import SpanDetailPane from "./SpanDetailPane";
 import LeftPanelSplit from "./TraceLeftPanel";
@@ -46,18 +46,19 @@ import {
 import { enqueueSnackbar } from "notistack";
 import { ShareDialog } from "src/components/share-dialog";
 import AddToQueueDialog from "src/sections/annotations/queues/components/add-to-queue-dialog";
-import AddDataset from "src/components/traceDetailDrawer/addToDataset/add-dataset";
+import { openAddData } from "src/sections/common/AddData/addDataStore";
 import AnnotationSidebarContent from "src/components/traceDetailDrawer/AnnotationSidebarContent";
 import AddLabelDrawer from "src/components/traceDetailDrawer/AddLabelDrawer";
 import { buildTraceAnnotationSources } from "src/components/voiceAnnotationSources";
 import AddTagsPopover from "./AddTagsPopover";
-import SaveViewPopover from "./SaveViewDialog";
 import { buildPromptConfigFromSpan } from "./promptFromSpan";
 import { useNavigate } from "react-router";
 import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
 import ImagineTab from "src/components/imagine/ImagineTab";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import useImagineStore from "src/components/imagine/useImagineStore";
+import FindBar from "src/sections/common/Find/FindBar";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const PANEL_WIDTH = "60vw";
 
@@ -103,26 +104,108 @@ TraceDetailSpanFilterPanel.propTypes = {
 };
 
 const ACTION_ITEMS = [
-  { id: "dataset", label: "Move to dataset", icon: "mdi:database-outline" },
+  { id: "dataset", label: "Add to dataset", icon: "solar:database-linear" },
   {
     id: "workbench",
     label: "Iterate in prompt workbench",
-    icon: "mdi:pencil-box-outline",
+    icon: "solar:pen-new-square-linear",
     spanTypes: ["llm"],
   },
   // {
   //   id: "playground",
   //   label: "Iterate in agent playground",
-  //   icon: "mdi:gamepad-variant-outline",
+  //   icon: "solar:gamepad-linear",
   // },
-  { id: "tags", label: "Add Tags", icon: "mdi:tag-outline" },
-  { id: "annotate", label: "Annotate", icon: "mdi:comment-text-outline" },
-  { id: "queue", label: "Add to annotation queue", icon: "mdi:playlist-plus" },
+  { id: "tags", label: "Add Tags", icon: "solar:tag-linear" },
+  { id: "annotate", label: "Annotate", icon: "solar:chat-round-line-linear" },
+  {
+    id: "queue",
+    label: "Add to annotation queue",
+    icon: "solar:list-plus-linear",
+  },
 ];
 
 function getSpan(entry) {
   return entry?.observation_span || {};
 }
+
+// Shown in place of the span tree or timeline when the trace has spans but
+// the Span Type setting or the span filters hide all of them, so a filtered
+// trace does not read as an empty one.
+function HiddenSpansNotice({ byType, byFilters, onShowAll }) {
+  const cause =
+    byType && byFilters
+      ? "The Span Type setting in Display and the span filters hide"
+      : byType
+        ? "The Span Type setting in Display hides"
+        : "The span filters hide";
+  return (
+    <Box sx={{ p: 3, textAlign: "center" }}>
+      <Typography variant="body2" fontSize={13} fontWeight={600}>
+        All spans are hidden
+      </Typography>
+      <Typography
+        variant="body2"
+        color="text.secondary"
+        fontSize={12}
+        sx={{ mt: 0.5 }}
+      >
+        {`${cause} every span in this trace.`}
+      </Typography>
+      <Button
+        size="small"
+        variant="outlined"
+        onClick={onShowAll}
+        sx={{ mt: 1.5 }}
+      >
+        Show all spans
+      </Button>
+    </Box>
+  );
+}
+
+HiddenSpansNotice.propTypes = {
+  byType: PropTypes.bool,
+  byFilters: PropTypes.bool,
+  onShowAll: PropTypes.func.isRequired,
+};
+
+const TRACE_LAYOUTS = [
+  { value: "tree", label: "Tree" },
+  { value: "timeline", label: "Timeline" },
+];
+
+// Tree | Timeline in the toolbar, beside Display, so the timeline is one
+// click away. The Display panel keeps its own Trace View / Timeline View
+// choice; both set the same viewMode.
+function TraceLayoutSwitch({ viewMode, onChange }) {
+  return (
+    <ToggleButtonGroup
+      exclusive
+      size="small"
+      aria-label="Trace layout"
+      // The content area draws the tree for any mode but "timeline".
+      value={viewMode === "timeline" ? "timeline" : "tree"}
+      // Clicking the pressed option sends null: keep one option pressed.
+      onChange={(_, next) => {
+        if (next) onChange(next);
+      }}
+      // Never squeezed or wrapped by a narrow drawer (1024 px window).
+      sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+    >
+      {TRACE_LAYOUTS.map((layout) => (
+        <ToggleButton key={layout.value} value={layout.value}>
+          {layout.label}
+        </ToggleButton>
+      ))}
+    </ToggleButtonGroup>
+  );
+}
+
+TraceLayoutSwitch.propTypes = {
+  viewMode: PropTypes.string,
+  onChange: PropTypes.func.isRequired,
+};
 
 const TraceDetailDrawerV2 = ({
   traceId,
@@ -205,7 +288,6 @@ const TraceDetailDrawerV2 = ({
 
   // Action dialog/drawer state
   const [queueAnchorEl, setQueueAnchorEl] = useState(null);
-  const [datasetDrawerOpen, setDatasetDrawerOpen] = useState(false);
   const [annotateDrawerOpen, setAnnotateDrawerOpen] = useState(null);
   const [addLabelDrawerOpen, setAddLabelDrawerOpen] = useState(false);
   const [tagsAnchorEl, setTagsAnchorEl] = useState(null);
@@ -220,6 +302,11 @@ const TraceDetailDrawerV2 = ({
       return null;
     }
   }, [storageKey]);
+
+  // The Trace tab's latest display and filters in this drawer, kept by the
+  // auto-save below. Imagine tabs change the live state (a saved one clears
+  // the span filters), so returning to Trace restores from here.
+  const traceViewRef = React.useRef(savedDefault);
 
   const [displayAnchorEl, setDisplayAnchorEl] = useState(null);
   const [spanTypeFilter, setSpanTypeFilter] = useState(
@@ -244,7 +331,6 @@ const TraceDetailDrawerV2 = ({
   const { data: savedViewsData } = useGetSavedViews(
     readOnly ? null : projectId,
   );
-  const { mutate: createSavedView } = useCreateSavedView(projectId);
   const { mutate: updateSavedView } = useUpdateSavedView(projectId);
   const { mutate: deleteSavedView } = useDeleteSavedView(projectId);
   const { mutate: reorderSavedViews } = useReorderSavedViews(projectId);
@@ -255,9 +341,6 @@ const TraceDetailDrawerV2 = ({
     () => savedViewsData?.custom_views ?? [],
     [savedViewsData],
   );
-  const { user } = useAuthContext();
-  // Inline duplicate-guard input: the current user's own view names.
-  const ownViewNames = getOwnViewNames(customViews, user?.id);
 
   const [activeDrawerTab, setActiveDrawerTab] = useState("trace");
   const [deleteTabId, setDeleteTabId] = useState(null);
@@ -267,7 +350,7 @@ const TraceDetailDrawerV2 = ({
       {
         id: "trace",
         label: "Trace",
-        icon: "mdi:link-variant",
+        icon: "solar:link-linear",
         isDefault: true,
       },
     ];
@@ -278,7 +361,7 @@ const TraceDetailDrawerV2 = ({
         tabs.push({
           id: v.id,
           label: v.name,
-          icon: "mdi:creation",
+          icon: "solar:stars-minimalistic-linear",
           isDefault: false,
           config: v.config,
           visibility: v.visibility,
@@ -290,7 +373,7 @@ const TraceDetailDrawerV2 = ({
       tabs.push({
         id: "__new_imagine__",
         label: "Imagine",
-        icon: "mdi:creation",
+        icon: "solar:stars-minimalistic-linear",
         isDefault: false,
         tabType: "imagine",
       });
@@ -304,8 +387,9 @@ const TraceDetailDrawerV2 = ({
     (tabId) => {
       setActiveDrawerTab(tabId);
       if (tabId === "trace") {
-        // Reset to user's default or hardcoded default
-        const def = savedDefault || DEFAULT_VIEW_CONFIG;
+        // Restore the Trace settings last chosen in this drawer, not the
+        // default read when it opened (the hardcoded default if none).
+        const def = traceViewRef.current || DEFAULT_VIEW_CONFIG;
         setViewMode(def.viewMode || "tree");
         setSpanTypeFilter(def.spanTypeFilter ?? null);
         setVisibleMetrics(
@@ -327,7 +411,7 @@ const TraceDetailDrawerV2 = ({
         setSpanFilters(tab.config.filters || []);
       }
     },
-    [drawerTabs, savedDefault],
+    [drawerTabs],
   );
 
   // Auto-save display settings when they change (debounced)
@@ -342,6 +426,7 @@ const TraceDetailDrawerV2 = ({
         showAgentGraph,
         filters: spanFilters,
       };
+      traceViewRef.current = config;
       localStorage.setItem(storageKey, JSON.stringify(config));
       return;
     }
@@ -378,138 +463,20 @@ const TraceDetailDrawerV2 = ({
     setShowAgentGraph(DEFAULT_VIEW_CONFIG.showAgentGraph);
   }, []);
 
-  // "Set default for everyone" — make current view project-visible
-  const handleSetDefaultView = useCallback(() => {
-    if (readOnly) return;
-    const onDone = {
-      onSuccess: () =>
-        enqueueSnackbar("View set as default for everyone", {
-          variant: "success",
-        }),
-      onError: (err) =>
-        enqueueSnackbar(
-          getRequestErrorMessage(err, "Failed to set view as default"),
-          { variant: "error" },
-        ),
-    };
-
-    if (activeDrawerTab !== "trace") {
-      // Flip visibility only. This branch handles non-"trace" (imagine) tabs,
-      // whose config is a different shape — resending the trace-shaped config
-      // below would corrupt it (the same reason auto-save skips imagine tabs).
-      updateSavedView({ id: activeDrawerTab, visibility: "project" }, onDone);
-      return;
-    }
-
-    const config = {
-      display: { viewMode, spanTypeFilter, visibleMetrics, showAgentGraph },
-      filters: spanFilters,
-    };
-
-    // Adopt the user's own default for this drawer's tab_type ("traces").
-    // Scoped to the current user so we never overwrite a teammate's shared
-    // default (a blind create would 400 on the name).
-    const existingDefault = findOwnDefaultView(customViews, {
-      tabType: "traces",
-      userId: user?.id,
-    });
-    if (existingDefault) {
-      updateSavedView(
-        { id: existingDefault.id, visibility: "project", config },
-        onDone,
-      );
-      return;
-    }
-
-    createSavedView(
-      {
-        project_id: projectId,
-        name: DEFAULT_VIEW_NAME,
-        tab_type: "traces",
-        visibility: "project",
-        config,
-      },
-      onDone,
-    );
-  }, [
-    activeDrawerTab,
-    viewMode,
-    spanTypeFilter,
-    visibleMetrics,
-    showAgentGraph,
-    spanFilters,
-    projectId,
-    customViews,
-    user,
-    updateSavedView,
-    createSavedView,
-    readOnly,
-  ]);
-
-  // Create new view from current config (called from "+" button or filter save)
-  // Save View popover state
-  const [saveViewAnchor, setSaveViewAnchor] = useState(null);
-  const [isSavingView, setIsSavingView] = useState(false);
-
-  const handleCreateView = useCallback((e) => {
-    setSaveViewAnchor(e?.currentTarget || e || document.body);
-  }, []);
-
-  const handleSaveViewConfirm = useCallback(
-    (name) => {
-      setIsSavingView(true);
-      const config = {
-        display: { viewMode, spanTypeFilter, visibleMetrics, showAgentGraph },
-        filters: spanFilters,
-      };
-      createSavedView(
-        {
-          project_id: projectId,
-          name,
-          tab_type: "traces",
-          config,
-        },
-        {
-          onSuccess: (res) => {
-            enqueueSnackbar("View created", { variant: "success" });
-            const newId = res?.data?.result?.id;
-            if (newId) setActiveDrawerTab(newId);
-            setSaveViewAnchor(null);
-            setIsSavingView(false);
-          },
-          onError: (err) => {
-            enqueueSnackbar(
-              getRequestErrorMessage(err, "Failed to create view"),
-              {
-                variant: "error",
-              },
-            );
-            setIsSavingView(false);
-          },
-        },
-      );
-    },
-    [
-      viewMode,
-      spanTypeFilter,
-      visibleMetrics,
-      showAgentGraph,
-      spanFilters,
-      projectId,
-      createSavedView,
-    ],
-  );
-
   // Close (delete) a custom view tab
-  const handleCloseTab = useCallback((tabId) => {
-    if (tabId === "trace") return;
-    // Unsaved Imagine tab — just switch back, no API call needed
-    if (tabId === "__new_imagine__") {
-      setActiveDrawerTab("trace");
-      return;
-    }
-    setDeleteTabId(tabId);
-  }, []);
+  const handleCloseTab = useCallback(
+    (tabId) => {
+      if (tabId === "trace") return;
+      // Unsaved Imagine tab — no API call needed. Return through the Trace
+      // restore: a saved Imagine tab opened before it cleared the span filters.
+      if (tabId === "__new_imagine__") {
+        handleTabChange("trace");
+        return;
+      }
+      setDeleteTabId(tabId);
+    },
+    [handleTabChange],
+  );
 
   // Create a new Imagine tab (temporary until saved)
   const handleCreateImagineTab = useCallback(() => {
@@ -527,11 +494,33 @@ const TraceDetailDrawerV2 = ({
     sharedToken,
     open && sharedToken ? traceId : null,
   );
-  const { data, isLoading } = sharedToken ? sharedTrace : ownTrace;
+  const {
+    data: traceData,
+    isLoading,
+    isError,
+    error,
+    isFetching,
+    refetch,
+  } = sharedToken ? sharedTrace : ownTrace;
+  // A failed refresh must not present cached spans or totals as current data.
+  const data = isError ? undefined : traceData;
+  const accessDenied = error?.statusCode === 401 || error?.statusCode === 403;
+  // Over the trace view's span, eval or annotation limit: every retry fails
+  // the same way, so no Retry is offered.
+  const traceTooLarge = error?.code === "trace_too_large";
 
   const handleRefresh = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["trace-detail", traceId] });
-  }, [queryClient, traceId]);
+    refetch();
+  }, [refetch]);
+
+  // The timeline's own metrics button turns latency and tokens on or off
+  // together, as the tree's does (TraceLeftPanel).
+  const handleToggleTimelineMetrics = useCallback(() => {
+    setVisibleMetrics((prev) => {
+      const next = !(prev.latency || prev.tokens);
+      return { ...prev, latency: next, tokens: next };
+    });
+  }, []);
 
   const rawSpans = data?.observation_spans;
   const summary = data?.summary;
@@ -633,6 +622,30 @@ const TraceDetailDrawerV2 = ({
     return filterTree(rawSpans);
   }, [rawSpans, spanFilters, spanTypeFilter]);
 
+  // The trace has spans, but the filters above hide every one. The notice
+  // uses the memo's own tests to name the filters that are set.
+  const spansHiddenByFilter = rawSpans?.length > 0 && !spans?.length;
+  const typeFilterActive =
+    Array.isArray(spanTypeFilter) && spanTypeFilter.length > 0;
+  const spanFiltersActive = (spanFilters || []).some(
+    (f) => f.field && Array.isArray(f.value) && f.value.length > 0,
+  );
+
+  // The Trace auto-save above stores this, so later traces in the project
+  // open with every span shown.
+  const handleShowAllSpans = useCallback(() => {
+    setSpanTypeFilter(null);
+    setSpanFilters([]);
+  }, []);
+
+  const hiddenSpansNotice = spansHiddenByFilter ? (
+    <HiddenSpansNotice
+      byType={typeFilterActive}
+      byFilters={spanFiltersActive}
+      onShowAll={handleShowAllSpans}
+    />
+  ) : null;
+
   // Auto-select root span when trace data loads (or when trace changes).
   // If caller passed ``initialSpanId`` (e.g. opened from span-grid), prefer
   // that so the drawer lands on the clicked span.
@@ -643,11 +656,13 @@ const TraceDetailDrawerV2 = ({
     setSelectedSpanId(initialSpanId || rootSpanId || null);
   }, [traceId, rootSpanId, initialSpanId]);
 
-  // Find selected span in tree
+  // Find selected span in tree. A span the Display span-type filter or the
+  // span filters hide (e.g. one clicked in the Spans grid) is still looked up
+  // in the unfiltered spans, so its details open instead of an empty pane.
   const selectedSpanData = useMemo(() => {
-    if (!selectedSpanId || !spans) return null;
+    if (!selectedSpanId) return null;
     function find(entries) {
-      for (const entry of entries) {
+      for (const entry of entries || []) {
         const span = getSpan(entry);
         if (span?.id === selectedSpanId) return entry;
         if (entry.children?.length) {
@@ -657,8 +672,8 @@ const TraceDetailDrawerV2 = ({
       }
       return null;
     }
-    return find(spans);
-  }, [selectedSpanId, spans]);
+    return find(spans) || find(rawSpans);
+  }, [selectedSpanId, spans, rawSpans]);
 
   const handleSelectSpan = useCallback((spanId) => {
     setSelectedSpanId((prev) => (prev === spanId ? null : spanId));
@@ -693,7 +708,15 @@ const TraceDetailDrawerV2 = ({
           });
           break;
         case "dataset":
-          setDatasetDrawerOpen(true);
+          // R2 (P5): one way in; the global Add-data sheet.
+          if (traceId)
+            openAddData({
+              source: {
+                kind: "traces",
+                trace_ids: [traceId],
+                project_id: projectId,
+              },
+            });
           break;
         case "workbench": {
           if (!span) {
@@ -799,7 +822,9 @@ const TraceDetailDrawerV2 = ({
           setTagsAnchorEl(anchorEl || document.body);
           break;
         default:
-          enqueueSnackbar(`${actionId} — coming soon`, { variant: "info" });
+          // options-truth L3 G10 (S1): every listed action has a case above;
+          // an unknown id is a wiring bug, never a `coming soon` toast.
+          logger.warn(`trace drawer: unknown action ${actionId}`);
       }
     },
     [
@@ -843,738 +868,824 @@ const TraceDetailDrawerV2 = ({
     activeDrawerTab === "__new_imagine__" ||
     drawerTabs.find((t) => t.id === activeDrawerTab)?.tabType === "imagine";
 
+  const covered = useDrawerCovered(open);
+  const annotateCovered = useDrawerCovered(Boolean(annotateDrawerOpen), {
+    overlay: true,
+  });
+
   return (
-    <Drawer
-      anchor="right"
-      open={open}
-      onClose={onClose}
-      variant="persistent"
-      PaperProps={{
-        sx: {
-          width: isFullscreen
-            ? `calc(100vw - ${falconOffsetPx}px)`
-            : `${drawerWidth}vw`,
-          height: "100vh",
-          position: "fixed",
-          right: `${falconOffsetPx}px`,
-          borderRadius: 0,
-          bgcolor: "background.paper",
-          display: "flex",
-          flexDirection: "column",
-          borderLeft: isFullscreen ? "none" : "1px solid",
-          borderColor: "divider",
-          transition: "none",
-        },
-      }}
-      ModalProps={{
-        BackdropProps: { style: { backgroundColor: "transparent" } },
-      }}
-    >
-      {/* Resize handle — left edge */}
-      {!isFullscreen && (
-        <Box
-          onMouseDown={(e) => {
-            e.preventDefault();
-            const startX = e.clientX;
-            const startWidth = drawerWidth;
-            const onMove = (moveE) => {
-              const diff = startX - moveE.clientX;
-              const newWidth = startWidth + (diff / window.innerWidth) * 100;
-              setDrawerWidth(Math.min(95, Math.max(30, newWidth)));
-            };
-            const onUp = () => {
-              document.removeEventListener("mousemove", onMove);
-              document.removeEventListener("mouseup", onUp);
-              document.body.style.cursor = "";
-              document.body.style.userSelect = "";
-            };
-            document.body.style.cursor = "col-resize";
-            document.body.style.userSelect = "none";
-            document.addEventListener("mousemove", onMove);
-            document.addEventListener("mouseup", onUp);
-          }}
-          sx={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: 4,
-            cursor: "col-resize",
-            zIndex: 10,
-            "&:hover": { bgcolor: "primary.main", opacity: 0.3 },
-          }}
-        />
-      )}
-
-      {/* Header */}
-      <DrawerHeader
+    // A persistent drawer renders in place, not in a portal. Opened from
+    // inside another drawer (a session's View Trace), it would sit inside that
+    // drawer's panel and be hidden with it when the drawer stack covers it.
+    <Portal>
+      <Drawer
+        anchor="right"
         open={open}
-        closeOnEscape={!initialFullscreen}
-        traceId={traceId}
-        projectId={projectId}
         onClose={onClose}
-        onPrev={onPrev}
-        onNext={onNext}
-        hasPrev={hasPrev}
-        hasNext={hasNext}
-        onFullscreen={
-          initialFullscreen ? undefined : () => setIsFullscreen((prev) => !prev)
-        }
-        isFullscreen={isFullscreen}
-        onOpenNewTab={
-          readOnly || initialFullscreen
-            ? undefined
-            : () => {
-                if (traceId && projectId) {
-                  window.open(
-                    `/dashboard/observe/${projectId}/trace/${traceId}`,
-                    "_blank",
-                  );
-                }
-              }
-        }
-        onDownload={() => {
-          // Download raw trace data as JSON
-          if (data) {
-            const blob = new Blob([JSON.stringify(data, null, 2)], {
-              type: "application/json",
-            });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `trace-${traceId || "unknown"}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-            enqueueSnackbar("Trace downloaded", { variant: "success" });
-          }
-        }}
-        onShare={readOnly ? undefined : () => setShareDialogOpen(true)}
-      />
-
-      {/* Toolbar — tab bar + filter/display/save buttons */}
-      <DrawerToolbar
-        tabs={drawerTabs}
-        activeTabId={activeDrawerTab}
-        readOnly={readOnly}
-        onTabChange={handleTabChange}
-        onCloseTab={handleCloseTab}
-        onCreateTab={handleCreateView}
-        onCreateImagineTab={handleCreateImagineTab}
-        onReorderTabs={(orderedIds) => {
-          // orderedIds are the new order for imagine tabs only. Merge with the
-          // other saved views (non-imagine) so their positions are preserved.
-          const imagineIdSet = new Set(orderedIds);
-          const imaginePosById = Object.fromEntries(
-            orderedIds.map((id, i) => [id, i]),
-          );
-          const allViews = customViews;
-          const nonImagine = allViews.filter((v) => !imagineIdSet.has(v.id));
-          const merged = [
-            ...nonImagine.map((v, i) => ({ id: v.id, position: i })),
-            ...orderedIds.map((id) => ({
-              id,
-              position: nonImagine.length + imaginePosById[id],
-            })),
-          ];
-          reorderSavedViews({ project_id: projectId, order: merged });
-        }}
-        onFilterOpen={(e) => setFilterAnchorEl(e?.currentTarget || e)}
-        onDisplayOpen={(el) => setDisplayAnchorEl(el)}
-        hasActiveFilter={spanFilters.length > 0}
-        hideFilter={readOnly}
-      />
-
-      {/* Display options popover — hidden on Imagine tab */}
-      {!isImagineActive && (
-        <TraceDisplayPanel
-          anchorEl={displayAnchorEl}
-          open={Boolean(displayAnchorEl)}
-          onClose={() => setDisplayAnchorEl(null)}
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
-          spanTypeFilter={spanTypeFilter}
-          onSpanTypeFilterChange={setSpanTypeFilter}
-          visibleMetrics={visibleMetrics}
-          onToggleMetric={(metric) =>
-            setVisibleMetrics((prev) => ({ ...prev, [metric]: !prev[metric] }))
-          }
-          showAgentGraph={showAgentGraph}
-          onToggleAgentGraph={() => setShowAgentGraph((prev) => !prev)}
-          onResetView={handleResetView}
-          onSetDefaultView={handleSetDefaultView}
-          hideSetDefault={readOnly}
-        />
-      )}
-
-      {/* Span filter popover — hidden on Imagine tab */}
-      {!isImagineActive && (
-        <TraceDetailSpanFilterPanel
-          anchorEl={filterAnchorEl}
-          open={Boolean(filterAnchorEl)}
-          onClose={() => setFilterAnchorEl(null)}
-          currentFilters={spanFilters}
-          onApply={(filters) => setSpanFilters(filters || [])}
-          projectId={projectId}
-        />
-      )}
-
-      {/* Active filter chips row — hidden on Imagine tab */}
-      {!isImagineActive && spanFilters.length > 0 && (
-        <Box
-          sx={{
+        variant="persistent"
+        sx={coveredDrawerSx(covered)}
+        PaperProps={{
+          sx: {
+            width: isFullscreen
+              ? `calc(100vw - ${falconOffsetPx}px)`
+              : `${drawerWidth}vw`,
+            height: "100vh",
+            position: "fixed",
+            right: `${falconOffsetPx}px`,
+            borderRadius: 0,
+            bgcolor: "background.paper",
             display: "flex",
-            alignItems: "center",
-            px: 1.5,
-            py: 0.5,
-            borderBottom: "1px solid",
+            flexDirection: "column",
+            borderLeft: isFullscreen ? "none" : "1px solid",
             borderColor: "divider",
-            flexShrink: 0,
-            bgcolor: "background.default",
-            gap: 0.5,
-            minHeight: 32,
+            transition: "none",
+          },
+        }}
+        ModalProps={{
+          BackdropProps: { style: { backgroundColor: "transparent" } },
+        }}
+      >
+        {/* Resize handle — left edge */}
+        {!isFullscreen && (
+          <Box
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const startX = e.clientX;
+              const startWidth = drawerWidth;
+              const onMove = (moveE) => {
+                const diff = startX - moveE.clientX;
+                const newWidth = startWidth + (diff / window.innerWidth) * 100;
+                setDrawerWidth(Math.min(95, Math.max(30, newWidth)));
+              };
+              const onUp = () => {
+                document.removeEventListener("mousemove", onMove);
+                document.removeEventListener("mouseup", onUp);
+                document.body.style.cursor = "";
+                document.body.style.userSelect = "";
+              };
+              document.body.style.cursor = "col-resize";
+              document.body.style.userSelect = "none";
+              document.addEventListener("mousemove", onMove);
+              document.addEventListener("mouseup", onUp);
+            }}
+            sx={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 4,
+              cursor: "col-resize",
+              zIndex: 10,
+              "&:hover": { bgcolor: "primary.main", opacity: 0.3 },
+            }}
+          />
+        )}
+
+        <FindBar scope=".MuiDrawer-paper" label="Find in this trace" />
+        {/* Header */}
+        <DrawerHeader
+          open={open}
+          closeOnEscape={!initialFullscreen}
+          traceId={traceId}
+          projectId={projectId}
+          onClose={onClose}
+          onPrev={onPrev}
+          onNext={onNext}
+          hasPrev={hasPrev}
+          hasNext={hasNext}
+          onFullscreen={
+            initialFullscreen
+              ? undefined
+              : () => setIsFullscreen((prev) => !prev)
+          }
+          isFullscreen={isFullscreen}
+          onOpenNewTab={
+            readOnly || initialFullscreen
+              ? undefined
+              : () => {
+                  if (traceId && projectId) {
+                    // Carry the selected span so the new tab opens on it; the
+                    // full page selects the root span when none is given.
+                    const spanQuery =
+                      selectedSpanId && selectedSpanId !== rootSpanId
+                        ? `?span_id=${encodeURIComponent(selectedSpanId)}`
+                        : "";
+                    window.open(
+                      `/dashboard/observe/${projectId}/trace/${traceId}${spanQuery}`,
+                      "_blank",
+                    );
+                  }
+                }
+          }
+          onDownload={() => {
+            // Download raw trace data as JSON
+            if (data) {
+              const blob = new Blob([JSON.stringify(data, null, 2)], {
+                type: "application/json",
+              });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `trace-${traceId || "unknown"}.json`;
+              a.click();
+              URL.revokeObjectURL(url);
+              enqueueSnackbar("Trace downloaded", { variant: "success" });
+            }
           }}
-        >
-          {/* Filter chips */}
+          onShare={readOnly ? undefined : () => setShareDialogOpen(true)}
+        />
+
+        {/* Toolbar — tab bar + filter/display/save buttons */}
+        <DrawerToolbar
+          tabs={drawerTabs}
+          activeTabId={activeDrawerTab}
+          readOnly={readOnly}
+          onTabChange={handleTabChange}
+          onCloseTab={handleCloseTab}
+          onCreateImagineTab={handleCreateImagineTab}
+          onReorderTabs={(orderedIds) => {
+            // orderedIds are the new order for imagine tabs only. Merge with the
+            // other saved views (non-imagine) so their positions are preserved.
+            const imagineIdSet = new Set(orderedIds);
+            const imaginePosById = Object.fromEntries(
+              orderedIds.map((id, i) => [id, i]),
+            );
+            const allViews = customViews;
+            const nonImagine = allViews.filter((v) => !imagineIdSet.has(v.id));
+            const merged = [
+              ...nonImagine.map((v, i) => ({ id: v.id, position: i })),
+              ...orderedIds.map((id) => ({
+                id,
+                position: nonImagine.length + imaginePosById[id],
+              })),
+            ];
+            reorderSavedViews({ project_id: projectId, order: merged });
+          }}
+          onFilterOpen={(e) => setFilterAnchorEl(e?.currentTarget || e)}
+          onDisplayOpen={(el) => setDisplayAnchorEl(el)}
+          hasActiveFilter={spanFilters.length > 0}
+          hideFilter={readOnly}
+          rightSlot={
+            <TraceLayoutSwitch viewMode={viewMode} onChange={setViewMode} />
+          }
+        />
+
+        {/* Display options popover — hidden on Imagine tab. The drawer's
+            display is auto-saved in this browser above and there is no
+            project-wide drawer default, so "Set default for everyone" gets
+            no handler: the panel shows it disabled with a reason (hidden
+            when read-only). Saved views of tab_type "traces" belong to the
+            Observe list and the drawer never reads them back. */}
+        {!isImagineActive && (
+          <TraceDisplayPanel
+            anchorEl={displayAnchorEl}
+            open={Boolean(displayAnchorEl)}
+            onClose={() => setDisplayAnchorEl(null)}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+            spanTypeFilter={spanTypeFilter}
+            onSpanTypeFilterChange={setSpanTypeFilter}
+            visibleMetrics={visibleMetrics}
+            onToggleMetric={(metric) =>
+              setVisibleMetrics((prev) => ({
+                ...prev,
+                [metric]: !prev[metric],
+              }))
+            }
+            showAgentGraph={showAgentGraph}
+            onToggleAgentGraph={() => setShowAgentGraph((prev) => !prev)}
+            onResetView={handleResetView}
+            hideSetDefault={readOnly}
+          />
+        )}
+
+        {/* Span filter popover — hidden on Imagine tab */}
+        {!isImagineActive && (
+          <TraceDetailSpanFilterPanel
+            anchorEl={filterAnchorEl}
+            open={Boolean(filterAnchorEl)}
+            onClose={() => setFilterAnchorEl(null)}
+            currentFilters={spanFilters}
+            onApply={(filters) => setSpanFilters(filters || [])}
+            projectId={projectId}
+          />
+        )}
+
+        {/* Active filter chips row — hidden on Imagine tab */}
+        {!isImagineActive && spanFilters.length > 0 && (
           <Box
             sx={{
               display: "flex",
               alignItems: "center",
+              px: 1.5,
+              py: 0.5,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              flexShrink: 0,
+              bgcolor: "background.default",
               gap: 0.5,
-              flex: 1,
-              flexWrap: "wrap",
-              overflow: "hidden",
+              minHeight: 32,
             }}
           >
-            {spanFilters.map((f, idx) => (
+            {/* Filter chips */}
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+                flex: 1,
+                flexWrap: "wrap",
+                overflow: "hidden",
+              }}
+            >
+              {spanFilters.map((f, idx) => (
+                <Box
+                  key={idx}
+                  sx={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    px: 0.75,
+                    py: 0.25,
+                    bgcolor: "background.paper",
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: "4px",
+                    fontSize: 12,
+                    color: "text.primary",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <Iconify
+                    icon="solar:filter-linear"
+                    width={12}
+                    color="text.disabled"
+                  />
+                  <span style={{ fontWeight: 500 }}>{f.field}</span>
+                  <span style={{ color: "var(--text-secondary)" }}>
+                    {f.operator || "is"}
+                  </span>
+                  <span style={{ fontWeight: 600 }}>
+                    {Array.isArray(f.value) ? f.value.join(", ") : f.value}
+                  </span>
+                  <Iconify
+                    icon="solar:close-linear"
+                    width={12}
+                    sx={{
+                      cursor: "pointer",
+                      color: "text.disabled",
+                      "&:hover": { color: "text.primary" },
+                    }}
+                    onClick={() => {
+                      setSpanFilters((prev) => {
+                        const next = prev.filter((_, i) => i !== idx);
+                        return next;
+                      });
+                    }}
+                  />
+                </Box>
+              ))}
+
+              {/* + button to add more filters */}
               <Box
-                key={idx}
+                onClick={(e) => setFilterAnchorEl(e.currentTarget)}
                 sx={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "4px",
-                  px: 0.75,
-                  py: 0.25,
-                  bgcolor: "background.paper",
+                  justifyContent: "center",
+                  width: 22,
+                  height: 22,
                   border: "1px solid",
                   borderColor: "divider",
                   borderRadius: "4px",
-                  fontSize: 11,
-                  color: "text.primary",
-                  whiteSpace: "nowrap",
+                  cursor: "pointer",
+                  color: "text.disabled",
+                  "&:hover": {
+                    bgcolor: "action.hover",
+                    color: "text.secondary",
+                  },
                 }}
               >
-                <Iconify
-                  icon="mdi:filter-variant"
-                  width={12}
-                  color="text.disabled"
-                />
-                <span style={{ fontWeight: 500 }}>{f.field}</span>
-                <span style={{ color: "var(--text-secondary)" }}>
-                  {f.operator || "is"}
-                </span>
-                <span style={{ fontWeight: 600 }}>
-                  {Array.isArray(f.value) ? f.value.join(", ") : f.value}
-                </span>
-                <Iconify
-                  icon="mdi:close"
-                  width={12}
-                  sx={{
-                    cursor: "pointer",
-                    color: "text.disabled",
-                    "&:hover": { color: "text.primary" },
-                  }}
-                  onClick={() => {
-                    setSpanFilters((prev) => {
-                      const next = prev.filter((_, i) => i !== idx);
-                      return next;
-                    });
-                  }}
-                />
+                <Iconify icon="solar:add-linear" width={14} />
               </Box>
-            ))}
+            </Box>
 
-            {/* + button to add more filters */}
+            {/* Clear + Save */}
             <Box
-              onClick={(e) => setFilterAnchorEl(e.currentTarget)}
               sx={{
-                display: "inline-flex",
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                flexShrink: 0,
+                ml: 1,
+              }}
+            >
+              <Typography
+                onClick={() => setSpanFilters([])}
+                sx={{
+                  fontSize: 12,
+                  color: "text.secondary",
+                  cursor: "pointer",
+                  fontWeight: 500,
+                  "&:hover": { color: "text.primary" },
+                }}
+              >
+                Clear
+              </Typography>
+              <Typography
+                onClick={() =>
+                  enqueueSnackbar("View saved", { variant: "success" })
+                }
+                sx={{
+                  fontSize: 12,
+                  color: "text.secondary",
+                  cursor: "pointer",
+                  fontWeight: 500,
+                  "&:hover": { color: "text.primary" },
+                }}
+              >
+                Save
+              </Typography>
+            </Box>
+          </Box>
+        )}
+
+        {!isError && !isLoading && (
+          <CaptureCoverageNotice coverage={data?.capture_coverage} />
+        )}
+
+        {/* Main content area */}
+        <Box
+          data-drawer-content
+          sx={{
+            flex: 1,
+            display: "flex",
+            flexDirection: isImagineActive
+              ? "column"
+              : viewMode === "timeline"
+                ? "column"
+                : "row",
+            overflow: "hidden",
+          }}
+        >
+          {isError ? (
+            <Box sx={{ p: 3, width: "100%" }}>
+              <Alert
+                severity="error"
+                action={
+                  !accessDenied &&
+                  !traceTooLarge && (
+                    <Button
+                      color="inherit"
+                      size="small"
+                      onClick={handleRefresh}
+                      disabled={isFetching}
+                    >
+                      {isFetching ? "Retrying…" : "Retry"}
+                    </Button>
+                  )
+                }
+              >
+                <AlertTitle>Unable to load trace</AlertTitle>
+                {traceTooLarge
+                  ? "This trace is too large to open here. The trace view opens traces with up to 1,000 spans, 5,000 eval results and 5,000 annotations, and trying again will not change this."
+                  : error?.statusCode === 401
+                    ? "Sign in again to view this trace."
+                    : error?.statusCode === 403
+                      ? "You do not have permission to view this trace. Ask your workspace administrator for access."
+                      : error?.statusCode === 404
+                        ? "This trace is no longer available or cannot be accessed from this view. Return to the trace list and select another trace."
+                        : error?.statusCode === 503
+                          ? "The trace service is unavailable. Try again. If this continues, ask your administrator to check service availability and trace size limits."
+                          : "The trace could not be loaded. Try again, or contact your administrator if the problem continues."}
+              </Alert>
+            </Box>
+          ) : isImagineActive ? (
+            <ImagineTab
+              traceId={traceId}
+              projectId={projectId}
+              traceData={{ spans: rawSpans, summary, graph }}
+              readOnly={activeDrawerTab !== "__new_imagine__"}
+              savedViewId={
+                activeDrawerTab !== "__new_imagine__" ? activeDrawerTab : null
+              }
+              savedWidgets={
+                drawerTabs.find((t) => t.id === activeDrawerTab)?.config
+                  ?.widgets
+              }
+              savedConversationId={
+                drawerTabs.find((t) => t.id === activeDrawerTab)?.config
+                  ?.conversation_id ||
+                drawerTabs.find((t) => t.id === activeDrawerTab)?.config
+                  ?.conversationId
+              }
+              onSaved={() =>
+                queryClient.invalidateQueries({
+                  queryKey: ["saved-views", projectId],
+                })
+              }
+            />
+          ) : isLoading ? (
+            <Box
+              sx={{
+                flex: 1,
+                display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                width: 22,
-                height: 22,
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: "4px",
-                cursor: "pointer",
-                color: "text.disabled",
-                "&:hover": { bgcolor: "action.hover", color: "text.secondary" },
               }}
             >
-              <Iconify icon="mdi:plus" width={14} />
+              <ContentSkeleton variant="panel" />
             </Box>
-          </Box>
+          ) : viewMode === "timeline" ? (
+            /* ── Timeline layout: full-width timeline on top, detail panel on bottom ── */
+            <>
+              {/* Top: Timeline (full width) */}
+              <Box
+                sx={{
+                  flex: selectedSpanData ? "0 0 55%" : 1,
+                  overflow: "auto",
+                  borderBottom: selectedSpanData ? "1px solid" : "none",
+                  borderColor: "divider",
+                }}
+              >
+                {hiddenSpansNotice || (
+                  <SpanTreeTimeline
+                    spans={spans}
+                    selectedSpanId={selectedSpanId}
+                    onSelectSpan={handleSelectSpan}
+                    showMetrics={Boolean(
+                      visibleMetrics?.latency ||
+                        visibleMetrics?.tokens ||
+                        visibleMetrics?.cost,
+                    )}
+                    visibleMetrics={visibleMetrics}
+                    onToggleMetrics={handleToggleTimelineMetrics}
+                  />
+                )}
+              </Box>
 
-          {/* Clear + Save */}
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 1,
-              flexShrink: 0,
-              ml: 1,
-            }}
-          >
-            <Typography
-              onClick={() => setSpanFilters([])}
-              sx={{
-                fontSize: 12,
-                color: "text.secondary",
-                cursor: "pointer",
-                fontWeight: 500,
-                "&:hover": { color: "text.primary" },
-              }}
-            >
-              Clear
-            </Typography>
-            <Typography
-              onClick={() =>
-                enqueueSnackbar("View saved", { variant: "success" })
-              }
-              sx={{
-                fontSize: 12,
-                color: "text.secondary",
-                cursor: "pointer",
-                fontWeight: 500,
-                "&:hover": { color: "text.primary" },
-              }}
-            >
-              Save
-            </Typography>
-          </Box>
-        </Box>
-      )}
+              {/* Bottom: Span detail (appears when span clicked) */}
+              {selectedSpanData && (
+                <Box
+                  sx={{
+                    flex: 1,
+                    overflow: "auto",
+                    display: "flex",
+                    flexDirection: "column",
+                    minHeight: 0,
+                  }}
+                >
+                  <SpanDetailPane
+                    entry={selectedSpanData}
+                    allSpans={spans}
+                    traceStartTime={
+                      spans?.length ? getSpan(spans[0])?.start_time : null
+                    }
+                    isRootSpan={selectedSpanId === rootSpanId}
+                    traceTags={data?.trace?.tags || []}
+                    projectId={projectId}
+                    onClose={() => setSelectedSpanId(null)}
+                    onAction={readOnly ? undefined : handleAction}
+                    readOnly={readOnly}
+                    onSelectSpan={handleViewSpan}
+                    initialEvalFocus={initialEvalFocus}
+                    drawerOpen={open}
+                  />
+                </Box>
+              )}
+            </>
+          ) : (
+            /* ── Tree layout: left/right split ── */
+            <>
+              {/* Left Panel: Tree + Agent Graph with resizable split. With
+                  every span hidden it has no tree or graph to show, so the
+                  notice takes its place at the same width. */}
+              {hiddenSpansNotice ? (
+                <Box
+                  sx={{
+                    width: `${leftPanelWidth}%`,
+                    flexShrink: 0,
+                    overflow: "auto",
+                    borderRight: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  {hiddenSpansNotice}
+                </Box>
+              ) : (
+                <LeftPanelSplit
+                  leftPanelWidth={leftPanelWidth}
+                  viewMode={viewMode}
+                  spans={spans}
+                  selectedSpanId={selectedSpanId}
+                  onSelectSpan={handleSelectSpan}
+                  visibleMetrics={visibleMetrics}
+                  setVisibleMetrics={setVisibleMetrics}
+                  showAgentGraph={showAgentGraph}
+                  onRefresh={handleRefresh}
+                />
+              )}
 
-      {/* Main content area */}
-      <Box
-        data-drawer-content
-        sx={{
-          flex: 1,
-          display: "flex",
-          flexDirection: isImagineActive
-            ? "column"
-            : viewMode === "timeline"
-              ? "column"
-              : "row",
-          overflow: "hidden",
-        }}
-      >
-        {isImagineActive ? (
-          <ImagineTab
-            traceId={traceId}
-            projectId={projectId}
-            traceData={{ spans: rawSpans, summary, graph }}
-            readOnly={activeDrawerTab !== "__new_imagine__"}
-            savedViewId={
-              activeDrawerTab !== "__new_imagine__" ? activeDrawerTab : null
-            }
-            savedWidgets={
-              drawerTabs.find((t) => t.id === activeDrawerTab)?.config?.widgets
-            }
-            savedConversationId={
-              drawerTabs.find((t) => t.id === activeDrawerTab)?.config
-                ?.conversation_id ||
-              drawerTabs.find((t) => t.id === activeDrawerTab)?.config
-                ?.conversationId
-            }
-            onSaved={() =>
-              queryClient.invalidateQueries({
-                queryKey: ["saved-views", projectId],
-              })
-            }
-          />
-        ) : isLoading ? (
-          <Box
-            sx={{
-              flex: 1,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <CircularProgress size={32} />
-          </Box>
-        ) : viewMode === "timeline" ? (
-          /* ── Timeline layout: full-width timeline on top, detail panel on bottom ── */
-          <>
-            {/* Top: Timeline (full width) */}
-            <Box
-              sx={{
-                flex: selectedSpanData ? "0 0 55%" : 1,
-                overflow: "auto",
-                borderBottom: selectedSpanData ? "1px solid" : "none",
-                borderColor: "divider",
-              }}
-            >
-              <SpanTreeTimeline
-                spans={spans}
-                selectedSpanId={selectedSpanId}
-                onSelectSpan={handleSelectSpan}
-              />
-            </Box>
+              {/* Resizable divider with visual handle */}
+              <Box
+                onMouseDown={handleDragStart}
+                sx={{
+                  width: 8,
+                  cursor: "col-resize",
+                  bgcolor: "transparent",
+                  flexShrink: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  "&:hover": { "& .divider-dots": { opacity: 1 } },
+                  "&:active": { "& .divider-dots": { opacity: 1 } },
+                  transition: "background-color 150ms",
+                }}
+              >
+                <Box
+                  className="divider-dots"
+                  sx={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "3px",
+                    opacity: 0.4,
+                    transition: "opacity 150ms",
+                  }}
+                >
+                  {[0, 1, 2, 3, 4, 5].map((i) => (
+                    <Box
+                      key={i}
+                      sx={{
+                        width: 3,
+                        height: 3,
+                        borderRadius: "50%",
+                        bgcolor: "text.disabled",
+                      }}
+                    />
+                  ))}
+                </Box>
+              </Box>
 
-            {/* Bottom: Span detail (appears when span clicked) */}
-            {selectedSpanData && (
+              {/* Right Panel: Span detail */}
               <Box
                 sx={{
                   flex: 1,
                   overflow: "auto",
                   display: "flex",
                   flexDirection: "column",
-                  minHeight: 0,
                 }}
               >
-                <SpanDetailPane
-                  entry={selectedSpanData}
-                  allSpans={spans}
-                  traceStartTime={
-                    spans?.length ? getSpan(spans[0])?.start_time : null
-                  }
-                  isRootSpan={selectedSpanId === rootSpanId}
-                  traceTags={data?.trace?.tags || []}
-                  projectId={projectId}
-                  onClose={() => setSelectedSpanId(null)}
-                  onAction={readOnly ? undefined : handleAction}
-                  readOnly={readOnly}
-                  onSelectSpan={handleViewSpan}
-                  initialEvalFocus={initialEvalFocus}
-                  drawerOpen={open}
-                />
-              </Box>
-            )}
-          </>
-        ) : (
-          /* ── Tree layout: left/right split ── */
-          <>
-            {/* Left Panel: Tree + Agent Graph with resizable split */}
-            <LeftPanelSplit
-              leftPanelWidth={leftPanelWidth}
-              viewMode={viewMode}
-              spans={spans}
-              selectedSpanId={selectedSpanId}
-              onSelectSpan={handleSelectSpan}
-              visibleMetrics={visibleMetrics}
-              setVisibleMetrics={setVisibleMetrics}
-              showAgentGraph={showAgentGraph}
-              onRefresh={handleRefresh}
-            />
-
-            {/* Resizable divider with visual handle */}
-            <Box
-              onMouseDown={handleDragStart}
-              sx={{
-                width: 8,
-                cursor: "col-resize",
-                bgcolor: "transparent",
-                flexShrink: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                "&:hover": { "& .divider-dots": { opacity: 1 } },
-                "&:active": { "& .divider-dots": { opacity: 1 } },
-                transition: "background-color 150ms",
-              }}
-            >
-              <Box
-                className="divider-dots"
-                sx={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "3px",
-                  opacity: 0.4,
-                  transition: "opacity 150ms",
-                }}
-              >
-                {[0, 1, 2, 3, 4, 5].map((i) => (
+                {selectedSpanData ? (
+                  <SpanDetailPane
+                    entry={selectedSpanData}
+                    allSpans={spans}
+                    traceStartTime={
+                      spans?.length ? getSpan(spans[0])?.start_time : null
+                    }
+                    isRootSpan={selectedSpanId === rootSpanId}
+                    traceTags={data?.trace?.tags || []}
+                    projectId={projectId}
+                    onClose={() => setSelectedSpanId(null)}
+                    onAction={readOnly ? undefined : handleAction}
+                    readOnly={readOnly}
+                    onSelectSpan={handleViewSpan}
+                    initialEvalFocus={initialEvalFocus}
+                    drawerOpen={open}
+                  />
+                ) : (
+                  /* Summary when no span selected */
                   <Box
-                    key={i}
                     sx={{
-                      width: 3,
-                      height: 3,
-                      borderRadius: "50%",
-                      bgcolor: "text.disabled",
+                      p: 3,
+                      textAlign: "center",
+                      color: "text.secondary",
+                      mt: 8,
                     }}
-                  />
-                ))}
+                  >
+                    <Iconify
+                      icon="solar:cursor-linear"
+                      width={40}
+                      sx={{ mb: 1, opacity: 0.5 }}
+                    />
+                    <Typography variant="body2" fontSize={13}>
+                      Select a span to view details
+                    </Typography>
+                    {summary && (
+                      <Box
+                        sx={{
+                          mt: 2,
+                          display: "flex",
+                          justifyContent: "center",
+                          gap: 3,
+                        }}
+                      >
+                        <Typography variant="caption">
+                          {summary.totalSpans || summary.total_spans} spans
+                        </Typography>
+                        <Typography variant="caption">
+                          {formatLatency(
+                            summary.totalDurationMs ||
+                              summary.total_duration_ms,
+                          )}
+                        </Typography>
+                        <Typography variant="caption">
+                          {formatTokenCount(summary.total_tokens)}{" "}
+                          {data?.capture_coverage
+                            ? "observed tokens"
+                            : "tokens"}
+                        </Typography>
+                        <Typography variant="caption">
+                          {data?.capture_coverage && "Observed cost: "}
+                          {formatCost(summary.total_cost)}
+                        </Typography>
+                      </Box>
+                    )}
+                  </Box>
+                )}
               </Box>
-            </Box>
+            </>
+          )}
+        </Box>
 
-            {/* Right Panel: Span detail */}
-            <Box
-              sx={{
-                flex: 1,
-                overflow: "auto",
-                display: "flex",
-                flexDirection: "column",
-              }}
-            >
-              {selectedSpanData ? (
-                <SpanDetailPane
-                  entry={selectedSpanData}
-                  allSpans={spans}
-                  traceStartTime={
-                    spans?.length ? getSpan(spans[0])?.start_time : null
-                  }
-                  isRootSpan={selectedSpanId === rootSpanId}
-                  traceTags={data?.trace?.tags || []}
-                  projectId={projectId}
-                  onClose={() => setSelectedSpanId(null)}
-                  onAction={readOnly ? undefined : handleAction}
-                  readOnly={readOnly}
-                  onSelectSpan={handleViewSpan}
-                  initialEvalFocus={initialEvalFocus}
-                  drawerOpen={open}
-                />
-              ) : (
-                /* Summary when no span selected */
-                <Box
-                  sx={{
-                    p: 3,
-                    textAlign: "center",
-                    color: "text.secondary",
-                    mt: 8,
-                  }}
-                >
-                  <Iconify
-                    icon="mdi:cursor-default-click-outline"
-                    width={40}
-                    sx={{ mb: 1, opacity: 0.5 }}
-                  />
-                  <Typography variant="body2" fontSize={13}>
-                    Select a span to view details
-                  </Typography>
-                  {summary && (
-                    <Box
-                      sx={{
-                        mt: 2,
-                        display: "flex",
-                        justifyContent: "center",
-                        gap: 3,
-                      }}
-                    >
-                      <Typography variant="caption">
-                        {summary.totalSpans || summary.total_spans} spans
-                      </Typography>
-                      <Typography variant="caption">
-                        {formatLatency(
-                          summary.totalDurationMs || summary.total_duration_ms,
-                        )}
-                      </Typography>
-                      <Typography variant="caption">
-                        {formatTokenCount(summary.total_tokens)} tokens
-                      </Typography>
-                      <Typography variant="caption">
-                        {formatCost(summary.total_cost)}
-                      </Typography>
-                    </Box>
-                  )}
-                </Box>
-              )}
-            </Box>
-          </>
-        )}
-      </Box>
-
-      {/* Actions context menu */}
-      <Menu
-        anchorEl={actionsAnchorEl}
-        open={Boolean(actionsAnchorEl)}
-        onClose={() => setActionsAnchorEl(null)}
-        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-        transformOrigin={{ vertical: "top", horizontal: "right" }}
-        slotProps={{
-          paper: {
-            sx: {
-              minWidth: 220,
-              boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
-              borderRadius: "6px",
-              "& .MuiMenuItem-root": { fontSize: 13, gap: 1, py: 0.75 },
+        {/* Actions context menu */}
+        <Menu
+          anchorEl={actionsAnchorEl}
+          open={Boolean(actionsAnchorEl)}
+          onClose={() => setActionsAnchorEl(null)}
+          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+          transformOrigin={{ vertical: "top", horizontal: "right" }}
+          slotProps={{
+            paper: {
+              sx: {
+                minWidth: 240,
+                borderRadius: "8px",
+                "& .MuiMenuItem-root": { fontSize: 13, gap: 1, py: 0.75 },
+              },
             },
-          },
-        }}
-      >
-        {ACTION_ITEMS.filter((item) => {
-          if (!item.spanTypes) return true;
-          const span = selectedSpanData ? getSpan(selectedSpanData) : null;
-          const type = (span?.observation_type || "").toLowerCase();
-          return item.spanTypes.includes(type);
-        }).map((item) => (
-          <MenuItem
-            key={item.id}
-            onClick={(e) => handleAction(item.id, e.currentTarget)}
-            disabled={
-              (item.id === "workbench" && isCreatingDraft) ||
-              (item.id === "playground" && isCreatingGraph)
-            }
-          >
-            <Iconify icon={item.icon} width={16} />
-            {item.id === "workbench" && isCreatingDraft
-              ? "Creating prompt..."
-              : item.id === "playground" && isCreatingGraph
-                ? "Creating agent graph..."
-                : item.label}
-          </MenuItem>
-        ))}
-      </Menu>
+          }}
+        >
+          {ACTION_ITEMS.filter((item) => {
+            if (!item.spanTypes) return true;
+            const span = selectedSpanData ? getSpan(selectedSpanData) : null;
+            const type = (span?.observation_type || "").toLowerCase();
+            return item.spanTypes.includes(type);
+          }).map((item) => (
+            <MenuItem
+              key={item.id}
+              onClick={(e) => handleAction(item.id, e.currentTarget)}
+              disabled={
+                (item.id === "workbench" && isCreatingDraft) ||
+                (item.id === "playground" && isCreatingGraph)
+              }
+            >
+              <Iconify icon={item.icon} width={16} />
+              {item.id === "workbench" && isCreatingDraft
+                ? "Creating prompt..."
+                : item.id === "playground" && isCreatingGraph
+                  ? "Creating agent graph..."
+                  : item.label}
+            </MenuItem>
+          ))}
+        </Menu>
 
-      {/* Share Dialog */}
-      {traceId && (
-        <ShareDialog
-          open={shareDialogOpen}
-          onClose={() => setShareDialogOpen(false)}
-          resourceType="trace"
-          resourceId={traceId}
+        {/* Share Dialog */}
+        {traceId && (
+          <ShareDialog
+            open={shareDialogOpen}
+            onClose={() => setShareDialogOpen(false)}
+            resourceType="trace"
+            resourceId={traceId}
+          />
+        )}
+
+        {/* Add to Annotation Queue Dialog */}
+        <AddToQueueDialog
+          anchorEl={queueAnchorEl}
+          onClose={() => setQueueAnchorEl(null)}
+          sourceType={selectedSpanId ? "observation_span" : "trace"}
+          sourceIds={
+            selectedSpanId ? [selectedSpanId] : traceId ? [traceId] : []
+          }
+          itemName={
+            selectedSpanData ? getSpan(selectedSpanData)?.name : "Trace"
+          }
         />
-      )}
 
-      {/* Add to Annotation Queue Dialog */}
-      <AddToQueueDialog
-        anchorEl={queueAnchorEl}
-        onClose={() => setQueueAnchorEl(null)}
-        sourceType={selectedSpanId ? "observation_span" : "trace"}
-        sourceIds={selectedSpanId ? [selectedSpanId] : traceId ? [traceId] : []}
-        itemName={selectedSpanData ? getSpan(selectedSpanData)?.name : "Trace"}
-      />
-
-      {/* Move to Dataset Drawer */}
-      <AddDataset
-        handleClose={() => setDatasetDrawerOpen(false)}
-        actionToDataset={datasetDrawerOpen}
-        spanId={selectedSpanId}
-      />
-
-      {/* Annotate Drawer — new sidebar UI */}
-      <Drawer
-        anchor="right"
-        open={Boolean(annotateDrawerOpen)}
-        onClose={() => setAnnotateDrawerOpen(null)}
-        variant="temporary"
-        PaperProps={{
-          sx: {
-            width: 360,
-            height: "100vh",
-            borderRadius: 0,
-            bgcolor: "background.paper",
-          },
-        }}
-        ModalProps={{
-          BackdropProps: { style: { backgroundColor: "rgba(0,0,0,0.1)" } },
-        }}
-      >
-        <AnnotationSidebarContent
-          sources={buildTraceAnnotationSources({
-            traceId,
-            spanId: annotateDrawerOpen?.spanId || rootSpanId,
-            sessionId: data?.trace?.session,
-            projectId,
-          })}
+        {/* Annotate Drawer — new sidebar UI */}
+        <Drawer
+          anchor="right"
+          open={Boolean(annotateDrawerOpen)}
           onClose={() => setAnnotateDrawerOpen(null)}
-          onAddLabel={() => setAddLabelDrawerOpen(true)}
-          onScoresChanged={() => {
+          variant="temporary"
+          sx={coveredDrawerSx(annotateCovered)}
+          PaperProps={{
+            sx: {
+              width: 480,
+              height: "100vh",
+              borderRadius: 0,
+              bgcolor: "background.paper",
+            },
+          }}
+          ModalProps={{
+            BackdropProps: { style: { backgroundColor: "rgba(0,0,0,0.1)" } },
+          }}
+        >
+          <AnnotationSidebarContent
+            sources={buildTraceAnnotationSources({
+              traceId,
+              spanId: annotateDrawerOpen?.spanId || rootSpanId,
+              sessionId: data?.trace?.session,
+              projectId,
+            })}
+            onClose={() => setAnnotateDrawerOpen(null)}
+            onAddLabel={() => setAddLabelDrawerOpen(true)}
+            onScoresChanged={() => {
+              queryClient.invalidateQueries({
+                queryKey: ["trace-detail", traceId],
+              });
+              if (annotateDrawerOpen?.spanId) {
+                queryClient.invalidateQueries({
+                  queryKey: ["span-annotation", annotateDrawerOpen.spanId],
+                });
+              }
+              queryClient.invalidateQueries({
+                queryKey: ["annotation-queues", "for-source"],
+              });
+              // The trace grid uses AG Grid's server-side row model with its
+              // own row cache — invalidating React Query keys is not enough to
+              // refresh the annotation column shown for this trace's row.
+              // Ask the parent grid to refresh so the new annotation surfaces
+              // without a full page reload.
+              refreshParentGrid?.();
+            }}
+            showHeader
+          />
+        </Drawer>
+
+        {/* Add Label Drawer — opens from AnnotationSidebarContent "+ Add Label" */}
+        <AddLabelDrawer
+          open={addLabelDrawerOpen}
+          onClose={() => setAddLabelDrawerOpen(false)}
+          projectId={projectId}
+          onLabelsChanged={() => {
             queryClient.invalidateQueries({
               queryKey: ["trace-detail", traceId],
             });
-            if (annotateDrawerOpen?.spanId) {
-              queryClient.invalidateQueries({
-                queryKey: ["span-annotation", annotateDrawerOpen.spanId],
-              });
-            }
             queryClient.invalidateQueries({
               queryKey: ["annotation-queues", "for-source"],
             });
-            // The trace grid uses AG Grid's server-side row model with its
-            // own row cache — invalidating React Query keys is not enough to
-            // refresh the annotation column shown for this trace's row.
-            // Ask the parent grid to refresh so the new annotation surfaces
-            // without a full page reload.
-            refreshParentGrid?.();
           }}
-          showHeader
         />
-      </Drawer>
 
-      {/* Add Label Drawer — opens from AnnotationSidebarContent "+ Add Label" */}
-      <AddLabelDrawer
-        open={addLabelDrawerOpen}
-        onClose={() => setAddLabelDrawerOpen(false)}
-        projectId={projectId}
-        onLabelsChanged={() => {
-          queryClient.invalidateQueries({
-            queryKey: ["trace-detail", traceId],
-          });
-          queryClient.invalidateQueries({
-            queryKey: ["annotation-queues", "for-source"],
-          });
-        }}
-      />
+        {/* Add Tags Popover */}
+        {!readOnly && (
+          <AddTagsPopover
+            anchorEl={tagsAnchorEl}
+            open={Boolean(tagsAnchorEl)}
+            onClose={() => setTagsAnchorEl(null)}
+            traceId={traceId}
+            spanId={selectedSpanId}
+            currentTags={
+              selectedSpanData
+                ? getSpan(selectedSpanData)?.tags || []
+                : data?.trace?.tags || []
+            }
+          />
+        )}
 
-      {/* Add Tags Popover */}
-      {!readOnly && (
-        <AddTagsPopover
-          anchorEl={tagsAnchorEl}
-          open={Boolean(tagsAnchorEl)}
-          onClose={() => setTagsAnchorEl(null)}
-          traceId={traceId}
-          spanId={selectedSpanId}
-          currentTags={
-            selectedSpanData
-              ? getSpan(selectedSpanData)?.tags || []
-              : data?.trace?.tags || []
+        {/* Delete tab confirmation dialog */}
+        <ConfirmDialog
+          open={Boolean(deleteTabId)}
+          onClose={() => setDeleteTabId(null)}
+          title="Delete view"
+          content={`Are you sure you want to delete "${drawerTabs.find((t) => t.id === deleteTabId)?.label || "this view"}"? This action cannot be undone.`}
+          action={
+            <Button
+              size="small"
+              variant="contained"
+              color="error"
+              onClick={() => {
+                const tabId = deleteTabId;
+                setDeleteTabId(null);
+                deleteSavedView(tabId, {
+                  onSuccess: () => {
+                    if (activeDrawerTab === tabId) handleTabChange("trace");
+                    enqueueSnackbar("View deleted", { variant: "info" });
+                  },
+                  onError: () => {
+                    enqueueSnackbar("Failed to delete view", {
+                      variant: "error",
+                    });
+                  },
+                });
+              }}
+            >
+              Delete
+            </Button>
           }
         />
-      )}
-
-      {/* Save View Popover */}
-      <SaveViewPopover
-        anchorEl={saveViewAnchor}
-        open={Boolean(saveViewAnchor)}
-        onClose={() => setSaveViewAnchor(null)}
-        onSave={handleSaveViewConfirm}
-        isLoading={isSavingView}
-        existingNames={ownViewNames}
-      />
-
-      {/* Delete tab confirmation dialog */}
-      <ConfirmDialog
-        open={Boolean(deleteTabId)}
-        onClose={() => setDeleteTabId(null)}
-        title="Delete view"
-        content={`Are you sure you want to delete "${drawerTabs.find((t) => t.id === deleteTabId)?.label || "this view"}"? This action cannot be undone.`}
-        action={
-          <Button
-            size="small"
-            variant="contained"
-            color="error"
-            onClick={() => {
-              const tabId = deleteTabId;
-              setDeleteTabId(null);
-              deleteSavedView(tabId, {
-                onSuccess: () => {
-                  if (activeDrawerTab === tabId) setActiveDrawerTab("trace");
-                  enqueueSnackbar("View deleted", { variant: "info" });
-                },
-                onError: () => {
-                  enqueueSnackbar("Failed to delete view", {
-                    variant: "error",
-                  });
-                },
-              });
-            }}
-          >
-            Delete
-          </Button>
-        }
-      />
-    </Drawer>
+      </Drawer>
+    </Portal>
   );
 };
 

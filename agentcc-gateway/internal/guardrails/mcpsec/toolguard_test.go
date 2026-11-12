@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/mcp"
+	"github.com/futureagi/agentcc-gateway/internal/mcp/vserver"
 )
 
 func TestToolGuardBlockedTool(t *testing.T) {
@@ -177,5 +178,110 @@ func TestExtractStringSlice(t *testing.T) {
 	result = extractStringSlice(cfg, "key")
 	if result != nil {
 		t.Errorf("expected nil, got %v", result)
+	}
+}
+
+// TestBlockedToolSeparatorAware is bug 22's matching half: the old suffix
+// match over-blocked ("exec" blocked "github_my_exec") and under-blocked
+// (another separator, or a virtual server's "__", slipped past).
+func TestBlockedToolSeparatorAware(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		separator string
+		blocked   []string
+		tool      string
+		server    string
+		want      bool
+	}{
+		{"exact exposed name", "", []string{"github__exec"}, "github__exec", "github", true},
+		{"bare tool on the server, legacy name", "", []string{"exec"}, "github_exec", "github", true},
+		{"bare tool on the server, virtual-server name", "", []string{"exec"}, "github__exec", "github", true},
+		{"bare tool, configured separator", ".", []string{"exec"}, "github.exec", "github", true},
+		{"legacy qualified entry, virtual-server name", "", []string{"github_exec"}, "github__exec", "github", true},
+		{"legacy qualified entry, configured separator", ".", []string{"github.exec"}, "github__exec", "github", true},
+		{"never a bare suffix", "", []string{"exec"}, "github_my_exec", "github", false},
+		{"never a suffix across the server boundary", "", []string{"hub_exec"}, "github_exec", "github", false},
+		{"another server's qualified entry", "", []string{"gitlab_exec"}, "github__exec", "github", false},
+		{"no server: exact only", "", []string{"exec"}, "x_exec", "", false},
+		{"a flat name is exact", "", []string{"exec"}, "exec", "github", true},
+		// An account member github@work exposes github_work__<tool>.
+		{"bare tool, account member", "", []string{"delete_repo"}, "github_work__delete_repo", "github", true},
+		{"legacy qualified entry, account member", "", []string{"github_delete_repo"}, "github_work__delete_repo", "github", true},
+		{"configured separator, account member", ".", []string{"github.delete_repo"}, "github_work__delete_repo", "github", true},
+		{"never a bare suffix, account member", "", []string{"repo"}, "github_work__delete_repo", "github", false},
+		{"another server's account member", "", []string{"delete_repo"}, "gitlab_work__delete_repo", "github", false},
+		{"the server's own prefixed name is not an account", "", []string{"x"}, "github__a__x", "github", false},
+		// Flat naming exposes the upstream name itself.
+		{"legacy qualified entry, flat name", "", []string{"github_delete_repo"}, "delete_repo", "github", true},
+		{"configured separator, flat name", ".", []string{"github.delete_repo"}, "delete_repo", "github", true},
+		{"another server's qualified entry, flat name", "", []string{"gitlab_delete_repo"}, "delete_repo", "github", false},
+	} {
+		cfg := map[string]interface{}{"blocked_tools": tc.blocked}
+		if tc.separator != "" {
+			cfg["separator"] = tc.separator
+		}
+		g := NewToolGuard(cfg)
+		if got := g.CheckPre(tc.tool, tc.server, nil) != ""; got != tc.want {
+			t.Errorf("%s: %v blocks %s on %q = %v, want %v", tc.name, tc.blocked, tc.tool, tc.server, got, tc.want)
+		}
+	}
+
+	// The resolved upstream tool, whatever name the call exposed it under.
+	for _, tc := range []struct {
+		name      string
+		separator string
+		blocked   []string
+		server    string
+		tool      string
+		want      bool
+	}{
+		{"bare entry", "", []string{"delete_repo"}, "github", "delete_repo", true},
+		{"legacy qualified entry", "", []string{"github_delete_repo"}, "github", "delete_repo", true},
+		{"virtual-server qualified entry", "", []string{"github__delete_repo"}, "github", "delete_repo", true},
+		{"configured separator", ".", []string{"github.delete_repo"}, "github", "delete_repo", true},
+		{"another separator's entry", ".", []string{"github_delete_repo"}, "github", "delete_repo", false},
+		{"never a bare suffix", "", []string{"repo"}, "github", "delete_repo", false},
+		{"never a prefix", "", []string{"delete"}, "github", "delete_repo", false},
+		{"another server's qualified entry", "", []string{"gitlab_delete_repo"}, "github", "delete_repo", false},
+		{"an exposed name is not an upstream tool", "", []string{"remove_repo"}, "github", "delete_repo", false},
+		{"nothing resolved", "", []string{"delete_repo"}, "", "", false},
+	} {
+		cfg := map[string]interface{}{"blocked_tools": tc.blocked}
+		if tc.separator != "" {
+			cfg["separator"] = tc.separator
+		}
+		if got := NewToolGuard(cfg).BlocksUpstreamTool(tc.server, tc.tool); got != tc.want {
+			t.Errorf("%s: %v blocks upstream %s/%s = %v, want %v", tc.name, tc.blocked, tc.server, tc.tool, got, tc.want)
+		}
+	}
+
+	// Exposed names that cannot be read back to their upstream tool: the
+	// exposed name alone never blocks them, the resolved upstream tool always
+	// does, which is why the scanner must judge both. The virtual-server builder
+	// rejects the three ambiguous account labels at composition, so no member
+	// exposes those names; overrides, hash caps and normalization stay.
+	long := "delete_repository_and_every_associated_resource_permanently_now"
+	for _, tc := range []struct {
+		form     string
+		exposed  string
+		upstream string
+	}{
+		{`account label "my__acct"`, vserver.EncodePrefixed(vserver.ParseMember("github@my__acct").Key(), "delete_repo"), "delete_repo"},
+		{`account label "_x"`, vserver.EncodePrefixed(vserver.ParseMember("github@_x").Key(), "delete_repo"), "delete_repo"},
+		{`account label "x_"`, vserver.EncodePrefixed(vserver.ParseMember("github@x_").Key(), "delete_repo"), "delete_repo"},
+		{`account label "a  b"`, vserver.EncodePrefixed(vserver.ParseMember("github@a  b").Key(), "delete_repo"), "delete_repo"},
+		{"an override's name", "remove_repo", "delete_repo"},
+		{"a hash-capped name", vserver.EncodePrefixed("github", long), long},
+		{"a normalized flat name", vserver.Normalize("delete repo"), "delete repo"},
+	} {
+		for _, blocked := range []string{tc.upstream, "github_" + tc.upstream} {
+			g := NewToolGuard(map[string]interface{}{"blocked_tools": []string{blocked}})
+			if g.CheckPre(tc.exposed, "github", nil) != "" {
+				t.Errorf("%s: [%s] blocks the exposed name %s: the parse guessed an upstream tool", tc.form, blocked, tc.exposed)
+			}
+			if !g.BlocksUpstreamTool("github", tc.upstream) {
+				t.Errorf("%s: [%s] does not block the resolved upstream tool github/%s (exposed %s)", tc.form, blocked, tc.upstream, tc.exposed)
+			}
+		}
 	}
 }

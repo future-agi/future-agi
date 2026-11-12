@@ -16,7 +16,18 @@ const CustomModelTools = ({
   hoverPlacement = "bottom",
   onClick = () => {},
   label,
+  namesInLabel = false,
 }) => {
+  // IT-R2 G4 P3 (additive, default off): `Tools (1): lookup_order` on the
+  // button instead of an unlabelled wrench with a bare count.
+  const toolNames = (tools ?? [])
+    .map((t) => t?.name ?? t?.function?.name ?? t?.config?.function?.name)
+    .filter(Boolean);
+  const namedLabel = namesInLabel
+    ? toolNames.length
+      ? `Tools (${toolNames.length}): ${toolNames.join(", ")}`
+      : "Tools"
+    : null;
   const [showModelTool, setShowModelTool] = useState(false);
 
   const handleOnClose = () => {
@@ -34,6 +45,7 @@ const CustomModelTools = ({
   return (
     <Box sx={{ height: "24px" }}>
       <CustomTooltip
+        card
         show={true}
         title={<ToolsHoverState tools={tools} disableHover={disableHover} />}
         placement={!disableHover ? hoverPlacement : "bottom"}
@@ -55,13 +67,13 @@ const CustomModelTools = ({
           disabled={disableClick}
           disableRipple={viewOnly}
           sx={{
-            borderRadius: "4px",
             backgroundColor: "background.paper",
             border: "1px solid",
             borderColor: "divider",
             padding: "4px",
             height: "32px",
-            width: label ? "auto" : "44px",
+            width: label || namedLabel ? "auto" : "44px",
+            ...(namedLabel && { maxWidth: 280, px: 1 }),
             marginTop: isModalContainer ? "-4px" : 0,
             color: "text.primary",
             ...(viewOnly && { cursor: "default" }),
@@ -70,12 +82,23 @@ const CustomModelTools = ({
           <SvgColor
             src="/assets/prompt/tools.svg"
             sx={{
-              height: "20px",
-              width: "20px",
+              height: "16px",
+              width: "16px",
               flexShrink: 0,
             }}
           />
-          {tools?.length > 0 && (
+          {namedLabel ? (
+            <Typography
+              typography="s2"
+              color="text.primary"
+              noWrap
+              data-testid="tools-label"
+              sx={{ ml: 0.5, minWidth: 0 }}
+            >
+              {namedLabel}
+            </Typography>
+          ) : null}
+          {!namedLabel && tools?.length > 0 && (
             <Typography
               variant="s3"
               fontWeight={"fontWeightMedium"}
@@ -123,4 +146,5 @@ CustomModelTools.propTypes = {
   hoverPlacement: PropTypes.string,
   onClick: PropTypes.func,
   label: PropTypes.string,
+  namesInLabel: PropTypes.bool,
 };

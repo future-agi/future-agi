@@ -802,6 +802,36 @@ def _force_flush_cascade():
         _PgOps.sql_flush = _original
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _authorize_test_flush(_force_flush_cascade):
+    """Give only Django's test flush a connection-bound erase authority.
+
+    Keep flush's own atomic execution and the existing CASCADE fixture. The
+    session patch grants nothing between calls; sql_authority resets its
+    ContextVar in finally, including when the original handle raises.
+    """
+    from functools import wraps
+
+    from django.core.management.commands.flush import Command
+    from django.db import DEFAULT_DB_ALIAS
+
+    from accounts.services.hard_erase_sql import sql_authority
+
+    original = Command.handle
+
+    @wraps(original)
+    def _flush_with_authority(self, *args, **options):
+        using = options.get("database", DEFAULT_DB_ALIAS)
+        with sql_authority(using, "erase"):
+            return original(self, *args, **options)
+
+    Command.handle = _flush_with_authority
+    try:
+        yield
+    finally:
+        Command.handle = original
+
+
 from accounts.models.organization import Organization
 from accounts.models.user import User
 from accounts.models.workspace import Workspace

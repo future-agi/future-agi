@@ -81,6 +81,12 @@ const useFalconStore = create((set, _get) => ({
   setPendingPrompt: (prompt) => set({ pendingPrompt: prompt }),
   clearPendingPrompt: () => set({ pendingPrompt: null }),
 
+  // Epochs invalidate in-flight work even when the same ID is selected again.
+  resetGeneration: 0,
+  conversationGeneration: 0,
+  // Shared HTTP-create/socket submission; recovery requires its matching ID.
+  pendingDraft: null,
+
   // Chat state
   conversations: [],
   currentConversationId: null,
@@ -91,7 +97,11 @@ const useFalconStore = create((set, _get) => ({
   // Conversation actions
   setConversations: (conversations) => set({ conversations }),
   setCurrentConversation: (id) =>
-    set({ currentConversationId: id, messages: [] }),
+    set((s) => ({
+      currentConversationId: id,
+      messages: [],
+      conversationGeneration: s.conversationGeneration + 1,
+    })),
 
   // Message actions
   setMessages: (messages) =>
@@ -212,14 +222,18 @@ const useFalconStore = create((set, _get) => ({
 
   // Reset
   resetChat: () =>
-    set({
+    set((s) => ({
+      conversationGeneration: s.conversationGeneration + 1,
       messages: [],
       isStreaming: false,
       streamingMessageId: null,
       attachedFiles: [],
-    }),
-  resetAll: () =>
-    set({
+    })),
+  resetAll: ({ draft = null } = {}) =>
+    set((s) => ({
+      resetGeneration: s.resetGeneration + 1,
+      conversationGeneration: s.conversationGeneration + 1,
+      pendingDraft: null,
       isSidebarOpen: false,
       conversations: [],
       currentConversationId: null,
@@ -228,11 +242,13 @@ const useFalconStore = create((set, _get) => ({
       streamingMessageId: null,
       selectedContext: "auto",
       activeSkill: null,
-      attachedFiles: [],
+      skills: [],
+      connectors: [],
+      attachedFiles: draft?.files || [],
       pendingNavigation: null,
       showCustomize: false,
-      pendingPrompt: null,
-    }),
+      pendingPrompt: draft?.text || null,
+    })),
 }));
 
 export default useFalconStore;

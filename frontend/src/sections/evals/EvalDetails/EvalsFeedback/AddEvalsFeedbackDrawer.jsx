@@ -1,7 +1,13 @@
 import React, { useEffect, useMemo } from "react";
 import { Box, Divider, Drawer, IconButton, Skeleton } from "@mui/material";
 import PropTypes from "prop-types";
-import { ACTION_TYPES, OUTPUT_TYPES } from "./feedbackConstant";
+import {
+  ACTION_TYPES,
+  OUTPUT_TYPES,
+  feedbackEditBlockedReason,
+  feedbackNote,
+  isTraceFeedback as isTraceFeedbackRow,
+} from "./feedbackConstant";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
@@ -12,6 +18,7 @@ import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const createValidationSchema = z.object({
   actionType: z.enum([ACTION_TYPES.RETUNE, ACTION_TYPES.RECALCULATE]),
@@ -42,9 +49,9 @@ const AddEvalsFormLoading = ({ handleClose }) => {
           <Skeleton height={20} width={250} />
           <Skeleton height={40} />
         </Box>
-        <IconButton onClick={handleClose} size="small" sx={{ height: "32px" }}>
+        <IconButton onClick={handleClose} size="small">
           {/* @ts-ignore */}
-          <Iconify icon="akar-icons:cross" sx={{ color: "text.primary" }} />
+          <Iconify icon="solar:close-linear" sx={{ color: "text.primary" }} />
         </IconButton>
       </Box>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
@@ -74,10 +81,15 @@ const AddEvalsFeedbackDrawerChild = ({
   existingFeedback,
 }) => {
   const isEdit = !!existingFeedback;
-  const { role } = useAuthContext();
+  const isTraceFeedback = isEdit && isTraceFeedbackRow(existingFeedback);
+  const { role, user } = useAuthContext();
   const canEdit = Boolean(
     RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role],
   );
+  // Say why before the user fills in a form the server would refuse.
+  const editBlockedReason = isEdit
+    ? feedbackEditBlockedReason(existingFeedback, user?.id)
+    : null;
   const handleClose = () => {
     onClose();
   };
@@ -112,8 +124,7 @@ const AddEvalsFeedbackDrawerChild = ({
   }, [configData]);
 
   const multiChoice = Boolean(configData?.multi_choice);
-  const isMultiSelect =
-    outputType === OUTPUT_TYPES.STR_LIST && multiChoice;
+  const isMultiSelect = outputType === OUTPUT_TYPES.STR_LIST && multiChoice;
 
   const { control, reset, handleSubmit, formState } = useForm({
     defaultValues: {
@@ -138,7 +149,8 @@ const AddEvalsFeedbackDrawerChild = ({
       }
       reset({
         value: parsedValue,
-        explanation: existingFeedback.explanation || "",
+        // Start from the person's own note, never the eval's explanation.
+        explanation: feedbackNote(existingFeedback),
         actionType: existingFeedback.action_type || "",
       });
     }
@@ -148,8 +160,11 @@ const AddEvalsFeedbackDrawerChild = ({
     mutationFn: ({ url, body }) => axios.post(url, body),
     onSuccess: (data) => {
       // @ts-ignore
+      const serverMessage = data?.data?.result?.message;
+      // Edits name what the button did; the server message describes the
+      // request, not what the user changed.
       enqueueSnackbar(
-        data?.data?.result?.message || "Feedback updated",
+        isEdit ? "Changes saved" : serverMessage || "Feedback updated",
         { variant: "success" },
       );
       reset();
@@ -159,6 +174,7 @@ const AddEvalsFeedbackDrawerChild = ({
   });
 
   const onSubmit = (payload) => {
+    if (editBlockedReason) return;
     const { actionType, ...rest } = payload;
     const source = existingFeedback?.source || "eval_playground";
     const feedbackValue = isMultiSelect
@@ -170,6 +186,23 @@ const AddEvalsFeedbackDrawerChild = ({
       actionType === ACTION_TYPES.RECALCULATE
         ? ACTION_TYPES.RETUNE_RECALCULATE
         : actionType;
+
+    // Observe and prototype-run feedback is saved by the tracer, which stores
+    // the corrected value and explanation along with the follow-up action.
+    if (isTraceFeedback) {
+      submitFeedback({
+        url: endpoints.project.submitObservationSpanFeedbackActionType(),
+        body: {
+          action_type: actionType,
+          feedback_id: existingFeedback?.id,
+          observation_span_id: existingFeedback?.source_id,
+          custom_eval_config_id: existingFeedback?.custom_eval_config_id,
+          value: feedbackValue,
+          explanation: rest.explanation,
+        },
+      });
+      return;
+    }
 
     if (source === "experiment") {
       const experimentId = existingFeedback?.experiment_id;
@@ -207,19 +240,6 @@ const AddEvalsFeedbackDrawerChild = ({
       return;
     }
 
-    if (source === "observe") {
-      submitFeedback({
-        url: endpoints.project.submitObservationSpanFeedbackActionType(),
-        body: {
-          action_type: actionType,
-          feedback_id: existingFeedback?.id,
-          observation_span_id: existingFeedback?.source_id,
-          custom_eval_config_id: existingFeedback?.custom_eval_config_id,
-        },
-      });
-      return;
-    }
-
     // eval_playground (default)
     submitFeedback({
       url: endpoints.develop.eval.addEvalsFeedback,
@@ -244,25 +264,25 @@ const AddEvalsFeedbackDrawerChild = ({
       control={control}
       explanation={output.reason}
       isEdit={isEdit}
+      blockedNote={editBlockedReason || undefined}
       outputType={outputType}
       feedbackError={Boolean(feedbackError)}
       choices={configData?.choices}
       multiChoice={multiChoice}
       handleSubmitForm={onSubmit}
       handleSubmit={handleSubmit}
-      disabled={!formState.isValid || !canEdit}
+      disabled={!formState.isValid || !canEdit || Boolean(editBlockedReason)}
       loading={isSubmitting}
       retuneOptions={[
         {
           title: "Re-tune",
-          description:
-            "A new version of this metric will be created and used in all future evaluations.",
+          description: "Submits feedback without creating a new eval version.",
           value: ACTION_TYPES.RETUNE,
         },
         {
           title: "Re-calculate and re-tune",
           description:
-            "We will create a new version of this metric and use in future evaluations. We will also recalculate all past evaluation runs using this feedback. This may take some time.",
+            "Submits feedback and requests recalculation for this source; it does not create a new eval version.",
           value: ACTION_TYPES.RECALCULATE,
         },
       ]}
@@ -280,20 +300,21 @@ AddEvalsFeedbackDrawerChild.propTypes = {
 };
 
 const AddEvalsFeedbackDrawer = ({ open, onClose, ...rest }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       variant="temporary"
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
-          width: "670px",
+          width: "640px",
           position: "fixed",
           zIndex: 10,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

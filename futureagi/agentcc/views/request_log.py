@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import UTC
 
 import structlog
 from django.contrib.postgres.aggregates import ArrayAgg
@@ -6,39 +7,70 @@ from django.db.models import (
     Avg,
     Count,
     DecimalField,
+    Exists,
     FloatField,
     Max,
     Min,
+    OuterRef,
     Q,
     Sum,
     Value,
 )
 from django.db.models.functions import Coalesce
 from django.http import StreamingHttpResponse
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.decorators import action
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ReadOnlyModelViewSet
 
 from accounts.utils import get_request_organization
-from agentcc.models import AgentccCustomPropertySchema, AgentccRequestLog
+from agentcc.models import (
+    AgentccCustomPropertySchema,
+    AgentccRequestAttempt,
+    AgentccRequestLog,
+)
 from agentcc.models.request_log import RequestLogTag
 from agentcc.serializers.contracts import AgentccErrorResponseSerializer
 from agentcc.serializers.request_log import (
     AgentccRequestLogDetailSerializer,
+    AgentccRequestLogExportQuerySerializer,
     AgentccRequestLogMetadataValuesResponseSerializer,
     AgentccRequestLogMetadataValuesSerializer,
+    AgentccRequestLogQuerySerializer,
     AgentccRequestLogSerializer,
+    AgentccRequestVolumeQuerySerializer,
+    AgentccRequestVolumeResponseSerializer,
+    AgentccRequestVolumeSerializer,
     AgentccSessionSerializer,
 )
-from agentcc.serializers.request_queries import GatewayRequestLogQuerySerializer
+from agentcc.services.analytics import (
+    ChartWindowTooLarge,
+    get_request_volume,
+    parse_time_range,
+    parse_time_zone,
+)
 from agentcc.services.export import MAX_EXPORT_ROWS, export_csv, export_json
+from agentcc.services.provider_label import provider_filter, provider_search
 from agentcc.services.request_log_metadata import TAG_SEPARATOR, get_metadata_values
+from agentcc.views.request_log_scope import OrganizationRequestLogScopeMixin
 from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
-from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
+
+# Log entry v2 filters: query param -> column. Each takes a comma-separated
+# list and matches any of its values.
+V2_COLUMN_FILTERS = {
+    "billing_mode": "billing_mode",
+    "credential_type": "credential_type",
+    "agent_id": "agent_id",
+    "run_id": "agent_run_id",
+    "step": "agent_step",
+    "policy_variant": "policy_variant",
+    "env": "agent_env",
+}
 
 
 def _parse_bool(value):
@@ -56,6 +88,20 @@ def _parse_int(value, default=None):
         return int(value)
     except (ValueError, TypeError):
         return default
+
+
+def _parse_started_at(value):
+    """A started_after/started_before value as an aware datetime.
+
+    ISO 8601 with an offset is read in that offset (the console sends one).
+    A value with no offset is UTC, as it has always been for API callers:
+    made aware here on purpose rather than through Django's naive-datetime
+    fallback. None when the value is not a date.
+    """
+    dt = parse_datetime(value)
+    if dt is not None and timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, UTC)
+    return dt
 
 
 def _parse_csv(value):
@@ -82,23 +128,41 @@ def _metadata_matches_any(key, values):
     return match
 
 
+def _has_attempt_in(error_classes):
+    """Requests with at least one attempt whose error class is listed.
+
+    Attempts are matched on (organization, request_id), as ingestion links them.
+    """
+    return Exists(
+        AgentccRequestAttempt.objects.filter(
+            organization_id=OuterRef("organization_id"),
+            request_id=OuterRef("request_id"),
+            error_class__in=error_classes,
+        )
+    )
+
+
 def _apply_search(queryset, raw_query):
     """Apply request-log search semantics shared by list/search/export paths."""
     q = (raw_query or "").strip()
     if len(q) < 2:
         return queryset
 
-    return queryset.filter(
+    # The provider matches as shown: a managed row's reads "Future AGI
+    # managed", so the start of a word of
+    # that label finds it and the upstream's id does not.
+    match = (
         Q(model__icontains=q)
-        | Q(provider__icontains=q)
+        | provider_search(q)
         | Q(error_message__icontains=q)
         | Q(request_id__icontains=q)
         | Q(user_id__icontains=q)
         | Q(session_id__icontains=q)
     )
+    return queryset.filter(match)
 
 
-class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelViewSet):
+class AgentccRequestLogViewSet(OrganizationRequestLogScopeMixin, ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = AgentccRequestLogSerializer
     queryset = AgentccRequestLog.no_workspace_objects.all()
@@ -109,9 +173,10 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
             return AgentccRequestLogDetailSerializer
         return AgentccRequestLogSerializer
 
+    # _get_authorized_queryset (OrganizationRequestLogScopeMixin) is the
+    # authorization the analytics viewset shares; the filters go on top.
     def get_queryset(self):
-        queryset = super().get_queryset()
-        return self._apply_filters(queryset)
+        return self._apply_filters(self._get_authorized_queryset())
 
     def _apply_filters(self, queryset):
         """Apply all supported query param filters."""
@@ -139,9 +204,19 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
         if models:
             queryset = queryset.filter(model__in=models)
 
-        providers = _parse_csv(params.get("provider"))
-        if providers:
-            queryset = queryset.filter(provider__in=providers)
+        # A provider id, or "Future AGI managed" for the managed rows.
+        provider_match = provider_filter(_parse_csv(params.get("provider")))
+        if provider_match is not None:
+            queryset = queryset.filter(provider_match)
+
+        for param, column in V2_COLUMN_FILTERS.items():
+            values = _parse_csv(params.get(param))
+            if values:
+                queryset = queryset.filter(**{f"{column}__in": values})
+
+        error_classes = _parse_csv(params.get("error_class"))
+        if error_classes:
+            queryset = queryset.filter(_has_attempt_in(error_classes))
 
         for tag in RequestLogTag:
             values = _parse_csv(params.get(tag.value))
@@ -199,13 +274,13 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
         # Date range filters
         started_after = params.get("started_after")
         if started_after:
-            dt = parse_datetime(started_after)
+            dt = _parse_started_at(started_after)
             if dt:
                 queryset = queryset.filter(started_at__gte=dt)
 
         started_before = params.get("started_before")
         if started_before:
-            dt = parse_datetime(started_before)
+            dt = _parse_started_at(started_before)
             if dt:
                 queryset = queryset.filter(started_at__lte=dt)
 
@@ -264,7 +339,7 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
         return queryset
 
     @validated_request(
-        query_serializer=GatewayRequestLogQuerySerializer,
+        query_serializer=AgentccRequestLogQuerySerializer,
         auto_schema=ExplicitQueryAutoSchema,
     )
     def list(self, request, *args, **kwargs):
@@ -276,6 +351,9 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
                 return self.get_paginated_response(serializer.data)
             serializer = AgentccRequestLogSerializer(queryset, many=True)
             return self._gm.success_response(serializer.data)
+        except APIException:
+            # The paginator's typed refusals (page size, invalid page).
+            raise
         except Exception as e:
             logger.exception("request_log_list_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -284,7 +362,9 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
         try:
             instance = self.get_object()
             return self._gm.success_response(
-                AgentccRequestLogDetailSerializer(instance).data
+                AgentccRequestLogDetailSerializer(
+                    instance, context=self.get_serializer_context()
+                ).data
             )
         except Exception as e:
             logger.exception("request_log_retrieve_error", error=str(e))
@@ -308,6 +388,9 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
                 return self.get_paginated_response(serializer.data)
             serializer = AgentccRequestLogSerializer(queryset, many=True)
             return self._gm.success_response(serializer.data)
+        except APIException:
+            # The paginator's typed refusals (page size, invalid page).
+            raise
         except Exception as e:
             logger.exception("request_log_search_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -335,13 +418,50 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
                 .order_by("name")
                 .values_list("name", flat=True)
             )
-            values = get_metadata_values(super().get_queryset(), tag_keys)
+            values = get_metadata_values(self._get_authorized_queryset(), tag_keys)
             return self._gm.success_response(
                 AgentccRequestLogMetadataValuesSerializer(values).data
             )
         except Exception as e:
             logger.exception("request_log_metadata_values_error", error=str(e))
             return self._gm.bad_request("Could not load filter options")
+
+    @validated_request(
+        query_serializer=AgentccRequestVolumeQuerySerializer,
+        auto_schema=ExplicitQueryAutoSchema,
+        responses={
+            200: AgentccRequestVolumeResponseSerializer,
+            400: AgentccErrorResponseSerializer,
+        },
+    )
+    @action(detail=False, methods=["get"], pagination_class=None)
+    def volume(self, request):
+        """Requests and errors per time bucket, under the list's own filters.
+
+        The Logs page's volume strip: every filter the list takes (search
+        included) narrows the counts, so the strip and the table count the
+        same requests. ``start``, ``end`` and ``granularity`` set the window;
+        day buckets are days in ``tz``.
+        """
+        try:
+            period_start, period_end, granularity = parse_time_range(
+                request.query_params
+            )
+            result = get_request_volume(
+                self.get_queryset(),
+                period_start,
+                period_end,
+                granularity,
+                zone=parse_time_zone(request.query_params),
+            )
+            return self._gm.success_response(
+                AgentccRequestVolumeSerializer(result).data
+            )
+        except ChartWindowTooLarge as e:
+            return self._gm.bad_request(str(e))
+        except Exception as e:
+            logger.exception("request_log_volume_error", error=str(e))
+            return self._gm.bad_request("Could not count requests over time")
 
     @action(detail=False, methods=["get"])
     def sessions(self, request):
@@ -391,6 +511,9 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
             result = list(sessions)
             serializer = AgentccSessionSerializer(result, many=True)
             return self._gm.success_response(serializer.data)
+        except APIException:
+            # The paginator's typed refusals (page size, invalid page).
+            raise
         except Exception as e:
             logger.exception("request_log_sessions_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -413,24 +536,53 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
                 return self.get_paginated_response(serializer.data)
             serializer = AgentccRequestLogSerializer(queryset, many=True)
             return self._gm.success_response(serializer.data)
+        except APIException:
+            # The paginator's typed refusals (page size, invalid page).
+            raise
         except Exception as e:
             logger.exception("request_log_session_detail_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        query_serializer=AgentccRequestLogExportQuerySerializer,
+        auto_schema=ExplicitQueryAutoSchema,
+    )
     @action(detail=False, methods=["get"])
     def export(self, request):
-        """Export filtered request logs as CSV or JSON."""
+        """Export filtered request logs as CSV or JSON (at most 10,000 rows).
+
+        The filters are the list's, validated the same way. 0 matching rows
+        answers 400 export_empty; more than the cap answers 400
+        export_too_large with the count and the cap, unless max_rows asks for
+        the first rows in the list's order. The console reads the list's
+        count first and shows the count and the cap before it downloads.
+        """
         try:
             queryset = self.get_queryset()
             count = queryset.count()
 
             if count == 0:
-                return self._gm.bad_request("No data to export")
+                return self._gm.custom_error_response(
+                    400,
+                    "No requests match these filters, so there is nothing to export.",
+                    code="export_empty",
+                )
 
-            if count > MAX_EXPORT_ROWS:
-                return self._gm.bad_request(
+            max_rows = request.validated_query_data.get("max_rows")
+            if max_rows:
+                # The first rows in the table's order (the list's ordering,
+                # newest first by default), streamed; the console showed the
+                # count and the cap before asking.
+                if not queryset.query.order_by:
+                    queryset = queryset.order_by("-started_at")
+                queryset = queryset[: min(max_rows, MAX_EXPORT_ROWS)]
+            elif count > MAX_EXPORT_ROWS:
+                return self._gm.custom_error_response(
+                    400,
                     f"Export limited to {MAX_EXPORT_ROWS:,} rows. "
-                    f"Current filter returns {count:,} rows. Please narrow your filters."
+                    f"These filters match {count:,} rows. Narrow the filters "
+                    "(a date range, for example) to export them.",
+                    code="export_too_large",
                 )
 
             fmt = request.query_params.get("export_format", "csv").lower()
@@ -438,7 +590,7 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
             if fmt == "json":
                 response = StreamingHttpResponse(
                     export_json(queryset),
-                    content_type="application/x-ndjson",
+                    content_type="application/json",
                 )
                 response["Content-Disposition"] = (
                     'attachment; filename="agentcc-logs.json"'

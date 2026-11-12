@@ -51,7 +51,7 @@ func newTestRC() *models.RequestContext {
 }
 
 func TestPlugin_Disabled(t *testing.T) {
-	p := New(nil, false, nil)
+	p := New(nil, false, nil, nil)
 	result := p.ProcessResponse(context.Background(), newTestRC())
 	if result.Action != pipeline.Continue {
 		t.Fatal("disabled plugin should continue")
@@ -59,7 +59,7 @@ func TestPlugin_Disabled(t *testing.T) {
 }
 
 func TestPlugin_NilManager(t *testing.T) {
-	p := New(nil, true, nil)
+	p := New(nil, true, nil, nil)
 	result := p.ProcessResponse(context.Background(), newTestRC())
 	if result.Action != pipeline.Continue {
 		t.Fatal("nil manager should continue")
@@ -67,7 +67,7 @@ func TestPlugin_NilManager(t *testing.T) {
 }
 
 func TestPlugin_NameAndPriority(t *testing.T) {
-	p := New(nil, true, nil)
+	p := New(nil, true, nil, nil)
 	if p.Name() != "alerting" {
 		t.Fatalf("Name() = %q, want alerting", p.Name())
 	}
@@ -77,7 +77,7 @@ func TestPlugin_NameAndPriority(t *testing.T) {
 }
 
 func TestPlugin_ProcessRequest_NoOp(t *testing.T) {
-	p := New(nil, true, nil)
+	p := New(nil, true, nil, nil)
 	result := p.ProcessRequest(context.Background(), newTestRC())
 	if result.Action != pipeline.Continue {
 		t.Fatal("ProcessRequest should be no-op")
@@ -88,7 +88,7 @@ func TestPlugin_RecordsRequestCount(t *testing.T) {
 	ch := &captureChannel{}
 	rule := alertpkg.NewRule("many-requests", "request_count", ">=", 3, time.Minute, 0, []string{"test"})
 	mgr := alertpkg.NewManagerWithChannels([]*alertpkg.Rule{rule}, map[string]alertpkg.Channel{"test": ch})
-	p := New(mgr, true, nil)
+	p := New(mgr, true, nil, nil)
 
 	for i := 0; i < 3; i++ {
 		p.ProcessResponse(context.Background(), newTestRC())
@@ -107,7 +107,7 @@ func TestPlugin_RecordsErrorCount(t *testing.T) {
 	ch := &captureChannel{}
 	rule := alertpkg.NewRule("errors", "error_count", ">=", 1, time.Minute, 0, []string{"test"})
 	mgr := alertpkg.NewManagerWithChannels([]*alertpkg.Rule{rule}, map[string]alertpkg.Channel{"test": ch})
-	p := New(mgr, true, nil)
+	p := New(mgr, true, nil, nil)
 
 	rc := newTestRC()
 	rc.Errors = append(rc.Errors, errors.New("provider timeout"))
@@ -122,7 +122,7 @@ func TestPlugin_RecordsCost(t *testing.T) {
 	ch := &captureChannel{}
 	rule := alertpkg.NewRule("cost-spike", "cost_total", ">=", 0.5, time.Minute, 0, []string{"test"})
 	mgr := alertpkg.NewManagerWithChannels([]*alertpkg.Rule{rule}, map[string]alertpkg.Channel{"test": ch})
-	p := New(mgr, true, nil)
+	p := New(mgr, true, nil, nil)
 
 	rc := newTestRC()
 	rc.Metadata["cost"] = "1.000000"
@@ -137,7 +137,7 @@ func TestPlugin_RecordsTokens(t *testing.T) {
 	ch := &captureChannel{}
 	rule := alertpkg.NewRule("tokens", "tokens_total", ">=", 100, time.Minute, 0, []string{"test"})
 	mgr := alertpkg.NewManagerWithChannels([]*alertpkg.Rule{rule}, map[string]alertpkg.Channel{"test": ch})
-	p := New(mgr, true, nil)
+	p := New(mgr, true, nil, nil)
 
 	p.ProcessResponse(context.Background(), newTestRC()) // 150 + 50 = 200 tokens
 
@@ -150,7 +150,7 @@ func TestPlugin_RecordsLatency(t *testing.T) {
 	ch := &captureChannel{}
 	rule := alertpkg.NewRule("slow", "latency_avg", ">=", 50, time.Minute, 0, []string{"test"})
 	mgr := alertpkg.NewManagerWithChannels([]*alertpkg.Rule{rule}, map[string]alertpkg.Channel{"test": ch})
-	p := New(mgr, true, nil)
+	p := New(mgr, true, nil, nil)
 
 	rc := newTestRC()
 	rc.StartTime = time.Now().Add(-200 * time.Millisecond) // 200ms latency
@@ -165,7 +165,7 @@ func TestPlugin_NilResponse(t *testing.T) {
 	ch := &captureChannel{}
 	rule := alertpkg.NewRule("requests", "request_count", ">=", 1, time.Minute, 0, []string{"test"})
 	mgr := alertpkg.NewManagerWithChannels([]*alertpkg.Rule{rule}, map[string]alertpkg.Channel{"test": ch})
-	p := New(mgr, true, nil)
+	p := New(mgr, true, nil, nil)
 
 	rc := newTestRC()
 	rc.Response = nil
@@ -181,7 +181,7 @@ func TestPlugin_RespectsCooldown(t *testing.T) {
 	ch := &captureChannel{}
 	rule := alertpkg.NewRule("test", "request_count", ">=", 1, time.Minute, time.Hour, []string{"test"})
 	mgr := alertpkg.NewManagerWithChannels([]*alertpkg.Rule{rule}, map[string]alertpkg.Channel{"test": ch})
-	p := New(mgr, true, nil)
+	p := New(mgr, true, nil, nil)
 
 	p.ProcessResponse(context.Background(), newTestRC())
 	p.ProcessResponse(context.Background(), newTestRC())

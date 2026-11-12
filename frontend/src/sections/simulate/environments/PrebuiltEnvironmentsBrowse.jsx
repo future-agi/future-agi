@@ -77,10 +77,10 @@ export default function PrebuiltEnvironmentsBrowse() {
             </IconButton>
           </CustomTooltip>
           <Box>
-            <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
+            <Typography sx={{ typography: "m1", fontWeight: 600 }}>
               {BROWSE_COPY.title}
             </Typography>
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            <Typography sx={{ typography: "s1", color: "text.secondary" }}>
               {BROWSE_COPY.subtitle}
             </Typography>
           </Box>
@@ -93,7 +93,7 @@ export default function PrebuiltEnvironmentsBrowse() {
           InputProps={{
             startAdornment: <Iconify icon="solar:magnifer-linear" width={13} sx={{ color: "text.subtitle", mr: 0.75 }} />,
           }}
-          sx={{ width: { sm: 280 }, flexShrink: 0, "& .MuiInputBase-input": { typography: "s2" } }}
+          sx={{ width: { sm: 280 }, flexShrink: 0 }}
         />
       </Stack>
 
@@ -115,7 +115,7 @@ export default function PrebuiltEnvironmentsBrowse() {
           }}
         >
           {!isLoading && totalShown === 0 ? (
-            <Typography sx={{ typography: "s2", color: "text.subtitle", py: 6, textAlign: "center" }}>
+            <Typography sx={{ typography: "s1", color: "text.subtitle", py: 6, textAlign: "center" }}>
               {query.trim() ? BROWSE_COPY.noMatch(query) : BROWSE_COPY.emptyLibrary}
             </Typography>
           ) : (
@@ -128,9 +128,19 @@ export default function PrebuiltEnvironmentsBrowse() {
                       mt: 1.5,
                       display: "grid",
                       gap: 1.25,
+                      /* minmax(0, …) lets a card shrink below its one-line
+                         tagline instead of pushing the row past the page;
+                         three-up waits for lg so 1024 keeps whole taglines. */
                       gridTemplateColumns: selected
-                        ? { xs: "1fr", md: "1fr 1fr" }
-                        : { xs: "1fr", sm: "1fr 1fr", md: "repeat(3, 1fr)" },
+                        ? {
+                            xs: "minmax(0, 1fr)",
+                            md: "repeat(2, minmax(0, 1fr))",
+                          }
+                        : {
+                            xs: "minmax(0, 1fr)",
+                            sm: "repeat(2, minmax(0, 1fr))",
+                            lg: "repeat(3, minmax(0, 1fr))",
+                          },
                     }}
                   >
                     {group.items.map((t) => (

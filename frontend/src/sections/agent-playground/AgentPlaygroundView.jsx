@@ -21,6 +21,7 @@ import {
   useGetVersionDetail,
 } from "src/api/agent-playground/agent-playground";
 import { VERSION_STATUS } from "./utils/constants";
+import usePrefillRowVariables from "./hooks/usePrefillRowVariables";
 
 const TabContentLoader = () => (
   <LoadingScreen variant="orbit" sx={{ minHeight: "60vh" }} />
@@ -91,6 +92,9 @@ const AgentPlaygroundView = React.memo(function AgentPlaygroundView() {
     setSearchParams,
   ]);
 
+  // Opened from an experiment row: put that row's variables in the playground.
+  usePrefillRowVariables(agentId, currentAgent?.version_id ?? urlVersionId);
+
   useEffect(() => {
     return () => {
       resetAgentPlaygroundStore();
@@ -106,6 +110,7 @@ const AgentPlaygroundView = React.memo(function AgentPlaygroundView() {
       <Divider />
       <Box
         sx={{
+          px: 2,
           borderBottom: "1px solid",
           borderColor: "divider",
         }}

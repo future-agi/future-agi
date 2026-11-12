@@ -1,0 +1,47 @@
+# Browserbase's hosted MCP server with a Browserbase API key in the
+# browserbaseApiKey query parameter, the only credential placement its page
+# documents for the hosted endpoint (a key in a query parameter). Its
+# optional query parameters (modelName, modelApiKey, keepAlive, proxies,
+# verified) are not offered; the server's defaults apply.
+schema: "connector-manifest/v1#provider"
+app: browserbase
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.browserbase.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: query
+      name: browserbaseApiKey
+      secret: true
+      label: API key
+      help: "A Browserbase API key, sent as the browserbaseApiKey query parameter of the MCP URL."
+      helpUrl: https://docs.browserbase.com/integrations/mcp/setup
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.browserbase.com/integrations/mcp/setup
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://docs.browserbase.com/integrations/mcp/setup
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.browserbase.com/integrations/mcp/setup
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://docs.browserbase.com/integrations/mcp/setup
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

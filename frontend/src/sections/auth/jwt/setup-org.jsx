@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+} from "react";
 import {
   Box,
   Stack,
@@ -19,6 +25,12 @@ import PropTypes from "prop-types";
 import { paths } from "src/routes/paths";
 import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField";
 import RightSectionAuth from "./RightSectionAuth";
+import {
+  authSplitSx,
+  authFormPanelSx,
+  authAsideSx,
+  authFormGutterSx,
+} from "src/layouts/auth/responsive-styles";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { Controller, useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -36,6 +48,9 @@ import { generateNameFromEmail, redirectAfterOrgSetup } from "./common";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import SvgColor from "src/components/svg-color";
 import { useSearchParams } from "react-router-dom";
+
+// The user's saved role and goals, as GET user_onboarding_info returns them.
+const ONBOARDING_ANSWERS_KEY = ["user-role-goals"];
 
 const DotsStepper = styled(MobileStepper)(({ theme }) => ({
   background: "transparent",
@@ -132,7 +147,7 @@ const MemberRow = React.memo(
               size="small"
               label="Role"
               showClear={false}
-              sx={{ flex: 1.5, minWidth: 110, borderRadius: 0.5 }}
+              sx={{ flex: 1.5, minWidth: 110, borderRadius: "4px" }}
               options={roleOptions}
             />
           )}
@@ -141,6 +156,7 @@ const MemberRow = React.memo(
         {member.organization_role !== "Owner" && (
           <IconButton
             className="remove-btn"
+            aria-label="Remove teammate"
             onClick={() => onRemove(index)}
             sx={{
               position: "absolute",
@@ -242,11 +258,13 @@ const SetupOrganization = ({ getStarted = false }) => {
     return rt && rt.startsWith("/") && !rt.startsWith("//") ? rt : null;
   })();
 
+  // Steps go into browser history so the browser Back button moves between
+  // them; `replace` is for corrections the user should not step back into.
   const setActiveStep = useCallback(
-    (newStep) => {
+    (newStep, { replace = false } = {}) => {
       const params = new URLSearchParams(searchParams);
       params.set("step", newStep.toString());
-      setSearchParams(params, { replace: true });
+      setSearchParams(params, { replace });
     },
     [searchParams, setSearchParams],
   );
@@ -272,8 +290,8 @@ const SetupOrganization = ({ getStarted = false }) => {
     select: (d) => d?.data?.result,
   });
 
-  const { data: userOnboardingData } = useQuery({
-    queryKey: ["user-role-goals"],
+  const { data: userOnboardingData, isFetched: onboardingFetched } = useQuery({
+    queryKey: ONBOARDING_ANSWERS_KEY,
     queryFn: async () => {
       const response = await axios.get(endpoints.auth.user_onboarding_info);
       return response;
@@ -284,13 +302,16 @@ const SetupOrganization = ({ getStarted = false }) => {
 
   const defaultValuesForUserForm = useCallback(() => {
     const customRole = !DEFAULT_ROLES?.includes(userOnboardingData?.role);
-    const goalsArray = GOALS_LIST.map((goal) => {
-      const isSelected = userOnboardingData?.goals?.some(
-        (g) => g.toLowerCase() === goal.label.toLowerCase(),
-      );
-
-      return isSelected;
-    });
+    // Always booleans: before the saved answers load there are no goals, and
+    // an undefined goal fails the schema before the role check runs, so the
+    // role step would open without saying why.
+    const goalsArray = GOALS_LIST.map((goal) =>
+      Boolean(
+        userOnboardingData?.goals?.some(
+          (g) => g.toLowerCase() === goal.label.toLowerCase(),
+        ),
+      ),
+    );
 
     return {
       role: customRole ? "" : userOnboardingData?.role || "",
@@ -303,22 +324,51 @@ const SetupOrganization = ({ getStarted = false }) => {
     resolver: zodResolver(userDataSchema),
     defaultValues: defaultValuesForUserForm(),
   });
+  // The saved answers fill the form once, and only where the user has not
+  // answered yet: the read sent when the page opens can land after the user
+  // picked a role or saved, and must not clear that role.
+  const seededFromServer = useRef(false);
   useEffect(() => {
-    if (userOnboardingData) {
-      const newDefaults = defaultValuesForUserForm();
-
-      userForm.reset(newDefaults);
+    if (!userOnboardingData || seededFromServer.current) {
+      return;
     }
-  }, [userOnboardingData]);
+    seededFromServer.current = true;
+    const saved = defaultValuesForUserForm();
+    const { role, customRole, goals } = userForm.getValues();
+    const hasRole = Boolean(role || customRole);
+    userForm.reset({
+      role: hasRole ? role : saved.role,
+      customRole: hasRole ? customRole : saved.customRole,
+      goals: goals?.some(Boolean) ? goals : saved.goals,
+    });
+  }, [defaultValuesForUserForm, userForm, userOnboardingData]);
 
-  const { mutate: saveUserData, isPending: isSavingUserData } = useMutation({
+  const {
+    mutate: saveUserData,
+    isPending: isSavingUserData,
+    isSuccess: userDataSaved,
+  } = useMutation({
     mutationFn: async (data) => {
       return await axios.post(endpoints.auth.user_onboarding_info, data);
     },
     meta: {
       errorHandled: true,
     },
-    onSuccess: (data, variables) => {
+    // A read still on its way answers from before this save.
+    onMutate: () =>
+      queryClient.cancelQueries({ queryKey: ONBOARDING_ANSWERS_KEY }),
+    onSuccess: async (data, variables) => {
+      // Keep what was saved, so the steps open again with these answers.
+      await queryClient.cancelQueries({ queryKey: ONBOARDING_ANSWERS_KEY });
+      queryClient.setQueryData(ONBOARDING_ANSWERS_KEY, {
+        data: {
+          result: {
+            role: variables?.role || "",
+            goals: variables?.goals || [],
+            completed: Boolean(variables?.role && variables?.goals?.length),
+          },
+        },
+      });
       enqueueSnackbar("Profile updated successfully", { variant: "success" });
       const provider = localStorage.getItem("signupProvider");
       trackEvent(Events.signUpCompleted, {
@@ -337,7 +387,7 @@ const SetupOrganization = ({ getStarted = false }) => {
           localStorage.setItem("initial-render", "done");
           localStorage.removeItem("redirectUrl");
         }
-        window.location.href = returnTo || paths.dashboard.develop;
+        redirectAfterOrgSetup(returnTo || paths.dashboard.develop);
       }
     },
     onError: (error) => {
@@ -346,6 +396,33 @@ const SetupOrganization = ({ getStarted = false }) => {
       });
     },
   });
+
+  // The role is saved together with the goals, so a reload on the goals step
+  // loses an unsaved role. Send the user back to choose it instead of leaving
+  // Continue disabled. A save in progress or done already carried a role.
+  useEffect(() => {
+    if (
+      getStarted ||
+      activeStep !== 1 ||
+      !onboardingFetched ||
+      isSavingUserData ||
+      userDataSaved
+    ) {
+      return;
+    }
+    const { role, customRole } = userForm.getValues();
+    if (!role && !customRole) {
+      setActiveStep(0, { replace: true });
+    }
+  }, [
+    activeStep,
+    getStarted,
+    onboardingFetched,
+    isSavingUserData,
+    userDataSaved,
+    setActiveStep,
+    userForm,
+  ]);
   const { handleSubmit: handleSubmitUserData } = userForm;
   const onSubmitUserData = (data, isSkipped = false) => {
     if (isSavingUserData) {
@@ -362,6 +439,8 @@ const SetupOrganization = ({ getStarted = false }) => {
 
     saveUserData(payload);
   };
+  // The only check on the goals step is the role, which step 0 shows.
+  const showRoleStep = () => setActiveStep(0);
 
   const customRoleValue = userForm.watch("customRole");
   const roleValue = userForm.watch("role");
@@ -655,7 +734,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               fullWidth
               sx={{
                 "& .MuiOutlinedInput-root": {
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   bgcolor: "background.paper",
                 },
               }}
@@ -667,7 +746,7 @@ const SetupOrganization = ({ getStarted = false }) => {
           {!isOSS && (
             <>
               <Typography variant="m2" fontWeight="fontWeightMedium">
-                Invite people to collaborate in FutureAGI
+                Invite people to collaborate in Future AGI
               </Typography>
 
               <Box
@@ -741,39 +820,28 @@ const SetupOrganization = ({ getStarted = false }) => {
                 })}
 
                 <Box sx={{ mt: 2 }}>
-                  <Typography
-                    variant={getStarted ? "body2" : "s1.2"}
-                    sx={{
-                      color: "primary.main",
-                      cursor: "pointer",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      border: "1px solid",
-                      borderColor: "primary.main",
-                      borderRadius: getStarted ? 1 : 0.5,
-                      padding: "4px 10px",
-                      transition: "all 0.2s",
-                      fontWeight: !getStarted && 500,
-                      "&:hover": { bgcolor: "action.hover" },
-                    }}
+                  <Button
+                    variant="outlined"
+                    color="primary"
+                    size="small"
+                    startIcon={
+                      <SvgColor
+                        src="/assets/icons/ic_add.svg"
+                        width={15}
+                        height={15}
+                      />
+                    }
                     onClick={addMember}
-                    disable={!getStarted && memberToadd?.length > 3}
                   >
-                    <SvgColor
-                      src="/assets/icons/ic_add.svg"
-                      width={15}
-                      height={15}
-                      sx={{ mr: 1 }}
-                    />
-
                     {getStarted ? "Add members" : "Add"}
-                  </Typography>
+                  </Button>
                 </Box>
               </Box>
             </>
           )}
 
           <LoadingButton
+            size="large"
             fullWidth
             type="submit"
             color="primary"
@@ -781,7 +849,6 @@ const SetupOrganization = ({ getStarted = false }) => {
             disabled={!IsOrgFormValid}
             loading={isFetchingInitialData || isCreating}
             sx={{
-              borderRadius: 0.5,
               mx: getStarted && "auto",
               maxWidth: "100%",
             }}
@@ -801,7 +868,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                 width: "414px",
               }}
               color="primary.main"
-              fontSize={"15px"}
+              fontSize={"13px"}
               fontWeight="fontWeightMedium"
             >
               Skip for now
@@ -812,16 +879,29 @@ const SetupOrganization = ({ getStarted = false }) => {
     </Box>
   );
 
+  const renderBackButton = (step, disabled) => (
+    <Button
+      variant="text"
+      color="inherit"
+      size="small"
+      disabled={disabled}
+      onClick={() => setActiveStep(step)}
+      sx={{ alignSelf: "flex-start" }}
+    >
+      Back
+    </Button>
+  );
+
   const renderContent = () => {
     switch (activeStep) {
       case 0:
         return (
-          <Stack spacing={2} width="440px">
+          <Stack spacing={2} width={{ xs: "100%", lg: "440px" }}>
             <Box>
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.primary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -832,7 +912,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.secondary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -871,7 +951,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   helperText={error?.message}
                   sx={{
                     backgroundColor: "background.neutral",
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                   }}
                 />
               )}
@@ -890,12 +970,13 @@ const SetupOrganization = ({ getStarted = false }) => {
 
       case 1:
         return (
-          <Stack spacing={2} width="440px">
+          <Stack spacing={2} width={{ xs: "100%", lg: "440px" }}>
+            {renderBackButton(0, isSavingUserData)}
             <Box>
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.primary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -906,7 +987,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.secondary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -930,35 +1011,31 @@ const SetupOrganization = ({ getStarted = false }) => {
               ))}
             </Stack>
             <LoadingButton
-              sx={{ borderRadius: 0.5 }}
+              size="large"
               variant="contained"
               loading={isSavingUserData}
               disabled={isSavingUserData || (!roleValue && !customRoleValue)}
-              onClick={handleSubmitUserData((data) =>
-                onSubmitUserData(data, false),
+              onClick={handleSubmitUserData(
+                (data) => onSubmitUserData(data, false),
+                showRoleStep,
               )}
               color="primary"
             >
               Continue
             </LoadingButton>
 
-            <Typography
-              textAlign="center"
-              onClick={
-                !isSavingUserData
-                  ? handleSubmitUserData((data) => onSubmitUserData(data, true))
-                  : undefined
-              }
-              sx={{
-                cursor: isSavingUserData ? "not-allowed" : "pointer",
-                opacity: isSavingUserData ? 0.6 : 1,
-              }}
-              color="primary.main"
-              variant="s1.2"
-              fontWeight={"fontWeightMedium"}
+            <Button
+              variant="text"
+              color="primary"
+              disabled={isSavingUserData}
+              onClick={handleSubmitUserData(
+                (data) => onSubmitUserData(data, true),
+                showRoleStep,
+              )}
+              sx={{ alignSelf: "center" }}
             >
               Skip for now
-            </Typography>
+            </Button>
           </Stack>
         );
 
@@ -968,11 +1045,12 @@ const SetupOrganization = ({ getStarted = false }) => {
         }
         return (
           <Stack spacing={4} maxWidth="440px">
+            {renderBackButton(1, isCreating)}
             <Box>
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.primary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -983,7 +1061,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.secondary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -1007,7 +1085,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.primary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -1018,7 +1096,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.secondary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -1042,11 +1120,10 @@ const SetupOrganization = ({ getStarted = false }) => {
   }
 
   return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
+    <Box sx={authSplitSx}>
       <Box
         sx={{
-          width: "50%",
-          height: "100vh",
+          ...authFormPanelSx,
           bgcolor: "background.paper",
           display: "flex",
           flexDirection: "column",
@@ -1058,7 +1135,7 @@ const SetupOrganization = ({ getStarted = false }) => {
           sx={{
             maxWidth: "640px",
             width: "100%",
-            px: 10,
+            ...authFormGutterSx,
             paddingY: "100px",
             display: "flex",
             flexDirection: "column",
@@ -1076,13 +1153,7 @@ const SetupOrganization = ({ getStarted = false }) => {
         </Box>
       </Box>
 
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
+      <Box sx={authAsideSx}>
         <RightSectionAuth />
       </Box>
     </Box>

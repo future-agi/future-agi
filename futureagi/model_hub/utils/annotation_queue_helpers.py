@@ -138,6 +138,324 @@ def get_fk_field_name(source_type):
     return fk_field
 
 
+AUTOMATION_RULE_SCOPE_ERROR = (
+    "Automation rule source is outside the queue workspace or unavailable."
+)
+AUTOMATION_RULE_SCOPE_CODE = "automation_rule_scope_unavailable"
+AUTOMATION_RULE_ACTOR_CODE = "automation_rule_actor_unavailable"
+AUTOMATION_RULE_ACTOR_ERROR = (
+    "Automation rule actor is unavailable or no longer authorized."
+)
+QUEUE_SOURCE_UNAVAILABLE = "queue_source_unavailable"
+
+
+def _organization_default_workspace(organization_id, *, using=None):
+    """The organization's active default workspace, or None.
+
+    The managers' rule reads every row of the organization that has no
+    workspace in this workspace.
+    """
+    from accounts.models.workspace import Workspace
+
+    if not organization_id:
+        return None
+    return (
+        Workspace.no_workspace_objects.using(using)
+        .filter(organization_id=organization_id, is_active=True, is_default=True)
+        .first()
+    )
+
+
+def _queue_scope_workspace(queue, *, using=None):
+    """The live workspace whose rule decides what ``queue`` may reach, or None.
+
+    A queue saved with no workspace belongs to its organization's default
+    workspace, where the managers' rule also places every row with no
+    workspace. A missing, inactive or other organization's workspace reaches
+    nothing.
+    """
+    from accounts.models.workspace import Workspace
+
+    if not queue or not getattr(queue, "organization_id", None):
+        return None
+    if not queue.workspace_id:
+        return _organization_default_workspace(queue.organization_id, using=using)
+    return (
+        Workspace.no_workspace_objects.using(using)
+        .filter(
+            pk=queue.workspace_id,
+            organization_id=queue.organization_id,
+            is_active=True,
+        )
+        .first()
+    )
+
+
+def _queue_source_workspace_q(workspace, field="workspace"):
+    """Rows whose ``field`` lies in ``workspace`` by the managers' rule.
+
+    In a default workspace that is the workspace itself, any default workspace
+    of the same organization, and no workspace; in any other workspace only
+    the workspace itself. The rule leaves rows with no workspace unbounded by
+    organization, so every caller filters on the queue's organization in the
+    same ``filter()`` call. No workspace reaches nothing.
+    """
+    from tfc.utils.tenant_scope import workspace_scope_q
+
+    if workspace is None:
+        return Q(pk__in=[])
+    return workspace_scope_q(workspace, field)
+
+
+def _live_queue_workspace(queue, *, user=None, require_actor=False, using=None):
+    """The queue's live scope workspace (:func:`_queue_scope_workspace`) or None.
+
+    With an actor, the queue must still hold the workspace it was loaded with
+    (none included) and lie in that scope, and the actor must have live access
+    to the scope workspace.
+    """
+    from types import SimpleNamespace
+
+    from tfc.utils.tenant_scope import scope_to_caller
+
+    workspace = _queue_scope_workspace(queue, using=using)
+    if workspace is None:
+        return None
+    if require_actor or user is not None:
+        allowed = scope_to_caller(
+            type(queue)
+            .no_workspace_objects.using(using)
+            .filter(
+                pk=queue.pk,
+                workspace_id=queue.workspace_id,
+            ),
+            SimpleNamespace(
+                user=user,
+                organization=queue.organization,
+                workspace=workspace,
+            ),
+        ).exists()
+        if not allowed:
+            return None
+    return workspace
+
+
+def _queue_workspace_is_live(queue, *, user=None, require_actor=False, using=None):
+    """Whether ``queue`` has a live scope workspace, open to the actor if given."""
+    workspace = _live_queue_workspace(
+        queue, user=user, require_actor=require_actor, using=using
+    )
+    return workspace is not None
+
+
+def _queue_source_queryset(queue, source_type, *, bind=True, workspace=None):
+    """Authoritative PG selection for automation and read-time ownership checks.
+
+    Use explicit ownership paths even in workers with no request context. Do not
+    use the item workspace stamp as evidence of its source's ownership. Each
+    ownership path ends in the queue's organization and in its scope workspace
+    by the managers' rule. ``workspace`` is that scope workspace when the
+    caller has already resolved it.
+    """
+    model = get_source_model(source_type)
+    if model is None:
+        return None
+    qs = model.no_workspace_objects.filter(deleted=False)
+    owner_paths = {
+        "dataset_row": ("dataset",),
+        "trace": ("project",),
+        "observation_span": ("project", "trace__project"),
+        "trace_session": ("project",),
+        "call_execution": (
+            "test_execution__run_test",
+            "test_execution__agent_definition",
+            "scenario",
+        ),
+        "prototype_run": ("", "dataset"),
+    }
+    paths = owner_paths.get(source_type)
+    if not paths:
+        return qs.none()
+    if workspace is None:
+        workspace = _queue_scope_workspace(queue)
+    if workspace is None:
+        return qs.none()
+    for path in paths:
+        prefix = f"{path}__" if path else ""
+        qs = qs.filter(
+            _queue_source_workspace_q(workspace, f"{prefix}workspace"),
+            **{
+                f"{prefix}organization_id": queue.organization_id,
+                f"{prefix}deleted": False,
+            },
+        )
+    if bind and not queue.is_default:
+        bindings = {
+            "dataset_row": ("dataset_id", queue.dataset_id),
+            "trace": ("project_id", queue.project_id),
+            "observation_span": ("project_id", queue.project_id),
+            "trace_session": ("project_id", queue.project_id),
+            "call_execution": (
+                "test_execution__agent_definition_id",
+                queue.agent_definition_id,
+            ),
+            "prototype_run": ("dataset_id", queue.dataset_id),
+        }
+        field, value = bindings[source_type]
+        if value:
+            qs = qs.filter(**{field: value})
+    return qs
+
+
+def automation_rule_scope_is_allowed(
+    queue,
+    source_type,
+    conditions,
+    *,
+    user=None,
+    require_actor=False,
+    using=None,
+):
+    """Validate every scope locator and queue binding, including saved old rules.
+
+    The public API uses project_id for call_execution's agent definition. Older
+    DB payloads may also carry agent_definition_id; both are authorized here.
+    Unknown locators fail closed rather than becoming an unscoped selector.
+    Each source must be in the queue's organization and in its scope workspace
+    by the managers' rule; a queue with no workspace is read in its
+    organization's default workspace.
+    """
+    from django.core.exceptions import ValidationError
+
+    from model_hub.models.develop_dataset import Dataset
+    from simulate.models import AgentDefinition
+    from tracer.models.project import Project
+
+    workspace = _live_queue_workspace(
+        queue, user=user, require_actor=require_actor, using=using
+    )
+    if workspace is None:
+        return False
+    if not queue.is_default:
+        if queue.dataset_id and source_type not in ("dataset_row", "prototype_run"):
+            return False
+        if queue.project_id and source_type not in _CH_NATIVE_SOURCE_TYPES:
+            return False
+        if queue.agent_definition_id and source_type != "call_execution":
+            return False
+    if conditions is not None and not isinstance(conditions, dict):
+        return False
+    scope = (conditions or {}).get("scope") or {}
+    if not isinstance(scope, dict) or set(scope) - {
+        "dataset_id",
+        "project_id",
+        "agent_definition_id",
+        "is_voice_call",
+        "remove_simulation_calls",
+    }:
+        return False
+    scope_models = {
+        "dataset_id": (Dataset, queue.dataset_id),
+        "project_id": (
+            (AgentDefinition, queue.agent_definition_id)
+            if source_type == "call_execution"
+            else (Project, queue.project_id)
+        ),
+        "agent_definition_id": (AgentDefinition, queue.agent_definition_id),
+    }
+    try:
+        for key, (model, binding) in scope_models.items():
+            selected = scope.get(key)
+            if key in scope and not selected:
+                return False
+            # Binding equality is enforced by the selector/queryset below, so
+            # same-workspace binding mismatches keep their existing run errors.
+            # Bindings are checked even if omitted from conditions, so a moved
+            # dataset/project cannot make an old rule cross the workspace boundary.
+            for source_id in {str(v) for v in (selected, binding) if v}:
+                if (
+                    not model.no_workspace_objects.using(using)
+                    .filter(
+                        _queue_source_workspace_q(workspace),
+                        pk=source_id,
+                        organization_id=queue.organization_id,
+                        deleted=False,
+                    )
+                    .exists()
+                ):
+                    return False
+        if (
+            source_type == "call_execution"
+            and scope.get("agent_definition_id")
+            and scope.get("project_id")
+        ):
+            if str(scope["agent_definition_id"]) != str(scope["project_id"]):
+                return False
+    except (ValidationError, ValueError, TypeError):
+        return False
+    return True
+
+
+def _automation_rule_actor(queue, user):
+    """Reload run authority; ownership-only helpers must never substitute for it."""
+    from django.contrib.auth import get_user_model
+    from django.core.exceptions import ValidationError
+
+    from model_hub.models.annotation_queues import (
+        AnnotationQueueAnnotator,
+        user_has_annotation_queue_admin_access,
+    )
+
+    if user is None or not getattr(user, "pk", None):
+        return None
+    try:
+        actor = get_user_model().objects.filter(pk=user.pk, is_active=True).first()
+    except (ValidationError, ValueError, TypeError):
+        return None
+    if actor is None or not _queue_workspace_is_live(
+        queue, user=actor, require_actor=True
+    ):
+        return None
+    # Preserve the API's manager-equivalent org/workspace admin policy, but use
+    # an explicit queue/user lookup for ordinary roles, never an ambient manager.
+    if user_has_annotation_queue_admin_access(queue, actor):
+        return actor
+    membership = AnnotationQueueAnnotator.no_workspace_objects.filter(
+        queue_id=queue.pk, user=actor, deleted=False
+    ).first()
+    if membership and AnnotatorRole.MANAGER.value in membership.normalized_roles:
+        return actor
+    return None
+
+
+def _automation_actor_refusal(rule):
+    logger.warning(
+        "automation_rule_actor_refused",
+        rule_id=str(rule.pk),
+        reason=AUTOMATION_RULE_ACTOR_CODE,
+    )
+    return {
+        "matched": 0,
+        "added": 0,
+        "duplicates": 0,
+        "error": AUTOMATION_RULE_ACTOR_ERROR,
+    }
+
+
+def _automation_scope_refusal(rule):
+    logger.warning(
+        "automation_rule_scope_refused",
+        rule_id=str(rule.pk),
+        reason=AUTOMATION_RULE_SCOPE_CODE,
+    )
+    return {
+        "matched": 0,
+        "added": 0,
+        "duplicates": 0,
+        "error": AUTOMATION_RULE_SCOPE_ERROR,
+    }
+
+
 def _trace_project_workspace_filter(workspace):
     if getattr(workspace, "is_default", False):
         return Q(project__workspace=workspace) | Q(project__workspace__isnull=True)
@@ -332,6 +650,7 @@ def resolve_default_queue_for_source(source_type, source_obj, organization, user
         AnnotationQueue,
         AnnotationQueueStatusChoices,
     )
+    from tfc.middleware.workspace_context import get_current_workspace
 
     lookup, scope_name = _resolve_default_queue_scope(
         source_type, source_obj, organization=organization
@@ -369,6 +688,13 @@ def resolve_default_queue_for_source(source_type, source_obj, organization, user
     workspace = None
     scope_obj = next(iter(lookup.values()))
     workspace = getattr(scope_obj, "workspace", None)
+    if workspace is None and get_current_workspace() is None:
+        # With no request workspace to stamp on save, a source saved with no
+        # workspace gets its organization's default one, where the managers'
+        # rule reads it. The new queue and the items added to it carry it.
+        workspace = _organization_default_workspace(
+            getattr(organization, "pk", organization)
+        )
 
     queue = AnnotationQueue.objects.create(
         is_default=True,
@@ -788,18 +1114,331 @@ def _resolve_ch_trace_session(source_id, *, organization=None, workspace=None):
     )
 
 
+def _queue_item_scope_workspace(item, request=None):
+    """The queue's live scope workspace when the caller may read ``item``, or None."""
+    from tfc.middleware.workspace_context import get_current_user
+    from tfc.utils.tenant_scope import scope_to_caller
+
+    queue = item.queue
+    if item.organization_id != queue.organization_id:
+        return None
+    user = getattr(request, "user", None) if request is not None else get_current_user()
+    workspace = _live_queue_workspace(queue, user=user, require_actor=True)
+    if workspace is None:
+        return None
+    # Live membership check in the caller's own workspace, by the same rule:
+    # a queue with no workspace is in reach of a default workspace only.
+    if not scope_to_caller(
+        type(queue).no_workspace_objects.filter(
+            pk=queue.pk,
+            workspace_id=queue.workspace_id,
+            deleted=False,
+        ),
+        request,
+    ).exists():
+        return None
+    return workspace
+
+
+def _queue_item_workspace_allowed(item, request=None):
+    return _queue_item_scope_workspace(item, request) is not None
+
+
 def _queue_item_source_project_ids(item):
-    """Projects a queue item's CH trace / span may render from: the item's own
-    project when it was recorded at add time, else every project of the item's
-    org / workspace (the add path's scope), where the newest copy wins. A trace /
-    span id can exist in several projects and organizations, so a render read by
-    bare id would show an arbitrary tenant's copy. FAIL CLOSED: ``[]`` renders
-    the ``deleted`` sentinel."""
-    if item.project_id:
-        return [str(item.project_id)]
-    return _tenant_scoped_project_ids(
-        organization=item.organization, workspace=item.workspace
+    """Queue-owned projects for CH reads; never trust the item's stamp."""
+    from tracer.models.project import Project
+
+    queue = item.queue
+    workspace = _queue_scope_workspace(queue)
+    if workspace is None:
+        return []
+    projects = Project.no_workspace_objects.filter(
+        _queue_source_workspace_q(workspace),
+        organization_id=queue.organization_id,
+        deleted=False,
     )
+    if item.project_id:
+        projects = projects.filter(pk=item.project_id)
+    ids = [
+        str(pk)
+        for pk in projects.values_list("pk", flat=True)[
+            : _MAX_SOURCE_SCOPE_PROJECTS + 1
+        ]
+    ]
+    return ids if len(ids) <= _MAX_SOURCE_SCOPE_PROJECTS else []
+
+
+def queue_project_workspace_ids(queue, project_ids):
+    """``{project_id: workspace_id}`` for the given projects ``queue`` may reach.
+
+    A project counts when it is in the queue's organization, not deleted, and
+    in the queue's scope workspace by the managers' rule. The value is the
+    project's own workspace id, ``None`` for a project saved with no workspace.
+    Keys keep the caller's spelling; projects out of reach and malformed ids
+    are absent.
+    """
+    import uuid
+
+    from tracer.models.project import Project
+
+    requested = {}
+    for project_id in project_ids or ():
+        try:
+            requested[str(project_id)] = uuid.UUID(str(project_id))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    if not queue or not requested:
+        return {}
+    workspace = _queue_scope_workspace(queue)
+    if workspace is None:
+        return {}
+    found = dict(
+        Project.no_workspace_objects.filter(
+            _queue_source_workspace_q(workspace),
+            pk__in=set(requested.values()),
+            organization_id=queue.organization_id,
+            deleted=False,
+        ).values_list("pk", "workspace_id")
+    )
+    return {
+        key: found[project_uuid]
+        for key, project_uuid in requested.items()
+        if project_uuid in found
+    }
+
+
+class QueueSourceAuthorization:
+    """Live ownership/membership snapshot for one render page, never a worker grant.
+
+    Queue endpoints render one queue. Resolve its caller gate once and its PG
+    sources once per family, using the same predicates as the single-item
+    gate. Mixed-queue helper callers are partitioned by queue, never granted the
+    union of another queue's sources. The snapshot belongs only to this render;
+    it is not stored on model instances or reused across requests.
+    """
+
+    def __init__(self):
+        self._items = set()
+        self._queues = {}
+        self._sources = {}
+        self._projects = {}
+        self._unpinned_projects = {}
+
+    @staticmethod
+    def _key(item):
+        fk = get_fk_field_name(item.source_type)
+        return (
+            item.pk,
+            item.queue_id,
+            item.organization_id,
+            item.source_type,
+            str(getattr(item, f"{fk}_id", None)) if fk else None,
+            str(item.project_id) if item.project_id else None,
+        )
+
+    @classmethod
+    def for_items(cls, items, *, request=None, raise_on_error=False):
+        from types import SimpleNamespace
+
+        from model_hub.models.annotation_queues import AnnotationQueue
+        from tracer.models.project import Project
+
+        auth = cls()
+        groups = {}
+        for item in items or []:
+            auth._items.add(auth._key(item))
+            # A freshly saved FK may still be a string; a reload returns UUID.
+            # Batch by canonical spelling, but retain each input key for grants.
+            queue_id = str(item.queue_id) if item.queue_id is not None else None
+            groups.setdefault(queue_id, []).append(item)
+        if not groups:
+            return auth
+        try:
+            # Do not lazily dereference item.queue N times or use a stamped
+            # item workspace as proof of the queue's current ownership.
+            queues = AnnotationQueue.no_workspace_objects.filter(
+                pk__in=groups, deleted=False
+            ).select_related("organization", "workspace")
+            for queue in queues:
+                queue_items = groups.get(str(queue.pk), [])
+                if not queue_items:
+                    continue
+                probe = SimpleNamespace(
+                    queue=queue, organization_id=queue.organization_id
+                )
+                workspace = _queue_item_scope_workspace(probe, request)
+                if workspace is None:
+                    continue
+                queue_keys = {item.queue_id for item in queue_items}
+                for queue_key in queue_keys:
+                    auth._queues[queue_key] = queue
+                families = {}
+                pins = set()
+                unpinned = False
+                has_collector = False
+                for item in queue_items:
+                    if item.organization_id != queue.organization_id:
+                        continue
+                    if item.source_type in _CH_NATIVE_SOURCE_TYPES:
+                        has_collector = True
+                        if item.project_id:
+                            pins.add(item.project_id)
+                        else:
+                            unpinned = True
+                    else:
+                        fk = get_fk_field_name(item.source_type)
+                        source_id = getattr(item, f"{fk}_id", None) if fk else None
+                        if source_id:
+                            families.setdefault(item.source_type, set()).add(source_id)
+                for source_type, ids in families.items():
+                    qs = _queue_source_queryset(
+                        queue, source_type, bind=False, workspace=workspace
+                    )
+                    if qs is not None:
+                        source_ids = {
+                            str(pk)
+                            for pk in qs.filter(pk__in=ids).values_list("pk", flat=True)
+                        }
+                        for queue_key in queue_keys:
+                            auth._sources[(queue_key, source_type)] = source_ids
+                if has_collector:
+                    projects = Project.no_workspace_objects.filter(
+                        _queue_source_workspace_q(workspace),
+                        organization_id=queue.organization_id,
+                        deleted=False,
+                    )
+                    selection = Q(pk__in=pins)
+                    if unpinned:
+                        # Keep the legacy lookup cap without denying a pinned
+                        # project just because the workspace has many projects.
+                        selection |= Q(
+                            pk__in=projects.values("pk")[
+                                : _MAX_SOURCE_SCOPE_PROJECTS + 1
+                            ]
+                        )
+                    ids = {
+                        str(pk)
+                        for pk in projects.filter(selection).values_list(
+                            "pk", flat=True
+                        )
+                    }
+                    unpinned_ids = (
+                        ids
+                        if unpinned and len(ids) <= _MAX_SOURCE_SCOPE_PROJECTS
+                        else set()
+                    )
+                    for queue_key in queue_keys:
+                        auth._projects[queue_key] = ids
+                        auth._unpinned_projects[queue_key] = unpinned_ids
+        except (ObjectDoesNotExist, DatabaseError, ValueError, TypeError):
+            if raise_on_error:
+                raise
+            # A partial batch cannot authorize content after a failed lookup.
+            return cls()
+        return auth
+
+    def workspace_allowed(self, item):
+        queue = self._queues.get(item.queue_id)
+        return bool(
+            self._key(item) in self._items
+            and queue is not None
+            and item.organization_id == queue.organization_id
+        )
+
+    def project_ids(self, item):
+        if not self.workspace_allowed(item):
+            return set()
+        if item.project_id:
+            pid = str(item.project_id)
+            return {pid} if pid in self._projects.get(item.queue_id, ()) else set()
+        return self._unpinned_projects.get(item.queue_id, set())
+
+    def pg_source_allowed(self, item):
+        if not self.workspace_allowed(item):
+            return False
+        fk = get_fk_field_name(item.source_type)
+        source_id = getattr(item, f"{fk}_id", None) if fk else None
+        return bool(
+            source_id
+            and str(source_id)
+            in self._sources.get((item.queue_id, item.source_type), ())
+        )
+
+
+def captured_preview_attribution(item, auth):
+    """Choose snapshot/live/withheld without using a live copy to bless stored bytes.
+
+    A snapshot still needs the source-availability gate (including the existing
+    pinned identity check). Unpinned collector captures are attributable only by
+    their own recorded project; absent attribution requires fresh live content.
+    """
+    if not item.source_preview:
+        return "live"
+    if item.source_type not in _CH_NATIVE_SOURCE_TYPES:
+        return "snapshot"
+    if not isinstance(item.source_preview, dict):
+        return "withheld"
+    if item.project_id:
+        return "snapshot"
+    preview_pid = item.source_preview.get("project_id")
+    if preview_pid is None:
+        return "live"
+    return "snapshot" if str(preview_pid) in auth.project_ids(item) else "withheld"
+
+
+def queue_item_source_is_available(
+    item, *, request=None, ch_cache=None, captured=False
+):
+    """Re-authorize a stored locator before returning any captured/live content."""
+    try:
+        auth = ch_cache.source_authorization if ch_cache is not None else None
+        if auth is None:
+            auth = QueueSourceAuthorization.for_items([item], request=request)
+        if not auth.workspace_allowed(item):
+            return False
+        if item.source_type not in _CH_NATIVE_SOURCE_TYPES:
+            return auth.pg_source_allowed(item)
+        project_ids = auth.project_ids(item)
+        if not project_ids:
+            return False
+        if captured and not isinstance(item.source_preview, dict):
+            return False
+        if captured and item.project_id:
+            # A captured preview has no authority of its own. Its recorded project
+            # must still exist in the queue workspace; contradictory pins deny.
+            preview_pid = (item.source_preview or {}).get("project_id")
+            return not preview_pid or str(preview_pid) == str(item.project_id)
+        if captured:
+            return captured_preview_attribution(item, auth) == "snapshot"
+        if ch_cache is None:
+            ch_cache = CollectorSourceCache.for_items(
+                [item], request=request, source_authorization=auth
+            )
+        if item.source_type == "trace":
+            source = ch_cache.trace_root(item.trace_id, item=item)
+            project_id = getattr(source, "project_id", None)
+        elif item.source_type == "observation_span":
+            source = ch_cache.span(item.observation_span_id, item=item)
+            project_id = getattr(source, "project_id", None)
+        else:
+            fields = ch_cache.session_fields(item.trace_session_id, item=item) or {}
+            project_id = fields.get("project_id")
+        return bool(project_id and str(project_id) in project_ids)
+    except (ObjectDoesNotExist, DatabaseError, ValueError, TypeError):
+        return False
+
+
+def unavailable_queue_source(item):
+    logger.warning(
+        "queue_item_source_unavailable",
+        item_id=str(item.pk),
+        reason=QUEUE_SOURCE_UNAVAILABLE,
+    )
+    return {
+        "type": item.source_type,
+        "deleted": True,
+        "error": QUEUE_SOURCE_UNAVAILABLE,
+    }
 
 
 def _ch_span_for_item(span_id, *, project_ids=None):
@@ -1043,7 +1682,7 @@ def _batch_ch_trace_roots(
 
 
 def _batch_ch_session_fields(
-    session_ids, *, project_id=None, caller="render", raise_on_error=False
+    session_ids, *, project_id=None, caller="render", raise_on_error=False, using=None
 ):
     """Batch CH read of session identity fields: ``{str(id): fields}`` in one query.
     CH error → ``{}`` (FAIL OPEN), or re-raised with ``raise_on_error``. Companion
@@ -1056,11 +1695,18 @@ def _batch_ch_session_fields(
     )
 
     try:
+        routing = {"using": using} if using is not None else {}
         return (
-            resolve_session_fields([str(s) for s in session_ids], project_id=project_id)
+            resolve_session_fields(
+                [str(s) for s in session_ids], project_id=project_id, **routing
+            )
             or {}
         )
     except Exception as exc:
+        from django.db import DatabaseError
+
+        if using is not None and isinstance(exc, (DatabaseError, AssertionError)):
+            raise
         _ch_batch_read_failed(
             exc,
             raise_on_error=raise_on_error,
@@ -1072,7 +1718,13 @@ def _batch_ch_session_fields(
 
 
 def _newest_ch_source_projects(
-    span_ids, trace_ids, *, item, caller="render", raise_on_error=False
+    span_ids,
+    trace_ids,
+    *,
+    item,
+    caller="render",
+    raise_on_error=False,
+    project_ids=None,
 ):
     """``({span_id: project_id}, {trace_id: project_id})`` for queue items added
     before their project was recorded: the project holding each id's newest copy
@@ -1083,7 +1735,8 @@ def _newest_ch_source_projects(
     ``raise_on_error``."""
     if not span_ids and not trace_ids:
         return {}, {}
-    project_ids = _queue_item_source_project_ids(item)
+    if project_ids is None:
+        project_ids = _queue_item_source_project_ids(item)
     if not project_ids:
         return {}, {}
     from tracer.services.clickhouse.v2 import get_reader
@@ -1126,18 +1779,77 @@ class CollectorSourceCache:
     :meth:`for_items` and pass it as ``ch_cache=`` so the page does a single CH read
     per kind. A cache miss returns ``None`` → ``deleted`` sentinel, matching the
     single-read fail-open. A write path builds it with ``raise_on_error=True`` so a
-    CH error raises instead of reading as a miss.
+    CH error raises instead of reading as a miss. The same request-local object
+    carries :class:`QueueSourceAuthorization` for every source family, so content,
+    previews, cells, evals and notes share one live membership/ownership batch.
+    Rows retain their (project_id, source_id) identity across queues. Item-bound
+    lookups select the authorized pin or that queue's resolved legacy project;
+    id-only compatibility lookups refuse ambiguous project copies.
     """
 
-    __slots__ = ("_spans", "_sessions", "_trace_roots")
+    __slots__ = (
+        "_spans",
+        "_sessions",
+        "_trace_roots",
+        "_unique_sources",
+        "_item_projects",
+        "source_authorization",
+    )
 
-    def __init__(self, *, spans=None, sessions=None, trace_roots=None):
-        self._spans = spans or {}
-        self._sessions = sessions or {}
-        self._trace_roots = trace_roots or {}
+    def __init__(
+        self,
+        *,
+        spans=None,
+        sessions=None,
+        trace_roots=None,
+        source_authorization=None,
+        item_projects=None,
+    ):
+        self._spans = self._project_sources(spans)
+        self._sessions = self._project_sources(sessions)
+        self._trace_roots = self._project_sources(trace_roots)
+        self.source_authorization = source_authorization
+        self._item_projects = item_projects
+        # Keep the single-queue/id-only API for existing callers. An id naming
+        # several project copies is never allowed to choose one by merge order.
+        self._unique_sources = {}
+        for kind, sources in (
+            ("observation_span", self._spans),
+            ("trace_session", self._sessions),
+            ("trace", self._trace_roots),
+        ):
+            for (_, source_id), source in sources.items():
+                key = (kind, source_id)
+                self._unique_sources[key] = (
+                    None if key in self._unique_sources else source
+                )
+
+    @staticmethod
+    def _project_sources(sources):
+        """Normalize batched and directly supplied rows to (project, source) keys."""
+        indexed = {}
+        for key, source in (sources or {}).items():
+            source_id = key[1] if isinstance(key, tuple) else key
+            project_id = (
+                source.get("project_id")
+                if isinstance(source, dict)
+                else getattr(source, "project_id", None)
+            )
+            if project_id:
+                indexed[(str(project_id), str(source_id))] = source
+        return indexed
 
     @classmethod
-    def for_items(cls, items, *, caller="render", raise_on_error=False):
+    def for_items(
+        cls,
+        items,
+        *,
+        caller="render",
+        raise_on_error=False,
+        using=None,
+        request=None,
+        source_authorization=None,
+    ):
         """Collect the tracer source ids across *items* and batch-resolve each kind
         from CH. Traces resolve to their root span (LEAN), spans and sessions by soft id.
 
@@ -1157,6 +1869,12 @@ class CollectorSourceCache:
         ``raise_on_error`` re-raises a CH error from any of these reads (a write
         path); by default the failed kind resolves empty (FAIL OPEN)."""
 
+        items = list(items or [])
+        if source_authorization is None:
+            source_authorization = QueueSourceAuthorization.for_items(
+                items, request=request, raise_on_error=raise_on_error
+            )
+
         def _buckets(groups, key):
             return groups.setdefault(
                 key, {"spans": set(), "sessions": set(), "traces": set()}
@@ -1164,19 +1882,22 @@ class CollectorSourceCache:
 
         # project_id (str, or None for pre-denorm sessions) -> per-kind soft-id sets
         by_project: dict[object, dict] = {}
-        # (organization_id, workspace_id) -> soft-id sets of pre-denorm trace / span
-        # items, plus one item of the group to read the org / workspace from
-        unattributed: dict[tuple, dict] = {}
-        for item in items or []:
+        # queue_id -> pre-denorm trace/span ids, plus one item whose live
+        # queue scope was resolved by the page authorization batch above.
+        unattributed: dict[object, dict] = {}
+        for item in items:
             source_type = getattr(item, "source_type", None)
+            if source_type not in _CH_NATIVE_SOURCE_TYPES:
+                continue
+            if not source_authorization.workspace_allowed(item):
+                continue
             pid = getattr(item, "project_id", None)
+            if not source_authorization.project_ids(item):
+                continue
             if pid or source_type == QueueItemSourceType.TRACE_SESSION.value:
                 buckets = _buckets(by_project, str(pid) if pid else None)
             else:
-                buckets = _buckets(
-                    unattributed,
-                    (item.organization_id, getattr(item, "workspace_id", None)),
-                )
+                buckets = _buckets(unattributed, item.queue_id)
                 buckets.setdefault("item", item)
             if (
                 source_type == QueueItemSourceType.OBSERVATION_SPAN.value
@@ -1198,37 +1919,101 @@ class CollectorSourceCache:
                 item=buckets["item"],
                 caller=caller,
                 raise_on_error=raise_on_error,
+                project_ids=list(source_authorization.project_ids(buckets["item"])),
             )
+            # Preserve the newest authorized project selected for each queue's
+            # legacy locator; another queue's pinned copy cannot replace it.
+            buckets["observation_span"] = span_projects
+            buckets["trace"] = trace_projects
             for span_id, pid in span_projects.items():
                 _buckets(by_project, pid)["spans"].add(span_id)
             for trace_id, pid in trace_projects.items():
                 _buckets(by_project, pid)["traces"].add(trace_id)
 
-        # One queue holds a source id once, so the per-group results never collide
-        # on merge. NULL-project group (project_id=None) holds sessions only.
+        # A for-source page spans queues, which can hold the same source id in
+        # different projects. Preserve both copies across the batched reads.
         spans, sessions, trace_roots = {}, {}, {}
         strict = {"caller": caller, "raise_on_error": raise_on_error}
         for pid, buckets in by_project.items():
-            spans.update(_batch_ch_spans(buckets["spans"], project_id=pid, **strict))
+            spans.update(
+                cls._project_sources(
+                    _batch_ch_spans(buckets["spans"], project_id=pid, **strict)
+                )
+            )
             sessions.update(
-                _batch_ch_session_fields(buckets["sessions"], project_id=pid, **strict)
+                cls._project_sources(
+                    _batch_ch_session_fields(
+                        buckets["sessions"],
+                        project_id=pid,
+                        **strict,
+                        **({"using": using} if using is not None else {}),
+                    )
+                )
             )
             trace_roots.update(
-                _batch_ch_trace_roots(buckets["traces"], project_id=pid, **strict)
+                cls._project_sources(
+                    _batch_ch_trace_roots(buckets["traces"], project_id=pid, **strict)
+                )
             )
-        return cls(spans=spans, sessions=sessions, trace_roots=trace_roots)
+        cache = cls(
+            spans=spans,
+            sessions=sessions,
+            trace_roots=trace_roots,
+            source_authorization=source_authorization,
+            item_projects={},
+        )
+        for item in items:
+            if item.source_type not in _CH_NATIVE_SOURCE_TYPES:
+                continue
+            key = QueueSourceAuthorization._key(item)
+            source_id = key[4]
+            if item.project_id:
+                pid = str(item.project_id)
+            elif item.source_type == "trace_session":
+                # Session ids are project-derived; a missing/ambiguous response
+                # cannot create an attribution for an unpinned legacy item.
+                fields = cache.session_fields(source_id) or {}
+                pid = fields.get("project_id")
+            else:
+                pid = (
+                    unattributed.get(item.queue_id, {})
+                    .get(item.source_type, {})
+                    .get(source_id)
+                )
+            if pid and str(pid) in source_authorization.project_ids(item):
+                cache._item_projects[key] = str(pid)
+        return cache
 
-    def span(self, span_id):
-        return self._spans.get(str(span_id)) if span_id else None
+    def _source(self, sources, source_type, source_id, item):
+        if not source_id:
+            return None
+        source_id = str(source_id)
+        if item is not None:
+            key = QueueSourceAuthorization._key(item)
+            if key[3:5] != (source_type, source_id):
+                return None
+            if self._item_projects is not None:
+                # An absent/changed item or unresolved legacy binding is a miss,
+                # never a fallback to another queue's copy of the bare id.
+                pid = self._item_projects.get(key)
+                return sources.get((pid, source_id)) if pid else None
+            if item.project_id:
+                return sources.get((str(item.project_id), source_id))
+        # Directly constructed caches retain the existing unique-copy API. The
+        # render/notes gates still check live ownership before exposing a row.
+        return self._unique_sources.get((source_type, source_id))
 
-    def trace_root(self, trace_id):
-        return self._trace_roots.get(str(trace_id)) if trace_id else None
+    def span(self, span_id, *, item=None):
+        return self._source(self._spans, "observation_span", span_id, item)
 
-    def session_fields(self, session_id):
-        return self._sessions.get(str(session_id)) if session_id else None
+    def trace_root(self, trace_id, *, item=None):
+        return self._source(self._trace_roots, "trace", trace_id, item)
+
+    def session_fields(self, session_id, *, item=None):
+        return self._source(self._sessions, "trace_session", session_id, item)
 
 
-def dataset_cells_by_row(items):
+def dataset_cells_by_row(items, *, request=None, ch_cache=None):
     """Batch the dataset-row cell read for a render/export page: ``{row_id(str): [Cell]}``.
 
     The Postgres companion to :class:`CollectorSourceCache`. ``resolve_source_content``
@@ -1239,18 +2024,31 @@ def dataset_cells_by_row(items):
     cache HIT (no fallback query); a row_id absent from the map was never batched, so
     the caller falls back to its own per-row read (keys are ``str`` throughout to dodge
     the UUID-vs-str lookup mismatch)."""
+    items = list(items or [])
+    if ch_cache is None:
+        ch_cache = CollectorSourceCache(
+            source_authorization=QueueSourceAuthorization.for_items(
+                items, request=request
+            )
+        )
     row_ids = [
         str(item.dataset_row_id)
-        for item in items or []
+        for item in items
         if getattr(item, "source_type", None) == QueueItemSourceType.DATASET_ROW.value
         and getattr(item, "dataset_row_id", None)
+        and queue_item_source_is_available(item, request=request, ch_cache=ch_cache)
     ]
     if not row_ids:
         return {}
     from model_hub.models.develop_dataset import Cell
 
     cells_by_row = {row_id: [] for row_id in row_ids}
-    for cell in Cell.objects.filter(row_id__in=row_ids).select_related("column"):
+    for cell in Cell.no_workspace_objects.filter(
+        row_id__in=row_ids,
+        dataset_id=F("row__dataset_id"),
+        column__dataset_id=F("row__dataset_id"),
+        column__deleted=False,
+    ).select_related("column"):
         cells_by_row[str(cell.row_id)].append(cell)
     return cells_by_row
 
@@ -1604,13 +2402,17 @@ def preview_payload_for_source(source_type, source_obj):
     return None
 
 
-def resolve_source_preview(item, *, ch_cache=None):
+def resolve_source_preview(item, *, ch_cache=None, request=None):
     """Return a standardized preview dict for a QueueItem's source.
 
     Tracer sources (trace / observation_span / trace_session) are read CH-only.
     ``ch_cache`` (opt-in :class:`CollectorSourceCache`): when supplied, they read
     from the page-batched map instead of a per-item CH point-read. Single-item
     callers pass ``None`` and keep the per-item read."""
+    if ch_cache is None:
+        ch_cache = CollectorSourceCache.for_items([item], request=request)
+    if not queue_item_source_is_available(item, request=request, ch_cache=ch_cache):
+        return unavailable_queue_source(item)
     try:
         if item.source_type == QueueItemSourceType.DATASET_ROW.value:
             row = item.dataset_row
@@ -1627,7 +2429,7 @@ def resolve_source_preview(item, *, ch_cache=None):
             # CH-only: a trace previews from its CH root span (conversation root
             # preferred). The PG tracer tables are dropped — never read them.
             root_span = (
-                ch_cache.trace_root(item.trace_id)
+                ch_cache.trace_root(item.trace_id, item=item)
                 if ch_cache is not None
                 else _ch_root_span_for_trace(
                     item.trace_id, project_ids=_queue_item_source_project_ids(item)
@@ -1640,7 +2442,7 @@ def resolve_source_preview(item, *, ch_cache=None):
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
             # CH-only: resolve the span from CH by its soft id.
             ch_span = (
-                ch_cache.span(item.observation_span_id)
+                ch_cache.span(item.observation_span_id, item=item)
                 if ch_cache is not None
                 else _ch_span_for_item(
                     item.observation_span_id,
@@ -1677,7 +2479,7 @@ def resolve_source_preview(item, *, ch_cache=None):
         elif item.source_type == QueueItemSourceType.TRACE_SESSION.value:
             # CH-only: resolve the session identity fields from CH.
             fields = (
-                ch_cache.session_fields(item.trace_session_id)
+                ch_cache.session_fields(item.trace_session_id, item=item)
                 if ch_cache is not None
                 else _ch_session_fields_for_item(item.trace_session_id)
             )
@@ -1708,7 +2510,7 @@ def _queue_item_project_source(item) -> str | None:
     return project.source if project else None
 
 
-def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
+def resolve_source_content(item, *, ch_cache=None, cell_cache=None, request=None):
     """Return full renderable content for a QueueItem's source (used in annotation view).
 
     Tracer sources (trace / observation_span / trace_session) are read CH-only.
@@ -1717,6 +2519,10 @@ def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
     (opt-in, from :func:`dataset_cells_by_row`): when supplied, a dataset row's cells
     read from the page-batched map instead of a per-item ``Cell`` query. Single-item
     callers pass ``None`` for both and keep the per-item reads."""
+    if ch_cache is None:
+        ch_cache = CollectorSourceCache.for_items([item], request=request)
+    if not queue_item_source_is_available(item, request=request, ch_cache=ch_cache):
+        return unavailable_queue_source(item)
     try:
         if item.source_type == QueueItemSourceType.DATASET_ROW.value:
             row = item.dataset_row
@@ -1743,7 +2549,12 @@ def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
                 else:
                     from model_hub.models.develop_dataset import Cell
 
-                    cells = Cell.objects.filter(row=row).select_related("column")
+                    cells = Cell.no_workspace_objects.filter(
+                        row=row,
+                        dataset_id=row.dataset_id,
+                        column__dataset_id=row.dataset_id,
+                        column__deleted=False,
+                    ).select_related("column")
                 for cell in cells:
                     col_name = (
                         cell.column.name if cell.column else f"column_{cell.column_id}"
@@ -1773,7 +2584,7 @@ def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
             # non-voice UI focuses the root via ``root_span_id`` (a render choice —
             # the stored item stays a trace).
             root_span = (
-                ch_cache.trace_root(item.trace_id)
+                ch_cache.trace_root(item.trace_id, item=item)
                 if ch_cache is not None
                 else _ch_root_span_for_trace(
                     item.trace_id, project_ids=_queue_item_source_project_ids(item)
@@ -1801,7 +2612,7 @@ def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
             # CH-only: rebuild content from CH via the canonical mapper.
             ch_span = (
-                ch_cache.span(item.observation_span_id)
+                ch_cache.span(item.observation_span_id, item=item)
                 if ch_cache is not None
                 else _ch_span_for_item(
                     item.observation_span_id,
@@ -1902,7 +2713,7 @@ def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
             # CH-only: resolve the session from CH (first_seen is the
             # created_at/updated_at proxy — CH has no audit columns).
             fields = (
-                ch_cache.session_fields(item.trace_session_id)
+                ch_cache.session_fields(item.trace_session_id, item=item)
                 if ch_cache is not None
                 else _ch_session_fields_for_item(item.trace_session_id)
             )
@@ -2934,14 +3745,21 @@ def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_ty
 
 
 def _resolve_dataset_rule_ids(rule, filters, dataset_id, cap):
-    from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+    from model_hub.models.develop_dataset import Cell, Column, Dataset
 
-    dataset = Dataset.objects.get(
+    if not automation_rule_scope_is_allowed(
+        rule.queue,
+        rule.source_type,
+        {"scope": {"dataset_id": dataset_id}},
+    ):
+        raise ValueError(AUTOMATION_RULE_SCOPE_ERROR)
+    dataset = Dataset.no_workspace_objects.get(
+        _queue_source_workspace_q(_queue_scope_workspace(rule.queue)),
         id=dataset_id,
         organization=rule.organization,
         deleted=False,
     )
-    rows = Row.objects.filter(dataset=dataset, deleted=False)
+    rows = _queue_source_queryset(rule.queue, "dataset_row").filter(dataset=dataset)
     columns = {
         str(col.id): col
         for col in Column.objects.filter(dataset=dataset, deleted=False)
@@ -3000,8 +3818,19 @@ def _resolve_dataset_rule_ids(rule, filters, dataset_id, cap):
     return total_matching, ids
 
 
+def _automation_item_workspace(queue):
+    """The workspace stamped on the queue items a rule adds to ``queue``.
+
+    That is the queue's own workspace or, for a queue saved with no workspace,
+    its scope workspace (:func:`_queue_scope_workspace`). None only when that
+    scope workspace is missing or inactive, which the run's scope check
+    refuses first.
+    """
+    return queue.workspace if queue.workspace_id else _queue_scope_workspace(queue)
+
+
 def _add_source_ids_to_queue(
-    rule, source_ids, total_matching, dry_run=False, project_id=None
+    rule, source_ids, total_matching, dry_run=False, project_id=None, *, workspace=None
 ):
     fk_field = get_fk_field_name(rule.source_type)
     if not fk_field:
@@ -3032,6 +3861,34 @@ def _add_source_ids_to_queue(
     from model_hub.models.annotation_queues import QueueItem
 
     candidate_ids = list(dict.fromkeys(source_ids))
+    scope = dict((rule.conditions or {}).get("scope") or {})
+    if rule.source_type in _CH_NATIVE_SOURCE_TYPES:
+        if not project_id or (
+            not rule.queue.is_default
+            and rule.queue.project_id
+            and str(project_id) != str(rule.queue.project_id)
+        ):
+            return _automation_scope_refusal(rule)
+        scope["project_id"] = project_id
+    if not automation_rule_scope_is_allowed(
+        rule.queue,
+        rule.source_type,
+        {"scope": scope},
+    ):
+        return _automation_scope_refusal(rule)
+    if workspace is None:
+        workspace = _automation_item_workspace(rule.queue)
+    if workspace is None:
+        return _automation_scope_refusal(rule)
+    if rule.source_type not in _CH_NATIVE_SOURCE_TYPES:
+        allowed_ids = {
+            str(pk)
+            for pk in _queue_source_queryset(rule.queue, rule.source_type)
+            .filter(pk__in=candidate_ids)
+            .values_list("pk", flat=True)
+        }
+        if allowed_ids != {str(pk) for pk in candidate_ids}:
+            return _automation_scope_refusal(rule)
     existing_source_ids = {
         str(source_id)
         for source_id in QueueItem.objects.filter(
@@ -3058,7 +3915,7 @@ def _add_source_ids_to_queue(
                 queue=rule.queue,
                 source_type=rule.source_type,
                 organization=rule.organization,
-                workspace=rule.queue.workspace,
+                workspace=workspace,
                 project_id=project_id,
                 order=max_order,
                 **{f"{fk_field}_id": source_id},
@@ -3112,6 +3969,19 @@ def _evaluate_filter_mode_rule(
     filters = _normalize_filter_payload(filters)
     source_type = rule.source_type
     queue = rule.queue
+    if not automation_rule_scope_is_allowed(
+        queue,
+        source_type,
+        {"scope": scope},
+        user=user,
+    ):
+        return _automation_scope_refusal(rule)
+    # Resolved once per run: the workspace the selectors read in and the one
+    # every added item carries. A queue with no workspace uses its
+    # organization's default one.
+    item_workspace = _automation_item_workspace(queue)
+    if item_workspace is None:
+        return _automation_scope_refusal(rule)
     queue_scope_locked = not getattr(queue, "is_default", False)
 
     if source_type == QueueItemSourceType.DATASET_ROW.value:
@@ -3161,13 +4031,16 @@ def _evaluate_filter_mode_rule(
                 "duplicates": 0,
                 "error": _automation_rule_filter_error_message(exc),
             }
-        return _add_source_ids_to_queue(rule, ids, total_matching, dry_run=dry_run)
+        return _add_source_ids_to_queue(
+            rule, ids, total_matching, dry_run=dry_run, workspace=item_workspace
+        )
 
     # Custom queue scope is authoritative for trace/span/session/call_execution
     # too. Default queues are flexible and prefer the rule's selected scope.
     resolver = None
     scope_project_id = scope.get("project_id")
     if source_type == QueueItemSourceType.CALL_EXECUTION.value:
+        scope_project_id = scope.get("agent_definition_id") or scope_project_id
         if (
             queue_scope_locked
             and queue.agent_definition_id
@@ -3240,7 +4113,7 @@ def _evaluate_filter_mode_rule(
         "filters": filters,
         "exclude_ids": set(),
         "organization": rule.organization,
-        "workspace": queue.workspace,
+        "workspace": item_workspace,
         "cap": cap,
         "user": user,
     }
@@ -3267,6 +4140,18 @@ def _evaluate_filter_mode_rule(
             "error": _automation_rule_filter_error_message(exc),
         }
 
+    if source_type == QueueItemSourceType.CALL_EXECUTION.value:
+        # The shared selector scopes the agent. Also prove the call's run and
+        # scenario ownership here, including preview/dry-run resolutions.
+        allowed_ids = {
+            str(pk)
+            for pk in _queue_source_queryset(queue, source_type)
+            .filter(pk__in=result.ids)
+            .values_list("pk", flat=True)
+        }
+        if allowed_ids != {str(pk) for pk in result.ids}:
+            return _automation_scope_refusal(rule)
+
     return _add_source_ids_to_queue(
         rule,
         result.ids,
@@ -3281,7 +4166,48 @@ def _evaluate_filter_mode_rule(
             if source_type != QueueItemSourceType.CALL_EXECUTION.value
             else None
         ),
+        workspace=item_workspace,
     )
+
+
+AUTOMATION_RULE_ENTITLEMENT_CODE = "automation_rule_entitlement_refused"
+AUTOMATION_RULE_ENTITLEMENT_ERROR = (
+    "Automation rules are unavailable under the organization's current entitlement."
+)
+
+
+def automation_rule_entitlement_check(rule, *, cache=None):
+    """Apply create's optional EE quota policy to an existing rule.
+
+    The rule already occupies one slot: count all other non-deleted rules in
+    its organization, including disabled rules and other workspaces. Delegating
+    to can_create preserves unlimited and non-cloud behavior. The scheduler may
+    share a cache for one tick only; every existing rule has the same org count
+    minus one. No process-wide entitlement decision is retained here.
+    """
+    org_id = str(rule.organization_id)
+    if cache is not None and org_id in cache:
+        return cache[org_id]
+    try:
+        from model_hub.models.annotation_queues import AutomationRule
+        from tfc.ee_gates import get_entitlement_service
+
+        entitlements = get_entitlement_service()
+        current_count = (
+            AutomationRule.no_workspace_objects.filter(
+                organization_id=rule.organization_id,
+                deleted=False,
+            )
+            .exclude(pk=rule.pk)
+            .count()
+        )
+        check = entitlements.can_create(org_id, "automation_rules", current_count)
+    except ImportError:
+        # Match create: installations without EE remain uncapped.
+        check = None
+    if cache is not None:
+        cache[org_id] = check
+    return check
 
 
 def evaluate_rule(
@@ -3289,6 +4215,8 @@ def evaluate_rule(
     dry_run: bool = False,
     user: Any | None = None,
     cap: int = AUTOMATION_RULE_MATCH_LIMIT,
+    *,
+    entitlement_cache=None,
 ) -> dict[str, Any]:
     """Evaluate an automation rule and add matching items to the queue.
     Returns dict with 'matched', 'added', 'duplicates' counts.
@@ -3297,8 +4225,25 @@ def evaluate_rule(
 
     from model_hub.models.annotation_queues import AutomationRule
 
+    rules = AutomationRule.no_workspace_objects.filter(
+        pk=rule.pk,
+        queue_id=rule.queue_id,
+        organization_id=rule.organization_id,
+        queue__workspace_id=rule.queue.workspace_id,
+        deleted=False,
+        queue__deleted=False,
+    )
     if dry_run:
-        return _evaluate_rule_inner(rule, dry_run, user, cap)
+        current = rules.select_related("queue", "queue__workspace").first()
+        if current is None:
+            return _automation_scope_refusal(rule)
+        return _evaluate_rule_inner(
+            current,
+            dry_run,
+            user,
+            cap,
+            entitlement_cache=entitlement_cache,
+        )
 
     # Serialize concurrent evaluations of the SAME rule. Without this, two
     # firings (e.g. manual + scheduled, or two scheduled retries) can both
@@ -3308,12 +4253,48 @@ def evaluate_rule(
     # rows. We hold the lock only for this rule, so different rules on
     # the same queue can still evaluate concurrently.
     with transaction.atomic():
-        list(AutomationRule.objects.select_for_update().filter(pk=rule.pk))
-        return _evaluate_rule_inner(rule, dry_run, user, cap)
+        current = rules.select_for_update().first()
+        if current is None:
+            return _automation_scope_refusal(rule)
+        return _evaluate_rule_inner(
+            current,
+            dry_run,
+            user,
+            cap,
+            entitlement_cache=entitlement_cache,
+        )
 
 
-def _evaluate_rule_inner(rule, dry_run, user, cap):
+def _evaluate_rule_inner(rule, dry_run, user, cap, *, entitlement_cache=None):
     from model_hub.models.annotation_queues import QueueItem
+
+    # This runs on the freshly loaded rule, inside the same-rule write lock.
+    # It covers sync/async manual execution and dry-run peeks as well as cron.
+    check = automation_rule_entitlement_check(rule, cache=entitlement_cache)
+    if check is not None and not check.allowed:
+        logger.warning(
+            "automation_rule_entitlement_refused",
+            rule_id=str(rule.pk),
+            reason=AUTOMATION_RULE_ENTITLEMENT_CODE,
+        )
+        return {
+            "matched": 0,
+            "added": 0,
+            "duplicates": 0,
+            "error": AUTOMATION_RULE_ENTITLEMENT_ERROR,
+        }
+
+    # Keep ownership failures distinct from run authority. A valid queue/source
+    # scope alone never authorizes a background run, even when the persisted
+    # creator was SET_NULL or the triggering manual account cannot be loaded.
+    queue = rule.queue
+    if rule.organization_id != queue.organization_id or not _queue_workspace_is_live(
+        queue
+    ):
+        return _automation_scope_refusal(rule)
+    user = _automation_rule_actor(queue, user)
+    if user is None:
+        return _automation_actor_refusal(rule)
 
     model = get_source_model(rule.source_type)
     if not model:
@@ -3328,32 +4309,20 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
     if not fk_field:
         return {"matched": 0, "added": 0, "duplicates": 0, "error": "Invalid FK field"}
 
-    # Build Django queryset filters from conditions, scoped to the rule's org
-    qs = model.objects.all()
-    qs = qs.filter(deleted=False)
-    if hasattr(model, "organization"):
-        qs = qs.filter(organization=rule.organization)
-    elif hasattr(model, "project"):
-        qs = qs.filter(project__organization=rule.organization)
-    elif hasattr(model, "dataset"):
-        qs = qs.filter(dataset__organization=rule.organization)
-
-    # Scope to the queue's project/dataset/agent_definition if set.
-    queue = rule.queue
-    if queue.project_id:
-        # Traces, spans, sessions belong to a project
-        if rule.source_type in ("trace", "observation_span", "trace_session"):
-            qs = qs.filter(project_id=queue.project_id)
-    if queue.dataset_id:
-        # Rows belong to a dataset
-        if rule.source_type == "dataset_row":
-            qs = qs.filter(dataset_id=queue.dataset_id)
-    if queue.agent_definition_id:
-        # Call executions belong to an agent_definition via test_execution
-        if rule.source_type == "call_execution":
-            qs = qs.filter(
-                test_execution__agent_definition_id=queue.agent_definition_id
-            )
+    # Recheck source ownership separately from the live actor gate above, for
+    # both manual and scheduled rules (including rules saved before validation).
+    if not automation_rule_scope_is_allowed(queue, rule.source_type, rule.conditions):
+        return _automation_scope_refusal(rule)
+    qs = _queue_source_queryset(queue, rule.source_type)
+    scope = (rule.conditions or {}).get("scope") or {}
+    if rule.source_type == "dataset_row" and scope.get("dataset_id"):
+        qs = qs.filter(dataset_id=scope["dataset_id"])
+    elif rule.source_type in _CH_NATIVE_SOURCE_TYPES and scope.get("project_id"):
+        qs = qs.filter(project_id=scope["project_id"])
+    elif rule.source_type == "call_execution":
+        agent_id = scope.get("agent_definition_id") or scope.get("project_id")
+        if agent_id:
+            qs = qs.filter(test_execution__agent_definition_id=agent_id)
 
     # High-water mark for scheduled rules: each tick rescans only rows newer
     # than the last run, with one interval of overlap to absorb clock skew +
@@ -3380,7 +4349,7 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
     )
     filter_scope = conditions.get("scope") or {}
     if rule.source_type in FILTER_MODE_SOURCE_TYPES and (
-        has_filter_payload or filter_scope
+        has_filter_payload or (filter_scope and not conditions.get("rules"))
     ):
         filter_result = _evaluate_filter_mode_rule(
             rule,
@@ -3547,6 +4516,11 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
         .first()
     ) or 0
     if candidates:
+        # Resolved once per run; a queue with no workspace stamps its
+        # organization's default one, never no workspace.
+        item_workspace = _automation_item_workspace(rule.queue)
+        if item_workspace is None:
+            return _automation_scope_refusal(rule)
         # Batch-check existing items with a single query
         existing_source_ids = set(
             QueueItem.objects.filter(
@@ -3567,7 +4541,7 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
                     queue=rule.queue,
                     source_type=rule.source_type,
                     organization=rule.organization,
-                    workspace=rule.queue.workspace,
+                    workspace=item_workspace,
                     project_id=getattr(obj, "project_id", None),
                     order=max_order,
                     **{fk_field: obj},

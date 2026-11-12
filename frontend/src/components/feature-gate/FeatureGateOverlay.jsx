@@ -3,12 +3,12 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
-  Paper,
   Skeleton,
   Stack,
   Typography,
   useTheme,
 } from "@mui/material";
+import Section from "src/components/section";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 
@@ -34,11 +34,12 @@ const PreviewSkeleton = () => (
   </Stack>
 );
 
+// The wall never shows a product screenshot behind its card: a preview image
+// reads as the user's own data (a sample chat history did). The
+// backdrop is the caller's children or neutral skeleton blocks, and the card
+// carries only the eyebrow its caller names.
 const FeatureGateOverlay = ({
-  image,
-  imageDark,
-  imageAlt = "Feature preview",
-  eyebrow = "Cloud feature",
+  eyebrow,
   title,
   description,
   steps = [],
@@ -52,34 +53,15 @@ const FeatureGateOverlay = ({
   blurFrom = "38%",
   minHeight = 480,
   maxCardWidth = 480,
+  plain = false,
   children,
   sx,
 }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
-  const resolvedImage = isDark ? imageDark || image : image;
-  const usingSkeleton = !children && !resolvedImage;
-  const effectiveBlurFrom = usingSkeleton ? 0 : blurFrom;
-
-  let backdrop = <PreviewSkeleton />;
-  if (children) {
-    backdrop = children;
-  } else if (resolvedImage) {
-    backdrop = (
-      <Box
-        component="img"
-        src={resolvedImage}
-        alt={imageAlt}
-        draggable={false}
-        sx={{
-          display: "block",
-          width: "100%",
-          height: "auto",
-          objectPosition: "top center",
-        }}
-      />
-    );
-  }
+  const effectiveBlurFrom = children ? blurFrom : 0;
+  const backdrop = children || <PreviewSkeleton />;
+  const blurWhole = effectiveBlurFrom === 0;
 
   return (
     <Box
@@ -96,29 +78,35 @@ const FeatureGateOverlay = ({
         ...sx,
       }}
     >
-      <Box
-        aria-hidden
-        sx={{
-          width: "100%",
-          height: "100%",
-          minHeight,
-          pointerEvents: "none",
-          userSelect: "none",
-        }}
-      >
-        {backdrop}
-      </Box>
+      {!plain && (
+        <Box
+          aria-hidden
+          sx={{
+            width: "100%",
+            height: "100%",
+            minHeight,
+            pointerEvents: "none",
+            userSelect: "none",
+            ...(blurWhole && { filter: `blur(${blur}px)` }),
+          }}
+        >
+          {backdrop}
+        </Box>
+      )}
 
       <Box
         aria-hidden
         sx={{
+          display: plain ? "none" : "block",
           position: "absolute",
           left: 0,
           right: 0,
           top: effectiveBlurFrom,
           bottom: 0,
-          backdropFilter: `blur(${blur}px)`,
-          WebkitBackdropFilter: `blur(${blur}px)`,
+          ...(!blurWhole && {
+            backdropFilter: `blur(${blur}px)`,
+            WebkitBackdropFilter: `blur(${blur}px)`,
+          }),
           background: isDark
             ? `linear-gradient(to bottom, ${alpha(
                 theme.palette.background.default,
@@ -143,16 +131,13 @@ const FeatureGateOverlay = ({
           p: 3,
         }}
       >
-        <Paper
-          elevation={12}
+        <Section
+          variant="panel"
           sx={{
             width: "100%",
             maxWidth: maxCardWidth,
             p: 3.5,
-            borderRadius: 2,
             bgcolor: "background.paper",
-            border: "1px solid",
-            borderColor: "divider",
           }}
         >
           <Stack spacing={2.5}>
@@ -162,11 +147,11 @@ const FeatureGateOverlay = ({
                   alignSelf: "flex-start",
                   px: 1,
                   py: 0.25,
-                  borderRadius: 0.75,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  letterSpacing: "0.04em",
-                  textTransform: "uppercase",
+                  borderRadius: "4px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  letterSpacing: 0,
+                  textTransform: "none",
                   color: "primary.main",
                   bgcolor: alpha(theme.palette.primary.main, 0.1),
                   border: "1px solid",
@@ -178,7 +163,7 @@ const FeatureGateOverlay = ({
             )}
 
             {title && (
-              <Typography variant="h5" fontWeight="fontWeightBold">
+              <Typography variant="h5" fontWeight={600}>
                 {title}
               </Typography>
             )}
@@ -194,7 +179,7 @@ const FeatureGateOverlay = ({
                 <Typography
                   variant="overline"
                   color="text.disabled"
-                  sx={{ fontWeight: 700 }}
+                  sx={{ fontWeight: 600 }}
                 >
                   What to do next
                 </Typography>
@@ -215,7 +200,7 @@ const FeatureGateOverlay = ({
                         alignItems: "center",
                         justifyContent: "center",
                         fontSize: 12,
-                        fontWeight: 700,
+                        fontWeight: 600,
                         color: "primary.main",
                         bgcolor: alpha(theme.palette.primary.main, 0.1),
                         border: "1px solid",
@@ -256,7 +241,15 @@ const FeatureGateOverlay = ({
                 href={onPrimary ? undefined : primaryHref}
                 target={onPrimary ? undefined : "_blank"}
                 rel={onPrimary ? undefined : "noopener"}
-                endIcon={<Iconify icon="solar:arrow-right-up-linear" />}
+                endIcon={
+                  <Iconify
+                    icon={
+                      onPrimary
+                        ? "solar:arrow-right-linear"
+                        : "solar:arrow-right-up-linear"
+                    }
+                  />
+                }
               >
                 {primaryLabel}
               </Button>
@@ -280,16 +273,13 @@ const FeatureGateOverlay = ({
               </Stack>
             )}
           </Stack>
-        </Paper>
+        </Section>
       </Box>
     </Box>
   );
 };
 
 FeatureGateOverlay.propTypes = {
-  image: PropTypes.string,
-  imageDark: PropTypes.string,
-  imageAlt: PropTypes.string,
   eyebrow: PropTypes.string,
   title: PropTypes.string,
   description: PropTypes.node,
@@ -304,6 +294,8 @@ FeatureGateOverlay.propTypes = {
   blurFrom: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   minHeight: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   maxCardWidth: PropTypes.number,
+  // No preview backdrop or blur: just the card on a neutral surface.
+  plain: PropTypes.bool,
   children: PropTypes.node,
   sx: PropTypes.object,
 };

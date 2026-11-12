@@ -3,6 +3,8 @@ import React, { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
+import RerunScopeField from "../RerunScopeField";
+import { withRerunScope } from "../rerunScope";
 import ConfigureKeys from "../../Common/ConfigureKeys/ConfigureKeys";
 import { ExtractEntitiesValidationSchema } from "./validation";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -20,6 +22,8 @@ import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
+import { rerunResultToast } from "../rerunResult";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const getDefaultValue = () => {
   return {
@@ -94,21 +98,26 @@ export const ExtractEntitiesChild = ({
         endpoints.develop.addColumns.updateDynamicColumn(editId),
         data,
       ),
-    onSuccess: () => {
-      enqueueSnackbar("API Call column updated successfully", {
-        variant: "success",
-      });
+    onSuccess: (res) => {
+      const toast = rerunResultToast("Extract Entities", res);
+      enqueueSnackbar(toast.text, { variant: toast.variant });
       refreshGrid();
       onClose();
     },
   });
 
+  const [rerunScope, setRerunScope] = useState("all");
   const onSubmit = (formValues) => {
     if (editId) {
-      updateColumn({
-        config: formValues,
-        operation_type: "extract_entities",
-      });
+      updateColumn(
+        withRerunScope(
+          {
+            config: formValues,
+            operation_type: "extract_entities",
+          },
+          rerunScope,
+        ),
+      );
       return;
     }
     if (onFormSubmit) {
@@ -149,17 +158,18 @@ export const ExtractEntitiesChild = ({
             mb: 2,
           }}
         >
-          <Typography fontWeight={700} color="text.secondary">
+          <Typography fontWeight={600} color="text.secondary">
             {editId ? "Edit Extract Entities" : "Extract Entities"}
           </Typography>
           <IconButton
+            aria-label="Close extract entities"
             onClick={() => {
               reset();
               onClose();
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Box
@@ -195,7 +205,7 @@ export const ExtractEntitiesChild = ({
             fullWidth
           />
           <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            <Typography fontWeight={700} fontSize="12px" color="text.secondary">
+            <Typography fontWeight={600} fontSize="12px" color="text.secondary">
               Instructions (To extract entities)
             </Typography>
             <FormTextFieldV2
@@ -208,7 +218,7 @@ export const ExtractEntitiesChild = ({
               maxRows={4}
               sx={{
                 backgroundColor: "background.neutral",
-                borderRadius: "10px",
+                borderRadius: "8px",
               }}
               placeholder="Enter instructions here"
             />
@@ -250,6 +260,9 @@ export const ExtractEntitiesChild = ({
             placeholder="Enter concurrency"
           />
         </Box>
+        {editId && (
+          <RerunScopeField value={rerunScope} onChange={setRerunScope} />
+        )}
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
           {!onFormSubmit && (
             <LoadingButton
@@ -307,19 +320,23 @@ const ExtractEntities = ({ initialData, onFormSubmit }) => {
     select: (data) => data?.data?.result?.metadata,
   });
 
+  const covered = useDrawerCovered(openExtractEntities);
   return (
     <Drawer
       anchor="right"
       open={openExtractEntities}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
-      variant="persistent"
+      variant="temporary"
       PaperProps={{
+        role: "dialog",
+        "aria-modal": true,
+        "aria-label": "Extract entities",
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

@@ -12,10 +12,20 @@ import { z } from "zod";
 // Zod generator drops `x-nullable`. Extend the generated envelope/result so we
 // keep all generated metadata validation while accepting the null gaps that
 // the backend and chart renderers explicitly support.
-const nullableGraphPoint = z.object({
+const nullableGraphPoint = TracerTraceGetGraphMethodsResponse.shape.result.shape.data.element.extend({
   timestamp: z.string().min(1),
   value: z.number().nullable(),
   primary_traffic: z.number().nullable().optional(),
+  count: z.number().int().nonnegative().optional(),
+  scored_count: z.number().int().nonnegative().optional(),
+  unscored_count: z.number().int().nonnegative().optional(),
+  completed_count: z.number().int().nonnegative().optional(),
+  error_count: z.number().int().nonnegative().optional(),
+  pending_count: z.number().int().nonnegative().optional(),
+  running_count: z.number().int().nonnegative().optional(),
+  skipped_count: z.number().int().nonnegative().optional(),
+  failed_count: z.number().int().nonnegative().optional(),
+  error_rate: z.number().nullable().optional(),
 });
 // The generated schema closes `metric_statistic` to today's enum. A newer
 // server may name a statistic this tab predates (for example p95); rejecting
@@ -41,12 +51,22 @@ export const parseTraceGraphResponse = (payload) =>
   successfulResult(traceGraphResponse, payload, "Trace graph");
 
 /** Parse one Observe trace-list HTTP body into the generated result shape. */
-export const parseTraceObserveListResponse = (payload) =>
-  successfulResult(
+export const parseTraceObserveListResponse = (payload) => {
+  const result = successfulResult(
     TracerTraceListTracesOfSessionResponse,
     payload,
     "Trace list",
   );
+  // Read only the generated, typed sidecar, never an arbitrary dynamic cell.
+  // Nesting by project protects org-scoped pages with reused trace IDs.
+  return {
+    ...result,
+    table: result.table.map((row) => ({
+      ...row,
+      _captureCoverage: result.trace_capture_coverage?.[row.project_id]?.[row.trace_id],
+    })),
+  };
+};
 
 /** Parse one Observe span-list HTTP body into the generated result shape. */
 export const parseSpanObserveListResponse = (payload) =>

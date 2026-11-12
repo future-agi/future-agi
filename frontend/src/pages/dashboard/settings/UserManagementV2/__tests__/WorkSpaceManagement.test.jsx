@@ -11,6 +11,13 @@ import { workspacesListKey } from "src/api/workspaces/list";
 const mocks = vi.hoisted(() => ({
   post: vi.fn(),
   enqueueSnackbar: vi.fn(),
+  prototype: false,
+}));
+
+// The real app's create flow (L7c g1: a prototype build has no Create New
+// Workspace, Share invite or row selection; see the last test).
+vi.mock("src/utils/prototype", () => ({
+  isPrototypeMode: () => mocks.prototype,
 }));
 
 vi.mock("src/utils/axios", () => ({
@@ -57,6 +64,16 @@ describe("WorkSpaceManagement create workspace", () => {
   beforeEach(() => {
     mocks.post.mockReset();
     mocks.enqueueSnackbar.mockReset();
+    mocks.prototype = false;
+  });
+
+  it("a prototype build offers no Create New Workspace (none is mocked)", () => {
+    mocks.prototype = true;
+    renderPage();
+    expect(
+      screen.queryByRole("button", { name: "Create New Workspace" }),
+    ).toBeNull();
+    expect(screen.queryByText("Share invite")).toBeNull();
   });
 
   it("sends only fields the backend create contract accepts", async () => {

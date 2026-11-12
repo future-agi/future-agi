@@ -1,0 +1,1858 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`full serialized stock catalogue rendering > preserves every stock model's catalogue and drawer bytes 1`] = `
+{
+  "aion-labs/aion-2.0": {
+    "catalogue": "b62485a2809bdc8f0433209ad82f955f93a5f2824f9aa5869ab8790deff76d4b",
+    "drawer": "ce4a5e57c58496a157c88527b264258eb5541b9b04afffcb18b41cfeeac87e6c",
+  },
+  "aion-labs/aion-3.0": {
+    "catalogue": "c62768d1d444ea3e9e663c244ac9631d2660d5841835884c676353a844c9c039",
+    "drawer": "47e006fba90c227acd89b479c61897d30541e9c0be413cdf243fab488c3cb184",
+  },
+  "aion-labs/aion-3.0-mini": {
+    "catalogue": "7b557f12afaa789b60d5c583c260fbbacd7ca875b79817a6851bbd9f32b9d2d9",
+    "drawer": "d49f4cb1a09020136792685b59bde7f576cd804abb1cec375a331b655154ad8f",
+  },
+  "aion-labs/aion-3.5": {
+    "catalogue": "654198a1849ecebe302afd25245c0bbfed7a6df71a3964b1ed0a6332ebfe12ee",
+    "drawer": "a431f3a97c6a55b189f38ae279b82ed68d375dcecd3498485fd5b40f21639457",
+  },
+  "aion-labs/aion-3.5-mini": {
+    "catalogue": "e4e24c6c59008dce9b0c27442e848001a30bda4cf33baa5db3037214d75757ce",
+    "drawer": "22e09086ac9c262b7e9d315ce5c0faec9244a9f8f595686c2ca496cd2987761e",
+  },
+  "aion-labs/aion-rp-llama-3.1-8b": {
+    "catalogue": "5eda117bb4df41e19fa2ed0c8e2398ccb9923f3e294c183742083c6ee358b111",
+    "drawer": "d578704d8036b9cae7f98c651cfb834e5d8da3efb701ee6434f5ac9f85009751",
+  },
+  "amazon/nova-2-lite-v1": {
+    "catalogue": "8d748907bc2ab08d68e3a1c1d91455f30c66187487492dd4d78dfd1a15baf1c5",
+    "drawer": "2487adc7a25c7e853ed8c79eddd00269620550a26699484b7689df4418c23ec0",
+  },
+  "amazon/nova-lite-v1": {
+    "catalogue": "5dff5924498651c4b474e7dc1500920d52910489b5d277301a49009a9c0642f6",
+    "drawer": "c3547bdb9eb4ce3be3c88ee6df580b53647c328f6a25c7fd8bab42cb883cb37f",
+  },
+  "amazon/nova-micro-v1": {
+    "catalogue": "23d24f6aef5105cff2d57d31b338cfc7f5c8960faca1a834c8483a56892c22cb",
+    "drawer": "df06318ad6ed537001745499cf97d3c658c690108453858c599801166a85508a",
+  },
+  "amazon/nova-premier-v1": {
+    "catalogue": "78a25f420f2522d750c7f7a0a9b1e7270f2ed6c277a854ba5ad540f75a43fc82",
+    "drawer": "e611b75ddad7ccb8a56dd5fe5ac7e1497b646d56f6c209b89da6ad4fcb6511ef",
+  },
+  "amazon/nova-pro-v1": {
+    "catalogue": "18ea0f65b74816a35b2ad07bd6f9831271f4cb454793bf9310644fdb4cc3cc36",
+    "drawer": "a072d4fb16d23db323cc43255ea479138779a50acc95ef7a55c5a260df241016",
+  },
+  "anthracite-org/magnum-v4-72b": {
+    "catalogue": "46c8cc0bcd55bd425d2ac9c87c7c89347109c7e90b84da80d548b07766c43418",
+    "drawer": "34dac07f2b3bcd289375d03893cbde8ce62b074522d79f9f181a47b27822ed03",
+  },
+  "anthropic/claude-fable-5": {
+    "catalogue": "f40b48ba61383b454df5559e44a63db04fb3187b4f8e3fd4bbb854707fecf7cf",
+    "drawer": "779f508b6dc278ed59839eaf6784346d82ff44a84ae6d6de97523468f5415c72",
+  },
+  "anthropic/claude-fable-5.1": {
+    "catalogue": "5b000622a185bef122fb0a905a15bbf93f36f201e8494edf7e6ed00198c5dc8d",
+    "drawer": "8f6f67b4e3f65931932094bfbd57f276d64f0a62b6ba4142fc5970fc4f3c94ec",
+  },
+  "anthropic/claude-fable-5.1:batch": {
+    "catalogue": "663fa2dafb6f8f682a32b28372b92c58e32d6cd05c8c3e55baea668346223bfe",
+    "drawer": "9ca33a74e6dec0a1e45fc614c40bc8a93987406e892de820812b6fb6867bb7b0",
+  },
+  "anthropic/claude-fable-5:batch": {
+    "catalogue": "a159cd0c501009104df3791d13a92d6c2c14e1ead6c55b1c54f7b1f3a53270a1",
+    "drawer": "ba13a650c8ac10908881b39fed351cdb83aa933d5e83005a45f037342c52aa41",
+  },
+  "anthropic/claude-haiku-4.5": {
+    "catalogue": "ee422c44936492d80e145f1cdc9cec909d858fc9131302e0f739bfa3d23c30ce",
+    "drawer": "9968a9205aee89fd1300cdb8601650da9f97df0224e87dd0fd411138e2c4ccfd",
+  },
+  "anthropic/claude-haiku-4.5:batch": {
+    "catalogue": "ab528cc52969e059b8e2376dd813069979740645ea6259e011c2fa5c22b49505",
+    "drawer": "3cfba8d3ff67ebb628bdced80420bf0bba84952d224aa31be5ec5cfb538d1690",
+  },
+  "anthropic/claude-haiku-5.5": {
+    "catalogue": "240d0e58e0e5cc918989be95fe5ab58575eacd5422deff1b6c555ce65b0f1b4c",
+    "drawer": "ce7c39f10a7db38c51e2c045531777f181a61062e330cd06abbf4bbb552c7f9d",
+  },
+  "anthropic/claude-haiku-5.5:batch": {
+    "catalogue": "9bc520ee8746ae1f733447d24d44870365c5e38d42098ad2b163709be9b68201",
+    "drawer": "4a4805113cf91862c073778cf7beb220db29ed73589dab9c7f1b81167bfc62af",
+  },
+  "anthropic/claude-opus-4.1": {
+    "catalogue": "61775c494a3bc3febb76308df4540b98b3ff26545c8474f4fb57e4d850548b32",
+    "drawer": "be6f0b51a58eb1a6851214def88159e296c28f842fcfe7f0bc4f9fc7d614627e",
+  },
+  "anthropic/claude-opus-4.1:batch": {
+    "catalogue": "f7e8cf4e22b4451845d39a504448d60d594d591027f7a86effeddc3bab53d01e",
+    "drawer": "3c066717ae1a39812dd992505963257511099a7574240d54567ac732c170d20d",
+  },
+  "anthropic/claude-opus-4.5": {
+    "catalogue": "22a9ade4e9766d7d3af93bd0c4fd666eb7f012a17e0c71c00eda6bda3f295ee9",
+    "drawer": "540aeaec80c26f6013d9099a9d35e15fef32f22ece8534411b97ebf62cdc4662",
+  },
+  "anthropic/claude-opus-4.5:batch": {
+    "catalogue": "3d370ec0f61cf4fa0c35be7cbc58dbc39c92e21ddb567ba5d9ddec9762c4b843",
+    "drawer": "6331e42b66d6c68639a63007731903fae0df57545517dd7fd4b5735b468369b7",
+  },
+  "anthropic/claude-opus-4.6": {
+    "catalogue": "81384befae87d08c1bd42eebf832d64ca1f08d2be83a53c8916e67f5eacb38b8",
+    "drawer": "fc42d6ac3b0b3da6e7cc4b902b4eb82890eb718212072eba530706afe05f7302",
+  },
+  "anthropic/claude-opus-4.6:batch": {
+    "catalogue": "8ef93bfde52c76df1784256e996c47f5980f2bbfd3c86e20818576072afdf0c0",
+    "drawer": "a39382e6e700d6e5e9368ce1e1aabe1cfdd0fe42ad3627293dc19f052e3f1916",
+  },
+  "anthropic/claude-opus-4.7": {
+    "catalogue": "b1d993173e029b78a3ec9b6eb46127f5b567b1fb09c5c6f574ef443ccc2b6a62",
+    "drawer": "c255d1c114ac2b80213738b459707b44726e011006a12b23b05c33538b147fd7",
+  },
+  "anthropic/claude-opus-4.7:batch": {
+    "catalogue": "affd03069250ad65c6ca13a89189e918f1b05c326cf1ffcbd3c071a5895ac330",
+    "drawer": "86b7b5d0560347ed45b531d6e43f8d9b042b05960c8ef715f9784e5690b7e8dd",
+  },
+  "anthropic/claude-opus-4.8": {
+    "catalogue": "2684b3b9ddb4d6aaa186299c4eb81701eb45e10c9e137bcb3ad15992e4bba42f",
+    "drawer": "d5050b75917da25cb70a5323712300adb072e65e513537c04d0486b4e27dc7c8",
+  },
+  "anthropic/claude-opus-4.8:batch": {
+    "catalogue": "441dc3143338e6ce3b96edf08b21bbda473c47599dc1fc04d9ea4483213a6ce4",
+    "drawer": "baf10c0176ce66a35cee03ee9b1c60aefd90b64a7591a46c0a72b12802ea45ec",
+  },
+  "anthropic/claude-opus-5": {
+    "catalogue": "db3f5fe2ea475992f74eb3044c8abd2e4b202043c04e039e61821c9b1c92b0dc",
+    "drawer": "dbe03edec53e3c19be3571a5a9d0734378e2ac0a08c5e22948322f8919ea04ce",
+  },
+  "anthropic/claude-opus-5.5": {
+    "catalogue": "41e68f78e01359fe810996fa397ed4d762c550f93f88131b270c3b1ff1b644bf",
+    "drawer": "73fd04617342a70c12633098929763fa27926fde5af6e91ca2b07566c05cbbd3",
+  },
+  "anthropic/claude-opus-5.5:batch": {
+    "catalogue": "4e73e0e9d14b33a23993634af64d8d6261d801e691f8c53bbe20df7aa55001d3",
+    "drawer": "802a037e64ea2d47adbddcfa5875a5a78759559b5c0c7d5a23686df04330c92b",
+  },
+  "anthropic/claude-opus-5:batch": {
+    "catalogue": "ab0658e4d41574050d14935aa74d424d96564f6654c2c54a950f27abf8bf1c6c",
+    "drawer": "38020cc48269037be1a1634075fe504226f7d9cdea823b69fb8b43457ace81fa",
+  },
+  "anthropic/claude-sonnet-4.5": {
+    "catalogue": "e3ceece6d1ec56982ed3719c4fe2864f42c86ab714deb80f69f3e190336745a2",
+    "drawer": "f5203e8639509191ef660a9d9c8bb0212e255e9e3dde25815b4f1e194707a336",
+  },
+  "anthropic/claude-sonnet-4.5:batch": {
+    "catalogue": "7eb4939dc27e0b823c10ea6443d566ea32b1b900e7a8e12c02f2ae1129bfe5e0",
+    "drawer": "a99fec664276f6cda25c97f24476321c943d3955f20baa700df843ddc9e6533d",
+  },
+  "anthropic/claude-sonnet-4.6": {
+    "catalogue": "36c2cd553022872c60c9bc47883049134fa5d7a42b81097451b48cddfd1de9f0",
+    "drawer": "42bb680fb01d04e7eed8327c6d4bc9f6d8d661120684bb655a252e8f6f5a8be9",
+  },
+  "anthropic/claude-sonnet-4.6:batch": {
+    "catalogue": "e38ed9400d7718a63654e2d194137bbe3833afa4a9cb6b22ded9b3f3f8af3802",
+    "drawer": "a2c54416e315d66a6f96721cc008fbb5fdde530acef4e2ad59789ea1bda48be3",
+  },
+  "anthropic/claude-sonnet-5": {
+    "catalogue": "4c001ede93675b71ebecc5656807a790968e38765af5831ca9ae84664fed69e1",
+    "drawer": "aa02ec65789cb03f0b182b3055daed03b2fc8ca8fb82eb60e5f3427d4dbc2160",
+  },
+  "anthropic/claude-sonnet-5.5": {
+    "catalogue": "08681dc2b024bea5d204e6c1387ca3ef5909260d6ae718bec653c5db2ea4c6d9",
+    "drawer": "fa0e90c756064971f1fc5339894eb306c09d7282c545145401216bce14d89176",
+  },
+  "anthropic/claude-sonnet-5.5:batch": {
+    "catalogue": "e20c13a8dccc125baff2e1351aa1fc098e3f957b356c0ff07654bb21fac3c6f9",
+    "drawer": "34b3de2f8e0efc6c53948dd03d8a8693751951072a437204fc29db02be126c82",
+  },
+  "anthropic/claude-sonnet-5:batch": {
+    "catalogue": "55045c64578c782616f87382e4a02bc24e59ea6d2fa86e05b1bc33e98409f4d3",
+    "drawer": "927a8b88dceef23e3f48f2628b8baf7c6feb6f6054ec68d691f05bd3bdc4e4bb",
+  },
+  "arcee-ai/trinity-large-thinking": {
+    "catalogue": "f17b951a7a6af31fc57e2459a8fc026d9ef461f7fd1d4d5ae64f5d8d4b6d751c",
+    "drawer": "0ec2c0a14203f0d38e35f008487288265647b2d59b27a1d204f41007e581ab59",
+  },
+  "bytedance-seed/seed-1.6": {
+    "catalogue": "6d86b2df7c2935b8c5e8c8e999145052da48feb4833ebb6ec29dc674dcc45787",
+    "drawer": "ddefa8e94e5edce3637dc898658bfcd43f264979800c09259ce78172467c4b6a",
+  },
+  "bytedance-seed/seed-1.6-flash": {
+    "catalogue": "f37fd882afaba72c35fd72faeceb386830aa3712ba4f360ed36ebdbadd1448ce",
+    "drawer": "4506f0a70525aef20abd6a17c9e454e843592b82585373b5ceb18c01bfa3097b",
+  },
+  "bytedance-seed/seed-2-1-turbo": {
+    "catalogue": "dc0f18cffe553752cc604f173c343e54390e9c9618938a15c5b2ca1a49ed651c",
+    "drawer": "f12e1e6dde76f9c27aca936dae0cfbb529ba4ba302599922623f132bea48e227",
+  },
+  "bytedance-seed/seed-2.0-code": {
+    "catalogue": "4ca83e8db98739e26cd3e57d441ebd0bde83b74166bb66793778b0c7675f521c",
+    "drawer": "0bf72bd0ace45b52514b7974d2f8f8153aafa6feb7cfe3531de3bec01693b0be",
+  },
+  "bytedance-seed/seed-2.0-lite": {
+    "catalogue": "b1bb1a914cac334b9b35dab79343184b902406fc9183f6f69c321863d4fb7e6b",
+    "drawer": "428139f593ab494aa96ae0a0e07d42ab1107093b9390474b7c45f3af36e6d261",
+  },
+  "bytedance-seed/seed-2.0-mini": {
+    "catalogue": "050c892d514fbd006ae40435032dab07c1cb1d5b1f0ea238fda20cea03ab0466",
+    "drawer": "2480bd552f881147e3c6e51673d84dac6a0ea1bdfcf2c7ac273fa6054328ae83",
+  },
+  "bytedance/ui-tars-1.5-7b": {
+    "catalogue": "f13a3b7824c3be0b9429d2bf9316091c2099541c5bf0699ddc17f969e66bf68e",
+    "drawer": "bef752f58d6d364ad445837daf3181079c6eac3929f4d743070fe5112a8f91af",
+  },
+  "cognitivecomputations/dolphin-mistral-24b-venice-edition": {
+    "catalogue": "9d3e5f73766d044c46feccbe8729021fda34653d66211605a366fe0c4bb4f65d",
+    "drawer": "341ff037e811d5e3127fdbb38a93609da407910834aa079a4acf40fc10aabe25",
+  },
+  "cohere/command-a": {
+    "catalogue": "5a15de0fe0575da8b97680c7914bd8b310b026ccbfbd243a3ba1cf095e7ddf75",
+    "drawer": "7c0e2e9b2284c53735b9412064b0b068a9f430d59da52374999b054dcfa68e2a",
+  },
+  "cohere/command-a-plus": {
+    "catalogue": "23e860f2f65a2fbd42c57aff3b9d458c5ecd6d9b92f7d7b1d62aca098edc618d",
+    "drawer": "40127174f7963d7f5bef1d6b71efe03b00ead045d6070ebc6f03af177784ec29",
+  },
+  "cohere/command-r-08-2024": {
+    "catalogue": "909221cc93ee37fb9ebec024f50e66b2a41c47f2dc8ae5fc0a4c83d4b617dc1c",
+    "drawer": "d7986a8ec6ca7e4921943c2cdfd693ec6ee9d1be795ba7ab30a0cb1bcacb39ba",
+  },
+  "cohere/command-r-plus-08-2024": {
+    "catalogue": "848f0b108d7845733b3c2c1ce3d7a9e6e4213a469b64af7eb0cd56d7daae4c21",
+    "drawer": "8991f93033041765828ca5867ed5e0257c9cf3af5f8f18b23d34cc17d9490271",
+  },
+  "cohere/command-r7b-12-2024": {
+    "catalogue": "ed6ccf5c8505ced224883f9dc0d97df5b05f25ebc581cba8e6e6df35d5935fdb",
+    "drawer": "efc349301bb084987e32eebe9e6ebd4efd94105e5561496fb52c6e2ea45a11e2",
+  },
+  "cohere/north-mini-code:free": {
+    "catalogue": "da7b3fa2382bd7f948bba942f28cc086cfcb67c21d8d5dc3403a13aa57909a3c",
+    "drawer": "cfab3e70855e43ce7e1e687edebc650c6259b3662fcc2412b6003eeed56e64da",
+  },
+  "deepseek/deepseek-chat": {
+    "catalogue": "1b40c83c99ac7ea382d27b6941a4e53de4a54eb23008f313cb9f5d7ed7177881",
+    "drawer": "248aa4816f9229712faa0a28da649d7db6bf447cd192d1a4b19e9ec8f42903ff",
+  },
+  "deepseek/deepseek-chat-v3-0324": {
+    "catalogue": "c64cfd3bb3c934d8652da5160086a579273cf4e34ebf3e8801c462da44f38043",
+    "drawer": "6cb2fa9e49443167b67a06aa34a144a421ceb86a8cfb7063251536d486514e0e",
+  },
+  "deepseek/deepseek-chat-v3.1": {
+    "catalogue": "2ad6eac2070477e05e059598483e503d2c458bc43a581f86615cd5458da152e3",
+    "drawer": "2231858158bc4111b4298ee7dafd76645aca840e1d5e8c03fb590a0cc5000f1b",
+  },
+  "deepseek/deepseek-r1": {
+    "catalogue": "e8ae8b48a7fe2444083c5420af758f7c5c279d7c794444df38fe757a14794ff8",
+    "drawer": "da163ba1708a080a7bd9787929e57c8fdd32276f8a0c950b74728a5313dab81b",
+  },
+  "deepseek/deepseek-r1-0528": {
+    "catalogue": "da91c98db55f6bc342dbbc5230d259ee4999d960a896fbde70c0a0a09d07463a",
+    "drawer": "a3f47cddd9457aec51a9da578c7acb7f5c5d36b33f0bf854bdf6c03c59230251",
+  },
+  "deepseek/deepseek-v3.1-terminus": {
+    "catalogue": "f9a08d5c982325f88b28a399fece463d1280893d3b214ef4e914f1fd510cbec8",
+    "drawer": "04f7cf2737b35f4e8099f68dc6b4064699129e4f1d23c314a887ec049166b962",
+  },
+  "deepseek/deepseek-v3.2": {
+    "catalogue": "00abff8ce76cde20239c9f07958b9fb1fa8a482e3623a13ec1589e51f14bc73f",
+    "drawer": "feb07f4ea600c7774037778f2552261d5b6ccf3f15f16c8f4e4bbfc8dac8d1c8",
+  },
+  "deepseek/deepseek-v3.2-exp": {
+    "catalogue": "5f66bf3d4ec971d3057311ca044f6e17ca91e886d11e46d73dd1ce02ee4f2368",
+    "drawer": "69ab14685668fed688e8d6069b7f8dbabdb4d0082174460ed2213acc03b9045a",
+  },
+  "deepseek/deepseek-v4-flash": {
+    "catalogue": "e99abe0fb199927239011b8d9246d091438b9ea76c2ec2ca9a8689482350e0a9",
+    "drawer": "573a6a2bc580371e855a8827de0b6d9f5c3b657ed7258fbd7b354062941a4282",
+  },
+  "deepseek/deepseek-v4-flash-0731": {
+    "catalogue": "72c65bf4d5a36cd0626d56c6958504731e61e313245bb2f87eb11a471576fcd2",
+    "drawer": "e3c01445b87f30822b23be25f1224953a51cb07eb98189f06b24a59f5c42b7b0",
+  },
+  "deepseek/deepseek-v4-flash-vision-exp": {
+    "catalogue": "e5aa8ade3f5d82a63dcfca75d4a61029e888cd3434e413cedc1327bc255d0431",
+    "drawer": "87d8f5cf68b3fd31ff17e06d7ae5acb93805d2c864198709006070cd4b2e904f",
+  },
+  "deepseek/deepseek-v4-pro": {
+    "catalogue": "80152f4da90685ad1e08e4159dd6382199e6c7ac1dfe24969b0967d2460b7c8d",
+    "drawer": "c6ad50c396d2049be67611d41e4e7a61cee4ff4f26af1089a4d070050b11b4e9",
+  },
+  "deepseek/deepseek-v4-pro-0813": {
+    "catalogue": "14e65ccd666a59c5930f626427e1ed61715914c9d172fbb07187e1c3e4b6157e",
+    "drawer": "f6f19303cef0d2bb55bef6114657c0f830d21509986d7dd693f476799248223e",
+  },
+  "deepseek/deepseek-v4.1-flash": {
+    "catalogue": "44ff6e61dde15ace5a3187f583b904486e65d94a54835b3192da64aa32539435",
+    "drawer": "910e8055c4bb543f7494a85cf9007e620dc0411c0f2b04b2e54a3c00ddc02a08",
+  },
+  "deepseek/deepseek-v4.1-flash:batch": {
+    "catalogue": "adfff0ad1568f0ccd7b54aedd88b2c1fca67d9ed52ca7ca765797aef39cb7306",
+    "drawer": "b771ac50abef037e98625b790e9a13459daba06d16b958400a27be635db0ef17",
+  },
+  "dots-studio/dots-3-note-preview:free": {
+    "catalogue": "238fae31fb52d0a1f182c81d4646a1c4bed027145fc1a7796e6c0d42dc2acccd",
+    "drawer": "8d8676bf533f4051c0724fa499bdd77f680a83dfa9f74ee32fa4e2fe1324c479",
+  },
+  "fireworks/ember-1": {
+    "catalogue": "4af4cf5e4bb12c7dd460149d7d0b21d8bbff449980baaca3881c32111bdd4b90",
+    "drawer": "8534e3ad436ec06ca2d92e95780195ce9e38841e3bd50c7c9b5fbbf70f8f6794",
+  },
+  "google/gemini-2.5-flash": {
+    "catalogue": "8dd1b5b0039739759e013dd3103eb5a73f58e37181c8cd52b9e291a746c1e4da",
+    "drawer": "b6bafffa1491f1fb730c3b7cf8ff96e97314d27acb01e2284ff03d8baf8742eb",
+  },
+  "google/gemini-2.5-flash-image": {
+    "catalogue": "64546ee36034a7ff9558669e358fb17702b86aec1b9f529d84559c97c62c42f1",
+    "drawer": "f945cb2101c1eb53f33f8c41e7df175ddd56bed6b098326731001d8695ad50f0",
+  },
+  "google/gemini-2.5-flash-lite": {
+    "catalogue": "3d770d51d49348dbb3112ca2a43949de6d6e86ee97682c1c793fb3529ab3f2b3",
+    "drawer": "938571bcb3d4e48523208ddd7821eebd3394cc2c9e4321b134eeb3869e2926f7",
+  },
+  "google/gemini-2.5-flash-lite:batch": {
+    "catalogue": "8ada0a2de4095835f21371e705a49cf3abd2b93de5c258ffb3797552cc9e42bb",
+    "drawer": "58b4bee905caec956529e71580cf29faf6eb68c0fbd43b8a15168619fefddffc",
+  },
+  "google/gemini-2.5-flash:batch": {
+    "catalogue": "a888f4aa6a699be8cfb361b118316239170c1004db27449d0134ce186a176e72",
+    "drawer": "cef9fa3d208143bdf5cd8a54bccfd96591292b82e97a11382bb3061a8ed032f2",
+  },
+  "google/gemini-2.5-pro": {
+    "catalogue": "a89db3d525be6431825360b928bbc9428a977359576ab06baa0f8dc895cc5be2",
+    "drawer": "e834715929041f74e106761fdde9fabe119904065651482fd82a0f8cdc522994",
+  },
+  "google/gemini-2.5-pro-preview": {
+    "catalogue": "a9fef95ba33892d022b4b780e234b6eaa4ea2310debb968d09aca49b2718957d",
+    "drawer": "e4ff0f6f25c8e04ec7071a4b2ca94c2d1e38a537038495066b31682c1a8871af",
+  },
+  "google/gemini-2.5-pro:batch": {
+    "catalogue": "221a5b6e5f85643d2aa3d21e8e4f1807b10160cb5676eabd70a1090992442e0a",
+    "drawer": "fc25e2378ed951708dc2e1327d2e8cd9ff41f163120fc0f81d2bab29743f5801",
+  },
+  "google/gemini-3-flash-preview": {
+    "catalogue": "7d2f657c48a26af186d173842bfe52e2f1490a40378792a1bf6e3d647262db4d",
+    "drawer": "0356c358e76c8691830e60590d0ad9a8df9ba2dc3ecfe4c07a2d591befca5bb4",
+  },
+  "google/gemini-3-flash-preview:batch": {
+    "catalogue": "d796fb7bff34195835000f5754e816e506ee55708f5a05e97023671a62e66210",
+    "drawer": "f092bed379645632e2c0d1a603c4f737fcbdcc0d4048abfcc273d95f342688b1",
+  },
+  "google/gemini-3-pro-image": {
+    "catalogue": "0645fe77cdae0375f1b40c8f3250e1236618348f9eba9cfbb427f3357ac1484e",
+    "drawer": "15b43e25102c6660bf8b0d38862f308813d79448477a0622759048a4d54bd157",
+  },
+  "google/gemini-3-pro-image-preview": {
+    "catalogue": "e32e9736eb98c31c02fcea7ac083f9bf4c1971d6843db9359d42f9d0a5fc44b5",
+    "drawer": "8f04f1d2cd906c4e9c94e3f7855c4b1a8860dfaba016a6f628b8319511978db5",
+  },
+  "google/gemini-3.1-flash-image": {
+    "catalogue": "337bdf4058fd125fd71008187f3f79b2c1fba61af62493712d36e1149ca333c2",
+    "drawer": "f5e9cfa132bfbfa98dfcd364bcb224d37cb056c119baaa76b3c16fa6eafc6b99",
+  },
+  "google/gemini-3.1-flash-image-preview": {
+    "catalogue": "32df6f283ad96bbcf595e4f2360542d9ee5b6124b25aff94bfaba6bcb61b7f9a",
+    "drawer": "cd3c1c49baf58f982dfa20f8a9326f11cfa7aa55e869e0f5ea2d571e14509ad1",
+  },
+  "google/gemini-3.1-flash-lite": {
+    "catalogue": "25666cdbfed54970cf2a197e6f3a3212b1126cfb25c4ad8ffb9d8715ff407575",
+    "drawer": "037f033e8bff12b7c59fc27afcecdcc66eaafd6f206d9027a294ad2f20b1f01c",
+  },
+  "google/gemini-3.1-flash-lite-image": {
+    "catalogue": "2a21c6edafb5bdb0f98e744ba218a3337fdf32bd4c72a54ae660b71f943c236c",
+    "drawer": "06ead115476bb63bee431cd2372857965946b0824c5e2b9442e0686058c1bf04",
+  },
+  "google/gemini-3.1-flash-lite-preview": {
+    "catalogue": "aadfeb2b39f6140d831c92e6d57f25dca6626c52279b53febcda783dcbbea554",
+    "drawer": "7ac0ca0d9a529d56c169610f6aac595c319c885f0eca834ba42d4aa7e7f8f0e6",
+  },
+  "google/gemini-3.1-flash-lite:batch": {
+    "catalogue": "e58f2d4ea9fb2e5e52aa1cd2c2d6d45e5bb4fbec98dc3aee8f0173e2b583401b",
+    "drawer": "7286da26172a9280f7e771a84697d5ae3c367d630fd3610e9eab8a57af7c0109",
+  },
+  "google/gemini-3.1-pro-preview": {
+    "catalogue": "c8cbe972b287747f7eb25663d9805a3d61dcaf769ef01dc2c15c41697ce3d4b4",
+    "drawer": "8e2cd890d739f13b9e9310571be11fe9b90459391b4c8c17c91626e26714e931",
+  },
+  "google/gemini-3.1-pro-preview-customtools": {
+    "catalogue": "bb3f2468710a656176784d42e231a0ed8ad48bad2e6da4576bca542eee9ff356",
+    "drawer": "4656a36f12b157b12d3550282132f50f58c1745b679a6375c756c93294635b03",
+  },
+  "google/gemini-3.1-pro-preview:batch": {
+    "catalogue": "b35ab5243e3fb9994128a9d7b301444722107aab5fef9c3872d61e536cc168fa",
+    "drawer": "b0d12f0155e1d22cc64e7e746be0f36ce139585ebe0286dd6ec89e3d257d283c",
+  },
+  "google/gemini-3.5-flash": {
+    "catalogue": "705f9405d5f25e51a3a3db69960a689f8b68e28515a888812526b172c696d1ef",
+    "drawer": "dd4ba889a1438e4d95f8de2b91044d65135ba76c01c23fe86cedbf6a988c6073",
+  },
+  "google/gemini-3.5-flash-lite": {
+    "catalogue": "a7fa9259ed1b166bd0d5dfaed340860a5040b01906f25d7758d21ffa218f1536",
+    "drawer": "48813061969e86f2370c4f6978e077a66fb5fd3049bdead5b1b93a142c68eccd",
+  },
+  "google/gemini-3.5-flash-lite:batch": {
+    "catalogue": "5f9dd117e11812353e2995777bc2d960270c4cc91896216a8c8b2aaa42c7a322",
+    "drawer": "bd2eba4364772fb1f4694a4396380bc5c4cd1c8b5c372377c9d90eeb34c7d441",
+  },
+  "google/gemini-3.5-flash:batch": {
+    "catalogue": "d6f04743cfe8c3235be3811801b6763f3ed7bb92cce54c6ae6870860d0776870",
+    "drawer": "9c7d57322e7915e609267bc76d8c058093d5374d7d13c8e57796483679aea831",
+  },
+  "google/gemini-3.6-flash": {
+    "catalogue": "e7c25f861d32b9f5fec5cadb8921419066d542a8a7526979d1d8a2df5f7c01ae",
+    "drawer": "9c9a8b3b0b3f8641860ad7379794b0853aefde247af68c2e27daa1a0116a08ce",
+  },
+  "google/gemini-3.6-flash:batch": {
+    "catalogue": "9c46fa7e13dfe1592d614b7b3791867d1da29c837d9740ad605cbbfe041b55ab",
+    "drawer": "1ed9439d9d3234088de8e22402c0ce0390978b5be42f805a7a8066c950cffc61",
+  },
+  "google/gemini-3.7-flash": {
+    "catalogue": "9bec9bb2f8356e5c12a8742d48a4d97332b5a60ff3d5488dde6daecad3d9ee54",
+    "drawer": "bb6ac426f0e3e5d8973d89b71b4a5d1bc6607576f35de131bc81dd024331d075",
+  },
+  "google/gemini-3.7-flash:batch": {
+    "catalogue": "2e6c204f569d6d9db821c00ccd0e8dc8313fdcb5034d503223a201a0d18b2bcb",
+    "drawer": "fd158177dc92793d7f31df99a886e8ff2be9783258c6f4445cf30383678544c7",
+  },
+  "google/gemini-3.8-flash": {
+    "catalogue": "2b085819dfac6497488a6041fc5aaae2b2f1bf3a1da1c5c211bfa5f145a09070",
+    "drawer": "21b070369d34a23176ce1ceba5d0c18f1ac1f6a19d4edb410b286db58995bb6e",
+  },
+  "google/gemini-3.8-flash:batch": {
+    "catalogue": "4f115e0faf887f1d79ba5d385d1bef90662addc99ac9836894c218eeec0130ce",
+    "drawer": "59021d1143e2642bb8105102ccc740086c85591235621916c0ee3b74cfb30db3",
+  },
+  "google/gemini-4-argon": {
+    "catalogue": "dc187c740802f4aa65383ced54c9e7a754d73cf7e31da39b3e86a860006c9149",
+    "drawer": "c6f87808dee292c7673e16927b53a70741ce3e56e08e48b3e00b87d74f020e9b",
+  },
+  "google/gemini-4-argon:batch": {
+    "catalogue": "eba680f269f440fb14f942d655d8ba0e3212187b3da960aa6f06d58be484a449",
+    "drawer": "0a1474278ca0b1d0941fac6686410909ecf3019700c500c95f9ff4a7079e1271",
+  },
+  "google/gemini-nano-banana-2.1": {
+    "catalogue": "d14d0c8c0759d5d2f4f9fbb38ab1536d0c8323fc0befd655d86bbcac6f47512b",
+    "drawer": "1956b1bb3d644e3082e087be525ccd3ef4b15ea92756d02699cd806264220e67",
+  },
+  "google/gemma-2-27b-it": {
+    "catalogue": "50fac928590b5ef507ea915519ab5141c2902152fe5bf8f38aea8154bc79899f",
+    "drawer": "397c3b4bf7d0afbbb9ca9ad3777d5b806630ef7490231068cfc0770a13b82368",
+  },
+  "google/gemma-3-12b-it": {
+    "catalogue": "a54bf5969c8b8428808b37e268b3dc8b139a9959a02d3af441e5197058e58758",
+    "drawer": "d5b063b9852e4c106fee38f7bba17be233869228d801d2f104a1dd3fab29b24c",
+  },
+  "google/gemma-3-27b-it": {
+    "catalogue": "d88b9cc33a6024e1ecb2a7f8c03231699c4f01e07411bd44373a859afc985d97",
+    "drawer": "c0eb1051143a39e68e4365a15831789986172673c2e4b454ba33a4c5b2c917c2",
+  },
+  "google/gemma-3-4b-it": {
+    "catalogue": "ba70f47ae2d686b9c9926acb68059cd76ad13e36a735c897223881bc6cd5f126",
+    "drawer": "7b54c595318c90753cf44274c0c0d9457c18dcfbafc924400543512aac50c6ee",
+  },
+  "google/gemma-4-26b-a4b-it": {
+    "catalogue": "eeeeaedf5b2d9932871f3362d4ae0e1c82fd3b1e55bffda2bb23acf2c2050fb6",
+    "drawer": "94e9b4f3526b8d524265b997318669274dd5ab1fea901e4999e6ebd864ad2f0b",
+  },
+  "google/gemma-4-26b-a4b-it:free": {
+    "catalogue": "8b4fc5821c42256cac476d5d9a36c0d5a4e963ca09f41914cd1988c3d4c34f5a",
+    "drawer": "12b9ed84bc0eef62db66e1196f273261ca662d50c7d66914c8a6787601d8b9f2",
+  },
+  "google/gemma-4-31b-it": {
+    "catalogue": "a9469bc40d45de23d5f639769169e0cbea037f35a00c30e4a903f9da56ffd537",
+    "drawer": "45e9c8ed3dfc2b38d0d4badb7c545983085212a718a15a2c18e866d486cd0bd6",
+  },
+  "google/gemma-4-31b-it:free": {
+    "catalogue": "6a0337899323a37155eac574defda4651b09d868df17c2dfd7f950abe50754cb",
+    "drawer": "be3aad6a8304d2be727f5b4cd7c8e9964bbdb411baaddfaeebcd9398ac326e19",
+  },
+  "google/lyria-3-clip-preview": {
+    "catalogue": "f4ce1aec014c6625b3944facc1157855567f63ae37cb6d8180832a651f705cdd",
+    "drawer": "9bdfa3ef7dab347b83e3cb6a4e4c9f75f2e1fb4e4be8ea71840fed7e66c28fcb",
+  },
+  "google/lyria-3-pro-preview": {
+    "catalogue": "b239dc453cb72b092ec35befa828a81f223752993a4839b6977afc2550e56cda",
+    "drawer": "6055342a79acf28e1515c03b7c9f417c262012603ee5c9de0472940fae17ba5c",
+  },
+  "gryphe/mythomax-l2-13b": {
+    "catalogue": "3b8ce76736c129fb2cdbf25537200099907b0e02d751986d3bda3770db3b70a9",
+    "drawer": "c1c22d614f8ab42551c72adf37c95714d6d71dc75c823b67c8bde1e696dd630a",
+  },
+  "ibm-granite/granite-4.0-h-micro": {
+    "catalogue": "e3c7420d73a12cdf84bb545b96e2bcc6e502172ee5c7624511d24daf298b2f1b",
+    "drawer": "351b373b1f2c1cabd85565b6a0e0ac866aabe77099b7d0fba8fb6cb44f041ad3",
+  },
+  "ibm-granite/granite-4.2-8b": {
+    "catalogue": "2772422250378edb41c4b2991b99bb11adaaeb3e531b9915a069e9b89f2a6d22",
+    "drawer": "8d8a5b5dda8351e4b582b32b132a37db8a9264fef3d60803cbf9133a6d21f322",
+  },
+  "inception/mercury-2": {
+    "catalogue": "6a6acfc47299c50ac6ac26ce3b562d6b7b7d233c0f440ad8ede50a703a64c5c3",
+    "drawer": "c93c1d40b335afdd514b62967953813350fc322d28648bbdb9362b78e83e14f4",
+  },
+  "inception/mercury-2.5": {
+    "catalogue": "e5f8f033c4af324313779024dae17e56616ea378916a7be57a635fba47218968",
+    "drawer": "eaaef5b3eb8525a2be43d9ee67b295d6a205e9d1543cd0cb7518095ca8f1ca96",
+  },
+  "inclusionai/ling-3.0-flash": {
+    "catalogue": "2806fffb1c1d8063747d587fee566267121d93b7e7291f664909c25f4da808a9",
+    "drawer": "34a87ac9c853a949f04a36e10e03f9f05a03da3f5cd807ad23f641fb3c9b8d0d",
+  },
+  "inclusionai/ling-3.0-flash-vl": {
+    "catalogue": "c409995d6d647af4b277117d277bc10661aed4c93ecb0749fcf2b4c30f59a1d2",
+    "drawer": "71f87e5059438bb9170e98411f7418f3135c9d576de595de2cb7f05499bd27d1",
+  },
+  "inclusionai/ling-3.1-flash": {
+    "catalogue": "e3c5845d0c0116e092ae054a4f7c816f3ec434622625cffb6d1a9abf747c87b4",
+    "drawer": "e0138da34c0ad01e6bf7d44e5fde827bbda1831d6ca88071433c8788da04bf8c",
+  },
+  "inference-net/schematron-v2-small": {
+    "catalogue": "7fc28b52ac2b75fcc6e6de47fb51c3acd722df1a5bba7975119d76eef7ec4445",
+    "drawer": "9b3a205200a01f45917857f0d9bb8bfe0f89432bb677a549774ba6080fd01288",
+  },
+  "inference-net/schematron-v2-turbo": {
+    "catalogue": "dcafb38196de76adcb18de48bf273c387a5d3d9d1720680fb4cb11848bc92637",
+    "drawer": "6f4bd043633f62dff9a84c8da4501023b320fa9292c674c949fc7e35dacdb3a0",
+  },
+  "liquid/lfm-2.5-2.6b:free": {
+    "catalogue": "7862b05a8409e2bb9848a792cb2206e6b9093e772e1cbbfa26ecb77e23b752b8",
+    "drawer": "6b3f31bfb020db5cd97195ccbb14d99abe34a9401607c2ff79c5e29d861719ca",
+  },
+  "liquid/lfm-2.5-24b-a2b": {
+    "catalogue": "ce588831c94b0ea3400abee7bb63d334726111df2b7e28ddb35e001e4bb87610",
+    "drawer": "3f14d1bfb6ab4497b6d60e2d8fe14304a6fccba1d2fce3b90f8d13749a7f6d34",
+  },
+  "mancer/weaver": {
+    "catalogue": "9e98b09a0248a701d899cc4a2e5c9e473748441774597a19c36895c640fe48cb",
+    "drawer": "16a286fd355283eab13f429d2407f45af40df0eb918d08a9be5c63d717c14ed3",
+  },
+  "meituan/longcat-2.0": {
+    "catalogue": "a87fcf3f5867514356af529d3a48f6326e56a8235991ee0c6e1ebc2d5f7fb615",
+    "drawer": "ceec98dee0bc2cc524306b4e3126157fdf505452261736a0f0282c5908aaa8fe",
+  },
+  "meta-llama/llama-3.1-70b-instruct": {
+    "catalogue": "f2ebe2ba889192e0b7e5d9639c040ee637949e0c549db4f8db38c912e51f0da3",
+    "drawer": "08a212a703abf38a5cbda6d8a448f04937307109ad96eaea15c056a7603a41f4",
+  },
+  "meta-llama/llama-3.1-8b-instruct": {
+    "catalogue": "9d074117f836ac695414c6008a1c7413a387d5e043d26ac6f94620f90cbd03fc",
+    "drawer": "4724623bf9a7f45be3eaeb45608f22dfd644bff52c1aa3d7cb1dd5acfe7c1ead",
+  },
+  "meta-llama/llama-3.2-1b-instruct": {
+    "catalogue": "397a52c661aac22a8b3df908f7ae69b04888012d159bdb61bac7120bb7459d01",
+    "drawer": "7090594b4b6b05e8c01219f7c826afdad7ce63e074085dd7b3eaa62f4351b623",
+  },
+  "meta-llama/llama-3.2-3b-instruct": {
+    "catalogue": "f9c1e0b36621b0da634a5eea4c44498290926cc11abce827bc64d9f293b49521",
+    "drawer": "7901f68d3ee4827acc3649be34065be921e9406c28841afdeaa3baf485ed8709",
+  },
+  "meta-llama/llama-3.3-70b-instruct": {
+    "catalogue": "4d44b6dcbb37bc3f5d7a2dbe0ca3a1aa0054cbb22394b8b48be77373209f4975",
+    "drawer": "74ad07c7292063354c118e4e77257ab17f18780fcb58117340a53bf5cf8f0f17",
+  },
+  "meta-llama/llama-4-maverick": {
+    "catalogue": "175b7c09d49231c16808b9ffb11c9a5bfecddf466dceabac4c485d91fd59f0a6",
+    "drawer": "ba02a4ed3a1eb82c78e047f8f74d3df448dcae12ee157590c9572e1ec1721b93",
+  },
+  "meta-llama/llama-4-scout": {
+    "catalogue": "3f854e8d9ab688c9456a8c301da38c9a8979b1ffaba2abe08410c8dfea909a91",
+    "drawer": "cd7a5536f7868e9fe28e5681bc68b28decb1ba91973ebc3fc79c0f582511eb06",
+  },
+  "meta-llama/llama-guard-4-12b": {
+    "catalogue": "ed52e41ef4affa6da6323699b4c967a8661dfd4d6e6a57ab1578af8da0ef551a",
+    "drawer": "0dcaec2a0789c171eaf5d6ffc4b05903bcab6c402fc683339277be1068099285",
+  },
+  "meta/muse-glimmer-30b": {
+    "catalogue": "a00e41685b2d97df9aaf7a5394be33d41739b944433d5b0170f2eeba7723fcf1",
+    "drawer": "400b8850a2a8299d99ba3bb1c1e5168b600e7e8e2e73a33952dbeb4cc8b726da",
+  },
+  "meta/muse-spark-1.1": {
+    "catalogue": "d00ac45b384f808b3ff45736366a11a36728380fafef1a6956a6e3bcfc89d858",
+    "drawer": "be52739bfd9a23bac0744352a664fbb35e47758fc05afeaf0544c65ac41394a8",
+  },
+  "meta/muse-spark-1.2": {
+    "catalogue": "521ee128932ac719d25a10ede138990025d5c89f09ba40249adb659cc0d69836",
+    "drawer": "e3d7b19a1ca957a4f5a16a6f30133e0ab118076be8ff889a2441cfeefce5a940",
+  },
+  "meta/muse-spark-1.2-contributor": {
+    "catalogue": "ec70be65191296cfb071f34609c343f3d51ab676de683759a2461a56fe92f246",
+    "drawer": "7638238be097b6bb56915c19905e6b73e743cd1dfa0edd49610bb1e21abaf793",
+  },
+  "meta/muse-spark-1.3": {
+    "catalogue": "68029f476b4134d2baa5721e6650b9f1381667592a5e1a9c87f4f7f07125dbf0",
+    "drawer": "58b8c4bb997d6679e6b367d5c1b27ddf3a1372b9097050c6fce87aed22004a39",
+  },
+  "meta/muse-spark-1.3-contributor": {
+    "catalogue": "c787f6edb06f6ebea4f01d600e4daebc8fdc6bb225d090c40df8e434f5dff32d",
+    "drawer": "9ea06885944c62d43e064b18f577591cb294946cd33ed2fe7c90779b8f042ddf",
+  },
+  "meta/muse-spark-open": {
+    "catalogue": "6fd61ff158d15cd7f4cccace771888b272cf510f8e091049dec06493c981d07e",
+    "drawer": "d4a399048bba6dcdcab8b532450a8ae1009f70e1fe6396f7de3e49d222022e85",
+  },
+  "meta/muse-wonder": {
+    "catalogue": "6552654edf4b68b35486d52509414ea2ac0dc106dc34ce8f39d020880956a7e2",
+    "drawer": "bca02789cbf4f7de77e8173fe9dd5ed2066ca27871f6921941a7a52bf2bb10e0",
+  },
+  "microsoft/phi-4": {
+    "catalogue": "9255b490abc2a5ef6884578b42d15c25857896b351e9421e240a4b829bd07a73",
+    "drawer": "b28f5bad4d0190621cbd28156d80b6b1a729addb7d2293684ada9ec02748c8fb",
+  },
+  "microsoft/wizardlm-2-8x22b": {
+    "catalogue": "d4abc6226923713f434cb00d69f39be54152053c7f930ff8916c0bc70f60ebf7",
+    "drawer": "15f2ba4b5baf6da8d186fbb93a176ee136fafbfa1367d13a7b8c8e42429761e9",
+  },
+  "minimax/minimax-01": {
+    "catalogue": "608bab9f5f22fdb861e7fceaa2af2016b5aa28724d8b329ea5f913b1abb65dcc",
+    "drawer": "99ff44336c8cf848236f457ec13bd9e350a4f5c699e6cf1c9e1b3b35050f98df",
+  },
+  "minimax/minimax-m1": {
+    "catalogue": "26019a57448764287a52b96ef6a412660472deaf700c08b3f95aae48b29406c9",
+    "drawer": "9686958db9e040f201316b5b5faab41c3052a273a390b428905d39159ab67fe3",
+  },
+  "minimax/minimax-m2": {
+    "catalogue": "e163ec2104af06287b4fa6a4fb25f2a9a5885658207d92e0ae68c9ee842176e1",
+    "drawer": "440bc2897bd95725d27bc78a544dd9380172c86716041a170d4d768159a1f666",
+  },
+  "minimax/minimax-m2-her": {
+    "catalogue": "768128d6cbb1797a4a5f03035580ee2957763a5ab3151f8aa7171fc601cef12a",
+    "drawer": "563072ced968456ae678a7f6140e77719ee4ec33e9104a23f0acfa04961e0837",
+  },
+  "minimax/minimax-m2.1": {
+    "catalogue": "14c92d15f6ed171d0f6b89f19b093ce5499a1c56ba8dacf25abeca4f33fb50bc",
+    "drawer": "9d966318146a2fd262ab453c4d40196e029bd80c2d64ba8af9f0f06a4852d830",
+  },
+  "minimax/minimax-m2.5": {
+    "catalogue": "f5dbfe33685742e8bd6306b92b9c0a60a0bcb453d2f242a6bb8a30ddc58e8cd3",
+    "drawer": "b42680f9b900da45d6861e42233d980f5842b373200d84a6b4f06fbb3728f832",
+  },
+  "minimax/minimax-m2.7": {
+    "catalogue": "acf676081bd60aec030f80128c2a7ba0e89d0b016171b68be8e5d84ab3cac67f",
+    "drawer": "cae26fce7f433406f3e2ecaa4000ad5945ea16fb41608b64103eaae66a583cef",
+  },
+  "minimax/minimax-m3": {
+    "catalogue": "9e4c57a75cb31d42a4d5cce6799cc7fad98d715fedaac78e0c8b3169c64f938c",
+    "drawer": "5ad3bac26336278b4c592c58c984c0160d35488fde4925064eda5d4d7cd94768",
+  },
+  "mistralai/codestral-2508": {
+    "catalogue": "09b535399bbba58d8c7f1a82c493b072489d7d83f8220d2ea40c007ed6ffa5b4",
+    "drawer": "6c19e7e2c8d1fb429d0c6c48425ae624d8a0544774a406bb90797be9d5b5a94e",
+  },
+  "mistralai/codestral-2508:batch": {
+    "catalogue": "6723e7d82d4a15fc461f196390e44c888d86474f9f7fa2903050937628c7839c",
+    "drawer": "089b729e9f5cd2e6b71799a02829a1fd0aa6ffc8111985c32950c8967c0d9e8b",
+  },
+  "mistralai/devstral-2512": {
+    "catalogue": "3a78627d56d2b207caece37eb0169bad670361f130364374f93726fc6534a433",
+    "drawer": "a671740602461514c0ea773ee18e3eac7f22624c380ff5d1a798d3f6cb5325df",
+  },
+  "mistralai/ministral-14b-2512": {
+    "catalogue": "35c9bbf8f0abfb64900a533ea90578937062d6dc764f747062a47b67ca386c93",
+    "drawer": "9bab12bf61a9108250f27f0f0cf48c45e093d32698da137489b49c3903f142f4",
+  },
+  "mistralai/ministral-3b-2512": {
+    "catalogue": "2096d490b56008471c42d9b502ab06f610f81ee2ddfb699e06d3d3d0da21c894",
+    "drawer": "60e173de7686b77380ef39b06a8bd0990d21cad9b2ab67edaa90c07ee14523f3",
+  },
+  "mistralai/ministral-8b-2512": {
+    "catalogue": "b35ad258f5f37115c688913aeb058ca8a5664f508695da9d2c72c643d2efcf2b",
+    "drawer": "1831716e3861ae6daf201baefe81827f412f5b736cee241e2200a52b3e5cae83",
+  },
+  "mistralai/ministral-8b-2512:batch": {
+    "catalogue": "dbb7d99d0846426016490a48dc0d44792ac3012844dc73ef99e777c40a7657d9",
+    "drawer": "a14c4825d69ac958993b9787443fc4351e32ee554c8d850946fb243cca963e15",
+  },
+  "mistralai/mistral-large": {
+    "catalogue": "db174d235055b2570d62280d9813268fa00736a2ac6a5a1a9cfbf7f39988b458",
+    "drawer": "99c8694418a4dec8960d0e5f856299568d0d01fe56c93e0080b963dfec6d6acd",
+  },
+  "mistralai/mistral-large-2407": {
+    "catalogue": "fe632b5e020f565bfd46c891bf3b8c0958257160eff8f3f695d3587fe38563da",
+    "drawer": "fb55444855a3c739ffe9d2e7c383d1ae19092fd5ddddd27795cf83446f2db644",
+  },
+  "mistralai/mistral-large-2512": {
+    "catalogue": "2c63f66bb403409dfa15385c5c1444a538fa71bd11a5a85833cd77ae3a3d74a3",
+    "drawer": "7f902a0a3894313f72a3092a902b96c47008a770e03457088826a14bb47e0cc0",
+  },
+  "mistralai/mistral-large-2512:batch": {
+    "catalogue": "341491fb6932bc927dcfa456ad95a3e812980bab24d28a31937924225589f178",
+    "drawer": "24e3d9b692d5c728a8d2c600e67f744fbea06ee96ac6476df9a49c7cd80313f7",
+  },
+  "mistralai/mistral-large-4-0": {
+    "catalogue": "3e185877cc635fa9a1eccdb28457ed2becc1462ba767b66ac09f726660864376",
+    "drawer": "00d692387bcfb089b7c3da61ea052201d15609698b4aae8c679ea6dc6e89e861",
+  },
+  "mistralai/mistral-medium-3": {
+    "catalogue": "8912f067ef35fbbeb7ae400956983bd72dfd9c089e775abfb8ae2a3f74fc4105",
+    "drawer": "f7345f2e7a6e435f5191c5acdb04905fef33426ca7410ce4d945bfa43c1e534b",
+  },
+  "mistralai/mistral-medium-3-5": {
+    "catalogue": "d9dd9247d2171ac908a5ad1f987158af575f070cd5a2f95958c7cc3246c61a80",
+    "drawer": "d1e5857a5282deb6b5ad3cae46abb381fc01773b19f160c03b5609b23a59beaf",
+  },
+  "mistralai/mistral-medium-3-5:batch": {
+    "catalogue": "41ce4b5bd84793503321ba2e210c5029ba815051f38a2f6b633320b07ddb9fa0",
+    "drawer": "6a42379a7512e256e46f41f85ba1825c107b7831d3038b0814cdd89ac49afe88",
+  },
+  "mistralai/mistral-medium-3.1": {
+    "catalogue": "2376b1989eca7bc85d27882eefc7119563c8b51dad5b4f548464b0a4b41ea59f",
+    "drawer": "050ebeaf21d719771990f52ef4ceba6f94d7bfaa849b152cebcc8071bad0e1e7",
+  },
+  "mistralai/mistral-medium-3.1:batch": {
+    "catalogue": "54e8a8e31c38ddc72ad393421f5e4833c500a7311a49b9a3188a946c25e25d18",
+    "drawer": "9babbdaa877f23ecd2d15dd3270d725c8292fd6ce1d17318bb84859c81333295",
+  },
+  "mistralai/mistral-nemo": {
+    "catalogue": "4f67d80b6e33f75be5720dd4b808c67361961846d9965322ded700da752ef36c",
+    "drawer": "a2bd572338089f91e976102eb1c443db2a629bcdcf5fae45895ce800bb1c9006",
+  },
+  "mistralai/mistral-saba": {
+    "catalogue": "0f52fc44ecf4a2d2cd600976a846109ce281a9721b4990369323280e68375d5c",
+    "drawer": "64e19677110747dd17d44564e28a249241095b0636c83dcd90cac9c5abeff2c3",
+  },
+  "mistralai/mistral-small-24b-instruct-2501": {
+    "catalogue": "b01241bc60ed923b7993d3b6e6d5af19a428941b289d5a0b441cfc67c4f481f2",
+    "drawer": "8a913c3917371eafd634a9148f58c9f93cb6c61247da82ba2f11126f93a7cd87",
+  },
+  "mistralai/mistral-small-2603": {
+    "catalogue": "fc550408079351e403c9a554411508546a5080a5a539f64955f21b80ba69fce2",
+    "drawer": "ec5f8a8510eb7f6e659c0c99b831822b3d25752b956f25d7a904d50af8a25a6c",
+  },
+  "mistralai/mistral-small-2603:batch": {
+    "catalogue": "7c856a078171da114e7e0436131db97734237924eae3dffecf3d6ec261c2ea08",
+    "drawer": "05ec7dd4c6741ffc5125482e4d55c45475711040ef049db174bc332a6729970b",
+  },
+  "mistralai/mistral-small-3.1-24b-instruct": {
+    "catalogue": "f5db79506a9bc72197a6239ee1580c7334facc234a3fca2760b91ff95007d547",
+    "drawer": "ecffee1578a6374a3032e2c63553d78eb919955de435b157f8a933e9c9c68496",
+  },
+  "mistralai/mistral-small-3.2-24b-instruct": {
+    "catalogue": "40cca82b4dbdfd4722c585fc2c6a29c3de861bb9279d35e10d606797e87cb3b6",
+    "drawer": "5762d0192c742b5a81b9eef257f3c4cb2f6de59ffeb7894c5834ff01548c2c41",
+  },
+  "mistralai/mixtral-8x22b-instruct": {
+    "catalogue": "50d96866148f3ff06615ddc6d595f6c16af68764d74e506a00abfa8831225ef9",
+    "drawer": "e10b849e43148d8034c4b4eab1cc222d1f1f83e3753379e9869f8537e47dc5f3",
+  },
+  "mistralai/voxtral-small-24b-2507": {
+    "catalogue": "8c609b6f6505da8d69ec74ff321e4bc988cf7b9a4469f9a2aa9abd66411d6312",
+    "drawer": "777e3497387efff006d5d3d9ad1e735a4038d7a7d5b41cc44a19b1ed4a95274a",
+  },
+  "moonshotai/kimi-k2": {
+    "catalogue": "00574ddb00c4070fa29ecb4e10cae966c86ff1c9d683ef19a8742637f444ac83",
+    "drawer": "c76144493b5b4db15a99aa3128b03cd216657338501ce6173f702c798a23a656",
+  },
+  "moonshotai/kimi-k2-0905": {
+    "catalogue": "0cc8e882c6b1a0b4c393faa4c331d4ad38c17f171e496030c1f5d1587b42d8b1",
+    "drawer": "0937af17e30cffd97397fe2e76b58f376ffc53dee1e4449f36b012cd0db8a20b",
+  },
+  "moonshotai/kimi-k2-thinking": {
+    "catalogue": "b8a0d6ab6d37d2e6ef0a86dc04d0ba851b040989a7a42a5d04894c10ed7bb92a",
+    "drawer": "87c659d96e9ab20b14333ee54fca29a8bb39015955da45cfc9dd5eb803506996",
+  },
+  "moonshotai/kimi-k2.5": {
+    "catalogue": "d80fb8c9f01fc5dc34dccc6598db21461e2cadc691dcaa687ec3dbc61e8c381c",
+    "drawer": "8349e2aa1d8c9e23d4429b5d0ab1d208335f3808a1a65223284da04446b100b7",
+  },
+  "moonshotai/kimi-k2.6": {
+    "catalogue": "7b4ec15211e224de2a27256e169d3136ffce13214ea4cebfd3e84087f969178b",
+    "drawer": "506678442dd6fd48a7e3d94f9e1739ad9c5be7e0596291f384692a138122f554",
+  },
+  "moonshotai/kimi-k2.7-code": {
+    "catalogue": "dd914764770095812dd623ccc35914e1ed07d35bb0e53d02c868bdaa0e0cb32c",
+    "drawer": "17bfa8499b0bcff7cb875077d5dec964aa6ba9369c50d8d1bf34ab95bbd57778",
+  },
+  "moonshotai/kimi-k3": {
+    "catalogue": "43fdefd97db459ca09460e939d6bb6338eff891b65eefbf317ab029662386eaf",
+    "drawer": "54aab4e36cddd12574242e6028848eebb96e62c4a530aac38efa7207a8399b7a",
+  },
+  "moonshotai/kimi-k3:batch": {
+    "catalogue": "2a38a685da6a13acccf1aee5faad75bda86d623dafc443f716b00747f083596c",
+    "drawer": "62d106874dcdb5b0a779b22d085c8f3635bc2e0a206df0234216d5e3a68bf771",
+  },
+  "morph/morph-v3-fast": {
+    "catalogue": "126754f01c5a767719e4ca6438729feca994462ffc73e942be79044c029c89ea",
+    "drawer": "cf1568748dc25060210b13d39b93476aa78eb187a3c16721c5074662083fba0c",
+  },
+  "morph/morph-v3-large": {
+    "catalogue": "8912d091949f999a151b2d63a5b951f7a3698c059b504c3d9ef3ea526eaea26a",
+    "drawer": "5803089918b35e4be2f83868e0f49915194abce27279ad0d75c46c218e69b80e",
+  },
+  "nex-agi/nex-n2.5-mini": {
+    "catalogue": "cb7518a728c3dd0ef34dac86a2d34793e0578782b0be25c7ec9fae80e2cf58ae",
+    "drawer": "75605b69041e06c5b9620c43d442094043fc41edf5587a3ef05347eee738c416",
+  },
+  "nex-agi/nex-n2.5-pro": {
+    "catalogue": "6aad9183b717574e448efd91d7cdc77835649930bfad66d9de0f73dce9bbbfd4",
+    "drawer": "9145c0093a1c794e3bb2ac090c357b18ae7efed148414a8cc6a51097647d12ec",
+  },
+  "nousresearch/hermes-3-llama-3.1-405b": {
+    "catalogue": "79af056c0458824decf08bb779b4dd236138f47c4f6dc03486b7fe7ae037150d",
+    "drawer": "ddf0262b1622d27219fc656ad7c86c0da02230fc41ab0fa9f9bc00d6e5a43cd5",
+  },
+  "nousresearch/hermes-3-llama-3.1-70b": {
+    "catalogue": "457e2783cc48439912a28c18985617f0cc152d8147379345db59dfd6dd1e9ba9",
+    "drawer": "a20c5e93c3ac3eaae2262c7c80786983ae24829e32d5d5150c49992dfd947b35",
+  },
+  "nousresearch/hermes-4-405b": {
+    "catalogue": "f4a461cf1a90dd3844463ffb199596f9c1988740946acacadfc45fdae2d3f046",
+    "drawer": "8da7e9d7a92a81e91e30853abe937b09619970fc492c1adbe69124aa906c9311",
+  },
+  "nvidia/nemotron-3-nano-30b-a3b": {
+    "catalogue": "ed47f307532da7f0db52a10e844f425f0e6824ce676b5bfcd28b7a11b727c04c",
+    "drawer": "18425db56c19953844083eb000b0cf177cd86163879501dc0472651163d913aa",
+  },
+  "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": {
+    "catalogue": "af33f4a9b4b1850d8fb5f5c13696e1bac0c0f47e7b0a816ec8ec2d63cf8caba5",
+    "drawer": "15fd8849f33710da678474c372a8b0037150a5774e26cf89ace6115c161938af",
+  },
+  "nvidia/nemotron-3-super-120b-a12b": {
+    "catalogue": "ef2d27bffa29d686fda596b18c313d4dac9519729afbb58e7ee699a2b3c61d8f",
+    "drawer": "e2076c20f34fa6c23d67acb6a742a34c2ba7f381ba21700fd1b1efe528ed612a",
+  },
+  "nvidia/nemotron-3-super-120b-a12b:free": {
+    "catalogue": "3582f44bd023bacd483c961004a4f9f65373703b6fe3bdefc043d26e11680d2a",
+    "drawer": "e38a5198c9079e09f2fc804974982ae6a9a28b30a4d0e0dbe87c7106a0f017a3",
+  },
+  "nvidia/nemotron-3-ultra-550b-a55b": {
+    "catalogue": "56ff02b10831351246341b3b0a4f3f2bdb431b49a743d62889c223c0230288d9",
+    "drawer": "f615ae6cb032cb2b58c7831b8f6d408750c4558f1e245c02e60fc4f17b046b96",
+  },
+  "nvidia/nemotron-3-ultra-550b-a55b:free": {
+    "catalogue": "7f3952e6238df0a711ad5657661b16a74c3496a1c243493fa8d4756d836e876b",
+    "drawer": "81187dda0220cdc6f4112583e494bc5d46c3e42a8bd7de23975bc3f2af407c7a",
+  },
+  "nvidia/nemotron-3.5-content-safety": {
+    "catalogue": "0e12d31a8368013387ae85df036977fed1d2eac4706c1a3989896754521b7bb8",
+    "drawer": "b275dc8e0a630e19e2338d02b55afa009ad50bf4e374b9ceba530389e2b94925",
+  },
+  "nvidia/nemotron-3.5-content-safety:free": {
+    "catalogue": "dea11b5c2d664ac95c5fdbbf3bd819ea20c2a38a973ca4d87d3c2758471994ab",
+    "drawer": "f8b0af4c8d53bbff7430ffb039dfbbc5fc682b13a1b399882e0e3a04337937fe",
+  },
+  "nvidia/nemotron-3.5-lightning": {
+    "catalogue": "3c7bbe32f088d7339f5c19e24fbadff5f212666cb61cab94802b958e5d0b6511",
+    "drawer": "44780bed83a4b2db8e61fa7da93f86ab9780296e0f788ef4ba7186b3abaac040",
+  },
+  "nvidia/nemotron-3.5-lightning:free": {
+    "catalogue": "4ad9e5ec4d5f1e348155dceba4bf3bd0ad8db4aac15d37dd7c4ce19adc259807",
+    "drawer": "ca64e0cb1a3222bacf942bccee9c238beaea889123852023e8126b5b42ad694f",
+  },
+  "nvidia/nemotron-3.5-super-vl": {
+    "catalogue": "b38f20de9e9fd9f3d3bea843dcb52c2cdedc825aa4f7c23f67d461f1b2363575",
+    "drawer": "6678567bf4624f626f972262470bb1ce60a51494524b0a956209c0092ef750f3",
+  },
+  "nvidia/nemotron-3.5-super-vl:free": {
+    "catalogue": "a33db6a7978bf49dc4f4e14689454b2aafa977ecd0126ad51b5fdc88df1c0e60",
+    "drawer": "4d844b0fd5a750fdd319723b87128310a8d65d1fc2806e0070558a5d820d031d",
+  },
+  "nvidia/switchyard": {
+    "catalogue": "ea28e05b32da8416948883e8386900baa5a11054663c3673826245b19ef7d39b",
+    "drawer": "b4e64e5dffe5820f88ad878c6d7160ae2b53281fdd430bf38caa0f97d699fea2",
+  },
+  "openai/gpt-3.5-turbo": {
+    "catalogue": "94c78b59b2eb8b52a2f0283716bbeb15c1880fe1cd45dc904974ff43f401c700",
+    "drawer": "989ea09f618f51a67114916f942d7103fdc56497ca1eef16e2a5aea526d7ea7f",
+  },
+  "openai/gpt-3.5-turbo-0613": {
+    "catalogue": "57236a9281aecfe92a9f1ab57053ee61e9975ff77dded98a8e9d7c80a5c99315",
+    "drawer": "ac77aa913bdda99235b5b772fa8bc11a18607abae0393238c07b34952ce3b8e9",
+  },
+  "openai/gpt-3.5-turbo-16k": {
+    "catalogue": "0a4ebd9145fa1f58c7d2f8b03377f2d5a12fac9a08d4cecf1690526b0129160b",
+    "drawer": "d500efa73932adf27f5f190254a7ce4ed030d2aea65fb2d7d559007bc03e0046",
+  },
+  "openai/gpt-3.5-turbo-instruct": {
+    "catalogue": "3d44fb47b297902527a4dd26b34f294ec2b76f4f8e309dd5565408e97c0a8c90",
+    "drawer": "9937739a6ed31df2868f8e35f737f2c38f078925c45d8fdb8aa036a8ea35e6f0",
+  },
+  "openai/gpt-3.5-turbo:batch": {
+    "catalogue": "411b722da101f36f5888aed1ef5d0512c0ac687bf918a9936bcd938b7a4871e9",
+    "drawer": "8aeb32df863437e81e53a6388bb4fe96c0eaa95f5cc8f091175088004615e3df",
+  },
+  "openai/gpt-4": {
+    "catalogue": "c7bf6e7b559d6f50f09e804598dd560e457b987bc5c59fbd9dbb32f43bb52fd1",
+    "drawer": "d028fe8cdcb4fa4d629f63181fc216fe588d67b2ecb5745ba5061de67a14e596",
+  },
+  "openai/gpt-4-turbo": {
+    "catalogue": "9ecff4967d134ab5ec52b3f3d2dee0c2c7256f074a16772e1d7bac0f38611d50",
+    "drawer": "77e7fcfb7bf646740d8da52203b021118e7f362ba295912b7b9fb3c5eb3dfb3b",
+  },
+  "openai/gpt-4-turbo:batch": {
+    "catalogue": "50e33d6bd6edee9e8857ca64ae75b98b04d68daa4c7c2ac067def416b62e7567",
+    "drawer": "4bb1bd46293b3a5b82165752a523dcf8b65cd6ba9086259339499f0a0625a88c",
+  },
+  "openai/gpt-4.1": {
+    "catalogue": "a379f42876c4e4fba4c3d8b33624e0a164db9b57467de7c9b0cab9650f312fd4",
+    "drawer": "c73f0b70d2acc04b8d976aacedd9f9cc323d0ae2ed2e24235891e82605548805",
+  },
+  "openai/gpt-4.1-mini": {
+    "catalogue": "d46472f523ceb91253d577057e532fa34807142486c4817e2268c81d4637e695",
+    "drawer": "6814fd372ec5dcb4205da9fdefd1c325d3b9065ce9981744f761704a96ea004d",
+  },
+  "openai/gpt-4.1-mini:batch": {
+    "catalogue": "9c9d21f691952b5bd0a97687db4370d6e2e842bc404f9eb6693173663b53eab5",
+    "drawer": "d60e89d391bf37943a8c1cdb807f4b6f37aba011477444278cac1223e4347cdc",
+  },
+  "openai/gpt-4.1-nano": {
+    "catalogue": "a59832b1ef9a89cddb5139698dda862b7a1ec792d4cc77298ac5997daeab88a7",
+    "drawer": "46de48504e6b2867d658a7faeb45ca45f9cc6c097b00bd70eb7a87d882cbd74a",
+  },
+  "openai/gpt-4.1-nano:batch": {
+    "catalogue": "3fcd6861a75e0a1117d8b44e6ed43768385814ebf60b7502f021e04119b2e7ff",
+    "drawer": "9ed32b207a30565618a523a10906e81d2fb16be3853c24b89e2ef34ccdd8397a",
+  },
+  "openai/gpt-4.1:batch": {
+    "catalogue": "18f81ff1f61e8d98ebd195eddd2aaf260a5905f0ca11a226604da276d091bd93",
+    "drawer": "425e20e18c3c2438603c19fec97e70325bf3e2a6f502d21bf94a1f2e032ac6f5",
+  },
+  "openai/gpt-4o": {
+    "catalogue": "e97c8db0a7e5d9b1b00724a093299f131f099504281fdbce99d9ea33e8d23152",
+    "drawer": "2177cd5c9324ab1b0760924122e2f02419059c6d88d35564b55c8e12aaac5258",
+  },
+  "openai/gpt-4o-2024-05-13": {
+    "catalogue": "c3110b9e2699f26e69d84c70003e5567938ecec26424aa8d512f1be5e3b97754",
+    "drawer": "0a54d970f9263b317dfc15fbf949d2e7b83ddd0938bac4801dd7b3892817fcfe",
+  },
+  "openai/gpt-4o-2024-08-06": {
+    "catalogue": "36a125fdaec139976fc38218c08a63c12a8e1153de88875e65e8ece283eddf28",
+    "drawer": "47a3992f1ed4f18e93991f5d090037c819b36b718f52117049390299f105ac6c",
+  },
+  "openai/gpt-4o-2024-11-20": {
+    "catalogue": "3fe2e66982d78bea970446cdb7f219d4757e7c6f67edd713d8d21e40b2865936",
+    "drawer": "88efb57b59976f1c149eae94b805d8c8558fd95f1a56290272a212b4a4df080a",
+  },
+  "openai/gpt-4o-mini": {
+    "catalogue": "91f987056a74416bb5bdaba9300e2140e25f7eb2e0fb363a9c2bb2030232dbf7",
+    "drawer": "382d59b102dfd386fef144a02d1e51885f7ba185bc4c3e17f9b21f9404a59cd4",
+  },
+  "openai/gpt-4o-mini-2024-07-18": {
+    "catalogue": "296c83d07cd73cc42bc631b6426bb1a550d672ab5f230259038475399b098b3d",
+    "drawer": "ab0b82b2b0d0c2bc26b3144c5d36fa7eadf5ac728173463788f50ce75a7d6007",
+  },
+  "openai/gpt-4o-mini:batch": {
+    "catalogue": "44a7124a2e7b0de210aa4238c188f82de825294d8407335f77168fe48b470137",
+    "drawer": "d30a2c1a566d3428fcc61f32c4938ce51b299a84ea9aa5ba177273c497cc7316",
+  },
+  "openai/gpt-4o:batch": {
+    "catalogue": "bfc6bca7f9b97c116d422f193e236f1c631f13a7520cf99d06fb661a28ab7ca8",
+    "drawer": "4535fcc924fbb4a9bc05d7fc09bae09723eba6e8e58188f83511b279282c0353",
+  },
+  "openai/gpt-5": {
+    "catalogue": "48f7f3e825aee45e64b5a167d2bedced8047289e8d61820e1ca5693bf07b0c1a",
+    "drawer": "9fb563f5fb7be89a2f64c712106cf23105ae606cf5f424e79b85d0da518c3081",
+  },
+  "openai/gpt-5-image": {
+    "catalogue": "d72f00e7ca962584fa02649d3e52f4de617ebccd8083a11efcb8668ab3d92dd5",
+    "drawer": "1f65647dde93ce7b3d00a65137752f13783e9d8c73185ac0a5b07919096b2fb9",
+  },
+  "openai/gpt-5-image-mini": {
+    "catalogue": "cc8184b03d96a1d37d9ab613c5115fd1f3815240323c9e33be5894b6e7ae69ed",
+    "drawer": "8f7488902ceb977c3d5431bd3fc6d06bcd0de3f63607acdf1796768a3c03aa01",
+  },
+  "openai/gpt-5-mini": {
+    "catalogue": "eff478c79f36994574acfbb6b17da4f71ffff5309820f4fb8e79285bb6ee19ac",
+    "drawer": "939ccb12babd35393d22c6ee84d3db8bb1cd778d573faa0e53f9982aa34c31c3",
+  },
+  "openai/gpt-5-mini:batch": {
+    "catalogue": "52c796673d2d65e7307d59ccde18fcbbc4294ba96167c416c54d775e073c23f7",
+    "drawer": "bae53c7eb22a18b38ce1f8151cf70ce0594a3aed937223c061fcbcef2a56a84b",
+  },
+  "openai/gpt-5-nano": {
+    "catalogue": "c9ae707d9067b5cd8ecc6d22f1c9f70cadb200a653f1109d15fb79d94b7e037d",
+    "drawer": "a49c027c58233889f8d3db66d51b8afdb25a063e77ec7197093dbf057227038f",
+  },
+  "openai/gpt-5-nano:batch": {
+    "catalogue": "5db469078657aa04e2e9eeee565c4e4a24c33a887e2fc03985c2473266a8693b",
+    "drawer": "037412d9ba55d2f304777cd319892ee2509a0e9880c610e69864f5b5341a58d2",
+  },
+  "openai/gpt-5-pro": {
+    "catalogue": "5fe578bb3a044d44b9d0f40c108d5280b3e482565e49b2c36b0758c8b54801da",
+    "drawer": "7dae2c84be92b795ea54e698d14eb4f0a674ec3bb1293b0a3dfa47bbf5678209",
+  },
+  "openai/gpt-5-pro:batch": {
+    "catalogue": "447497adcac63e1c4065a8ecae4b40a2c122b10055ae9951e0c707c7e81ec55f",
+    "drawer": "7d5cd87925e332d744f6aaac83597ea886ae2c0353478ec31da409a341cde3ab",
+  },
+  "openai/gpt-5.1": {
+    "catalogue": "17c971c09f5c97e0e0d641945438564142e934e6ed485783bfcf07920bbed32f",
+    "drawer": "87558171648d3e2275d0818464f20450bc58af30051f195dd6d1fbacc4c1bc57",
+  },
+  "openai/gpt-5.1-codex": {
+    "catalogue": "0b62a3a23b65de094dead2ec0d915fb029dfbf45bc35d4bacedd4243fffe47f6",
+    "drawer": "17d662ad94f7833ea83f2850f5af063d5820460d99d28251fafb0ef4f3f5af5d",
+  },
+  "openai/gpt-5.1-codex-max": {
+    "catalogue": "774df8d5adb513e38626f2cd4dd2bc8f9b90920bd89eb27eb9098ed518876c89",
+    "drawer": "df887b48d5fb52ca33966f9be107e3a52d41c56f49846572ef881c8ea7cf0642",
+  },
+  "openai/gpt-5.1-codex-mini": {
+    "catalogue": "9eafae3942539b92c88294302da728d3788ee78908eafc2e0b525667f231783a",
+    "drawer": "4cbb02261d57d184fde842a693ec616c26c36f56bd3e07b5ad129fecb21242ab",
+  },
+  "openai/gpt-5.1:batch": {
+    "catalogue": "7a5bcfb62f7082c10fef78acc1e79ce4acaef8a3bf12f41e41b46c68f2bc71fe",
+    "drawer": "2fc2f5f894e9b69f78aaa9b7dd6babdfcb558411a153e484d97c512ac3ce575a",
+  },
+  "openai/gpt-5.2": {
+    "catalogue": "939a369b44d986fbd7cad68d98b5c1b9ccb6a9a60ec22a200d99361d7d8d89fd",
+    "drawer": "8e4480ef6d4e57fc648bac842ce7f00aabe83dfe4eb5bfd84e73fd1217b293fe",
+  },
+  "openai/gpt-5.2-chat": {
+    "catalogue": "32f9fcedd3c8d47b5bf48171675572c5455598ca5d4787558f161bdec472f17f",
+    "drawer": "1f78417278bfab26080709db61874193cb7fc0ae345680e4263b2bf7edde8345",
+  },
+  "openai/gpt-5.2-codex": {
+    "catalogue": "d062cdc336223d74721b60064cab343818cab3baaad2d405bdff57508c013570",
+    "drawer": "38573edf793ea2ded67660985a8f87f76feac8689e563076a8ef2f5adb12c57b",
+  },
+  "openai/gpt-5.2-pro": {
+    "catalogue": "3e6d5eae9948d19041854f13c087c3e26f861e83b01f0f6948b8014a3d2417d5",
+    "drawer": "0e6077114209889b015d550b6509000334b190eefdbe25e4f485c5df68243949",
+  },
+  "openai/gpt-5.2-pro:batch": {
+    "catalogue": "bec93c7100c6062fe67578eb8b5260b7d6f4846079b8f4496b94bb366a127d54",
+    "drawer": "c246e2e12a90f57b77500f0538af87e81f3f6ab4ca9d9119ca651c73965f82eb",
+  },
+  "openai/gpt-5.2:batch": {
+    "catalogue": "146f11e8da2622738714e036393614371f627364d6a2a1c9e9212ee36d4a2ac4",
+    "drawer": "06240a2ad73110489af8ad69496fb97e6ff4e0520dfe8f41cbf502c7cb6939c6",
+  },
+  "openai/gpt-5.3-codex": {
+    "catalogue": "6147b1bf76097d27945549822b461db784b3b845f5ab79f477c989ee9c0952a2",
+    "drawer": "c983e8018e2c86c8950b18208b9f791defbca8d7239c5f6e642891133ce34541",
+  },
+  "openai/gpt-5.4": {
+    "catalogue": "145136e1735cbfc322ee778231aa2188ddcabbe4f4548df8581556bfec17513a",
+    "drawer": "191790f97b1d0b4d6e41dccd2d3f3dd001430900b9c3c34baa2eafbe1302c53e",
+  },
+  "openai/gpt-5.4-image-2": {
+    "catalogue": "7654f118eabad04f78f1df07bbfda62d4c927b42f175a61a41bb8503e6228c13",
+    "drawer": "4f5d480e5714a140371d873bfb0dd3f7aa3129976764eb8109a72a7429a0700e",
+  },
+  "openai/gpt-5.4-mini": {
+    "catalogue": "d5f5b5f9fefabbef7cbb8436d8799444367910730acd981933e5b5cde58d7cf6",
+    "drawer": "3f4c5e7e3b43e231fd578293ac99a71039f0bb4601b7acc83267de64c366814e",
+  },
+  "openai/gpt-5.4-mini:batch": {
+    "catalogue": "0396acf737cde92fd0be337c34ccd1a569ec162fc9e04248c93fb8f7a1617809",
+    "drawer": "53ca51dbf575751d7e7234230922de79a05b42aedd4d5e370534f4d774b6e390",
+  },
+  "openai/gpt-5.4-nano": {
+    "catalogue": "6452ca6ce50e75c755ef620b92f2f11c4b982f6df1ae826ce4686b22f97edc60",
+    "drawer": "9866ad1d03699522cda1eb5ed8125f834f9f2d0eec37dcb8387f7b7ba8820978",
+  },
+  "openai/gpt-5.4-nano:batch": {
+    "catalogue": "12073dcf8e8b26030ccfe1ad07b0863955662ddfdd0b5402368aacd270584e50",
+    "drawer": "a569e01a95da2c964628e484328817cdea3d15ed0eeadf640e46a1b73c17a220",
+  },
+  "openai/gpt-5.4-pro": {
+    "catalogue": "9255eb116d8eea6c933d32173854d40b179521e18202bcb8e458629f65c46ac7",
+    "drawer": "4d80cd8683c4e525b88967f54d734df63b0dee53a5eee58716731706e263a3ae",
+  },
+  "openai/gpt-5.4-pro:batch": {
+    "catalogue": "cfd6ca67078f1cb3b3edac8f12851ae9cb7169e92f536e69f9237829060d5a29",
+    "drawer": "a141914787e94703ad34ce2a5b53250aede107b86107a2b0ea3a1b37824106cd",
+  },
+  "openai/gpt-5.4:batch": {
+    "catalogue": "ac1d641717941d97a42c24b1b322fdab9ed79ced3b9876695c1046b2f0b8f4be",
+    "drawer": "8c7024c02fc57cc524c89f845ac6fed72adbbe64b611c0edebfbe87c127ecae0",
+  },
+  "openai/gpt-5.5": {
+    "catalogue": "e8d39d456c49b9eebf47a858bd506a8a9017d6588f825d0cbee2b3f2e43117e3",
+    "drawer": "3cfb988703c489e0d53f8c1a6e8393779fa18213dd002bb303b69043be79e251",
+  },
+  "openai/gpt-5.5-pro": {
+    "catalogue": "83f26e5607877eed85c6214a28ce536c9923eca4221ab049dedd269c7ee11a94",
+    "drawer": "1a644ed83446ba4a4aa6ec2d99895b3051664d80644b67c909bcc8cfc713ba44",
+  },
+  "openai/gpt-5.5-pro:batch": {
+    "catalogue": "3fca5b6672539cd8e6be9644765cebe1b2357b197efffe2b7e5d98441b0e7bc7",
+    "drawer": "fc077d9baa67259ddd2b106c82a3d026d5dbf74c2438fdf2ec3d52879cebb019",
+  },
+  "openai/gpt-5.5:batch": {
+    "catalogue": "73a228c66e2b6a6dc750aa2af8b50bf7fa5d8bccaf57f218f80e568f0e04d6a7",
+    "drawer": "ac53c6a05028252fbe96ae492e6e571c6b1a25c24cfbd9934f1dbe13ee33c863",
+  },
+  "openai/gpt-5.6-luna": {
+    "catalogue": "7202a2646b9934b5c31dcac5631c7cd2b48a2d307a3fe728696edeffb68019a5",
+    "drawer": "2fdb49654c89b5cbe17d3163664a6282571bcffd0324d0ea31f08042fd0aaa65",
+  },
+  "openai/gpt-5.6-luna-pro": {
+    "catalogue": "b436ee2863c48e0da4c13e73034a55a0a52b07b0d62185e6a6be0912f7708ebd",
+    "drawer": "868c458816f9af2f30b9aaf7f3cb466363ee0da7a872466406af4eeaf1beca10",
+  },
+  "openai/gpt-5.6-luna-pro:batch": {
+    "catalogue": "08b99c3b58c02263169d7a7e68f0dce8b5a188d109a19612d660d984b30e121e",
+    "drawer": "3416b7905f1fb1bd48667da1b9c14f5bdb8c726ab4e54f879dfcdca262b530b1",
+  },
+  "openai/gpt-5.6-luna:batch": {
+    "catalogue": "2446965bba3d1aa7b54709e5a3494bbb19727a5433e8496aa1e1b370651d21c2",
+    "drawer": "8b835a1505ea3acc5ae5b690b62bb39671e6894a78417643decd0c4cd2f31053",
+  },
+  "openai/gpt-5.6-sol": {
+    "catalogue": "ea1562754449d2112b3971ed645e8763eebf195a19f513d2a2817d75d298e430",
+    "drawer": "085f20d098ddf4de542e3fc86e4532442a28088b4ac9e681a2b033f99ff50f77",
+  },
+  "openai/gpt-5.6-sol-pro": {
+    "catalogue": "ffe6fcd23fd6b5f8b443b964ec41c7a569e94c971dd29b75a472742cd7f11bb5",
+    "drawer": "570aba24a2fd07f9d67e7314225cfc7e446fdf295f9196bf295ea5f6db372958",
+  },
+  "openai/gpt-5.6-sol-pro:batch": {
+    "catalogue": "9dc1317288dbf959c4ae9aea762c148176ddd62369794e82dfdaaf146a616124",
+    "drawer": "5ca9890bb1485d10081c482814746df7b2b8e237787655ef631bb2b43b08e81d",
+  },
+  "openai/gpt-5.6-sol:batch": {
+    "catalogue": "c05a5e453c538b83c05773a1d18e78d2ba69ad88f9fd375ab62cc11931a135c0",
+    "drawer": "46e1b7358a2d58935c6519f980ba5c09dc71730c851a5694bb73d1c16311a58f",
+  },
+  "openai/gpt-5.6-terra": {
+    "catalogue": "ed79b46b23d24bafb7c66edbd2a5beaca557568baae9ca64a5c90ab3105c8de4",
+    "drawer": "83cb4106e5b7058e4123556059fa4b275677dd1174d8649a60fc633541b37710",
+  },
+  "openai/gpt-5.6-terra-pro": {
+    "catalogue": "4cbd50f29b6df32baa94af77dc172e68111983dbdfa59d5eea6890fba89b588d",
+    "drawer": "696742e8d1c61485f01783787b90171ab4b09f1c7163c3aa094c7b63431fff01",
+  },
+  "openai/gpt-5.6-terra-pro:batch": {
+    "catalogue": "59ea1a74e22748724cc1a005b76652b8e7a8696c09dbf496af55594d6df9a72d",
+    "drawer": "5d132c8abad973eef1df4df22c08bec2922c14c62b5d95fb5798ac3a56fcfa64",
+  },
+  "openai/gpt-5.6-terra:batch": {
+    "catalogue": "ec2a635c8e293ec456c977e7f9f907dba0af078b769a9750bf9fd8089b788382",
+    "drawer": "f0cb36c2e90b6891586ee9cfaff96bd27d0dc338e27cc316984bcc0b514f5302",
+  },
+  "openai/gpt-5:batch": {
+    "catalogue": "6e72587d1aef5309502ec5e9380e7c4d5d3743a03888e5704cfa4b4030b54950",
+    "drawer": "d39dbab33bfaba9cb706ff877fdd2481708d20955be7de2893b81547dbab8da1",
+  },
+  "openai/gpt-6-astra": {
+    "catalogue": "0425596ffc329e4cb0c36cc4280a4fe3f5d204a54cb769a3259b497e1a30b474",
+    "drawer": "ebe4a387abd6edbe59e1d0fa613bdd888c640d3ed5234eab4ad22578fad76593",
+  },
+  "openai/gpt-6-astra-pro": {
+    "catalogue": "3fe569610ea31bca90923378295ce24672d344a94ae27835a86dcebf0fb01366",
+    "drawer": "0bdd750f2d90ff0f8835bee3da6deb842be4df066bfd7ea7aedf7ec08debc80d",
+  },
+  "openai/gpt-6-astra-pro:batch": {
+    "catalogue": "c038ef906128eeb58163272c15672f955b2a1ab3f942a4c68d5d9a98c21471f3",
+    "drawer": "957eb5a3ce51a3b5ffe100a351139fedf60285a1223ed43b7da800b0577d820f",
+  },
+  "openai/gpt-6-astra:batch": {
+    "catalogue": "5197df7bd29e0d336aa12689d9c9b312df7091d71eb69cbe4f15a5634587a6ac",
+    "drawer": "3d90149c36aecd4bb516a0a8b47df4ced72964257b21367fc20d9a81d7096bb3",
+  },
+  "openai/gpt-6-luna": {
+    "catalogue": "049716648ea19087ca882eb11a90f283b884757b3806f581b72fab704263c1a9",
+    "drawer": "ad7b9ef8848f74f007ad4827865189204a041ea565c995025c96b41ab57a3843",
+  },
+  "openai/gpt-6-luna-pro": {
+    "catalogue": "9913446156ff02b03d2f556d588f80e40b4bf7fb4c64c42c28e303d9fa5a2e82",
+    "drawer": "ca2625a4a1a4fb4b2f1201cc3ddbb1d92f966965dae9859dcf47c85c0502c03c",
+  },
+  "openai/gpt-6-luna-pro:batch": {
+    "catalogue": "66884338127cd7cd79957a391a452c300ac073fd4289b4b76c89ee95ab6e8972",
+    "drawer": "447d66e989be95e487cd9de01f3d0a8d7115bc2926d1e71f49202d244eb062cd",
+  },
+  "openai/gpt-6-luna:batch": {
+    "catalogue": "fd5d55377644b34707ebd4a8a9341c0ca33a7c6d80f33623113f29127579311b",
+    "drawer": "bdca48a11fe0f9a09d8fdc528a125c768214f84b410048407d0e842cb04e8b03",
+  },
+  "openai/gpt-6-sol": {
+    "catalogue": "acd7f04943e0bb1c30643f6a79cf0fb54b5da5738976318129a0deb36c997e3b",
+    "drawer": "c68ff1b324ce1644022a60d8ca538a5a8e4cf8c41c38b4e0a0b5427f5032595b",
+  },
+  "openai/gpt-6-sol-pro": {
+    "catalogue": "813a9b7e4e78b897bfbd667bc5d9f20e8b1b4bdaef67215e35532c4b95575cdc",
+    "drawer": "a1111048022bfafbbea15235d5b6c27e050b26e3a3fdf673df342ca9bf8abe36",
+  },
+  "openai/gpt-6-sol-pro:batch": {
+    "catalogue": "7e70db87ec36835e3ac877091a43c6d644c097d8d02e824c94187cdd44e40ac1",
+    "drawer": "42eb103bf96f7f688d1167c008ffe13d81cf16841bbbe0e0702796145cf31522",
+  },
+  "openai/gpt-6-sol:batch": {
+    "catalogue": "c97cc6a87a4bab951479886701299465505f0c8c70fa51771aba52f19639e999",
+    "drawer": "0d49c9299473150fe19c670d8b228e09f536d57d49b041fc35c89b59df624e1c",
+  },
+  "openai/gpt-6.1-sol": {
+    "catalogue": "20a85d1aac4823108de8087ed64c0ca33a359f6577c1c8403e24f5d69818176f",
+    "drawer": "4ba984bfb396f58883cfe6775a1bd235f39fb0c706c7491a5f6be67c37cb8495",
+  },
+  "openai/gpt-6.1-sol-pro": {
+    "catalogue": "eb7250e83a0a3c1a1315146cb467758a8fc3fac3aa38c510004c8ea3b7e3ba0c",
+    "drawer": "2b35098295cfbba6c0457db79fdf50b9b19720f2e4a6d6545dd77480fffd7d82",
+  },
+  "openai/gpt-6.1-sol-pro:batch": {
+    "catalogue": "302ddba7032b2d2143cc571364ac365e43d5b218fcba8af6159e75c02bda26d6",
+    "drawer": "35d49452d290e5455d193216ed2420dfc433500f974eb2aa6a1bb02a4afeb2cb",
+  },
+  "openai/gpt-6.1-sol:batch": {
+    "catalogue": "63d1c70cddcbe21524e22409586e69415a3b462f8979e7efd4a7b16db82d9493",
+    "drawer": "6cbfe5db109d2a20c29b9f136a2929adfb69c0318b25f3d688efb691e4bdc2d6",
+  },
+  "openai/gpt-audio": {
+    "catalogue": "6bd01bacdabb27af2dff0fd19f6478b020967fd09f25dabde2a4f9487db21b4a",
+    "drawer": "ed9e36921061e828c86c176fc323222000276c062ed905d0dc80ade280431cfd",
+  },
+  "openai/gpt-audio-mini": {
+    "catalogue": "a19611864d9c4837738fecc218c5f95f454387233b821e4d1d8fb5aa0c5ac4d3",
+    "drawer": "e07bdcbfc7efc3b6b714acc7e5c8f898929cfeb9175cea5f9163ea08bf8d670f",
+  },
+  "openai/gpt-chat-latest": {
+    "catalogue": "0ec9db06643a8763a5d77a5a7b2d30b9fd9a552b133ea748c3b66d19cca73a6e",
+    "drawer": "a1b1ddb2bbe5444a7c411640f55c593be96429955936906b963e7705062c6c35",
+  },
+  "openai/gpt-oss-120b": {
+    "catalogue": "8a1674ca1fa89b344f9b0becb623845042c142980359af28742633a61b869953",
+    "drawer": "e5af6d2978264bd679dd94205b0730ad74966cb5b9d0f5686195544e88a9b29b",
+  },
+  "openai/gpt-oss-120b:batch": {
+    "catalogue": "4116623bb9b6b185361cad6677165ff190566214913fe62801b7cf80d3c2a4c6",
+    "drawer": "3ca567fa5dea943dbd4e591a6029d026c60072dab6d53b0ebacedf0233bd306a",
+  },
+  "openai/gpt-oss-20b": {
+    "catalogue": "aae1a58acf96aee673b758a1f44a7a20251173258fadc2f51a11f54c8595a754",
+    "drawer": "3b83fb861625a02418529eef21e84646cad5b4b496eb21f2d40fa94c67d143a2",
+  },
+  "openai/gpt-oss-20b:batch": {
+    "catalogue": "092fb7f431819ec9acead06bb2843f12245f1d150f6f1452d2a6fd14cf2f50b7",
+    "drawer": "01850aea113f10678917baaa554e7126c42f28dce4c5ff1aeb27912a71b3150e",
+  },
+  "openai/gpt-oss-safeguard-20b": {
+    "catalogue": "76638a8e6871316978c5172d541c32bf9fc54bd1d0e5cb2afa3b99a3a6bbf59e",
+    "drawer": "fe3f391da4d9c9b94755fe595220ff50251b4816d25f2a75389575b764b7a9ab",
+  },
+  "openai/o1": {
+    "catalogue": "94eebfd7ef8708f663d4c8ca797b8929b76402b034d07e575b975a64f08542a0",
+    "drawer": "8fcc71077e576c7fbab00724ca91cfbae7ee5b63bcc9f2fc569477cddfdcc29f",
+  },
+  "openai/o1-pro": {
+    "catalogue": "4aad955747ed59ea1cbb5a9bdc33360ab302c930eee4ac0487ce1567d1dfbca4",
+    "drawer": "d7d1d4faef42f25784a54fae53b99b86da080cda0d3c9049c1b75f781d84de38",
+  },
+  "openai/o3": {
+    "catalogue": "ccbcae378f29146755696628cd2d755266cc8cf928fd3828b630d3ecc969fcc9",
+    "drawer": "244137e3c3d77e32ad0ed188d75d4a17951965fc2892aac7989f28ec5664a6fc",
+  },
+  "openai/o3-mini": {
+    "catalogue": "27e9bde54941becce07e47a0c74c61c0cce76fdae2edf0244d0a1bb34707d323",
+    "drawer": "b364b7d08803b5fd270eea8653a51b2adcdfc2f740d0579761ed264bd3e01fec",
+  },
+  "openai/o3-mini-high": {
+    "catalogue": "ba4933dd6a93fae750598a7aabb49997f1cc602affebf3484a83fc939350ce0b",
+    "drawer": "686fd29910af6cc7731aa4fc805676439a5af40d8ebb95a969459cfae0939b17",
+  },
+  "openai/o3-mini:batch": {
+    "catalogue": "f79d762b25b69586e233d3fed9ecc51c08fdceb6154deca1f670d5ac14c80a94",
+    "drawer": "6a98c337b86096cff0b2196e70a60a0ee29d5bdd240bace20667a1a340a7169c",
+  },
+  "openai/o3-pro": {
+    "catalogue": "d04b9555451153f57908396a2aee324cf519df1260ae2208d8b739fe8f9bc92e",
+    "drawer": "9521e7ae10292f4947ad1b5c913940e95fd506f532a6f7f322d7f6063503749c",
+  },
+  "openai/o3:batch": {
+    "catalogue": "50fe7c883b16d25f2ef6df6724100cf4f58fe5cfda3eb6b8621fd24530751048",
+    "drawer": "cd2442163dd24fa069cd39b9f6bc459d0dc06baa4d67b7d9557effd941f1ced4",
+  },
+  "openai/o4-mini": {
+    "catalogue": "71bd2033c1271c4cb9832e3b29b0475751fbcf3ff56c5fb779239c9c6b284b2f",
+    "drawer": "4a27ed4841a773cd74dc3ab3939793d18b10b72851d34c2569419d3e63a5d7de",
+  },
+  "openai/o4-mini-high": {
+    "catalogue": "ab5348cbc72df99885d13342171045b5bc9390a415635735f6954e1ed0c2512c",
+    "drawer": "d95593e830a4bab0024806d0868138c1c72f51ff447a4de3014328864a5f7eca",
+  },
+  "openai/o4-mini:batch": {
+    "catalogue": "4e8acbab54c81c1843c39d05b1c0dfb7738f76a5cd1ffb0857061be38806984c",
+    "drawer": "f0eb0e7ca77b16d9d1f8a88ec831ad3fb78124b84a4f84460f0e91e178ea9eb6",
+  },
+  "openrouter/auto": {
+    "catalogue": "0104f6171d29350b3f3585d6f62e3004029b0b9e748a9a6cab69a6126bf4cf39",
+    "drawer": "d619fce87c1b9bac07d4a257bd9a8ce766b47c2773c6cf0e6901c0f4c4ee017b",
+  },
+  "openrouter/auto-beta": {
+    "catalogue": "16f8f0e3e9564e1f5a7d17b4142438a67c7f135230ae4efaac6be60d4cedb821",
+    "drawer": "ab5e316de9c360961f251214dfa8a5ccc6ed1bf593d1a93845447a71ffa96782",
+  },
+  "openrouter/bodybuilder": {
+    "catalogue": "3f3bc48c7161af72b2b9b309e005b220d4b378935763b0a00a190bdeaae6130b",
+    "drawer": "b4badf5d63465c53c168e5dc44035e5a17b61141fee2034723b554174cdb7da2",
+  },
+  "openrouter/free": {
+    "catalogue": "09552bd1ba8d65155ba59a71f7e14df6c5abc3c4d21510d3ad66b77d682fa8c0",
+    "drawer": "1c024bccd80a024e2b79d40f6bbe0f9b5991e9c34fbdccaa5a1f070978e189fc",
+  },
+  "openrouter/fusion": {
+    "catalogue": "3811c1d9b667d62bbd07acf3c56c57f6defa256ebbdba6e130adca182718b003",
+    "drawer": "362935029305e119b997405a1505975f55b7709b05786cfc0607176b5a82d56a",
+  },
+  "openrouter/pareto-code": {
+    "catalogue": "4cb05c7c433f6425c1d49a8c59d55dec5e41ae8593105b8680f344b644a3d2d4",
+    "drawer": "3526c8ca2b39d085979c88d8578b150843a1c00c68c26edb3bb4d21d8b187506",
+  },
+  "perceptron/perceptron-mk1": {
+    "catalogue": "75879c3993bb8c05df986cc46e9a4a2028bff36716779e4a54fa62b6c9a95350",
+    "drawer": "a1c3ddd06af723afc627b0a00c978d5ca6622f344a6dae4540d17e7eeef9564e",
+  },
+  "perceptron/perceptron-mk1.5": {
+    "catalogue": "8cd1be1f32b3bd006ab5fc940b5a4a0802fd6338dc45f43f2d0148915cf9acdb",
+    "drawer": "d6f9231d34f251b0000b90199a0cfbfe92acad7beedb1238729898f3901933fd",
+  },
+  "perplexity/sonar": {
+    "catalogue": "88af6adc2058738bc80813cd69b115f375bd03c41b115389077e6dbbd12491f5",
+    "drawer": "034ae9a526cacfb1d9cebf5e475cf27c36fce8a08c9eb14153469d1814c84547",
+  },
+  "perplexity/sonar-deep-research": {
+    "catalogue": "4ca748758f25c938b33f20cd43781e8a2acc30d8799d17cad0df3e5fa83d0512",
+    "drawer": "2027ad5a592526f5f7f587183f5724e107c9f80171bd417e9c6c450fff669920",
+  },
+  "perplexity/sonar-pro": {
+    "catalogue": "351ec6c2fb2e66e0601ec82b041d225f5ab0882525551d24776e32973264c41f",
+    "drawer": "c71004910ccdd8e852cce740f081768fc24f8011c697c1c349896944f9d2caaa",
+  },
+  "perplexity/sonar-pro-search": {
+    "catalogue": "e6be4021c24a7be38f91c74eee1119f19e5d5bd734bd6664a706febd5512c2c0",
+    "drawer": "2d0ab575114070afa1e91efa8b3d198b29285b867d10d11d4d21518a59f0c116",
+  },
+  "perplexity/sonar-reasoning-pro": {
+    "catalogue": "aecc8763775131705e89440496d90a615702922402453c491c48b9c0fa82b398",
+    "drawer": "f10ba7f1d55bc2388fc77e84644350e565aa354ea60a12f2263ff2ffb535c32c",
+  },
+  "poolside/laguna-s-2.1": {
+    "catalogue": "8b7476b4168b827906b29dbc9b6a90ce9f97c5c391855e3a23ea76ebef767487",
+    "drawer": "adacccbd8881e4daaa3120158ac2f522e407aa597531941c6c20b9de81c4dd5f",
+  },
+  "poolside/laguna-s-2.1:free": {
+    "catalogue": "e2f639f08609092b24fb5d194c87a3873c9b851f044870419ecaf1e22664c1b0",
+    "drawer": "5f1366441aa1a1d6bf7233e3248bbaf924f54a5d12a8f180581e7ee17a61bbb0",
+  },
+  "poolside/laguna-xs-2.1": {
+    "catalogue": "f0e63eef0bd3d52db0eaeadf3ac54a4009933dd68357f260f882d7bd901fac18",
+    "drawer": "890b881ac4b8879333e61101eadfde09009fd11c083c9e965359af0baf0d0c71",
+  },
+  "poolside/laguna-xs-2.1:free": {
+    "catalogue": "c749fec5601e04455859d6bd61ae407f994c71a8b0a4956b501da3c9a34ae250",
+    "drawer": "c9277f951421b785316de0e4dc4a6793d1483d94a4cf8015bd3e7380e5d0307e",
+  },
+  "prism-ml/ternary-bonsai-2-27b": {
+    "catalogue": "7dbedd922aebfe209f22fbb0274eabf8c216b96ae33dfb0b4b2934e16a22369a",
+    "drawer": "af3b64e9285c2a3e33c12dd0838f404d1f577a80c43f80288d19370461b95aed",
+  },
+  "qwen/qwen-2.5-72b-instruct": {
+    "catalogue": "7405d460f6800f1980a3eb1442e00fc189ca46e56854ddea11dabec54757f9fc",
+    "drawer": "9aada1b7174c2153b9e16e44d42d660ee61f768c920090a7dc45530c2dd910ae",
+  },
+  "qwen/qwen-2.5-7b-instruct": {
+    "catalogue": "739964c00215a2dffc6789d4242f8b601e80a15c1bbcc7dcaedbf7e8d93c2155",
+    "drawer": "3a4643940c584bff1c7d45b4e5066cc31e1b24dac159c4bf54852a0739eb7daa",
+  },
+  "qwen/qwen-2.5-coder-32b-instruct": {
+    "catalogue": "14fe2bcf43d4577628f0e7d262b334372766e74519797b4b1e06a0c935800b92",
+    "drawer": "9e557b6236138fbf613525a3a73e662f7563539651e9af7e1a19b1aa5fc089bf",
+  },
+  "qwen/qwen-plus": {
+    "catalogue": "37b3a6fdddabbd358910a9c28f32aa271f50f216a73e93d4aab1f055d203958b",
+    "drawer": "2a0cbec76751f6b86f7d5a50ae6a2ec8014e22dd6c13df74acd4b7819f338e44",
+  },
+  "qwen/qwen2.5-vl-72b-instruct": {
+    "catalogue": "086867ce7eed84d9d3cd0694fca14bb421863ab5b3f937e4ef2cc7188c4c4e2b",
+    "drawer": "a836ebf9ab6e92418c8a3a739ee5985cbf3392d553cba5722e2553b048a2bb3d",
+  },
+  "qwen/qwen3-14b": {
+    "catalogue": "0f5dfaed5fc64b71ee3d192ac607030b553cab74f4d8f1547a296b45ecf8b885",
+    "drawer": "7eac19148b117ac5ab7e77658f2ca25e780c4a901513755450ae3e78bb7d5c65",
+  },
+  "qwen/qwen3-235b-a22b-2507": {
+    "catalogue": "067c653d3949d63c4c4363017cfebd16b01d21f7df4368da7f088ff0c174eb13",
+    "drawer": "06fdb10a8e4ba89a42156ce7b7e576e5654135e2b8d5d1030b1d6ec832c70d73",
+  },
+  "qwen/qwen3-235b-a22b-thinking-2507": {
+    "catalogue": "5021f3bae57ad2934b12ea05ccf475d9af748d49edd85e12f142691eb6a9a840",
+    "drawer": "96ca16c75eb9788e488799bb8d65162d6f61a0739b56fb25d3fb4d1f0aead313",
+  },
+  "qwen/qwen3-30b-a3b": {
+    "catalogue": "0b074f746bbfb1d732dfb38490659cf63ba9640f9845c06361180e27a856b157",
+    "drawer": "76265788134e6c3467276d97d11fbe3b4b8429f3ecf82bc3b03a09bd3a6fd662",
+  },
+  "qwen/qwen3-30b-a3b-instruct-2507": {
+    "catalogue": "e184638811be1addd903f5d81b555e2096358c510baf1eca474038623af6c685",
+    "drawer": "f878a66cdcbbc12e620f1d716d93d8513de0fcd233c69a27d79aa976d9f46550",
+  },
+  "qwen/qwen3-32b": {
+    "catalogue": "26c4f64bc4cd64803b9e414349dcac3dec5519b00c6482bef67a04f9be972f1c",
+    "drawer": "807a72153b7126ab3e5d1f603ae6c6c7bd9fd64417434f303a613274056b6bac",
+  },
+  "qwen/qwen3-coder": {
+    "catalogue": "b4b970e4c67cc791196f4db4a38f3d92c19b6cc135f2b07389123b995f0e90e1",
+    "drawer": "c9d085be5494a6d07a75c689cf7a3eb96d68996d7b17ec45cc968b426c1df664",
+  },
+  "qwen/qwen3-coder-30b-a3b-instruct": {
+    "catalogue": "1eedb922609432f1843510454d9de186466af70d2711cf60a07da88cfe591f87",
+    "drawer": "1b5edaa3ce6ce3ea7332ddac019cf9443b1a066c412be0c5bd238985fef7e9f8",
+  },
+  "qwen/qwen3-coder-flash": {
+    "catalogue": "c4ec695f790daedc42d0957ee2ba44e35b76463519e98d15930e5116775d6731",
+    "drawer": "70c4299e65165eecc0630e6a77b6d64148c7f47f61d11e25e9ff3ce2d511b735",
+  },
+  "qwen/qwen3-coder-next": {
+    "catalogue": "c797585ff720d8749728a93049c89574ed1643267c4827ee593e24f74a9d0d4f",
+    "drawer": "79d63549a80b4d87f6ae4b1e07b398dbdd778eaabdcadd439f75056f1831dc60",
+  },
+  "qwen/qwen3-next-80b-a3b-instruct": {
+    "catalogue": "5aa827d5acdda9c7a0bdb5925b68d8c7305392a4f6ba54ddde18d79f7aa70437",
+    "drawer": "264374de8f675f0ebd6ea924d9e78a8af3a5b482c8452068211cda45f39e13aa",
+  },
+  "qwen/qwen3-next-80b-a3b-thinking": {
+    "catalogue": "47af4634459bf36324f65f132e505c7cf67a8dae7fccc18d2e8c6dcd23c7b4f4",
+    "drawer": "4d177417781d9f423448182c3eaed7126d08166628835afaf855e54e3a883d22",
+  },
+  "qwen/qwen3-vl-235b-a22b-instruct": {
+    "catalogue": "e7f3da5b92423e42e0dec51494d8112eb39ee89bfbd2eb8009206022e7603b60",
+    "drawer": "916e26c312d699d14f397cb3d3dd707587d24d4a859adcd851ac8e3d0244379b",
+  },
+  "qwen/qwen3-vl-30b-a3b-instruct": {
+    "catalogue": "216383ffc2293e175342181263f78f92b2acb198938424ad5c70ee5b13a56d95",
+    "drawer": "e7a6cc28881d3fd3162de1333e5cf81df2e0d8db3d34239a2a12dc86d8517024",
+  },
+  "qwen/qwen3-vl-30b-a3b-thinking": {
+    "catalogue": "ee7d9446e105eeb816f7510c3f60a5cd92edfd2ce40e25a46c219d465cb857b1",
+    "drawer": "fa5a7d4e2d53622fb770a22d2e7f78787019459516781f1657a14cb5f66d8428",
+  },
+  "qwen/qwen3-vl-8b-instruct": {
+    "catalogue": "545d592bbfcc04eaecf316676f968b887a1eb6a163e45a57b97279d197b5b810",
+    "drawer": "f7f5a9e89ba6e7d91c589a1d5f04d3cdcfef4c8e70ab6eb39e542df074a9ca15",
+  },
+  "qwen/qwen3.5-122b-a10b": {
+    "catalogue": "8ecf9d02e13fed3df7b0df30aa2a3815f163d50fb8d8ebc91eb304c96aec6635",
+    "drawer": "03f4e3dc163055e85f587c64651f3997761ecd3f20b1d25ff1cf6d03523a2411",
+  },
+  "qwen/qwen3.5-27b": {
+    "catalogue": "a481ad09fe8d7146a7c42e49402d36c5a0775373c4d94ee03eb32a5de3af79f0",
+    "drawer": "552c9b15a8b070adde7d179a18a41f8ce6a661e5a8f99af2a1067a1d89e7ca2c",
+  },
+  "qwen/qwen3.5-35b-a3b": {
+    "catalogue": "d694fddfdae4301fa35bec97710027ac1e687d510c21e7e4d865014973a0897f",
+    "drawer": "a20d791e5d15957344838efd9e2d477cae33588851163858192cce3442d0fea7",
+  },
+  "qwen/qwen3.5-397b-a17b": {
+    "catalogue": "6642d87648341f09093c7cbfaeb0ff9b46bf90290a9145513f99ff75f875d8a9",
+    "drawer": "05b953609ca3eb2b3a6cd82762f4046c51754c81ff2eec3e00838a024388d6fb",
+  },
+  "qwen/qwen3.5-9b": {
+    "catalogue": "4cdb51d964b9d50e053d2544007dcfe0d00c306d12a010b83c0f7824eb215616",
+    "drawer": "93ddbd2cf9733f263ba0b1be0a1a1d2e3dc3ccbaeee86adf43bba9a221be9f74",
+  },
+  "qwen/qwen3.5-flash-02-23": {
+    "catalogue": "fd657a96ceda53088fd77ab6351daa1369ed062053a1afcb9ea5b8094c73f900",
+    "drawer": "262740f386b2a6c9c43f402da9963af7b487c0ea0ef6bb5f9f9b484ce5c8003a",
+  },
+  "qwen/qwen3.5-plus-02-15": {
+    "catalogue": "23dd577485aea9f4224f4937e80b6eeb5b265f2cc7d57bb88d0fa945d1dee515",
+    "drawer": "c260de1751555d16c87fa766c1b089aac43053ba772568e6986af5283ccb08ae",
+  },
+  "qwen/qwen3.5-plus-20260420": {
+    "catalogue": "561a895aadcdde1acb10a72e38b23e7d797ae305821f269ddbb7ba051a197e3d",
+    "drawer": "ee3726972f9dfe86451a7a0c8591f631999219322ad82b7602a5d8f8286a065c",
+  },
+  "qwen/qwen3.6-27b": {
+    "catalogue": "e8a5cc912a7e4c740d8762ebc774c434746afe57d5b5019753a8d74ab8501fe2",
+    "drawer": "cd5ac2eea05da562209bb98a5bfaedba287d07aafe02505aefc11c1921e0f6b4",
+  },
+  "qwen/qwen3.6-35b-a3b": {
+    "catalogue": "852fea1a798cb09d1952ae17ac63e9172ca1d99da6a659d4afe47a430ac8a245",
+    "drawer": "f0e9eaf1eb9d5c5e2091f9a9545a06e69ebb7806f2725cdd14494088bad888ab",
+  },
+  "qwen/qwen3.6-flash": {
+    "catalogue": "68842b57ae99407fa30015eda46c1c7376f5590526365e224591dc84f50096bf",
+    "drawer": "db205441a871edcd8cd8616969fbe57bd898e84eab3e05b4ebadda7d9155b76b",
+  },
+  "qwen/qwen3.6-plus": {
+    "catalogue": "e9347f89f985f5ee8bb35ac35d56cf0e362642bac146bfa4fc87095252cbd57a",
+    "drawer": "78f6e0b42c7bd29be28285f6f4c86664761cd11994830fd57802553472197d90",
+  },
+  "qwen/qwen3.7-flash": {
+    "catalogue": "01ba55d6000b17c44567a816a0c79a663d4e5552d4aa9052c5706a3ebc86fc5d",
+    "drawer": "e99875b081207dde9f57c17e8f50e98a4bf9a0d44be947ae86c5f70201a1d0c5",
+  },
+  "qwen/qwen3.7-max": {
+    "catalogue": "e864a8933cc5ba7f7baf44396a1c95d77912922bca40d4ce3e2a6992eb2378ea",
+    "drawer": "a9b9226ddbe5e990f71f89640d4055a4320e757331cdc81a4b43cf9c6d14a3e4",
+  },
+  "qwen/qwen3.7-plus": {
+    "catalogue": "b80df982900f5de7313dabd8783b12f59d5c8b645599bc67d54f71883461cd7d",
+    "drawer": "64ef6201529ebc0db95ab3160d0f6ecac178f51977fa58bc5c077c7a926a9065",
+  },
+  "qwen/qwen3.8-2.4t-a95b": {
+    "catalogue": "0d1bd3cc26c14eb0e5ca66660d6da51ff0f74d749348784508b433135d2b893c",
+    "drawer": "4c416c61b72fe0045f00700dcc4eaa517f68cd117cc7b35e1f58831159f4f968",
+  },
+  "qwen/qwen3.8-27b": {
+    "catalogue": "fded889a8a13420cefb886f0ef0dc5b391a527b6d5d3b2617d508475faffff5c",
+    "drawer": "cc0597127a880dc5dc10df1c3ef9d453c07f9b422c6d0a3c4ada303009cc0f07",
+  },
+  "qwen/qwen3.8-flash": {
+    "catalogue": "32a8c1d45ed29402349fcdbf360c493ef3cfc1b843de209b781c2b3fae1e32a4",
+    "drawer": "72b76048cfe77a0f5aefa2879d561532dcf02ca3a0410fe64a527f514f4e8f85",
+  },
+  "qwen/qwen3.8-max-0902": {
+    "catalogue": "506108edad523a2c9ff6e1c50e4ac3947a340abd41e1bdc06ad824368dccc7af",
+    "drawer": "6052af060fd9970db1fc46981634a284b29d1e3b769bcad262f24b2683d85e03",
+  },
+  "qwen/qwen3.8-max-prime": {
+    "catalogue": "45340df7f87f3b66adba8298a182effbb78b6ddb12c11db7e4c6c96b806b6200",
+    "drawer": "9e56cc1b63b0b4525af88dc2e9f1771f24b3b35a9173fe1d85026f3633811570",
+  },
+  "qwen/qwen3.8-omni-flash": {
+    "catalogue": "d352f6a5072ce6f5249d9be64fc7433a666802ea036ec8340803436746330313",
+    "drawer": "5fa7767f9a11f16e6cd8b4e2b0c79915d097470b151029cc087105715ab7f83c",
+  },
+  "rekaai/reka-edge": {
+    "catalogue": "e373fa6e851d6cc1c63ca57c35b6f6c572da7d8f7f0a61550c9366ae0b20fbeb",
+    "drawer": "aa69999e20c85e69e22552a17970ad404dd8f950ebc6efeebc0272dfe492f2b0",
+  },
+  "rekaai/reka-flash-3": {
+    "catalogue": "edc1c743a2328c000b2f30b933eec1b019e29b74774bd87c061c9706acd8b01e",
+    "drawer": "9d93df8a68fa618ff3ec4bf7305919d5fc1f368340f36c88eaa102fe16e5b63d",
+  },
+  "relace/relace-apply-3": {
+    "catalogue": "9b57f023ea27538704f526abcedea8b69dfce47a12ec25641dbb00f16d1be5cd",
+    "drawer": "dbc118b2bf2c93a89d5c3d291fca1c81295d6070bc199522bc510bb5265d3993",
+  },
+  "relace/relace-search": {
+    "catalogue": "5efd560f485859678774268f04fd2eeacc94f345b98f21401beb0c884848ec20",
+    "drawer": "85aa90898956e088505cbd5197a888deb15d628fe8a9fb20560364c46c6dade2",
+  },
+  "sakana/fugu-max": {
+    "catalogue": "3eb34288713839587b40582c851507533e2a32fc611c207f3104f5c00b305ca1",
+    "drawer": "b9e20595f720beb381819e10823658a2897475fa6798d0d44e0d2aa861ff934f",
+  },
+  "sakana/fugu-ultra": {
+    "catalogue": "6d1cf1867b17c0f9d192ba7ea9d7f4d86d50e3a6c71138d8bd478cbff6d264fe",
+    "drawer": "dd7a7b491811a319925e6c3a43a30cc9c8ec4366d490d9182497c4445e2dd0a4",
+  },
+  "sakana/fugu-ultra-v2": {
+    "catalogue": "b9bd4e131e668ae830f36f9272e1feb948bed1b70b7b52c997eeb4dac7ffaa0b",
+    "drawer": "c1f5dc3a62346ec5315be7af28b51fba436d768ae1ad26633ce65cda2b6c923b",
+  },
+  "sakana/sakana-namazu": {
+    "catalogue": "107e4f96cc6cee8e1fcd2093f7c2d285a2dd31dc3e3f11fce9679927d39a3cf8",
+    "drawer": "30098d4319ba7cf7fb7e0e5820fae4ceea0df3e896bbfddc38b55a7ddb5b0c76",
+  },
+  "sao10k/l3-lunaris-8b": {
+    "catalogue": "71d4ee90fc4501d14c72e07692d04b87a245f7245750dd730ef429e6b5e2fa72",
+    "drawer": "158c3f0af0a5d26c011259f5c80074e970a96a917e42e8eff534e428a39d1904",
+  },
+  "sao10k/l3.1-euryale-70b": {
+    "catalogue": "c3fba0e2357753153264be70910b24aa2d5388a3aeeee25f31d71d0af9eb9297",
+    "drawer": "00e0ba3688abc537e6bea4fb211532563f9210502f5ebf2d7f6ca56479aec504",
+  },
+  "sao10k/l3.3-euryale-70b": {
+    "catalogue": "3726b55c6c4dfb2db270fbf39ba6bf59acf2a831a58d0da6f4fecea897af6704",
+    "drawer": "70fe6a86c02a69cc464b4a47056a46df1cdca57efef9a010e895e4cb599c3626",
+  },
+  "scaledown/extract": {
+    "catalogue": "d7aa8de744d0c26609386eb20fdf5f29df5900293a89bc6b2c58e879ce606c70",
+    "drawer": "1be47b973f89b34d52cef8d208bf13600d672d2e2c3aa8936560f766085e23ee",
+  },
+  "scaledown/summarize": {
+    "catalogue": "5c9cbafac18857071ec5c38f8af0a06d8170ffab05b844c92d0fa4d79c4eadf1",
+    "drawer": "e3b7e8892ef38902dc85b2d2a316195ad71d0c5861d46212044884fb13515bf7",
+  },
+  "stepfun/step-3.5-flash": {
+    "catalogue": "c90792c0781c8c1af0af67d28586be65d947db90c8f5299ffe9d2e8802e063b6",
+    "drawer": "8c87276557188d3fe3672d06c28e8ce8427bd88d2df31f459b532a002c46ae24",
+  },
+  "stepfun/step-3.7-flash": {
+    "catalogue": "3d5b5e59cc500c993eb1a5ca7d316854a8147b4d65c6697caf4832d227bf188a",
+    "drawer": "cfacd1276bd8783901e00833b4c557fd93d0b73ff5f9f4acf3e317f70af980a1",
+  },
+  "stepfun/step-5-preview": {
+    "catalogue": "d951fe55aed094cb1c83f70c9165f1f90e802735bc6b2d9c4e5e1960b2b210f8",
+    "drawer": "5503cb7b84e445a1f04d30d10400a2326b026d79748214eabb7a04f1f64448ed",
+  },
+  "tencent/hunyuan-a13b-instruct": {
+    "catalogue": "848c65fe5958093f33ffb262eeaf3bcdd6df1124f6bc589f2b0e912725a98e51",
+    "drawer": "a13db8724bba017ea763bb5c7bb039462d819c2bc4106b5602acd32cb72ae57e",
+  },
+  "tencent/hy-mt2-1.8b": {
+    "catalogue": "f2dd4b78f8641e25a26f908797898339cafa85c3442fa229aa439384fe121313",
+    "drawer": "d24cccfc1bad70788200d57775b8111d17235efbd791c736f421a4f00ebca77a",
+  },
+  "tencent/hy-mt2-30b-a3b": {
+    "catalogue": "adc332552c618858bc8344c7ec6b753f874341099a86e40f6baf8bea0157b35a",
+    "drawer": "635b1cfdd76f507261bd1ec961698eef3e1dc49a95d09926f63b444f32ac99a4",
+  },
+  "tencent/hy-mt2-7b": {
+    "catalogue": "ba1cd5842da4c79fb30272216d80d6049dc5612ac27d541b9b4de97303c2148e",
+    "drawer": "cad99851a462d36d5dcdb51e0a627049190269b8a3091aea31c3e47f06a2476d",
+  },
+  "tencent/hy3": {
+    "catalogue": "d70b0bc3987b3ef8715c3b3341c309f4f5de918b46cc0a99763294d18fb887d3",
+    "drawer": "d6b76b2ab84b9ca4edfaf6d54171d84b97cdc45a76bf8b3921e754a060af4979",
+  },
+  "tencent/hy3-preview": {
+    "catalogue": "6031dfd734062e8d2fa9abbb89acd707047eb0de7391dbed73126616564034fc",
+    "drawer": "63d86002b5f34f61ac438bbfe6bd19d604d5e8982d164fd9d5cded2ea32c6f71",
+  },
+  "tencent/hy4-preview": {
+    "catalogue": "0c56c8d48b2f63d78913638c041d68e2add4a9c04534c8efd64472ade4ba3425",
+    "drawer": "cce76a86fb98c68c63e3689760ed8b574b656de8f257a8dee713dbc1e4c46f72",
+  },
+  "thedrummer/cydonia-24b-v4.1": {
+    "catalogue": "8349c432b538ecbb660f0e300ee6b03d93099ada58ab4ee515fb9912251ab7a1",
+    "drawer": "8bbd585a3cf0044d515da8e6bdd6b0c331724171c0c4880a36483b6b13778994",
+  },
+  "thedrummer/skyfall-36b-v2": {
+    "catalogue": "3e156ec08cfa8e37943f487e0b2b685f7c5faea31633a657f84decc173037905",
+    "drawer": "fa5ff0f14158f9e08e847111ad7981ee013d8bc661cac279c2d1b55c81fd1307",
+  },
+  "thedrummer/unslopnemo-12b": {
+    "catalogue": "8f7eb884254c6c80ac2cad25f6b6b84f0b4adb01e58cfb781a1f95a0692b2d28",
+    "drawer": "2e6f7202e5c110f0e4210bbbe4446d5e3bd310b5fe64905e1154b30123fe6366",
+  },
+  "thinkingmachines/inkling": {
+    "catalogue": "27be955abcca6f0cd77a41bdb049f1000b7b0422fde64de9996b2272906bb736",
+    "drawer": "eb8bb096a8e8c61b5a0de8d46c8a67d5752888f12b3a664677fc3fd596a791ef",
+  },
+  "thinkingmachines/inkling-small": {
+    "catalogue": "2f7b7c44251ad7b8aadfffefb38ddcfdeee94e6e78f795650cfcdd44b2e7640f",
+    "drawer": "3ef24e47be400134475933babe18c5dd51ef0b764f3522e111d8d9c2ff40f643",
+  },
+  "thinkingmachines/inkling-small:free": {
+    "catalogue": "a6464092012773fcf23718af34cfb40f3d4f34b6f0ec01a56d3ba2878192e19d",
+    "drawer": "29a23365a54576f327479b1e6a200e133c91672eda11913c2c9c562cad3b2bc1",
+  },
+  "thinkingmachines/inkling:free": {
+    "catalogue": "37f739ce76912a67a96e2fe27b355c4264c9c616ef5415fc172c9d05ec06ffc2",
+    "drawer": "f21851cf3ab36a555325a37cb558f91fb72ef4e33282e8a008ba01caa373955f",
+  },
+  "typesafe/jev-router": {
+    "catalogue": "eb0c4dbb9db6c8e0c2fac40face5411f6337b04e491ebd2784bc32a065adce77",
+    "drawer": "81f88a3afa809270cdeed23c20e2c7973f364afa7b35835e559c5319e54f5ae1",
+  },
+  "unbiased/pareto-26.9": {
+    "catalogue": "30ba41376e3b4bbca66ffb5cd0f1a11f21c32c4bb4b93317303322615125172b",
+    "drawer": "e4b80cf4a0e12a547a84c84e9b9981a5ed2d8b0f83a2adffcbdbff45599288d2",
+  },
+  "undi95/remm-slerp-l2-13b": {
+    "catalogue": "2af47fe308521e353fceece5d9b45be845e20e9081a6477559de9f00cdc60b0a",
+    "drawer": "395ef1540e37e01ac28f8417275e8a94553273ba757f48f97e25de9b085e7a45",
+  },
+  "upstage/solar-mini4": {
+    "catalogue": "0147f43c7b1f9a3b83e1402eefaf5dda49e9d0c87d47970e0ff0b30da29058d9",
+    "drawer": "d6c3cfbcfa25bc3aa00f6bdb7d2cb93cbe455aa820ba6a4f481cd808aa2f0a23",
+  },
+  "upstage/solar-pro-3": {
+    "catalogue": "c9f5d66857dd346527080dfc26ddd889db17acde34c7f715b37817d0af37d7a7",
+    "drawer": "43ccb32ed67f200db5d9e6075deda28f59d3bcbccdec40d20336c6661c835ef5",
+  },
+  "upstage/solar-pro4": {
+    "catalogue": "cf43d51b8794790fe8016aa626af02d26cdb659c22a4e502c08899d4ebe4d584",
+    "drawer": "a18995ff6d1d9eb2b5fb0a15c7859f30b0406c470200dc0a5b09dffdb6fddc40",
+  },
+  "writer/palmyra-x5": {
+    "catalogue": "8dd029c12005231a5eb2e296cbe6dd8a097d7d4196200f3f39bc42a4cc8c9820",
+    "drawer": "0799699121639f884d20ff8cff858c84ab267ecb496cebf145446c9c767b76e8",
+  },
+  "x-ai/grok-4.20": {
+    "catalogue": "fdcaca285cdc69d900c16beb02685beab818d6abe3fca45521f7825fe5640678",
+    "drawer": "bb00c09c4f465b86dde62dafa7f500e998f133ec6b862de1b79f427884544fcd",
+  },
+  "x-ai/grok-4.20-multi-agent": {
+    "catalogue": "57ff6f9b1c3dd45172042edcc26c17e4d8c432bb2ff47570073b49e7e70fd866",
+    "drawer": "d83fbc8a785e6298d898fe47fce6cfcf2b1bb0fd6a35c74054de6c5cc46fdd99",
+  },
+  "x-ai/grok-4.3": {
+    "catalogue": "beb39f4b3e599544658dffa29da870d08b7280f2c926fd5cab2c939fd0c0623d",
+    "drawer": "f7756ef3d53c144edb0513f2ceea70c5ddc90ef6428de604a7cade8f8edef292",
+  },
+  "x-ai/grok-4.3:batch": {
+    "catalogue": "f1a6b2215a8fbf625eeca32402ac87f85e7896eaba69db26e159ca092f4a3077",
+    "drawer": "f47284b9c1eda1b7cb3d9b240e60ae91e42a659af407ff69e21c400ef0551019",
+  },
+  "x-ai/grok-4.5": {
+    "catalogue": "3c8c6917e587544fe24a40613bb13acb4ec87d025285c7b7f6ce13c9aeda5514",
+    "drawer": "99c6c94bfbb783ed9249114cd39738616d677cc26408c7e7dac08212cb559e3f",
+  },
+  "x-ai/grok-4.6": {
+    "catalogue": "193057602d31f86427d0ba158d8f199186ea4b6608662c7a2ab85a498a21b07e",
+    "drawer": "72f1e2e86a5806bfbecb8d8d05c5bf435a19f1324cc7eb13938a1adf8ad86346",
+  },
+  "x-ai/grok-4.7": {
+    "catalogue": "481e61506b91c90412fe379c5d0f3d238f82a85392d2179df3e8d38fb09408e7",
+    "drawer": "0a090dda31d59ab7e0496b56d7acee7f20e39f0a1297c43199861ea15009075d",
+  },
+  "x-ai/grok-build-0.1": {
+    "catalogue": "b7589265013f2eb143a92028ac7004f9076c54b72558ff8bbd10811a712bdd41",
+    "drawer": "78ad9d7a8a7d239b70a516237725f86100c491f2e39def53ae6f87e8397ae87d",
+  },
+  "xiaomi/mimo-v2.5": {
+    "catalogue": "8bf19b4ac01525eeb12fcaf122a470ef06f6aad1acff3d5a58575edd7ec8b7cd",
+    "drawer": "8b0d50d83d394011f00cfcf85c66c57a8762dd1434d50afa548d08990c084cd8",
+  },
+  "xiaomi/mimo-v2.5-pro": {
+    "catalogue": "a986f5f5a9f37968e9bcc009f509f8cbdc278f65a70ce29bee0b0b7ca412fabd",
+    "drawer": "5f6960cfd244f9af1adb55f51e641c692c35d3274bc87f53e9d30293057b9cf4",
+  },
+  "xiaomi/mimo-v2.6-flash": {
+    "catalogue": "769c109ea4b6db44e84b8019f8c6593383e9096c67ea570fc7838da7c27148e0",
+    "drawer": "b506e0337af9d13cef4dcd57adc3b3ea4fc34cd97772fea251ace5ccb801bd3d",
+  },
+  "xiaomi/mimo-v2.6-pro": {
+    "catalogue": "bca77bf3c1115fb0d5e775b2d5cd604f8593231b1109ae7af0385368f19000b3",
+    "drawer": "d2167a33d40be46b8a864e667c875cafcf5c0c2d95f74a1a9418c5d8b5de4981",
+  },
+  "xiaomi/mimo-v2.6-pro-ultraspeed": {
+    "catalogue": "a9eb4bb3bb2f829d6f5a804e4fda9d0b613c6b961102ceac5a25db5670d49d64",
+    "drawer": "bbf4e0a9fe3a24f9a808e19abe5ca2f955e0fc481fc64e4627d9492c09bd276f",
+  },
+  "z-ai/glm-4.5": {
+    "catalogue": "8e852d52398a9a13dc5731b58885d5e5cdbd2ad32d221387a8d90a2c10bc4b99",
+    "drawer": "b063c3d08bfd3a8e8f27a2b97a1d5ebb5edb9e98b8b7a733a825c9c652006b6d",
+  },
+  "z-ai/glm-4.5-air": {
+    "catalogue": "b5a3d42ce6ba527193eaa6408c8f0d37fa3b27398c57dba59220240d0d6b6261",
+    "drawer": "cf131557b2ddf281d8448a1140b9ea2d7ea106235b075c84262865a9aceeb6ae",
+  },
+  "z-ai/glm-4.5v": {
+    "catalogue": "0a485d91ca796aef8a4b3c8175df5353c587f9e4e502ade78aa66938738b40b2",
+    "drawer": "40fe6f4c222a885aa111781d514133d6a1d672929732fd4b07fa20d469fd0540",
+  },
+  "z-ai/glm-4.6": {
+    "catalogue": "a21d894d0a911d5c192fc926bd12deb92857f3c6b25bba1f990ed08ea1cff562",
+    "drawer": "e5410637931e3e4664b415b396c9041d8c5856fa2ffa646e1c2b9148f396d5c2",
+  },
+  "z-ai/glm-4.6v": {
+    "catalogue": "2c49568a45b7552055eed5a2d6f465821b134943d476fb7e1e242199ef376643",
+    "drawer": "b6d4849783edabe54c6fa16407b13f89aeb5a5576255329d2dc3eb1300253f27",
+  },
+  "z-ai/glm-4.7": {
+    "catalogue": "f0501a526d394a174acd3144c384af9ac59a94d9b45edbd603070ded56c59a73",
+    "drawer": "20dd6ee23ef727c5d2ae5816c873cdd97693c040a070e056c2380e0047af471c",
+  },
+  "z-ai/glm-4.7-flash": {
+    "catalogue": "c6c40a5a66155ec3514cc139073311ec8dfa479b782cbe60bdafa2d8f4db7ead",
+    "drawer": "af92e188c21b9f18a116511aba7b126c6510c4dac5a3ad462469394d76ed5eba",
+  },
+  "z-ai/glm-5": {
+    "catalogue": "c639e65818ea559954bb7de53c039af70b70c410637b156713aa04a6efb8c7bf",
+    "drawer": "eeeb4b9fb9fd515c47cc61718e1d624d4b85326d8f411a790e4504362630a145",
+  },
+  "z-ai/glm-5-turbo": {
+    "catalogue": "07dcce36bbeb030ce1727e2ab41fbb3d272c745817460ca531de3677f03b5774",
+    "drawer": "a1c87e3d4a078080e7cc4b04ba3d7fce0a8f8bae1f0bac3c730943b62ceb240a",
+  },
+  "z-ai/glm-5.1": {
+    "catalogue": "a0b2bc31d5b9e27fc8bac96de6829e2bb989ee4111dfb431ec54684eddaf7c05",
+    "drawer": "5d7a2bf1d6e0cc3590e0de7b4c69248a39ce03f23c78f8b6c93149e76539d119",
+  },
+  "z-ai/glm-5.2": {
+    "catalogue": "4d94e432ae4f487173542c3f6127fe6451ca3141787d310d9ec645071d0af824",
+    "drawer": "8f4d16fa614cdaa1a0ee56a017bc9733eeafddea8335cd66f60a89525d0a2062",
+  },
+  "z-ai/glm-5.3": {
+    "catalogue": "2f71a7a40b0cd614c932a957280dad66d9ce5f4d960a5af40cf314204f01dc93",
+    "drawer": "5b2258f293140f1ff6fbc5a34d7bb8945dd8ee84cb683611a4d743cd7d94dfc0",
+  },
+  "z-ai/glm-5.3-flash": {
+    "catalogue": "d6f533af3764ec70432dfd6083794d603c6675212437abcd1a517dced4ac5bd0",
+    "drawer": "7522b30b8222e40ca61b7bfcbbc8ac6b8bd6bc4285b9bd1783d581ae199e029f",
+  },
+  "z-ai/glm-5.3-flash:batch": {
+    "catalogue": "2e02d139a7c4029445acaebc002543fd7d6e174d47f0293653ef7256e5b3fa10",
+    "drawer": "63ce6b2f9cc7767e6f740846d8cb7e1a1a75a47c66ba9f58c22a1c4da0f30d9b",
+  },
+  "z-ai/glm-5.3-flashx": {
+    "catalogue": "94354e07573343c4772f99d9c3204364598051addeb7ef2f4b38f3c85a658c56",
+    "drawer": "ccd367c70abe39d768f5cfe2991cb34180ebff15f11d240fa58bd1ff889da89d",
+  },
+  "z-ai/glm-5.3-prime": {
+    "catalogue": "8f31e87920628dd736d0ba5b36f0bfedd426001f1fd9dc1ea168258056c9dc3b",
+    "drawer": "6bcea66f9049a0471cc6829626b8ca94f6b68b7233eb9e4450aef968b1d2ea6b",
+  },
+  "z-ai/glm-5.3:batch": {
+    "catalogue": "23185d3f0a0e3ee24f205ba494d392d5fe7a81269228bcce26afb5bd5b241427",
+    "drawer": "27378d9c51af62be0847cf1081f2d5a0a790a157035a51bf1b829d12da1d615f",
+  },
+  "z-ai/glm-5v-turbo": {
+    "catalogue": "8887542a3e83f8e805750f4bfb3b5f46e12901dc9ff7d93b0236c75c6e2d3a84",
+    "drawer": "175c3d6677bd4431752a715066d1ee32d3ff9ef5d48e26f44380d0bca20ad1ae",
+  },
+  "~anthropic/claude-fable-latest": {
+    "catalogue": "e03e2e0cb5cb5dd9cee65973e08c565bea721d80523864a0ee992217b806100a",
+    "drawer": "e017549074fd570bf5685561b71f64aa56e14014959068923d239efcb4e7b688",
+  },
+  "~anthropic/claude-haiku-latest": {
+    "catalogue": "ddc43a1e624c4f518af9a13d9d0f566845904a1e7cd2ef8019dfa110d49d445e",
+    "drawer": "2adf0e09510b9f0a7ce1b83b2d436ce894ec5122e8d45356ef9623be6be9ce02",
+  },
+  "~anthropic/claude-opus-latest": {
+    "catalogue": "a5a6b7bb61bf08b8e7a7f4afa4eb4901115ab2c1ab0ac041ad5ead5acc26da18",
+    "drawer": "7b69f61a202e59a540b019ed4c8a8de4c3b0b43582c066015591dc8d54341de7",
+  },
+  "~anthropic/claude-sonnet-latest": {
+    "catalogue": "e2387fcd73414dfa70756c1d345b8975717fb4b9145a5d6df882e35d1978f468",
+    "drawer": "202b3d378bd46aae2e41e6503225c49d6a2efc3500715d413c87d0a64cc3b1de",
+  },
+  "~deepseek/deepseek-flash-latest": {
+    "catalogue": "552f7a5a7f5945eb0d8abf3cf08080f437873bf415dd52cdc122781f7288aa82",
+    "drawer": "5c23d85f4d7a21099c2c6936ab4f8b1416f2e290514f85348dca962685835053",
+  },
+  "~deepseek/deepseek-pro-latest": {
+    "catalogue": "342c0107aeaeb25abdec5f16a5274a7c96aac17e6b12efd782acafaedb98e31e",
+    "drawer": "a8dc2759699c628f821e07486fc49f83fd7f86919a088a0cb67396a8fc6b1157",
+  },
+  "~deepseek/deepseek-v4-flash-latest": {
+    "catalogue": "4a65b9595bb41061cbaa44d329ebe484c7cadc6bed5b30c3039a6322c215d1a0",
+    "drawer": "4ea6511f38f9b620bfe74168e4cdcc43ba8e3ab3f2326383e262a4163494b515",
+  },
+  "~google/gemini-flash-latest": {
+    "catalogue": "8be851722766500eea869c9d93d37facc4eed417dd773f1b39ffd58f55e88b9b",
+    "drawer": "479d8a970bff3e0ec06298d11d915dbbd238554b3c3d518657f1de30c6b29b2a",
+  },
+  "~google/gemini-pro-latest": {
+    "catalogue": "3ad8f89a1bbc5924a5271f811c9e34d089c6390fb6012fb936559c788edc7aaa",
+    "drawer": "c4ab056a2e681e855d1f35030c95f720ef33359e1740cb2a2cd5076eb01e2eed",
+  },
+  "~moonshotai/kimi-latest": {
+    "catalogue": "cacbec83fecde652772b7b574cd8bcfbe141eaf9abeb0412fa4ae38efc777a10",
+    "drawer": "02e9de5484723b872a9fabb082232265cc25510b6774bddf6829480fe3715fbe",
+  },
+  "~openai/gpt-astra-latest": {
+    "catalogue": "51edfd47abd393a09f5ff26b517dfa6926456666313ae96267c6ad7448f7dd43",
+    "drawer": "42d3bf50a18f6896dced5aec3302ccdcd1ed95818388971f115f3456e836aabe",
+  },
+  "~openai/gpt-luna-latest": {
+    "catalogue": "0e16c1e9ffc37d6e007a3e2cb88823f24a6430acfd744fbfebd3ae62bc9d532d",
+    "drawer": "48f63892a630d775c540751bc1e36f67d50576bb16512c55595df73b8081209f",
+  },
+  "~openai/gpt-mini-latest": {
+    "catalogue": "36cea9e949d2a3ca806dc8812a0d52311e4cd0644270568e7eb0a4dbfa575bc8",
+    "drawer": "cc6d839422ca0911df22f57e847271d295e960a89ad7e5a07bf1a061966b7206",
+  },
+  "~openai/gpt-sol-latest": {
+    "catalogue": "09098112c73fc4d9f441290c4436a97acabba7f58a4faad4fca1d6880dd07d7f",
+    "drawer": "ceb3fd5e9e45b20a2edc66ba93c1058ff17aabe91adbce6d621b619a7d026c55",
+  },
+  "~openai/gpt-terra-latest": {
+    "catalogue": "fa5c16f812c28ec8fa1cda6990877c79c5cf2be40b3a5ced47b154e867389011",
+    "drawer": "155ec51262e4347b98e673ef0150ac002a4be355f2cca079a9a053d74fd61b43",
+  },
+  "~unbiased/pareto-latest": {
+    "catalogue": "8f8699c6d1db2b1a33f53b7d33e58cc0edfecd84851b3d1eae2a742cb49b81ea",
+    "drawer": "9515d96fe4eb7d76c6d9fa50e38f17b53d841412ff7bf11f7eb763c73f4f24f0",
+  },
+  "~x-ai/grok-latest": {
+    "catalogue": "6347e01bc0095b4aa494f72c618caedead9f2cef37b427b329e35fb4c90ce9af",
+    "drawer": "7c3eab31eba98040a5a772eab9df11868ba8a101a6a318e248b4c38484c18766",
+  },
+  "~z-ai/glm-flash-latest": {
+    "catalogue": "57fb11e11f2ef38f7d7ba2652229d9619b0b81e746713bfd1019f01b699e59c6",
+    "drawer": "3da0694998bf3b1dc7503095734a782dba569266684c51f597c2ba54f315e421",
+  },
+  "~z-ai/glm-latest": {
+    "catalogue": "181acdaed99c84a8a636df016e911a87d625442d4ab75427f2ab9e4d1b1c330b",
+    "drawer": "cc0ed9f66171803804f4fc6ceb91f70b282613225ae191d3bb633f3ce53ed9ed",
+  },
+}
+`;

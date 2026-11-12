@@ -1,0 +1,43 @@
+{
+  "http": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "This run has used its tool-call budget [tool_budget_exhausted]"
+        }
+      ],
+      "isError": true,
+      "_meta": {
+        "io.futureagi/error": {
+          "type": "payment_required",
+          "code": "tool_budget_exhausted",
+          "message": "This run has used its tool-call budget",
+          "param": null,
+          "metadata": {
+            "limit_source": "agentcc_tool_budget",
+            "scope": "run:run_01K7CN5RUN0000000000000001",
+            "resets_at": null,
+            "kind": "calls",
+            "remaining": 0
+          }
+        },
+        "io.futureagi/tool_call": {
+          "tool_call_id": "tc_01K7CN5TC00000000000000006",
+          "executed": false,
+          "billing_mode": "byok",
+          "billed_usd": 0,
+          "latency_ms": 4
+        }
+      }
+    }
+  }
+}

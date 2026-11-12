@@ -59,6 +59,22 @@ class ThresholdCalculationMethodChoices(models.TextChoices):
     # ANOMALY_DETECTION = "anomaly_detection", "Anomaly Detection"
 
 
+class ThresholdRuleChoices(models.TextChoices):
+    """How a monitor's saved thresholds are judged.
+
+    EARLIER: saved before the threshold update and not edited since. A
+    percentage-change threshold p is a band around the history's mean, mean
+    +/- stddev * (1 + p / 100), and a service-provider error rate is the share
+    of providers with no errors (tracer.utils.monitor_earlier_rule).
+    CURRENT: a percentage-change threshold compares with one previous period,
+    baseline * (1 +/- p / 100), and the service-provider error rate is the
+    share of providers with errors.
+    """
+
+    EARLIER = "earlier", "Earlier"
+    CURRENT = "current", "Current"
+
+
 class UserAlertMonitor(BaseModel):
     """Model for user-defined alert monitors that track various metrics."""
 
@@ -122,6 +138,15 @@ class UserAlertMonitor(BaseModel):
     auto_threshold_time_window = models.PositiveIntegerField(
         default=60 * 24 * 7,  # 1 week
         help_text="For auto-thresholding. The time window in minutes to calculate the historical mean",
+    )
+    # Rows saved before this column existed read the database default; a row
+    # the server saves now gets the Python default. Set by the server only.
+    threshold_rule = models.CharField(
+        max_length=16,
+        choices=ThresholdRuleChoices,
+        default=ThresholdRuleChoices.CURRENT.value,
+        db_default=ThresholdRuleChoices.EARLIER.value,
+        help_text="How the saved thresholds are judged: earlier for monitors saved before the threshold update and not edited since, current otherwise.",
     )
     last_checked_at = models.DateTimeField(
         null=True,

@@ -1,0 +1,17 @@
+{
+  "http": {
+    "status": 403,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": false,
+    "type": "permission_error",
+    "code": "key_scope_denied",
+    "detail": "This is an Omega EE agent key: it may call only the gateway's MCP endpoint and its model endpoints (POST /v1/chat/completions, /v1/embeddings and /v1/responses), not this API.",
+    "message": "This is an Omega EE agent key: it may call only the gateway's MCP endpoint and its model endpoints (POST /v1/chat/completions, /v1/embeddings and /v1/responses), not this API.",
+    "error": "This is an Omega EE agent key: it may call only the gateway's MCP endpoint and its model endpoints (POST /v1/chat/completions, /v1/embeddings and /v1/responses), not this API.",
+    "result": "This is an Omega EE agent key: it may call only the gateway's MCP endpoint and its model endpoints (POST /v1/chat/completions, /v1/embeddings and /v1/responses), not this API."
+  }
+}

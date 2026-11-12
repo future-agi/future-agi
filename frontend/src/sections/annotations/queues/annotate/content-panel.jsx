@@ -17,10 +17,11 @@ import {
   IconButton,
   LinearProgress,
   Stack,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import {
@@ -42,6 +43,9 @@ import TraceDisplayPanel, {
   DEFAULT_VIEW_CONFIG,
 } from "src/components/traceDetail/TraceDisplayPanel";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
+import ReviewCandidates from "./ReviewCandidates";
+// W4 C1: the expected answer with Correct (queues with corrections on).
+import CorrectExpectedField from "./CorrectExpectedField";
 import {
   useGetSavedViews,
   useDeleteSavedView,
@@ -72,19 +76,16 @@ const ANNOTATION_WORKSPACE_HIDDEN_VOICE_ACTION_IDS = ["queue", "tags"];
 function neutralChipSx(theme, height = 22) {
   return {
     height,
-    fontSize: height <= 18 ? 10 : 11,
-    fontWeight: 700,
-    borderColor: alpha(theme.palette.text.primary, 0.12),
-    bgcolor: alpha(
-      theme.palette.text.primary,
-      theme.palette.mode === "dark" ? 0.04 : 0.025,
-    ),
+    fontSize: 12,
+    fontWeight: 600,
+    borderColor: "divider",
+    bgcolor: "background.neutral",
     color: "text.secondary",
     "& .MuiChip-label": { px: 0.75 },
   };
 }
 
-export default function ContentPanel({ item }) {
+export default function ContentPanel({ item, reviewContext = null }) {
   if (!item) return null;
 
   const content = item.source_content;
@@ -152,7 +153,20 @@ export default function ContentPanel({ item }) {
         sx={(theme) => ({ ...neutralChipSx(theme), mb: 2 })}
       />
 
-      {sourceType === "dataset_row" && <DatasetRowContent content={content} />}
+      {sourceType === "dataset_row" && reviewContext ? (
+        <ReviewCandidates
+          context={reviewContext}
+          datasetName={content?.dataset_name}
+        />
+      ) : null}
+      {sourceType === "dataset_row" && reviewContext ? (
+        <Box sx={{ mt: 2 }}>
+          <CorrectExpectedField context={reviewContext} />
+        </Box>
+      ) : null}
+      {sourceType === "dataset_row" && !reviewContext && (
+        <DatasetRowContent content={content} />
+      )}
       {sourceType === "trace" && <TraceContent content={content} />}
       {sourceType === "observation_span" && <SpanContent content={content} />}
       {sourceType === "prototype_run" && <PrototypeContent content={content} />}
@@ -163,6 +177,8 @@ export default function ContentPanel({ item }) {
 
 ContentPanel.propTypes = {
   item: PropTypes.object,
+  // annotate-detail `review_context` (experiment review items, §3.12)
+  reviewContext: PropTypes.object,
 };
 
 // ---------------------------------------------------------------------------
@@ -182,6 +198,52 @@ function findEntryBySpanId(entries, spanId) {
 }
 
 const READ_ONLY_TAB_TOOLTIP = "Open trace project to edit the view";
+
+const TRACE_LAYOUTS = [
+  { value: "tree", label: "Tree" },
+  { value: "timeline", label: "Timeline" },
+];
+
+// Tree | Timeline in the toolbar, beside Display, as in the trace drawer, so
+// the timeline is one click away. The Display panel keeps its own Trace
+// View / Timeline View choice; both set the same viewMode.
+function TraceLayoutSwitch({ viewMode, onChange }) {
+  return (
+    <ToggleButtonGroup
+      exclusive
+      size="small"
+      aria-label="Trace layout"
+      // The body draws the tree for any mode but "timeline".
+      value={viewMode === "timeline" ? "timeline" : "tree"}
+      // Clicking the pressed option sends null: keep one option pressed.
+      onChange={(_, next) => {
+        if (next) onChange(next);
+      }}
+      // Never squeezed or wrapped by a narrow panel.
+      sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+    >
+      {TRACE_LAYOUTS.map((layout) => (
+        <ToggleButton key={layout.value} value={layout.value}>
+          {layout.label}
+        </ToggleButton>
+      ))}
+    </ToggleButtonGroup>
+  );
+}
+
+TraceLayoutSwitch.propTypes = {
+  viewMode: PropTypes.string,
+  onChange: PropTypes.func.isRequired,
+};
+
+// The toolbar reads its own width, not the window's: the label panel beside
+// it decides the room it has (about 380 px in review mode at a 1024 px
+// window). With View session showing, one line needs about 410 px (the
+// Trace tab, Display, Tree | Timeline, View session, padding and gaps). At
+// 440 px or less, View session sits under the switch, so the row never runs
+// into the Trace tab. With no session there is one control and no change.
+const TOOLBAR_CONTAINER = "inline-trace-toolbar";
+const TOOLBAR_STACKED = `@container ${TOOLBAR_CONTAINER} (max-width: 440px)`;
 
 function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
   const queryClient = useQueryClient();
@@ -215,7 +277,7 @@ function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
       {
         id: "trace",
         label: "Trace",
-        icon: "mdi:link-variant",
+        icon: "solar:link-linear",
         isDefault: true,
       },
     ];
@@ -225,7 +287,9 @@ function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
       tabs.push({
         id: v.id,
         label: v.name,
-        icon: isImagine ? "mdi:creation" : "mdi:link-variant",
+        icon: isImagine
+          ? "solar:stars-minimalistic-linear"
+          : "solar:link-linear",
         isDefault: false,
         config: v.config,
         visibility: v.visibility,
@@ -236,7 +300,7 @@ function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
       tabs.push({
         id: "__new_imagine__",
         label: "Imagine",
-        icon: "mdi:creation",
+        icon: "solar:stars-minimalistic-linear",
         isDefault: false,
         tabType: "imagine",
       });
@@ -392,14 +456,10 @@ function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
             size="small"
             variant="text"
             color="inherit"
-            startIcon={<Iconify icon="mdi:arrow-left" width={16} />}
+            startIcon={<Iconify icon="solar:arrow-left-linear" width={16} />}
             onClick={() => setShowSession(false)}
             sx={{
-              fontSize: 12,
-              fontWeight: 500,
-              textTransform: "none",
               minWidth: 0,
-              px: 0.75,
             }}
           >
             Back to trace
@@ -432,26 +492,48 @@ function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
       {/* Tabs toolbar — includes the "+ Imagine" button so users can pivot
           to an Imagine view from the annotate workspace. Saved views
           themselves stay read-only (no rename/edit here). */}
-      <DrawerToolbar
-        tabs={drawerTabs}
-        activeTabId={activeDrawerTab}
-        onTabChange={handleTabChange}
-        onCloseTab={handleCloseTab}
-        onCreateImagineTab={handleCreateImagineTab}
-        onDisplayOpen={(el) => setDisplayAnchorEl(el)}
-        readOnly
-        readOnlyTabTooltip={READ_ONLY_TAB_TOOLTIP}
-        hideFilter
-        rightSlot={
-          sessionId ? (
-            <ToolbarPill
-              icon="mdi:forum-outline"
-              label="View session"
-              onClick={() => setShowSession(true)}
-            />
-          ) : null
-        }
-      />
+      <Box
+        sx={{
+          flexShrink: 0,
+          containerType: "inline-size",
+          containerName: TOOLBAR_CONTAINER,
+        }}
+      >
+        <DrawerToolbar
+          tabs={drawerTabs}
+          activeTabId={activeDrawerTab}
+          onTabChange={handleTabChange}
+          onCloseTab={handleCloseTab}
+          onCreateImagineTab={handleCreateImagineTab}
+          onDisplayOpen={(el) => setDisplayAnchorEl(el)}
+          readOnly
+          readOnlyTabTooltip={READ_ONLY_TAB_TOOLTIP}
+          hideFilter
+          rightSlot={
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+                [TOOLBAR_STACKED]: {
+                  flexDirection: "column",
+                  alignItems: "flex-end",
+                  py: 0.5,
+                },
+              }}
+            >
+              <TraceLayoutSwitch viewMode={viewMode} onChange={setViewMode} />
+              {sessionId ? (
+                <ToolbarPill
+                  icon="solar:chat-round-line-linear"
+                  label="View session"
+                  onClick={() => setShowSession(true)}
+                />
+              ) : null}
+            </Box>
+          }
+        />
+      </Box>
 
       {/* Display options popover */}
       <TraceDisplayPanel
@@ -909,7 +991,7 @@ function ImageValue({ value }) {
             sx={{
               maxWidth: "100%",
               maxHeight: 300,
-              borderRadius: 0.5,
+              borderRadius: "4px",
               cursor: "pointer",
               objectFit: "contain",
               border: 1,
@@ -922,7 +1004,8 @@ function ImageValue({ value }) {
       <Dialog
         open={!!expanded}
         onClose={() => setExpanded(false)}
-        maxWidth="lg"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 960 } }}
       >
         <Box sx={{ position: "relative" }}>
           <IconButton
@@ -935,7 +1018,7 @@ function ImageValue({ value }) {
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
           <Box
             component="img"
@@ -1004,7 +1087,7 @@ function DocumentValue({ value }) {
           height: 500,
           border: 1,
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
         }}
       />
     );
@@ -1013,7 +1096,7 @@ function DocumentValue({ value }) {
   // Other documents — download link
   return (
     <Stack direction="row" spacing={1} alignItems="center">
-      <Iconify icon="mingcute:file-line" width={20} />
+      <Iconify icon="solar:document-text-linear" width={20} />
       <Typography
         component="a"
         href={src}
@@ -1134,10 +1217,9 @@ function ContentSection({ title, children, dataType, copyValue }) {
               size="small"
               aria-label={`Copy ${title || "content"}`}
               onClick={handleCopy}
-              sx={{ p: 0.25 }}
             >
               <Iconify
-                icon={copied ? "eva:checkmark-fill" : "eva:copy-fill"}
+                icon={copied ? "solar:check-linear" : "solar:copy-linear"}
                 width={14}
                 sx={{ color: copied ? "success.main" : "text.disabled" }}
               />
@@ -1148,7 +1230,7 @@ function ContentSection({ title, children, dataType, copyValue }) {
       <Box
         sx={{
           bgcolor: "background.neutral",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           p: 2,
           fontSize: 13,
           whiteSpace: "pre-wrap",
@@ -1537,7 +1619,7 @@ function SessionContent({ content }) {
           {sessionMetadata.duration != null && (
             <Chip
               size="small"
-              icon={<Iconify icon="radix-icons:clock" width={14} />}
+              icon={<Iconify icon="solar:clock-circle-linear" width={14} />}
               label={`Duration: ${formatMs(sessionMetadata.duration * 1000)}`}
               variant="outlined"
             />

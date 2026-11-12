@@ -1,0 +1,34 @@
+# H-MCP-only overlay. bin/e2e adds it only for E2E_GATEWAY_PROFILE=mcp.
+# bin/e2e build mcpmock generates the fixture bundle with agentcc-catalog and
+# extracts only the public certificate from the mock image. No real secret is
+# read, mounted or shipped. The gateway keeps normal TLS verification enabled.
+services:
+  # Preserve the default bearer/public-only fixture; U3 W08 explicitly selects OAuth.
+  # Other walk profiles retain the extended OAuth recorder from the base stack.
+  mcp-mock: !override
+    image: futureagi/agentcc-mcpmock:e2e-local
+    pull_policy: never
+    command: []
+    environment:
+      E2E_MCP_MOCK_AUTH: ${E2E_MCP_MOCK_AUTH:-bearer:e2e-mcp-upstream-bearer-not-a-secret}
+    networks:
+      e2e-public:
+        ipv4_address: 11.88.0.13
+        aliases: [mcp.e2e-public.test]
+    restart: "no"
+  app:
+    environment:
+      # with-mcp-subfeatures.sh pins W07=mcp to all OFF, W08 to upstream
+      # only, and W09=mcp-signin to client only. Both app processes read
+      # these env vars; setting only gateway YAML would leave Django OFF.
+      AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED: ${AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED:-false}
+      AGENTCC_MCP_CLIENT_OAUTH_ENABLED: ${AGENTCC_MCP_CLIENT_OAUTH_ENABLED:-false}
+      AGENTCC_MCP_K2_APPS_ENABLED: ${AGENTCC_MCP_K2_APPS_ENABLED:-false}
+      AGENTCC_MCP_TOOL_CALL_EXPLORER_ENABLED: ${AGENTCC_MCP_TOOL_CALL_EXPLORER_ENABLED:-false}
+      AGENTCC_MCP_TOOL_CALL_DOWNLOAD_ENABLED: ${AGENTCC_MCP_TOOL_CALL_DOWNLOAD_ENABLED:-false}
+      AGENTCC_MCP_STATE_KEYS: e2e-only-mcp-state-key-not-a-secret-0000
+      SSL_CERT_FILE: /opt/e2e/mcp/ca.pem
+    volumes:
+      - ./e2e/.mcp/catalog:/opt/e2e/mcp/catalog:ro
+      - ./e2e/.mcp/catalog/dist/catalog.json:/app/backend/agentcc/connector_catalog/catalog.json:ro
+      - ./e2e/.mcp/ca.pem:/opt/e2e/mcp/ca.pem:ro

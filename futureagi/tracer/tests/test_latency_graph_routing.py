@@ -1,5 +1,5 @@
-"""An unfiltered LATENCY graph takes the exact path; every other metric keeps
-the fast unfiltered path.
+"""Latency, monetary series and trace Traffic use qualified raw sources;
+other metrics keep the fast unfiltered aggregate-state path.
 
 The fast path reads ``spans``'s hourly aggregate states. They hold latency
 only as t-digest states over every physically inserted row (no latency sum,
@@ -9,7 +9,8 @@ path's own statement with an empty filter set - including its cost gate,
 background hand-off, snapshot cache and pending envelope - so a chart with no
 filter equals the same chart with a filter that matches everything. Graph
 requests are per metric (``metric_id`` is part of the exact-snapshot
-identity), so only latency requests move.
+identity). Cost independently requires latest-live monetary flags, which the
+hourly states cannot supply.
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ ALWAYS_TRUE = {
 
 # Every id the trace dispatcher publishes as the latency series.
 LATENCY_IDS = ["latency", " Latency ", "", None, "time_to_first_token"]
-FAST_PATH_IDS = [
+NON_LATENCY_IDS = [
     "tokens",
     "total_tokens",
     "prompt_tokens",
@@ -130,16 +131,26 @@ def test_unfiltered_latency_runs_the_raw_span_statement(observe_type, metric_id)
 
 
 @pytest.mark.parametrize("observe_type", ["trace", "span"])
-@pytest.mark.parametrize("metric_id", FAST_PATH_IDS)
-def test_unfiltered_other_metrics_keep_the_hourly_state_statement(
-    observe_type, metric_id
-):
+@pytest.mark.parametrize("metric_id", NON_LATENCY_IDS)
+def test_unfiltered_metrics_use_their_qualified_source(observe_type, metric_id):
     response, analytics = _trace_graph(metric_id, [WINDOW], observe_type=observe_type)
 
     assert response["query_status"] == "complete", response
     assert len(analytics.statements) == 1
-    assert _is_hourly_state_statement(analytics.statements[0])
-    assert response["query_provenance"] == "materialized_rollup"
+    if metric_id == "cost":
+        assert _is_raw_span_statement(analytics.statements[0])
+        assert "AS graph_monetary_spans" in analytics.statements[0]
+        assert "AS graph_cost_flags" in analytics.statements[0]
+        assert response["query_provenance"] == "bounded_candidates"
+    elif metric_id == "traffic" and observe_type == "trace":
+        sql = analytics.statements[0]
+        assert "uniqExact(trace_id) AS traffic_count" in sql
+        assert "parent_span_id IS NULL OR parent_span_id = ''" in sql
+        assert "countMerge" not in sql
+        assert response["query_provenance"] == "bounded_candidates"
+    else:
+        assert _is_hourly_state_statement(analytics.statements[0])
+        assert response["query_provenance"] == "materialized_rollup"
 
 
 @pytest.mark.parametrize("observe_type", ["trace", "span"])
@@ -181,6 +192,97 @@ def test_unfiltered_latency_accepts_an_empty_filter_set(monkeypatch, filters):
     assert direct.call_args.kwargs["filters"] == filters
     assert direct.call_args.kwargs["metric_id"] == "latency"
     assert response["query_status"] == "complete"
+
+
+@pytest.mark.parametrize("filters", [[], [WINDOW]], ids=["no-filters", "window"])
+def test_trace_traffic_reads_only_root_projection_columns(filters):
+    response, analytics = _trace_graph("traffic", list(filters))
+
+    assert response["query_status"] == "complete"
+    (sql,) = analytics.statements
+    assert sql.count("FROM spans") == 1
+    assert "uniqExact(trace_id) AS traffic_count" in sql
+    assert "parent_span_id IS NULL OR parent_span_id = ''" in sql
+    assert "start_time >= %(start_date)s" in sql
+    assert "start_time < %(end_date)s" in sql
+    assert "project_id = toUUID(%(project_id)s)" in sql
+    assert "is_deleted = 0" in sql
+    for unnecessary in ("attrs_string", "latency_ms", "_version", "FINAL", "JOIN"):
+        assert unnecessary not in sql
+
+
+def test_filtered_trace_traffic_reuses_root_contributions_without_an_extra_scan():
+    response, analytics = _trace_graph("traffic", [WINDOW, ALWAYS_TRUE])
+
+    assert response["query_status"] == "complete"
+    (sql,) = analytics.statements
+    assert sql.count("FROM spans") == 1
+    assert "AS graph_contribution_match_0" in sql
+    assert "parent_span_id IS NULL OR parent_span_id = ''" in sql
+    assert "toUInt64(countIf(" in sql
+    assert "> 0) AS graph_row_count" in sql
+    assert "HAVING graph_match_0 = 1" in sql
+    assert "(parent_span_id IS NULL OR parent_span_id = '') AND (1 = 1)" in sql
+    assert "observation_type != ''" not in sql
+
+
+def test_trace_traffic_cache_identity_carries_root_scope(monkeypatch):
+    probes = []
+
+    def pending(**call):
+        probes.append(call)
+        return {**call["pending_payload"], "query_refreshing": True}
+
+    monkeypatch.setattr(graph_dispatch, "_read_or_refresh_exact_graph", pending)
+    filters = [WINDOW, ALWAYS_TRUE]
+    _trace_graph("traffic", filters)
+
+    (call,) = probes
+    scoped = call["identity"]["filters"]
+    assert filters == [WINDOW, ALWAYS_TRUE], "caller filters must not be mutated"
+    assert scoped[:2] == filters
+    assert len(scoped) == 3
+    assert scoped[-1]["_eval_task_trace_root"] is True
+    assert scoped[-1]["filter_config"]["filter_op"] == "not_in"
+    assert scoped[-1]["filter_config"]["filter_value"] == []
+
+
+def test_trace_traffic_cost_probe_prices_root_projection_columns():
+    from datetime import datetime
+
+    from tracer.services.clickhouse.graph_read_cost import estimate_raw_graph_scan_rows
+
+    analytics = mock.Mock()
+    analytics.execute_ch_query.return_value = SimpleNamespace(
+        data=[{"database": "default", "table": "spans", "parts": 1, "rows": 100, "marks": 1}],
+        columns=["database", "table", "parts", "rows", "marks"],
+    )
+    rows = estimate_raw_graph_scan_rows(
+        analytics=analytics, project_id=PROJECT_ID,
+        scan_start=datetime(2026, 8, 5), scan_end=datetime(2026, 8, 12),
+        timeout_ms=1_000, root_only=True,
+    )
+
+    assert rows == 100
+    call = analytics.execute_ch_query.call_args
+    sql = call.args[0]
+    assert "SELECT trace_id, start_time" in sql
+    assert "is_deleted = 0" in sql
+    assert "parent_span_id IS NULL OR parent_span_id = ''" in sql
+    assert call.kwargs["settings"]["optimize_use_projections"] == 1
+
+
+def test_background_trace_traffic_without_saved_scope_counts_roots():
+    analytics = _RecordingAnalytics()
+    response = graph_dispatch.fetch_background_raw_system_metric_graph(
+        analytics=analytics, project_id=PROJECT_ID, filters=[WINDOW],
+        interval="day", metric_id="traffic", observe_type="trace",
+    )
+
+    assert response["query_status"] == "complete"
+    (sql,) = analytics.statements
+    assert "uniqExact(trace_id) AS traffic_count" in sql
+    assert "parent_span_id IS NULL OR parent_span_id = ''" in sql
 
 
 # ---------------------------------------------------------------------------

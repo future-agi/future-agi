@@ -1,6 +1,8 @@
 import { Box, Drawer, IconButton, Typography } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useEffect, useMemo, useRef } from "react";
+import RerunScopeField from "../RerunScopeField";
+import { withRerunScope } from "../rerunScope";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import {
@@ -29,6 +31,10 @@ import {
 import { ShowComponent } from "src/components/show";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { transformDynamicColumnConfig } from "../common";
+import { savedApiCallForm } from "./savedApiCallForm";
+import { rerunResultToast } from "../rerunResult";
+import { apiCallFormOf, responsePathOffered } from "./responsePath";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const getDefaultValue = () => {
   return {
@@ -40,6 +46,8 @@ const getDefaultValue = () => {
       headers: [],
       body: "",
       output_type: "string",
+      // L2: only where a response path is applied (prototype mode).
+      ...(responsePathOffered() ? { response_path: "$" } : {}),
     },
     concurrency: "",
   };
@@ -111,10 +119,9 @@ export const AddColumnApiCallChild = ({
         endpoints.develop.addColumns.updateDynamicColumn(editId),
         data,
       ),
-    onSuccess: () => {
-      enqueueSnackbar("API Call column updated successfully", {
-        variant: "success",
-      });
+    onSuccess: (res) => {
+      const toast = rerunResultToast("API Calls", res);
+      enqueueSnackbar(toast.text, { variant: toast.variant });
       queryClient.invalidateQueries({
         queryKey: ["dynamic-column-config", editId],
       });
@@ -206,14 +213,22 @@ export const AddColumnApiCallChild = ({
     return false;
   };
 
-  const onSubmit = (formValues) => {
+  const [rerunScope, setRerunScope] = useState("all");
+  const onSubmit = (submitted) => {
     if (!validateDotInColumnNames()) return;
-    if (!validateBodyVariable(formValues)) return;
+    if (!validateBodyVariable(submitted)) return;
+    // L2: dev keeps no response path; a real build neither offers nor sends it.
+    const formValues = apiCallFormOf(submitted);
     if (editId) {
-      updateColumn({
-        config: { ...formValues },
-        operation_type: "api_call",
-      });
+      updateColumn(
+        withRerunScope(
+          {
+            config: { ...formValues },
+            operation_type: "api_call",
+          },
+          rerunScope,
+        ),
+      );
       return;
     }
     if (onFormSubmit) {
@@ -227,7 +242,7 @@ export const AddColumnApiCallChild = ({
     if (!validateDotInColumnNames()) return;
     if (!validateBodyVariable(formValues)) return;
     if (!onFormSubmit) {
-      preview({ config: formValues.config });
+      preview({ config: apiCallFormOf(formValues).config });
     }
   });
 
@@ -257,17 +272,18 @@ export const AddColumnApiCallChild = ({
             mb: 2,
           }}
         >
-          <Typography fontWeight={700} color="text.secondary">
+          <Typography fontWeight={600} color="text.secondary">
             {editId ? "Edit API Call" : "Add API Call"}
           </Typography>
           <IconButton
+            aria-label="Close api calls"
             onClick={() => {
               reset();
               onClose();
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Box
@@ -297,6 +313,16 @@ export const AddColumnApiCallChild = ({
             fieldName="config.output_type"
             options={OutputTypeOptions}
           />
+          <ShowComponent condition={responsePathOffered()}>
+            <FormTextFieldV2
+              label="Response path"
+              size="small"
+              control={control}
+              fieldName="config.response_path"
+              placeholder="$.message"
+              helperText="The part of the JSON response the cell keeps; $ keeps all of it."
+            />
+          </ShowComponent>
           <RequestBody
             control={control}
             contentFieldName="config.url"
@@ -326,7 +352,7 @@ export const AddColumnApiCallChild = ({
           />
           <Accordion defaultExpanded>
             <AccordionSummary>
-              <Typography fontWeight={700} fontSize="12px">
+              <Typography fontWeight={600} fontSize="12px">
                 Params
               </Typography>
             </AccordionSummary>
@@ -341,7 +367,7 @@ export const AddColumnApiCallChild = ({
           </Accordion>
           <Accordion defaultExpanded>
             <AccordionSummary>
-              <Typography fontWeight={700} fontSize="12px">
+              <Typography fontWeight={600} fontSize="12px">
                 Headers
               </Typography>
             </AccordionSummary>
@@ -356,7 +382,7 @@ export const AddColumnApiCallChild = ({
           </Accordion>
           <Accordion defaultExpanded>
             <AccordionSummary>
-              <Typography fontWeight={700} fontSize="12px">
+              <Typography fontWeight={600} fontSize="12px">
                 Request Body
               </Typography>
             </AccordionSummary>
@@ -370,6 +396,9 @@ export const AddColumnApiCallChild = ({
             </AccordionDetails>
           </Accordion>
         </Box>
+        {editId && (
+          <RerunScopeField value={rerunScope} onChange={setRerunScope} />
+        )}
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
           {!onFormSubmit && (
             <LoadingButton
@@ -431,24 +460,36 @@ const AddColumnApiCall = ({ initialData, onFormSubmit }) => {
   const allColumns = useDatasetColumnConfig(dataset, true);
 
   const memoizedInitialData = useMemo(() => {
-    return columnConfig
-      ? transformDynamicColumnConfig("api_call", columnConfig, allColumns)
-      : initialData;
+    if (!columnConfig) return initialData;
+    // v2.1 g8 (dyncol:api-calls): a column saved from this form stores the
+    // form itself (`{column_name, config: {url, params: [...]}, concurrency}`);
+    // Configure reopens it as saved. Older configs keep the backend shape.
+    const saved = savedApiCallForm(columnConfig, (c) =>
+      transformDynamicColumnConfig("api_call", c, allColumns),
+    );
+    return (
+      saved ??
+      transformDynamicColumnConfig("api_call", columnConfig, allColumns)
+    );
   }, [columnConfig, allColumns, initialData]);
 
+  const covered = useDrawerCovered(openAddColumnApiCall);
   return (
     <Drawer
       anchor="right"
       open={openAddColumnApiCall}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
-      variant="persistent"
+      variant="temporary"
       PaperProps={{
+        role: "dialog",
+        "aria-modal": true,
+        "aria-label": "API calls",
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 1300,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

@@ -33,6 +33,7 @@ from django.conf import settings
 
 from model_hub.models.develop_dataset import Cell, Row
 from simulate.models import AgentDefinition, CallExecution, Scenarios, TestExecution
+from tfc.ee_loader import is_cloud_env
 
 logger = structlog.get_logger(__name__)
 
@@ -77,8 +78,7 @@ def _leased_room_run_seconds(case_count: int, max_seconds: float) -> float:
     outer deadline.
     """
     return (
-        case_count * (max_seconds + _leased_overhead_seconds())
-        + _BASE_CLEANUP_SECONDS
+        case_count * (max_seconds + _leased_overhead_seconds()) + _BASE_CLEANUP_SECONDS
     )
 
 
@@ -288,7 +288,7 @@ def build_start_runner_job(
         raise HostedRunnerBuildError("run test has no agent definition")
 
     ordered_ids = [str(sid) for sid in (scenario_ids or test_execution.scenario_ids)]
-    scenarios = _load_scenarios(ordered_ids)
+    scenarios = _load_scenarios(ordered_ids, organization_id=run_test.organization_id)
     if not scenarios:
         raise HostedRunnerBuildError("no scenarios available for the runner job")
 
@@ -391,10 +391,20 @@ def build_start_runner_job(
     return job
 
 
-def _load_scenarios(scenario_ids: list[str]) -> list[Scenarios]:
+def _load_scenarios(scenario_ids: list[str], *, organization_id) -> list[Scenarios]:
+    """The execution's scenarios, in the requested order, from its own organization.
+
+    This runs in a Temporal activity with no workspace bound, so the manager adds
+    no tenant filter. ``organization_id`` is the run test's: an id of another
+    organization's scenario (stored on an execution created before execute
+    checked its scenario_ids, T6 #7e) is skipped like a deleted one, and its
+    persona and dataset rows are never read.
+    """
     by_id = {
         str(scenario.id): scenario
-        for scenario in Scenarios.objects.filter(id__in=scenario_ids, deleted=False)
+        for scenario in Scenarios.objects.filter(
+            id__in=scenario_ids, organization_id=organization_id, deleted=False
+        )
     }
     return [by_id[sid] for sid in scenario_ids if sid in by_id]
 
@@ -942,6 +952,42 @@ def _env_passthrough_ref(env_var: str) -> dict[str, Any]:
     return {"key": env_var, "manager": "env", "source": env_var}
 
 
+def _vapi_control_secret_ref(credentials) -> dict[str, Any] | None:
+    """Use the authorized target credential row's saved Vapi control config.
+
+    ``config_json.monitorPlan.controlAuthenticationEnabled`` declares the
+    target's control policy; ``config_json.public_api_key`` is its customer-owned
+    public control key. Only the credential reference enters the job payload.
+    This does not fetch provider configuration or use worker-env credentials.
+    """
+    config = getattr(credentials, "config_json", None) or {}
+    plan = config.get("monitorPlan", {}) if isinstance(config, dict) else None
+    authenticated = (
+        plan.get("controlAuthenticationEnabled", False)
+        if isinstance(plan, dict)
+        else None
+    )
+    if type(authenticated) is not bool:
+        raise HostedRunnerBuildError(
+            "invalid Vapi control authentication configuration"
+        )
+    if not authenticated:
+        return None
+    _require(getattr(credentials, "id", None), "Vapi customer credential")
+    public_key = config.get("public_api_key")
+    if not isinstance(public_key, str) or not public_key.strip():
+        if not is_cloud_env(getattr(settings, "CLOUD_DEPLOYMENT", "") or ""):
+            # v1.56.1 self-host parity: the operator is the customer. The
+            # activity may use their worker public key, never on Cloud.
+            return None
+        # On Cloud retain the reference even when its value is absent. The
+        # activity refuses before spawn and returns a user-facing failure detail
+        # (a build-activity exception would become a generic ActivityError).
+    return _provider_credential_ref(
+        "VAPI_PUBLIC_API_KEY", credentials, "public_api_key"
+    )
+
+
 def _voice_agent_definition(
     agent_definition,
     provider: str,
@@ -1009,6 +1055,10 @@ def _voice_agent_definition(
             transport["inbound_call_originator"] = originator
             env_var = _PROVIDER_ENV[originator]["api_key"]
             secret_env.append(_credential_or_env(env_var, credentials, "api_key"))
+            if originator == "vapi":
+                control_ref = _vapi_control_secret_ref(credentials)
+                if control_ref is not None:
+                    secret_env.append(control_ref)
             for job_field_name, source_attribute, validator in profile[
                 "sip_inbound_originator_fields"
             ]:
@@ -1180,7 +1230,6 @@ def _voice_params(
     target_speaks_first: bool | None = None,
     leased_room: bool = False,
 ) -> dict[str, Any]:
-    is_telephony = transport_kind in {"sip_inbound", "sip_outbound"}
     # Who opens the conversation. The explicit ``target_speaks_first`` toggle on
     # the agent definition wins when set (True: wait for the target's greeting;
     # False: the simulator opens). When unset (None), fall back to the target's

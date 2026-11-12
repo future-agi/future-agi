@@ -1,0 +1,23 @@
+{
+  "admin": {
+    "org_id": "org_01JD8Z3K4M5N6P7Q8R9S",
+    "granted_total_micros": 100000000,
+    "granted_version": 7,
+    "spent_micros": 41262000,
+    "held_micros": 40000,
+    "available_micros": 58698000,
+    "balance_usd": 58.698,
+    "markup_percent": 5,
+    "outbox_pending": 3,
+    "ledger": "redis"
+  },
+  "customer": {
+    "data": {
+      "total_credits": 100.0,
+      "total_usage": 41.262,
+      "balance": 58.698,
+      "held": 0.04,
+      "managed_enabled": true
+    }
+  }
+}

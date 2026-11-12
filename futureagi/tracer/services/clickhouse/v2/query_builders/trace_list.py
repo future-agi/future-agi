@@ -43,7 +43,12 @@ from tracer.services.clickhouse.query_builders.trace_list import (
     TraceListQueryBuilder,
     _unix_microseconds,
 )
-from tracer.services.clickhouse.query_builders.trace_usage import usage_aggregate_sql
+from tracer.services.clickhouse.query_builders.trace_usage import (
+    capture_coverage_from_counts,
+    source_summary_sql,
+    usage_aggregate_sql,
+    usage_coverage_sql,
+)
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
@@ -55,6 +60,9 @@ from tracer.services.clickhouse.v2.query_builders.filters import (
 TRACE_ROLLUP_COLUMNS: tuple[str, ...] = (
     "trace_rollup_present",
     "trace_rollup_cost",
+    "trace_rollup_cost_unknown",
+    "trace_rollup_source_summary_present",
+    "trace_rollup_request_count",
     "trace_rollup_total_tokens",
     "trace_rollup_prompt_tokens",
     "trace_rollup_completion_tokens",
@@ -90,6 +98,18 @@ def apply_trace_rollup(row: dict[str, Any], rollup: Mapping[str, Any]) -> None:
         value = rollup.get(key)
         if value is not None:
             row[column] = value
+    # Only an explicit coverage result can replace a numeric root with NULL.
+    # An absent/join-default rollup must still leave the root unchanged.
+    if rollup.get("trace_rollup_cost_unknown"):
+        row["cost"] = None
+    capture = capture_coverage_from_counts(
+        source_summary_present=bool(rollup.get("trace_rollup_source_summary_present")),
+        request_count=int(rollup.get("trace_rollup_request_count") or 0),
+    )
+    if capture is not None:
+        row["capture_coverage"] = capture
+    else:
+        row.pop("capture_coverage", None)
     if _blank_content(row.get("input")) and _blank_content(row.get("output")):
         llm_input = rollup.get("first_llm_input")
         llm_output = rollup.get("first_llm_output")
@@ -524,17 +544,25 @@ class _TraceRootReplayV2:
                     rollup_cost, rollup_total_tokens,
                     rollup_prompt_tokens, rollup_completion_tokens,
                     rollup_first_llm_model, rollup_first_llm_provider,
-                    rollup_first_llm_key, rollup_root_has_content
+                    rollup_first_llm_key, rollup_root_has_content,
+                    usage_cost_unknown, usage_source_summary_present, usage_request_count
                 ))
                 FROM (
+                    SELECT project_id, trace_id,
+                        usage_metrics.1 AS usage_cost_unknown,
+                        usage_metrics.2 AS rollup_cost,
+                        usage_metrics.3 AS rollup_total_tokens,
+                        usage_metrics.4 AS rollup_prompt_tokens,
+                        usage_metrics.5 AS rollup_completion_tokens,
+                        usage_metrics.6 AS usage_source_summary_present,
+                        usage_metrics.7 AS usage_request_count,
+                        rollup_first_llm_model, rollup_first_llm_provider,
+                        rollup_first_llm_key, rollup_root_has_content
+                    FROM (
                     SELECT
                         project_id,
                         trace_id,
-                        {usage_aggregate_sql(prefix="latest_")},
-                        usage_cost AS rollup_cost,
-                        usage_total_tokens AS rollup_total_tokens,
-                        usage_prompt_tokens AS rollup_prompt_tokens,
-                        usage_completion_tokens AS rollup_completion_tokens,
+                        {usage_aggregate_sql(prefix="latest_", coverage="latest_usage_coverage", source_summary="latest_source_summary_present", materialized=True)},
                         argMinIf(latest_model,
                             tuple(latest_start_time, id, observation_type, service_name),
                             observation_type = 'llm' AND latest_model != '')
@@ -564,7 +592,9 @@ class _TraceRootReplayV2:
                             toStartOfHour(start_time) AS start_hour,
                             argMax(tuple(start_time, cost, total_tokens, prompt_tokens,
                                 completion_tokens, model, provider, input_length,
-                                output_length, parent_span_id, is_deleted, name), _version)
+                                output_length, parent_span_id, is_deleted, name,
+                                {usage_coverage_sql(attrs="attrs_string", include_summary=True)},
+                                {source_summary_sql(attrs="attrs_string")}), _version)
                                 AS latest_span,
                             id AS latest_id,
                             observation_type AS latest_observation_type,
@@ -579,7 +609,9 @@ class _TraceRootReplayV2:
                             latest_span.9 AS latest_output_length,
                             latest_span.10 AS latest_parent_span_id,
                             latest_span.11 AS latest_is_deleted,
-                            latest_span.12 AS latest_name
+                            latest_span.12 AS latest_name,
+                            latest_span.13 AS latest_usage_coverage,
+                            latest_span.14 AS latest_source_summary_present
                         FROM {self.TABLE}
                         PREWHERE (toString(project_id), trace_id) IN {identities}
                           AND {project_filter}
@@ -587,6 +619,8 @@ class _TraceRootReplayV2:
                     ) AS latest_trace_spans
                     WHERE latest_is_deleted = 0
                     GROUP BY project_id, trace_id
+                    ) AS trace_usage_state
+                    ARRAY JOIN trace_usage_metrics AS usage_metrics
                 )
             ) AS trace_rollup_rows,
             (
@@ -612,6 +646,9 @@ class _TraceRootReplayV2:
                 tupleElement(rollup_row, 2) AS trace_rollup_trace_id,
                 toUInt8(1) AS trace_rollup_present,
                 tupleElement(rollup_row, 3) AS trace_rollup_cost,
+                tupleElement(rollup_row, 11) AS trace_rollup_cost_unknown,
+                tupleElement(rollup_row, 12) AS trace_rollup_source_summary_present,
+                tupleElement(rollup_row, 13) AS trace_rollup_request_count,
                 tupleElement(rollup_row, 4) AS trace_rollup_total_tokens,
                 tupleElement(rollup_row, 5) AS trace_rollup_prompt_tokens,
                 tupleElement(rollup_row, 6) AS trace_rollup_completion_tokens,
@@ -629,6 +666,9 @@ class _TraceRootReplayV2:
           ON latest_physical_roots.project_id = trace_rollup.trace_rollup_project_id
          AND latest_physical_roots.trace_id = trace_rollup.trace_rollup_trace_id
         """
+
+    def _root_replay_root_condition(self, prefix: str) -> str:
+        return "(latest_parent_span_id IS NULL OR latest_parent_span_id = '')"
 
     def _root_replay_query(
         self, identities: list[tuple], *, content: bool, trace_rollup: bool = False
@@ -655,6 +695,9 @@ class _TraceRootReplayV2:
                 dict.fromkeys(identity[1] for identity in identities)
             ),
             f"{prefix}_root_identities": tuple(identities),
+            f"{prefix}_trace_identities": tuple(
+                (str(identity[0]), str(identity[1])) for identity in identities
+            ),
             f"{prefix}_physical_keys": tuple(
                 (
                     project,
@@ -770,7 +813,7 @@ class _TraceRootReplayV2:
         {self._root_replay_content_join_sql() if content else ""}
         {self._trace_rollup_join_sql(prefix) if trace_rollup else ""}
         WHERE latest_is_deleted = 0
-          AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
+          AND {self._root_replay_root_condition(prefix)}
           {project_version}
         ORDER BY start_time DESC, trace_id DESC, project_id DESC
         LIMIT {len(identities)}
@@ -1394,7 +1437,7 @@ class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
                   PREWHERE {self.project_filter_sql()}
                       AND start_time >= fromUnixTimestamp64Micro(%(filter_slice_start_us)s)
                       AND start_time < fromUnixTimestamp64Micro(%(filter_slice_end_us)s)
-                  WHERE parent_span_id IS NULL OR parent_span_id = ''
+                  WHERE {self._trace_root_window_condition("filter_slice_start_us", "filter_slice_end_us")}
               )
         """
 

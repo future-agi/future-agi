@@ -20,6 +20,7 @@ import { useRouter } from "src/routes/hooks";
 import { useBoolean } from "src/hooks/use-boolean";
 import { useAuthContext } from "src/auth/hooks";
 import { setSession, setRefreshToken } from "src/auth/context/jwt/utils";
+import { SS_KEY_USER_ID } from "src/utils/sessionKeys";
 
 import Iconify from "src/components/iconify";
 import FormProvider, { RHFTextField } from "src/components/hook-form";
@@ -41,7 +42,21 @@ import {
   startAuthentication,
 } from "@simplewebauthn/browser";
 import RightSectionAuth from "./RightSectionAuth";
+import {
+  authSplitSx,
+  authFormPanelSx,
+  authAsideSx,
+  authFormGutterSx,
+} from "src/layouts/auth/responsive-styles";
 import { isValidUtm } from "src/utils/utmUtils";
+
+// Static gate (HO S2 leak scan). L7c g1 (switcher:logout): the prototype
+// signs in with email and password only (POST /accounts/token/ is mocked);
+// passkey, Google, GitHub, SSO, sign up and password reset are not, so
+// those doors are absent there.
+const PROTOTYPE_BUILD =
+  import.meta.env.VITE_ENVIRONMENT === "local" &&
+  import.meta.env.VITE_PROTOTYPE_MODE === "true";
 import {
   useDeploymentMode,
   usePostLoginPath,
@@ -72,7 +87,7 @@ export default function JwtLoginView() {
   // Only apply OSS treatment on a confirmed "oss" response; a failed
   // deployment-info read falls back to the full login (social/SSO shown).
   const { isOSS, isSuccess: modeConfirmed } = useDeploymentMode();
-  const showSocial = !(modeConfirmed && isOSS);
+  const showSocial = !PROTOTYPE_BUILD && !(modeConfirmed && isOSS);
 
   const [inviteFailed, setInviteFailed] = useState(false);
 
@@ -87,21 +102,17 @@ export default function JwtLoginView() {
         },
       });
     },
-    onError: (error) => {
+    // The invite page reports every refusal itself, so no error toast.
+    meta: { errorHandled: true },
+    onError: () => {
       setInviteFailed(true);
-      // If user is logged in as different user, redirect to the invite page
-      // which has proper UI for handling this case
-      if (error?.code === "authenticated_user_mismatch") {
-        navigate(`/auth/jwt/invitation/set-password/${uuid}/${token}`);
-        return;
-      }
-      enqueueSnackbar(
-        error?.error ||
-          error?.message ||
-          error?.detail ||
-          "Failed to accept invitation",
-        { variant: "error" },
-      );
+      // The invite page re-reads the link and explains each refusal: signed
+      // in as someone else, or a link that was used, cancelled, has expired
+      // or is malformed (the backend answers those alike). Replace this URL
+      // so Back does not reopen it.
+      navigate(`/auth/jwt/invitation/set-password/${uuid}/${token}`, {
+        replace: true,
+      });
     },
   });
 
@@ -225,6 +236,12 @@ export default function JwtLoginView() {
       if (response.status === 200) {
         // User was removed from their org — redirect to org-removed page
         if (response.data.requires_org_setup) {
+          // Resolve the same user ID as initialize/login without changing this
+          // branch's org-less session or running org-user analytics setup.
+          const { data: user } = await axiosInstance.get(endpoints.auth.me, {
+            headers: { Authorization: `Bearer ${response.data.access}` },
+          });
+          sessionStorage.setItem(SS_KEY_USER_ID, user.id);
           setSession(response.data.access, null);
           if (response.data.refresh) setRefreshToken(response.data.refresh);
           navigate(paths.auth.jwt.org_removed);
@@ -464,7 +481,7 @@ export default function JwtLoginView() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -475,7 +492,7 @@ export default function JwtLoginView() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.secondary",
           maxWidth: "440px",
           fontFamily: "Inter",
@@ -488,15 +505,15 @@ export default function JwtLoginView() {
   );
 
   const renderForm = (
-    <Stack spacing={2.5} sx={{ maxWidth: "440px" }}>
+    <Stack spacing={2} sx={{ maxWidth: "440px" }}>
       <RegionSelect />
       <RHFTextField
         name="email"
         label="Email address"
         placeholder="Enter email ID"
         autoComplete="email"
-        sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
-        size="small"
+        sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
+        size="medium"
       />
 
       <RHFTextField
@@ -505,7 +522,7 @@ export default function JwtLoginView() {
         placeholder="Enter password"
         type={password.value ? "text" : "password"}
         autoComplete="current-password"
-        sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+        sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
         InputProps={{
           endAdornment: (
             <InputAdornment position="end">
@@ -519,18 +536,17 @@ export default function JwtLoginView() {
             </InputAdornment>
           ),
         }}
-        size="small"
+        size="medium"
       />
       {!!errorMsg && (
         <Alert
-          icon={<Iconify icon="fluent:warning-24-regular" color="red.500" />}
+          icon={
+            <Iconify
+              icon="solar:danger-triangle-linear"
+              color="status.danger.fg"
+            />
+          }
           severity="error"
-          sx={{
-            color: "red.500",
-            border: "1px solid",
-            borderColor: "red.200",
-            backgroundColor: "red.o5",
-          }}
         >
           {errorMsg}
         </Alert>
@@ -564,28 +580,30 @@ export default function JwtLoginView() {
           <Typography variant="body2">Remember me</Typography>
         </Stack> */}
 
-        <Link
-          variant="body2"
-          color="primary"
-          underline="always"
-          href={paths.auth.jwt["forget-password"]}
-          onClick={() => {
-            trackEvent(Events.forgotPasswordClicked, {
-              [PropertyName.click]: true,
-            });
-          }}
-        >
-          Forgot Password
-        </Link>
+        {PROTOTYPE_BUILD ? null : (
+          <Link
+            variant="body2"
+            color="primary"
+            underline="always"
+            href={paths.auth.jwt["forget-password"]}
+            onClick={() => {
+              trackEvent(Events.forgotPasswordClicked, {
+                [PropertyName.click]: true,
+              });
+            }}
+          >
+            Forgot Password
+          </Link>
+        )}
       </Stack>
 
       <LoadingButton
+        size="large"
         fullWidth
         color="primary"
         type="submit"
         variant="contained"
         loading={isSubmitting}
-        sx={{ height: "42px", borderRadius: 0.5 }}
       >
         Continue
       </LoadingButton>
@@ -630,20 +648,16 @@ export default function JwtLoginView() {
       <Stack spacing={1.5}>
         {showSocial && browserSupportsWebAuthn() && (
           <LoadingButton
-            sx={{
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: 0.5,
-              height: 44,
-              color: "text.primary",
-            }}
+            size="large"
+            variant="outlined"
+            color="inherit"
             loading={passkeyLoading}
             onClick={handlePasskeyLogin}
             startIcon={<Iconify icon="solar:key-bold" width={20} />}
           >
             <Typography
               fontWeight={"fontWeightMedium"}
-              sx={{ fontSize: "15px" }}
+              sx={{ fontSize: "13px" }}
             >
               Sign in with Passkey
             </Typography>
@@ -652,20 +666,15 @@ export default function JwtLoginView() {
         {showSocial && (
           <>
             <Button
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 0.5,
-
-                color: "text.primary",
-                height: 44,
-              }}
+              size="large"
+              variant="outlined"
+              color="inherit"
               onClick={() => handleServiceProvider("google")}
               startIcon={<Iconify icon="logos:google-icon" width={20} />}
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "15px" }}
+                sx={{ fontSize: "13px" }}
               >
                 Continue with Google
               </Typography>
@@ -675,7 +684,7 @@ export default function JwtLoginView() {
         sx={{
           border: "1px solid",
           borderColor: "divider",
-          borderRadius:0.5,
+          borderRadius:"4px",
           display: "flex",
           height: 44,
           color: "text.primary",
@@ -692,7 +701,7 @@ export default function JwtLoginView() {
           sx={{
             fontWeight: 500,
             paddingLeft: "10px",
-            fontSize: "15px",
+            fontSize: "13px",
             marginRight: -1.5,
           }}
         >
@@ -700,13 +709,9 @@ export default function JwtLoginView() {
         </Typography>
       </Button> */}
             <Button
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 0.5,
-
-                height: 44,
-              }}
+              size="large"
+              variant="outlined"
+              color="inherit"
               onClick={() => handleServiceProvider("github")}
               startIcon={
                 <Iconify
@@ -718,20 +723,15 @@ export default function JwtLoginView() {
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "15px", color: "text.primary" }}
+                sx={{ fontSize: "13px", color: "text.primary" }}
               >
                 Continue with Github
               </Typography>
             </Button>
             <Button
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 0.5,
-
-                height: 44,
-                color: "text.primary",
-              }}
+              size="large"
+              variant="outlined"
+              color="inherit"
               onClick={handleSsoLogin}
               startIcon={
                 <SvgColor
@@ -742,7 +742,7 @@ export default function JwtLoginView() {
             >
               <Typography
                 fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "15px", marginRight: -1.5 }}
+                sx={{ fontSize: "13px", marginRight: -1.5 }}
               >
                 Continue with SSO/SAML
               </Typography>
@@ -751,23 +751,25 @@ export default function JwtLoginView() {
         )}
 
         {/* ✅ Added Create Account Link */}
-        <Typography
-          fontSize={"15px"}
-          fontWeight={"fontWeightMedium"}
-          color="text.secondary"
-          sx={{ textAlign: "center" }}
-        >
-          Don’t have an account?
-          <Link
-            variant="subtitle2"
-            component={RouterLink}
-            to={paths.auth.jwt.register + search}
-            sx={{ color: "primary.main" }}
+        {PROTOTYPE_BUILD ? null : (
+          <Typography
+            fontSize={"13px"}
+            fontWeight={"fontWeightMedium"}
+            color="text.secondary"
+            sx={{ textAlign: "center" }}
           >
-            {" "}
-            Sign up
-          </Link>
-        </Typography>
+            Don’t have an account?
+            <Link
+              variant="subtitle2"
+              component={RouterLink}
+              to={paths.auth.jwt.register + search}
+              sx={{ color: "primary.main" }}
+            >
+              {" "}
+              Sign up
+            </Link>
+          </Typography>
+        )}
       </Stack>
     </Stack>
   );
@@ -775,11 +777,10 @@ export default function JwtLoginView() {
   // Show loading screen while accepting an invitation (token present but not yet failed)
   if (token && !inviteFailed) {
     return (
-      <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
+      <Box sx={authSplitSx}>
         <Box
           sx={{
-            width: "50%",
-            height: "100vh",
+            ...authFormPanelSx,
             display: "flex",
             justifyContent: "center",
             alignItems: "center",
@@ -798,13 +799,7 @@ export default function JwtLoginView() {
           </Stack>
         </Box>
 
-        <Box
-          sx={{
-            width: "50%",
-            height: "100%",
-            backgroundColor: "background.neutral",
-          }}
-        >
+        <Box sx={authAsideSx}>
           <RightSectionAuth />
         </Box>
       </Box>
@@ -812,12 +807,11 @@ export default function JwtLoginView() {
   }
 
   return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
+    <Box sx={authSplitSx}>
       {/* Left Side - Form */}
       <Box
         sx={{
-          width: "50%",
-          height: "100vh",
+          ...authFormPanelSx,
           display: "flex",
           justifyContent: "center",
 
@@ -830,7 +824,7 @@ export default function JwtLoginView() {
             maxWidth: "640px",
             paddingY: "100px",
             width: "100%",
-            px: 10,
+            ...authFormGutterSx,
             height: "fit-content",
           }}
         >
@@ -842,13 +836,7 @@ export default function JwtLoginView() {
       </Box>
 
       {/* Right Side - Image with Text Overlay */}
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
+      <Box sx={authAsideSx}>
         <RightSectionAuth />
       </Box>
     </Box>

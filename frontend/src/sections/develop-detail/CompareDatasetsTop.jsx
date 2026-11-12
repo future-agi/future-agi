@@ -7,6 +7,10 @@ import BaseColumnDrawer from "./BaseColumnsDrawer";
 import { getUniqueColorPalette } from "src/utils/utils";
 import Tooltip from "@mui/material/Tooltip";
 
+/** Removing datasets down to one leaves compare for Data; a mount never does. */
+const shouldLeaveToData = (prevCount, count) =>
+  prevCount != null && prevCount > 1 && count <= 1;
+
 const CompareDatasetsTop = ({
   setIsChooseWinnerSelected,
   setBaseColumn,
@@ -79,19 +83,25 @@ const CompareDatasetsTop = ({
     }
   };
 
+  // Fewer than 2 datasets ends compare mode. Only a user LEAVING compare
+  // (2+ → 1 by removing a dataset) lands on Data; a mount never moves the
+  // tab, so a deep link such as ?tab=experiments stays put (critic r3 #1).
+  const prevCountRef = useRef(null);
   useEffect(() => {
-    if (localSelectedDatasets.length <= 1) {
-      setIsChooseWinnerButtonVisible(false);
-      setIsCompareDataset(false);
-      setLocalSelectedDatasets([]);
-      setBaseColumn(null);
-      setIsChooseWinnerSelected(false);
-      setCompareFromOutSide(false);
-      setCurrentTab("data");
-      setPendingSelectedDatasets([]);
-      setPendingSelectedValues([]);
-      setPendingBaseColumn(null);
-    }
+    const count = localSelectedDatasets.length;
+    const prev = prevCountRef.current;
+    prevCountRef.current = count;
+    if (count > 1) return;
+    setIsChooseWinnerButtonVisible(false);
+    setIsCompareDataset(false);
+    if (count) setLocalSelectedDatasets([]);
+    setBaseColumn(null);
+    setIsChooseWinnerSelected(false);
+    setCompareFromOutSide(false);
+    if (shouldLeaveToData(prev, count)) setCurrentTab("data");
+    setPendingSelectedDatasets([]);
+    setPendingSelectedValues([]);
+    setPendingBaseColumn(null);
   }, [localSelectedDatasets]);
 
   // Calculate text truncation and dataset visibility
@@ -244,7 +254,7 @@ const CompareDatasetsTop = ({
                   <Typography
                     sx={{
                       color: versionColors.tagForeground,
-                      fontSize: "11px",
+                      fontSize: "12px",
                       fontWeight: 500,
                     }}
                   >
@@ -282,13 +292,18 @@ const CompareDatasetsTop = ({
                   >
                     <IconButton
                       size="small"
+                      aria-label={`Remove ${item} from the comparison`}
                       sx={{ color: "text.secondary", padding: 0, margin: 0 }}
                       onClick={() => {
                         handleRemoveDataset(item);
                         setIsChooseWinnerSelected(false);
                       }}
                     >
-                      <Iconify icon="akar-icons:cross" width={14} height={14} />
+                      <Iconify
+                        icon="solar:close-linear"
+                        width={14}
+                        height={14}
+                      />
                     </IconButton>
                   </Box>
                 )}
@@ -302,7 +317,7 @@ const CompareDatasetsTop = ({
                     pointerEvents: "none",
                   }}
                 >
-                  <Iconify icon="material-symbols:compare-arrows" />
+                  <Iconify icon="solar:transfer-horizontal-linear" />
                 </IconButton>
               )}
             </React.Fragment>
@@ -320,14 +335,11 @@ const CompareDatasetsTop = ({
                 pointerEvents: "none",
               }}
             >
-              <Iconify icon="material-symbols:compare-arrows" />
+              <Iconify icon="solar:transfer-horizontal-linear" />
             </IconButton> */}
             <Button
               size="small"
               sx={{
-                borderRadius: "4px",
-                fontSize: "12px",
-                fontWeight: 500,
                 color: "text.primary",
                 display: "flex",
                 flexDirection: "row",
@@ -349,7 +361,7 @@ const CompareDatasetsTop = ({
               </Typography>
               <Iconify
                 sx={{ color: "text.secondary" }}
-                icon="akar-icons:chevron-down"
+                icon="solar:alt-arrow-down-linear"
                 width={14}
                 height={14}
               />
@@ -361,7 +373,7 @@ const CompareDatasetsTop = ({
           sx={{ color: "text.secondary" }}
           onClick={() => setCompareDatasetDrawerVisible(true)}
         >
-          <Iconify icon="akar-icons:plus" height={"14px"} width={"14px"} />
+          <Iconify icon="solar:add-linear" height={"14px"} width={"14px"} />
         </IconButton>
 
         {/* Buttons aligned to the right */}
@@ -371,9 +383,7 @@ const CompareDatasetsTop = ({
             sx={{
               border: "1px solid",
               borderColor: "action.hover",
-              borderRadius: "8px",
               minWidth: "38px",
-              px: "8px",
             }}
             onClick={() => {
               setIsCompareDataset(false);

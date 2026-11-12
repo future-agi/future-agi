@@ -1,5 +1,6 @@
 import structlog
 from django.core.cache import cache
+from django.urls import Resolver404, resolve
 
 logger = structlog.get_logger(__name__)
 
@@ -13,8 +14,14 @@ class AuthMonitoringMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        # Monitor failed auth attempts
-        if hasattr(request, "user") and not request.user.is_authenticated:
+        # Invitation previews/refusals must not change auth cache, including
+        # this anonymous-session counter (DRF bearer auth runs after middleware).
+        # Skip only the counter, never downstream auth/rate limits or logging.
+        if (
+            hasattr(request, "user")
+            and not request.user.is_authenticated
+            and not self._is_invitation_request(request)
+        ):
             self.count_attempt(self.get_client_ip(request))
 
         response = self.get_response(request)
@@ -27,6 +34,22 @@ class AuthMonitoringMiddleware:
             )
 
         return response
+
+    @staticmethod
+    def _is_invitation_request(request):
+        if request.method not in ("GET", "POST"):
+            return False
+        # Match the actual view, not a user-controlled path prefix or URL name.
+        # Django has not populated request.resolver_match at this boundary yet.
+        try:
+            match = resolve(
+                request.path_info, urlconf=getattr(request, "urlconf", None)
+            )
+        except Resolver404:
+            return False
+        from accounts.views.signup import accept_invitation_mail
+
+        return match.func is accept_invitation_mail
 
     def count_attempt(self, client_ip):
         """Fails open: this runs on every anonymous request, /health/ and the

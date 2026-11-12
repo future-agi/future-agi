@@ -1,0 +1,12 @@
+{
+  "results": [
+    {
+      "url": "https://example.com/capmock",
+      "raw_content": "Example page text.",
+      "images": []
+    }
+  ],
+  "failed_results": [],
+  "response_time": 0.21,
+  "request_id": "{{id}}"
+}

@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: google-maps
+version: 1.0.0
+name: Google Maps
+description: "Places, weather and routes from Google Maps, through Maps Grounding Lite."
+vendor:
+  name: Google
+  domains: [google.com]
+eeCategory: data
+group: google
+categories: [data, maps]
+tags: [places, weather, routes]
+docsUrl: https://developers.google.com/maps/ai/grounding-lite
+defaultProvider: grounding-lite
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.google.com/maps/ai/grounding-lite
+    fetchedAt: 2026-10-21

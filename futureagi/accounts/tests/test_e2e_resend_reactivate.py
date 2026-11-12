@@ -18,6 +18,7 @@ from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.services.invitation_links import make_invitation_token
 from conftest import WorkspaceAwareAPIClient
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
@@ -491,17 +492,24 @@ class TestResendInviteFromWorkspaceTab:
         invite.save(update_fields=["status", "created_at"])
 
         invited_user = User.objects.get(email="already_accepted@ws.com")
+        before_created_at = invite.created_at
+        before_password = invited_user.password
+        before_active = invited_user.is_active
 
         resp = owner_client.post(
             LEGACY_USER_RESEND_URL,
             {"user_id": str(invited_user.id)},
             format="json",
         )
-        assert resp.status_code == status.HTTP_200_OK
+        assert resp.status_code == status.HTTP_404_NOT_FOUND
 
         invite.refresh_from_db()
+        invited_user.refresh_from_db()
         assert invite.status == InviteStatus.ACCEPTED
         assert invite.effective_status == "Accepted"
+        assert invite.created_at == before_created_at
+        assert invited_user.password == before_password
+        assert invited_user.is_active == before_active
 
     def test_resend_expired_invite_from_bulk_endpoint(
         self, owner_client, org, default_ws, second_ws
@@ -1003,7 +1011,6 @@ class TestInviteAcceptanceActivatesMemberships:
         self, owner_client, org, default_ws, owner
     ):
         """After invite + accept, the org membership must be is_active=True."""
-        from django.contrib.auth.tokens import default_token_generator
         from django.utils.encoding import force_bytes
         from django.utils.http import urlsafe_base64_encode
 
@@ -1025,7 +1032,10 @@ class TestInviteAcceptanceActivatesMemberships:
 
         # Simulate accepting the invite via the URL endpoint (POST sets password + activates)
         uid = urlsafe_base64_encode(force_bytes(user.pk))
-        token = default_token_generator.make_token(user)
+        invite = OrganizationInvite.objects.get(
+            organization=org, target_email=user.email, status=InviteStatus.PENDING
+        )
+        token = make_invitation_token(user, invite)
 
         from rest_framework.test import APIClient
 
@@ -1047,7 +1057,6 @@ class TestInviteAcceptanceActivatesMemberships:
         self, owner_client, org, default_ws, owner
     ):
         """After invite + accept, workspace memberships must be is_active=True."""
-        from django.contrib.auth.tokens import default_token_generator
         from django.utils.encoding import force_bytes
         from django.utils.http import urlsafe_base64_encode
 
@@ -1067,7 +1076,10 @@ class TestInviteAcceptanceActivatesMemberships:
         assert ws_mem.is_active is False
 
         uid = urlsafe_base64_encode(force_bytes(user.pk))
-        token = default_token_generator.make_token(user)
+        invite = OrganizationInvite.objects.get(
+            organization=org, target_email=user.email, status=InviteStatus.PENDING
+        )
+        token = make_invitation_token(user, invite)
 
         from rest_framework.test import APIClient
 
@@ -1089,7 +1101,6 @@ class TestInviteAcceptanceActivatesMemberships:
     ):
         """After acceptance, the login query for active membership must succeed
         (this is what prevented the 'org removed' screen)."""
-        from django.contrib.auth.tokens import default_token_generator
         from django.utils.encoding import force_bytes
         from django.utils.http import urlsafe_base64_encode
 
@@ -1104,16 +1115,20 @@ class TestInviteAcceptanceActivatesMemberships:
 
         user = User.objects.get(email="logintest@test.com")
         uid = urlsafe_base64_encode(force_bytes(user.pk))
-        token = default_token_generator.make_token(user)
+        invite = OrganizationInvite.objects.get(
+            organization=org, target_email=user.email, status=InviteStatus.PENDING
+        )
+        token = make_invitation_token(user, invite)
 
         from rest_framework.test import APIClient
 
         anon_client = APIClient()
-        anon_client.post(
+        resp = anon_client.post(
             f"/accounts/accept-invitation/{uid}/{token}/",
             {"new_password": "SecurePass123!", "repeat_password": "SecurePass123!"},
             format="json",
         )
+        assert resp.status_code == status.HTTP_200_OK
 
         # This is the exact query the login view uses
         active_mem = OrganizationMembership.no_workspace_objects.filter(

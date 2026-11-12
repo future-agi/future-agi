@@ -1,13 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import {
   Alert,
   Box,
   Button,
-  CircularProgress,
   MenuItem,
   Stack,
   Tab,
-  Tabs,
   Typography,
 } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
@@ -36,11 +35,16 @@ import {
 } from "./schema";
 import TaskConfirmDialog from "src/sections/common/EvalsTasks/EditTaskDrawer/TaskConfirmBox";
 import DuplicateTaskDialog from "./components/DuplicateTaskDialog";
-import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import {
+  getInlineLoadErrorMessage,
+  getSafeActionErrorMessage,
+} from "src/utils/errorUtils";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import ContentSkeleton from "src/components/content-skeleton";
 
+// A refusal the workspace recovery explains gets a calm line, not its text.
 const getTaskDetailsErrorMessage = (error) =>
-  getSafeActionErrorMessage(error, "Task details could not be loaded.");
+  getInlineLoadErrorMessage(error, "Task details could not be loaded.");
 
 const TAB_OPTIONS = [
   { label: "Details", value: "details", icon: "solar:settings-linear" },
@@ -67,6 +71,59 @@ const getLinkedTraceSource = (taskDetails) => {
     path: `/dashboard/observe/${projectId}/trace/${traceId}`,
   };
 };
+
+// An Instant eval run reads the rows its Ask page sampled, not a filter query.
+// Saving or re-running it here would drop that sample, delete its answers and
+// evaluate an ordinary window, so it is asked again from its Ask page.
+const getInstantRunAskPath = (taskDetails, taskId) => {
+  const filters = taskDetails?.filters_applied || {};
+  if (!filters.instant_eval_run) return null;
+  const projectId = taskDetails?.project_id || filters.project_id;
+  return `/dashboard/observe/${projectId}/ask?run=${encodeURIComponent(taskId)}`;
+};
+
+const hasDirtyField = (dirty) =>
+  dirty === true ||
+  (dirty &&
+    typeof dirty === "object" &&
+    Object.values(dirty).some(hasDirtyField));
+
+const WINDOW_FIELDS = ["startDate", "endDate", "datePreset"];
+
+// Save keeps a historical task's stored window unless the user changed it.
+// Rebuilding it moves a rolling preset (Past 7D, 12M) to now, which the server
+// reads as changed rows, so adding one evaluator could then only be saved with
+// Delete & rerun. Re-run still resolves the preset against now.
+const getUntouchedSavedWindow = ({ taskDetails, data, dirty, confirmMode }) => {
+  if (confirmMode === "rerun") return null;
+  if (data?.runType !== "historical") return null;
+  if (taskDetails?.run_type !== "historical") return null;
+  if (WINDOW_FIELDS.some((name) => hasDirtyField(dirty?.[name]))) return null;
+  const saved = taskDetails?.filters_applied;
+  if (!Array.isArray(saved?.date_range) || saved.date_range.length !== 2) {
+    return null;
+  }
+  return {
+    date_range: saved.date_range,
+    ...(saved.date_preset ? { date_preset: saved.date_preset } : {}),
+  };
+};
+
+// The task fields getDefaultTaskValues reads. Polls of a running task also
+// refresh status and last_run; those alone must not re-hydrate the form,
+// because every hydration hands the live preview new evaluation and
+// date-window values and it discards its row and pending test results.
+const getTaskConfigSignature = (task) =>
+  JSON.stringify([
+    task?.name,
+    task?.project_id,
+    task?.filters_applied ?? null,
+    task?.spans_limit,
+    task?.sampling_rate,
+    task?.evals_applied ?? null,
+    task?.run_type,
+    task?.row_type,
+  ]);
 
 const TaskDetailPage = () => {
   const { taskId } = useParams();
@@ -122,12 +179,47 @@ const TaskDetailPage = () => {
   const project = useWatch({ control, name: "project" });
   const formValues = useWatch({ control });
 
-  // Populate form once task is loaded
+  const hydratedTaskId = useRef(null);
+  const hydratedConfigSignature = useRef(null);
+  // Read the latest dirty state when a poll arrives, without making each edit
+  // trigger the hydration effect itself.
+  const dirtyFieldsRef = useRef(dirtyFields);
+  dirtyFieldsRef.current = dirtyFields;
+
+  // Polls update operational details without discarding local configuration.
+  // Freeze all form values while confirmation is open, including pristine
+  // fields, so a background refresh cannot change the payload being confirmed.
   useEffect(() => {
-    if (taskDetails) {
-      reset(getDefaultTaskValues(taskDetails, null));
+    if (!taskDetails) return;
+    const isSameTask = hydratedTaskId.current === taskId;
+    if (isSameTask && confirmMode) return;
+    const configSignature = getTaskConfigSignature(taskDetails);
+    if (isSameTask && configSignature === hydratedConfigSignature.current) {
+      return;
     }
-  }, [taskDetails, reset]);
+
+    const defaults = getDefaultTaskValues(taskDetails, null);
+    if (isSameTask) {
+      const currentValues = getValues();
+      const edits = Object.fromEntries(
+        Object.entries(dirtyFieldsRef.current)
+          .filter(([, dirty]) => hasDirtyField(dirty))
+          .map(([name]) => [name, currentValues[name]]),
+      );
+      // keepDirtyValues only preserves registered inputs in our RHF version.
+      // Filters set programmatically and field-array removals need whole-value
+      // preservation, not a per-index merge that can restore deleted rows.
+      // Update the server baseline without broadcasting it to the inputs, then
+      // hydrate once with the edits and recompute dirtiness against that baseline.
+      reset(defaults, { keepValues: true });
+      reset({ ...defaults, ...edits }, { keepDefaultValues: true });
+    } else {
+      reset(defaults);
+    }
+    hydratedTaskId.current = taskId;
+    hydratedConfigSignature.current = configSignature;
+    if (!isSameTask) setConfirmMode(null);
+  }, [taskId, taskDetails, reset, confirmMode, getValues]);
 
   // ── Mutations ──
   const { mutate: updateTask, isPending: isUpdating } = useMutation({
@@ -254,7 +346,9 @@ const TaskDetailPage = () => {
     },
     onError: (err) => {
       enqueueSnackbar(
-        err?.response?.data?.result || err?.message || "Failed to duplicate task",
+        err?.response?.data?.result ||
+          err?.message ||
+          "Failed to duplicate task",
         { variant: "error" },
       );
     },
@@ -305,9 +399,7 @@ const TaskDetailPage = () => {
       evals: src.evalsDetails?.map((item) => item.id || item) || [],
       filters: {
         ...wireFilters,
-        ...(attributeFilters?.length > 0
-          ? { filters: attributeFilters }
-          : {}),
+        ...(attributeFilters?.length > 0 ? { filters: attributeFilters } : {}),
       },
     };
     duplicateTask(payload, {
@@ -320,15 +412,23 @@ const TaskDetailPage = () => {
   const handleConfirm = useCallback(
     (editType) => {
       const data = formValues;
+      const savedWindow = getUntouchedSavedWindow({
+        taskDetails,
+        data,
+        dirty: dirtyFieldsRef.current,
+        confirmMode,
+      });
       const { filters, attributeFilters } = getNewTaskFilters(
         data,
         data.project,
+        Boolean(savedWindow),
       );
 
       const transformedData = {
         evals: data.evalsDetails?.map((item) => item.id || item) || [],
         filters: {
           ...filters,
+          ...savedWindow,
           ...(attributeFilters?.length > 0
             ? { filters: attributeFilters }
             : {}),
@@ -344,7 +444,7 @@ const TaskDetailPage = () => {
       updateTask({ payload: transformedData, mode: confirmMode });
       setConfirmMode(null);
     },
-    [formValues, updateTask, confirmMode],
+    [formValues, updateTask, confirmMode, taskDetails],
   );
 
   if (isLoading && !taskDetails) {
@@ -357,7 +457,7 @@ const TaskDetailPage = () => {
           height: "100%",
         }}
       >
-        <CircularProgress size={28} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -399,7 +499,6 @@ const TaskDetailPage = () => {
               size="small"
               onClick={() => refetch?.()}
               disabled={isFetching}
-              sx={{ textTransform: "none" }}
             >
               Retry
             </Button>
@@ -408,7 +507,6 @@ const TaskDetailPage = () => {
               size="small"
               onClick={() => navigate("/dashboard/tasks")}
               startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
-              sx={{ textTransform: "none" }}
             >
               Back to Tasks
             </Button>
@@ -422,6 +520,7 @@ const TaskDetailPage = () => {
   const canPause = status === "running";
   const canResume = isResumableTaskStatus(status);
   const linkedTraceSource = getLinkedTraceSource(taskDetails);
+  const instantRunAskPath = getInstantRunAskPath(taskDetails, taskId);
 
   // A re-run mid-flight would race the live run.
   const rerunBlockedReason = !canEditTask
@@ -429,6 +528,10 @@ const TaskDetailPage = () => {
     : status === "running" || status === "pending"
       ? "Wait for the current run to finish."
       : "";
+
+  // The server refuses to update a running task, so Save waits for Pause and
+  // the header says so before the user starts editing.
+  const showPauseToEdit = canPause && canEditTask && !instantRunAskPath;
 
   // Pause/Resume stay in the header
   const headerActions = (
@@ -439,15 +542,17 @@ const TaskDetailPage = () => {
           size="small"
           onClick={() => navigate(linkedTraceSource.path)}
           startIcon={<Iconify icon="solar:map-point-wave-linear" width={14} />}
-          sx={{
-            textTransform: "none",
-            fontWeight: 500,
-            fontSize: "12px",
-            height: 30,
-          }}
         >
           {linkedTraceSource.label}
         </Button>
+      )}
+      {showPauseToEdit && (
+        <Typography
+          variant="caption"
+          sx={{ color: "text.secondary", whiteSpace: "nowrap" }}
+        >
+          Pause the task to edit it
+        </Typography>
       )}
       {canPause && (
         <Button
@@ -455,12 +560,6 @@ const TaskDetailPage = () => {
           size="small"
           onClick={() => pauseTask()}
           startIcon={<Iconify icon="solar:pause-circle-linear" width={14} />}
-          sx={{
-            textTransform: "none",
-            fontWeight: 500,
-            fontSize: "12px",
-            height: 30,
-          }}
         >
           Pause
         </Button>
@@ -471,40 +570,39 @@ const TaskDetailPage = () => {
           size="small"
           onClick={() => resumeTask()}
           startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
-          sx={{
-            textTransform: "none",
-            fontWeight: 500,
-            fontSize: "12px",
-            height: 30,
-          }}
         >
           Resume
         </Button>
       )}
-      <CustomTooltip
-        show={!!rerunBlockedReason}
-        title={rerunBlockedReason}
-        size="small"
-      >
-        <span>
-          <LoadingButton
-            variant="outlined"
-            size="small"
-            onClick={() => openConfirm("rerun")}
-            loading={isUpdating}
-            disabled={!!rerunBlockedReason}
-            startIcon={<Iconify icon="solar:restart-linear" width={14} />}
-            sx={{
-              textTransform: "none",
-              fontWeight: 500,
-              fontSize: "12px",
-              height: 30,
-            }}
-          >
-            Re-run
-          </LoadingButton>
-        </span>
-      </CustomTooltip>
+      {instantRunAskPath ? (
+        <Button
+          variant="outlined"
+          size="small"
+          onClick={() => navigate(instantRunAskPath)}
+          startIcon={<Iconify icon="mdi:creation-outline" width={14} />}
+        >
+          Open in Ask
+        </Button>
+      ) : (
+        <CustomTooltip
+          show={!!rerunBlockedReason}
+          title={rerunBlockedReason}
+          size="small"
+        >
+          <span>
+            <LoadingButton
+              variant="outlined"
+              size="small"
+              onClick={() => openConfirm("rerun")}
+              loading={isUpdating}
+              disabled={!!rerunBlockedReason}
+              startIcon={<Iconify icon="solar:restart-linear" width={14} />}
+            >
+              Re-run
+            </LoadingButton>
+          </span>
+        </CustomTooltip>
+      )}
 
       <LoadingButton
         variant="outlined"
@@ -577,31 +675,10 @@ const TaskDetailPage = () => {
           backgroundColor: "background.paper",
         }}
       >
-        <Tabs
+        <SegmentedTabs
           value={tab}
           onChange={(_, val) => setTab(val)}
-          TabIndicatorProps={{ style: { display: "none" } }}
-          sx={{
-            minHeight: 32,
-            "& .MuiTab-root": {
-              minHeight: 32,
-              px: 1.5,
-              py: 0,
-              mr: "0px !important",
-              textTransform: "none",
-              fontSize: "13px",
-              borderRadius: "6px",
-            },
-            border: "1px solid",
-            borderColor: "divider",
-            p: "2px",
-            borderRadius: "8px",
-            width: "fit-content",
-            bgcolor: (theme) =>
-              theme.palette.mode === "dark"
-                ? "rgba(255,255,255,0.04)"
-                : "background.neutral",
-          }}
+          sx={{ width: "fit-content" }}
         >
           {TAB_OPTIONS.map((t) => (
             <Tab
@@ -613,28 +690,9 @@ const TaskDetailPage = () => {
                   {t.label}
                 </Box>
               }
-              sx={{
-                bgcolor:
-                  tab === t.value
-                    ? (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.12)"
-                          : "background.paper"
-                    : "transparent",
-                boxShadow:
-                  tab === t.value
-                    ? (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "none"
-                          : "0 1px 3px rgba(0,0,0,0.08)"
-                    : "none",
-                borderRadius: "6px",
-                fontWeight: tab === t.value ? 600 : 400,
-                color: tab === t.value ? "text.primary" : "text.disabled",
-              }}
             />
           ))}
-        </Tabs>
+        </SegmentedTabs>
       </Box>
 
       {/* Tab content */}
@@ -679,7 +737,11 @@ const TaskDetailPage = () => {
 
         {tab === "usage" && (
           <Box sx={{ height: "100%", overflow: "hidden" }}>
-            <TaskUsageTab taskId={taskId} projectId={project} />
+            <TaskUsageTab
+              taskId={taskId}
+              projectId={project}
+              onViewLogs={() => setTab("logs")}
+            />
           </Box>
         )}
       </Box>
@@ -707,20 +769,26 @@ const TaskDetailPage = () => {
             disabled={!testState.canTest || !canEditTask}
             onClick={() => previewRef.current?.runTest()}
             startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
-            sx={{ textTransform: "none", fontWeight: 500, minWidth: 120 }}
+            sx={{ minWidth: 120 }}
           >
             Test
           </LoadingButton>
-          <LoadingButton
-            variant="contained"
-            size="small"
-            onClick={() => openConfirm("save")}
-            loading={isUpdating}
-            disabled={!canEditTask}
-            sx={{ textTransform: "none", fontWeight: 500, minWidth: 140 }}
-          >
-            Save
-          </LoadingButton>
+          {instantRunAskPath ? (
+            <Typography variant="caption" sx={{ color: "text.secondary" }}>
+              This is an Instant eval run. Ask it again from its Ask page.
+            </Typography>
+          ) : (
+            <LoadingButton
+              variant="contained"
+              size="small"
+              onClick={() => openConfirm("save")}
+              loading={isUpdating}
+              disabled={!canEditTask || canPause}
+              sx={{ minWidth: 140 }}
+            >
+              Save
+            </LoadingButton>
+          )}
         </Box>
       )}
 

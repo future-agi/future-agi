@@ -103,7 +103,7 @@ describe("BuildingStage", () => {
 });
 
 describe("PanelBoundary", () => {
-  it("renders the crash card when a child throws and Retry resets it", () => {
+  it("renders the fallback when a child throws and Reload panel resets it", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     let crash = true;
     function Boom() {
@@ -117,12 +117,12 @@ describe("PanelBoundary", () => {
       </PanelBoundary>,
     );
 
-    expect(screen.getByText("The right-side panel crashed")).toBeInTheDocument();
+    expect(screen.getByText("This panel couldn't load")).toBeInTheDocument();
 
     crash = false;
-    fireEvent.click(screen.getByText("Retry"));
+    fireEvent.click(screen.getByRole("button", { name: "Reload panel" }));
 
-    expect(screen.queryByText("The right-side panel crashed")).not.toBeInTheDocument();
+    expect(screen.queryByText("This panel couldn't load")).not.toBeInTheDocument();
     expect(screen.getByText("panel recovered")).toBeInTheDocument();
 
     spy.mockRestore();

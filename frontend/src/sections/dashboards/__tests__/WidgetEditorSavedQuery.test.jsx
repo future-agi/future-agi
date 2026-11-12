@@ -1,12 +1,18 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, waitFor } from "src/utils/test-utils";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "src/utils/test-utils";
 import WidgetEditorView, * as editor from "../WidgetEditorView";
 
 const h = vi.hoisted(() => ({
   dashboard: null,
   query: { mutate: vi.fn(), reset: vi.fn() },
-  write: { mutate: vi.fn() },
+  write: { mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue({}) },
   catalog: {
     metrics: [],
     isLoading: false,
@@ -23,6 +29,7 @@ vi.mock("src/hooks/useDashboards", () => ({
   useCreateWidget: () => h.write,
   useUpdateWidget: () => h.write,
   useDeleteWidget: () => h.write,
+  useReorderWidgets: () => h.write,
   useSimulationAgents: () => h.agents,
   usePropertyCatalog: () => h.catalog,
   useLegacyDashboardMetricsPaginated: () => h.catalog,
@@ -231,6 +238,85 @@ afterEach(() => {
 });
 
 describe("saved WidgetEditor actual reopen payload", () => {
+  it.each([
+    ["7D", "hour"],
+    ["today", "minute"],
+    ["3M", "week"],
+    ["30D", "hour"],
+  ])(
+    "W10-DASHBOARDS-L04 preserves saved %s/%s when renaming and saving",
+    async (preset, granularity) => {
+      const saved = {
+        ...queryWith(TRACES),
+        time_range: { preset },
+        granularity,
+      };
+      const preview = await captureReopen(saved);
+
+      fireEvent.click(screen.getByText("Saved identity widget"));
+      const nameInput = screen.getByPlaceholderText("Untitled widget");
+      fireEvent.change(nameInput, { target: { value: "Renamed widget" } });
+      fireEvent.blur(nameInput);
+      fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+
+      await waitFor(() => expect(h.write.mutateAsync).toHaveBeenCalledOnce());
+      expect(h.write.mutateAsync).toHaveBeenCalledWith({
+        dashboardId: "dashboard",
+        widgetId: "saved-widget",
+        data: expect.objectContaining({
+          name: "Renamed widget",
+          query_config: saved,
+        }),
+      });
+      expect(preview).toEqual(saved);
+    },
+  );
+
+  it("W10-DASHBOARDS-L04 keeps valid saved custom-range granularity", async () => {
+    const saved = {
+      ...queryWith(TRACES),
+      time_range: {
+        custom_start: "2026-01-01T00:00:00.000Z",
+        custom_end: "2026-01-08T00:00:00.000Z",
+      },
+      granularity: "hour",
+    };
+    expect(await captureReopen(saved)).toEqual(saved);
+  });
+
+  it.each([
+    ["6M", "hour", "month"],
+    ["30D", "minute", "day"],
+  ])(
+    "W10-DASHBOARDS-L04 replaces invalid saved %s/%s with %s",
+    async (preset, granularity, expected) => {
+      const saved = {
+        ...queryWith(TRACES),
+        time_range: { preset },
+        granularity,
+      };
+      expect(await captureReopen(saved)).toEqual({
+        ...saved,
+        granularity: expected,
+      });
+    },
+  );
+
+  it("W10-DASHBOARDS-L04 defaults granularity for an explicit new preset", async () => {
+    await captureReopen({ ...queryWith(TRACES), granularity: "hour" });
+
+    // Hour is allowed for 30D, but a user-selected new preset still uses Day.
+    fireEvent.click(screen.getByText("30D", { exact: true }));
+    await waitFor(() => expect(h.query.mutate).toHaveBeenCalledTimes(2), {
+      timeout: 2500,
+    });
+    expect(h.query.mutate.mock.calls[1][0].queryConfig).toEqual({
+      ...queryWith(TRACES),
+      time_range: { preset: "30D" },
+      granularity: "day",
+    });
+  });
+
   it.each(["avg", "count", "count_distinct"])(
     "preserves the requested text annotation operation %s on reopen",
     async (aggregation) => {
@@ -244,7 +330,10 @@ describe("saved WidgetEditor actual reopen payload", () => {
         output_type: "text",
         aggregation,
       };
-      const saved = queryWith({ ...metric, allowedAggregations: ["count", "count_distinct"] });
+      const saved = queryWith({
+        ...metric,
+        allowedAggregations: ["count", "count_distinct"],
+      });
       expect(await captureReopen(saved)).toEqual(queryWith(metric));
     },
   );
@@ -503,7 +592,12 @@ describe("saved WidgetEditor actual reopen payload", () => {
 
 describe("restoreWidgetQueryItem typed saved contract", () => {
   it("restores text capabilities without rewriting a legacy Average request", () => {
-    const item = freeze({ name: LABEL, type: "annotation_metric", output_type: "text", aggregation: "avg" });
+    const item = freeze({
+      name: LABEL,
+      type: "annotation_metric",
+      output_type: "text",
+      aggregation: "avg",
+    });
     expect(editor.restoreWidgetQueryItem(item)).toMatchObject({
       allowedAggregations: ["count", "count_distinct"],
       aggregation: "avg",

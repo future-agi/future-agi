@@ -5,11 +5,11 @@ from django.db import migrations
 
 def remove_webhook_secret_from_agent_version(apps,schema_editor):
     AgentVersion = apps.get_model('simulate','AgentVersion')
-    for version in AgentVersion.objects.all():
+    for version in AgentVersion.objects.using(schema_editor.connection.alias).all():
         snapshot = version.configuration_snapshot
         if snapshot.get('webhook_secret'):
             del version.configuration_snapshot['webhook_secret']
-            version.save()
+            version.save(using=schema_editor.connection.alias)
 
 
 

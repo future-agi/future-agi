@@ -7,6 +7,20 @@ import {
   waitFor,
 } from "src/utils/test-utils";
 
+// Decorations and account-level billing queries are outside this source-form test.
+vi.mock("src/components/iconify", () => ({ default: () => null }));
+vi.mock("src/hooks/useDeploymentMode", () => ({
+  useDeploymentMode: () => ({ isCloud: false }),
+}));
+vi.mock("src/hooks/use-credit-exhaustion", () => ({
+  useCreditExhaustion: () => ({
+    exhaustionError: null,
+    handleError: () => false,
+    handleUpgradeClick: vi.fn(),
+    handleDismiss: vi.fn(),
+  }),
+}));
+
 const navigate = vi.fn();
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
@@ -14,7 +28,6 @@ vi.mock("react-router-dom", async () => {
 });
 
 vi.mock("src/api/harness/harness", () => ({
-  uploadHarnessSource: vi.fn(),
   preflightHarnessJob: vi.fn(),
   storeHarnessSecretValues: vi.fn(),
   createHarnessJob: vi.fn(),
@@ -23,8 +36,15 @@ vi.mock("src/api/harness/harness", () => ({
   listHarnessJobs: vi.fn(),
 }));
 
-const { uploadHarnessSource, preflightHarnessJob, createHarnessJob } = await import(
+const { preflightHarnessJob, createHarnessJob } = await import(
   "src/api/harness/harness"
+);
+vi.mock("src/pages/dashboard/harness/sourceUpload", async (importOriginal) => ({
+  ...(await importOriginal()),
+  uploadSourceFolder: vi.fn(),
+}));
+const { uploadSourceFolder } = await import(
+  "src/pages/dashboard/harness/sourceUpload"
 );
 const { default: PanelCodeUpload } = await import("../PanelCodeUpload");
 const { resetEnvironmentsStore } = await import(
@@ -43,18 +63,23 @@ const PASS = {
 };
 
 const HELPER =
-  "We can observe your agent only if its code already sends telemetry (OpenTelemetry or traceAI). If it doesn't, the Environment still builds, without observability.";
+  "Calls imported from connected voice providers and spans from agents run in hosted sandboxes aren't stored in Observe in this release.";
 
 const render = (ui) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return baseRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  return baseRender(
+    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+  );
 };
 
-const preflightBtn = () => screen.getByRole("button", { name: "Run preflight" });
-const buildBtn = () => screen.getByRole("button", { name: /Build environment/ });
-const box = () => screen.getByRole("checkbox", { name: "Turn on observability" });
+const preflightBtn = () =>
+  screen.getByRole("button", { name: "Run preflight" });
+const buildBtn = () =>
+  screen.getByRole("button", { name: /Build environment/ });
+const box = () =>
+  screen.getByRole("checkbox", { name: "Turn on observability" });
 
 const uploadFolder = async (container) => {
   const input = container.querySelector('input[type="file"][multiple]');
@@ -75,10 +100,10 @@ const buildBody = async () => {
 beforeEach(() => {
   resetEnvironmentsStore();
   navigate.mockReset();
-  uploadHarnessSource.mockReset();
+  uploadSourceFolder.mockReset();
   preflightHarnessJob.mockReset();
   createHarnessJob.mockReset();
-  uploadHarnessSource.mockResolvedValue({
+  uploadSourceFolder.mockResolvedValue({
     source_id: "src-uuid-1",
     file_count: 1,
     total_bytes: 1536,
@@ -124,6 +149,15 @@ describe("PanelCodeUpload observability choice", () => {
     render(<PanelCodeUpload />);
     expect(screen.getByText(HELPER)).toBeInTheDocument();
     expect(box()).toHaveAccessibleDescription(HELPER);
+    expect(
+      screen.getByRole("link", { name: "2.0.0 release notes: Known issues" }),
+    ).toHaveAttribute(
+      "href",
+      "https://github.com/future-agi/future-agi/releases/tag/v2.0.0",
+    );
+    expect(
+      screen.getByRole("link", { name: "2.0.0 release notes: Known issues" }),
+    ).toHaveAttribute("target", "_blank");
     expect(box()).toBeEnabled();
     fireEvent.click(box());
     expect(box()).toBeChecked();

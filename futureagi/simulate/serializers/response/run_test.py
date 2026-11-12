@@ -133,6 +133,13 @@ class AddEvalConfigResponseSerializer(serializers.Serializer):
     )
 
 
+class RunOutcomeSummaryResponseSerializer(serializers.Serializer):
+    total = serializers.IntegerField(read_only=True)
+    outcomes = serializers.DictField(child=serializers.IntegerField(), read_only=True)
+    measured = serializers.IntegerField(read_only=True)
+    pass_rate = serializers.FloatField(read_only=True, allow_null=True)
+
+
 class TestExecutionItemResponseSerializer(serializers.Serializer):
     """
     Response shape for a single item in GET /run-tests/{run_test_id}/executions/.
@@ -165,6 +172,7 @@ class TestExecutionItemResponseSerializer(serializers.Serializer):
     failed_calls = serializers.IntegerField(read_only=True)
     pending_calls = serializers.IntegerField(read_only=True)
     completed_at = serializers.CharField(read_only=True, allow_null=True)
+    outcome_summary = RunOutcomeSummaryResponseSerializer(read_only=True, allow_null=True)
     outcome_passed = serializers.IntegerField(read_only=True, allow_null=True)
     outcome_failed = serializers.IntegerField(read_only=True, allow_null=True)
     outcome_skipped = serializers.IntegerField(read_only=True, allow_null=True)

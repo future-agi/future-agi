@@ -1,4 +1,5 @@
-import { Box, Button, Popper, Skeleton, Typography } from "@mui/material";
+import { Box, Button, ButtonBase, Skeleton, Typography } from "@mui/material";
+import SwitcherSubmenu from "./SwitcherSubmenu";
 import React, { useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import { useMutation } from "@tanstack/react-query";
@@ -9,6 +10,7 @@ import { useCreateWorkspaceModal } from "../states";
 import { useScrollEnd } from "../../../hooks/use-scroll-end";
 import { ShowComponent } from "../../../components/show";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
+import { isPrototypeMode } from "src/utils/prototype";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useOrganization } from "src/contexts/OrganizationContext";
 
@@ -78,7 +80,8 @@ const SelectWorkspaceChild = React.forwardRef(
           }
           setOpen(true);
         }}
-        onMouseLeave={() => {
+        onMouseLeave={(event) => {
+          if (event.currentTarget.contains(document.activeElement)) return;
           // Add a small delay before closing
           popperTimeoutRef.current = setTimeout(() => {
             setOpen(false);
@@ -89,7 +92,7 @@ const SelectWorkspaceChild = React.forwardRef(
           border: "1px solid",
           borderColor: "divider",
           borderRadius: 1,
-          boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.1)",
+          boxShadow: (theme) => theme.customShadows?.dropdown,
           p: 1,
           minWidth: "200px",
           display: "flex",
@@ -110,23 +113,26 @@ const SelectWorkspaceChild = React.forwardRef(
           <ShowComponent condition={isPending}>
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
               height={20}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
               height={20}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
               height={20}
             />
           </ShowComponent>
           <ShowComponent condition={!isPending}>
             {workspaces?.map((workspace) => (
               <Box
+                component={ButtonBase}
+                disabled={isSwitching}
+                aria-pressed={workspace.id === currentWorkspaceId}
                 key={workspace.id}
                 onClick={() => {
                   if (isSwitching || workspace.id === currentWorkspaceId)
@@ -140,14 +146,15 @@ const SelectWorkspaceChild = React.forwardRef(
                   px: 1,
                   py: 0.5,
                   cursor: isSwitching ? "wait" : "pointer",
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   backgroundColor:
                     workspace.id === currentWorkspaceId
                       ? "background.neutral"
                       : "background.paper",
-                  "&:hover": {
+                  "&:hover, &:focus-visible": {
                     backgroundColor: "background.neutral",
                   },
+                  "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main" },
                   opacity: isSwitching ? 0.6 : 1,
                   display: "flex",
                   alignItems: "center",
@@ -163,7 +170,7 @@ const SelectWorkspaceChild = React.forwardRef(
                 </Typography>
                 <ShowComponent condition={workspace.id === currentWorkspaceId}>
                   <Iconify
-                    icon="eva:checkmark-fill"
+                    icon="solar:check-linear"
                     sx={{ width: 16, height: 16, color: "primary.main" }}
                   />
                 </ShowComponent>
@@ -173,20 +180,21 @@ const SelectWorkspaceChild = React.forwardRef(
           <ShowComponent condition={isFetchingNextPage}>
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5, height: "20px", minHeight: "20px" }}
+              sx={{ borderRadius: "4px", height: "20px", minHeight: "20px" }}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5, height: "20px", minHeight: "20px" }}
+              sx={{ borderRadius: "4px", height: "20px", minHeight: "20px" }}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5, height: "20px", minHeight: "20px" }}
+              sx={{ borderRadius: "4px", height: "20px", minHeight: "20px" }}
             />
           </ShowComponent>
         </Box>
         <Box>
-          <ShowComponent condition={canCreateWorkspace}>
+          {/* L7b absent-sweep: not mocked, so absent in prototype builds. */}
+          <ShowComponent condition={canCreateWorkspace && !isPrototypeMode()}>
             <Button
               variant="text"
               color="primary"
@@ -222,31 +230,17 @@ SelectWorkspaceChild.propTypes = {
 };
 
 const SelectWorkspace = React.forwardRef(
-  ({ open, anchorEl, setOpen }, popperTimeoutRef) => {
-    return (
-      <Popper
-        open={open}
-        anchorEl={anchorEl}
-        placement="right-start"
-        modifiers={[
-          {
-            name: "offset",
-            options: {
-              offset: [0, 8],
-            },
-          },
-        ]}
-        style={{ zIndex: 1300 }}
-      >
-        <SelectWorkspaceChild setOpen={setOpen} ref={popperTimeoutRef} />
-      </Popper>
-    );
-  },
+  ({ open, anchorEl, setOpen, autoFocus }, popperTimeoutRef) => (
+    <SwitcherSubmenu open={open} anchorEl={anchorEl} setOpen={setOpen} autoFocus={autoFocus} label="Workspaces">
+      {(changeOpen) => <SelectWorkspaceChild setOpen={changeOpen} ref={popperTimeoutRef} />}
+    </SwitcherSubmenu>
+  ),
 );
 
 SelectWorkspace.displayName = "SelectWorkspace";
 
 SelectWorkspace.propTypes = {
+  autoFocus: PropTypes.bool,
   open: PropTypes.bool,
   anchorEl: PropTypes.object,
   setOpen: PropTypes.func,

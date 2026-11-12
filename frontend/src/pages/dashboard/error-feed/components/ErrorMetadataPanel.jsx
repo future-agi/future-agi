@@ -2,16 +2,21 @@ import React, { useState } from "react";
 import {
   Box,
   Button,
+  ButtonBase,
   CircularProgress,
   Dialog,
   DialogContent,
   DialogTitle,
   Divider,
+  IconButton,
+  InputAdornment,
   Link,
+  ListSubheader,
   Menu,
   MenuItem,
   Skeleton,
   Stack,
+  TextField,
   Tooltip,
   Typography,
   useTheme,
@@ -28,15 +33,25 @@ import {
   useLinearTeams,
   useUpdateErrorFeedIssue,
 } from "src/api/errorFeed/error-feed";
-import { useOrgMembers } from "src/api/annotation-queues/annotation-queues";
+import { useOrgMembersInfinite } from "src/api/annotation-queues/annotation-queues";
 import { useOrganization } from "src/contexts/OrganizationContext";
+import { useDebounce } from "src/hooks/use-debounce";
 import { useSharedIssueSidebar } from "src/api/shared-links";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { canManageIntegrations } from "src/sections/settings/integrations/access";
+import { getErrorMessage } from "src/sections/settings/integrations/utils";
 import openExternal, { safeExternalUrl } from "../openExternal";
+import {
+  LINEAR_CONNECT_ADMIN_ONLY,
+  LINEAR_CREATE_VIEWER,
+} from "../linearAccess";
 import { useErrorFeedStore } from "../store";
 import { useSharedIssue } from "../sharedIssueContext";
 import ErrorStatusChip from "./ErrorStatusChip";
 import ErrorSeverityBadge from "./ErrorSeverityBadge";
 import PropTypes from "prop-types";
+import { statusColors } from "src/utils/runStatus";
 
 const humanizeTime = (iso) => {
   if (!iso) return "—";
@@ -57,7 +72,7 @@ function FieldRow({ label, children }) {
       gap={1}
     >
       <Typography
-        sx={{ fontSize: "11px", color: "text.secondary", flexShrink: 0 }}
+        sx={{ fontSize: "12px", color: "text.secondary", flexShrink: 0 }}
       >
         {label}
       </Typography>
@@ -68,7 +83,7 @@ function FieldRow({ label, children }) {
 FieldRow.propTypes = { label: PropTypes.string, children: PropTypes.node };
 
 // ── Meta row ────────────────────────────────────────────────────────────────
-function MetaRow({ label, value, icon, monospace, linkHref }) {
+function MetaRow({ label, value, icon, linkHref }) {
   if (value == null || value === "") return null;
   return (
     <Stack
@@ -86,13 +101,13 @@ function MetaRow({ label, value, icon, monospace, linkHref }) {
         {icon && (
           <Iconify
             icon={icon}
-            width={11}
+            width={12}
             sx={{ color: "text.secondary", flexShrink: 0 }}
           />
         )}
         <Typography
           sx={{
-            fontSize: "11px",
+            fontSize: "12px",
             color: "text.secondary",
             whiteSpace: "nowrap",
           }}
@@ -107,7 +122,7 @@ function MetaRow({ label, value, icon, monospace, linkHref }) {
           target="_blank"
           rel="noopener noreferrer"
           sx={{
-            fontSize: "11px",
+            fontSize: "12px",
             fontWeight: 500,
             color: "primary.main",
             fontFamily: "inherit",
@@ -125,7 +140,7 @@ function MetaRow({ label, value, icon, monospace, linkHref }) {
         <Tooltip title={String(value)} placement="top-start">
           <Typography
             sx={{
-              fontSize: "11px",
+              fontSize: "12px",
               fontWeight: 500,
               color: "text.primary",
               fontFamily: "inherit",
@@ -156,11 +171,11 @@ function Section({ title, children }) {
     <Stack gap={1}>
       <Typography
         sx={{
-          fontSize: "10px",
+          fontSize: "12px",
           fontWeight: 600,
           color: "text.secondary",
-          textTransform: "uppercase",
-          letterSpacing: "0.07em",
+          textTransform: "none",
+          letterSpacing: 0,
         }}
       >
         {title}
@@ -177,30 +192,26 @@ const STATUS_OPTIONS = [
   {
     value: "escalating",
     label: "Escalating",
-    icon: "mdi:trending-up",
-    color: "#DB2F2D",
-    darkColor: "#E87878",
+    icon: "solar:graph-up-linear",
+    role: "danger",
   },
   {
     value: "acknowledged",
     label: "Acknowledged",
-    icon: "mdi:check-circle-outline",
-    color: "#938FA3",
-    darkColor: "#938FA3",
+    icon: "solar:check-circle-linear",
+    role: "neutral",
   },
   {
     value: "for_review",
     label: "For review",
-    icon: "mdi:eye-outline",
-    color: "#F5A623",
-    darkColor: "#F5A623",
+    icon: "solar:eye-linear",
+    role: "warning",
   },
   {
     value: "resolved",
     label: "Resolved",
-    icon: "mdi:check-circle",
-    color: "#5ACE6D",
-    darkColor: "#5ACE6D",
+    icon: "solar:check-circle-bold",
+    role: "success",
   },
 ];
 
@@ -208,54 +219,56 @@ function StatusDropdown({ clusterId, current }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const updateIssue = useUpdateErrorFeedIssue();
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const statusBase =
+  const cur =
     STATUS_OPTIONS.find((s) => s.value === current) || STATUS_OPTIONS[0];
-  const cur = {
-    ...statusBase,
-    color: isDark ? statusBase.darkColor : statusBase.color,
-  };
+  const curColors = statusColors(theme, cur.role);
 
   return (
     <>
-      <Box
+      <ButtonBase
         onClick={(e) => {
           e.stopPropagation();
           setAnchorEl(e.currentTarget);
         }}
+        aria-label={`Status: ${cur.label}`}
+        aria-haspopup="menu"
+        aria-expanded={Boolean(anchorEl)}
         sx={{
           display: "inline-flex",
           alignItems: "center",
           gap: 0.5,
           px: 0.9,
           py: 0.35,
-          borderRadius: "5px",
+          borderRadius: "4px",
           cursor: "pointer",
-          border: "1px solid",
-          borderColor: isDark ? alpha(cur.color, 0.3) : alpha(cur.color, 0.25),
-          bgcolor: isDark ? alpha(cur.color, 0.1) : alpha(cur.color, 0.07),
-          "&:hover": { borderColor: alpha(cur.color, 0.5) },
+          bgcolor: curColors.bg,
+          color: curColors.fg,
+          "&:hover": { opacity: 0.85 },
           transition: "all 0.15s",
         }}
       >
-        <Iconify icon={cur.icon} width={11} sx={{ color: cur.color }} />
-        <Typography fontSize="11px" fontWeight={600} sx={{ color: cur.color }}>
+        <Iconify icon={cur.icon} width={12} sx={{ color: "inherit" }} />
+        <Typography
+          component="span"
+          fontSize="12px"
+          fontWeight={500}
+          sx={{ color: "inherit" }}
+        >
           {cur.label}
         </Typography>
         <Iconify
-          icon="mdi:chevron-down"
-          width={11}
-          sx={{ color: cur.color, opacity: 0.7 }}
+          icon="solar:alt-arrow-down-linear"
+          width={12}
+          sx={{ color: "inherit", opacity: 0.7 }}
         />
-      </Box>
+      </ButtonBase>
       <Menu
         anchorEl={anchorEl}
         open={Boolean(anchorEl)}
         onClose={() => setAnchorEl(null)}
         PaperProps={{
-          elevation: 3,
           sx: {
-            borderRadius: 1,
+            borderRadius: "8px",
             border: "1px solid",
             borderColor: "divider",
             minWidth: 150,
@@ -263,23 +276,27 @@ function StatusDropdown({ clusterId, current }) {
           },
         }}
       >
-        <Box sx={{ px: 1.5, py: 0.75 }}>
+        {/* A ListSubheader, not a Box: MenuList skips it and the Divider
+            when it picks the item to focus, so the menu opens on its first
+            option and the arrow keys and Enter work. A Box was picked
+            instead, ignored the focus, and left the keys on the paper. */}
+        <ListSubheader component="div" disableSticky sx={{ px: 1.5, py: 0.75 }}>
           <Typography
             sx={{
-              fontSize: "10px",
+              fontSize: "12px",
               fontWeight: 600,
               color: "text.disabled",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
+              textTransform: "none",
+              letterSpacing: 0,
             }}
           >
             Change status
           </Typography>
-        </Box>
+        </ListSubheader>
         <Divider sx={{ borderColor: "divider" }} />
         {STATUS_OPTIONS.filter((option) => option.value !== current).map(
           (option) => {
-            const statusColor = isDark ? option.darkColor : option.color;
+            const statusColor = statusColors(theme, option.role).fg;
             return (
               <MenuItem
                 key={option.value}
@@ -287,16 +304,14 @@ function StatusDropdown({ clusterId, current }) {
                   updateIssue.mutate({ clusterId, status: option.value });
                   setAnchorEl(null);
                 }}
-                sx={{ gap: 1, fontSize: "13px", py: 0.75 }}
+                sx={{ gap: 1, py: 0.75 }}
               >
                 <Iconify
                   icon={option.icon}
-                  width={15}
+                  width={16}
                   sx={{ color: statusColor }}
                 />
-                <Typography fontSize="12px" sx={{ color: statusColor }}>
-                  {option.label}
-                </Typography>
+                <Typography fontSize="12px">{option.label}</Typography>
               </MenuItem>
             );
           },
@@ -315,112 +330,125 @@ const SEVERITY_OPTIONS = [
   {
     value: "critical",
     label: "Critical",
-    color: "#DB2F2D",
-    darkColor: "#E87876",
-    icon: "mdi:alert-octagon-outline",
+    role: "danger",
+    icon: "solar:danger-circle-linear",
   },
   {
     value: "high",
     label: "High",
-    color: "#E9690C",
-    darkColor: "#F49A54",
-    icon: "mdi:alert-circle-outline",
+    role: "warning",
+    icon: "solar:danger-circle-linear",
   },
   {
     value: "medium",
     label: "Medium",
-    color: "#8C7A00",
-    darkColor: "#F5E65F",
-    icon: "mdi:alert-outline",
+    role: "info",
+    icon: "solar:danger-triangle-linear",
   },
   {
     value: "low",
     label: "Low",
-    color: "#605C70",
-    darkColor: "#71717a",
-    icon: "mdi:information-outline",
+    role: "neutral",
+    icon: "solar:info-circle-linear",
   },
 ];
 
-function SeverityDropdown({ current, onChange }) {
+function SeverityDropdown({ current, source, assessmentStatus, onChange }) {
   const [anchorEl, setAnchorEl] = useState(null);
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const base =
+  const cur =
     SEVERITY_OPTIONS.find((s) => s.value === current) || SEVERITY_OPTIONS[1];
-  const cur = { ...base, color: isDark ? base.darkColor : base.color };
+  // Same rule as ErrorSeverityBadge (header and list): a "default" severity
+  // is only a placeholder until the assessment completes.
+  const unestablished =
+    source === "default" && assessmentStatus !== "completed";
+  const label = unestablished
+    ? assessmentStatus === "pending"
+      ? "Pending"
+      : "Unassessed"
+    : cur.label;
+  const role = unestablished ? "neutral" : cur.role;
 
   return (
     <>
-      <Box
+      <ButtonBase
         onClick={(e) => {
           e.stopPropagation();
           setAnchorEl(e.currentTarget);
         }}
+        aria-label={`Severity: ${label}`}
+        aria-haspopup="menu"
+        aria-expanded={Boolean(anchorEl)}
         sx={{
           display: "inline-flex",
           alignItems: "center",
           gap: 0.5,
           px: 0.9,
           py: 0.35,
-          borderRadius: "5px",
+          borderRadius: "4px",
           cursor: "pointer",
           border: "1px solid",
-          borderColor: isDark ? alpha(cur.color, 0.3) : alpha(cur.color, 0.25),
-          bgcolor: isDark ? alpha(cur.color, 0.1) : alpha(cur.color, 0.07),
-          "&:hover": { borderColor: alpha(cur.color, 0.5) },
+          borderColor: `status.${role}.border`,
+          bgcolor: `status.${role}.bg`,
+          "&:hover": { borderColor: `status.${role}.solid` },
           transition: "all 0.15s",
         }}
       >
         <Box
+          component="span"
           sx={{
             width: 6,
             height: 6,
             borderRadius: "50%",
-            bgcolor: cur.color,
+            bgcolor: `status.${role}.solid`,
             flexShrink: 0,
           }}
         />
-        <Typography fontSize="11px" fontWeight={600} sx={{ color: cur.color }}>
-          {cur.label}
+        <Typography
+          component="span"
+          fontSize="12px"
+          fontWeight={600}
+          sx={{ color: `status.${role}.fg` }}
+        >
+          {label}
         </Typography>
         <Iconify
-          icon="mdi:chevron-down"
-          width={11}
-          sx={{ color: cur.color, opacity: 0.7 }}
+          icon="solar:alt-arrow-down-linear"
+          width={12}
+          sx={{ color: `status.${role}.fg`, opacity: 0.7 }}
         />
-      </Box>
+      </ButtonBase>
       <Menu
         anchorEl={anchorEl}
         open={Boolean(anchorEl)}
         onClose={() => setAnchorEl(null)}
         PaperProps={{
-          elevation: 3,
           sx: {
-            borderRadius: 1,
+            borderRadius: "8px",
             border: "1px solid",
             borderColor: "divider",
-            minWidth: 150,
+            minWidth: 200,
             mt: 0.5,
           },
         }}
       >
-        <Box sx={{ px: 1.5, py: 0.75 }}>
+        {/* As in Status: the menu opens on its first option. */}
+        <ListSubheader component="div" disableSticky sx={{ px: 1.5, py: 0.75 }}>
           <Typography
             sx={{
-              fontSize: "10px",
+              fontSize: "12px",
               fontWeight: 600,
               color: "text.disabled",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
+              textTransform: "none",
+              letterSpacing: 0,
             }}
           >
             Change severity
           </Typography>
-        </Box>
+        </ListSubheader>
         <Divider sx={{ borderColor: "divider" }} />
-        {SEVERITY_OPTIONS.filter((s) => s.value !== current).map((s) => {
-          const c = isDark ? s.darkColor : s.color;
+        {SEVERITY_OPTIONS.filter(
+          (s) => unestablished || s.value !== cur.value,
+        ).map((s) => {
           return (
             <MenuItem
               key={s.value}
@@ -428,18 +456,18 @@ function SeverityDropdown({ current, onChange }) {
                 onChange?.(s.value);
                 setAnchorEl(null);
               }}
-              sx={{ gap: 1, fontSize: "13px", py: 0.75 }}
+              sx={{ gap: 1, py: 0.75 }}
             >
               <Box
                 sx={{
                   width: 8,
                   height: 8,
                   borderRadius: "50%",
-                  bgcolor: c,
+                  bgcolor: `status.${s.role}.solid`,
                   flexShrink: 0,
                 }}
               />
-              <Typography fontSize="12px" sx={{ color: c }}>
+              <Typography fontSize="12px" sx={{ color: `status.${s.role}.fg` }}>
                 {s.label}
               </Typography>
             </MenuItem>
@@ -451,6 +479,8 @@ function SeverityDropdown({ current, onChange }) {
 }
 SeverityDropdown.propTypes = {
   current: PropTypes.string,
+  source: PropTypes.string,
+  assessmentStatus: PropTypes.string,
   onChange: PropTypes.func,
 };
 
@@ -465,45 +495,73 @@ function getInitials(name, email) {
   return (email || "??").slice(0, 2).toUpperCase();
 }
 
-function AssigneeDropdown({ current, onChange, members = [] }) {
+function AssigneeDropdown({ current, onChange, orgId }) {
   const [anchorEl, setAnchorEl] = useState(null);
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search.trim(), 300);
+  // Members come a page at a time and are searched on the server: past the
+  // first page, a member is reached by searching or by "Show more members".
+  const {
+    data: members = [],
+    fetchNextPage,
+    hasNextPage,
+    isFetching,
+    isFetchingNextPage,
+  } = useOrgMembersInfinite(orgId, debouncedSearch);
   const member = members.find((m) => m.email === current);
+  const assigneeName = member
+    ? member.name || member.email
+    : current || "Unassigned";
+  // An assignee outside the loaded page still owns the issue: show them by
+  // their email rather than as unassigned.
+  const shown = member ?? (current ? { email: current } : null);
+
+  const close = () => {
+    setAnchorEl(null);
+    setSearch("");
+  };
+  const pick = (email) => {
+    onChange?.(email);
+    close();
+  };
 
   return (
     <>
-      <Box
+      <ButtonBase
         onClick={(e) => {
           e.stopPropagation();
           setAnchorEl(e.currentTarget);
         }}
+        aria-label={`Assignee: ${assigneeName}`}
+        aria-haspopup="menu"
+        aria-expanded={Boolean(anchorEl)}
         sx={{
           display: "inline-flex",
           alignItems: "center",
           gap: 0.6,
           px: 0.75,
           py: 0.3,
-          borderRadius: "5px",
+          borderRadius: "4px",
           cursor: "pointer",
           border: "1px solid",
           borderColor: "divider",
-          bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.03),
+          bgcolor: "action.hover",
           "&:hover": {
-            borderColor: alpha("#7857FC", 0.4),
-            bgcolor: isDark ? alpha("#7857FC", 0.07) : alpha("#7857FC", 0.04),
+            borderColor: "status.discovery.solid",
+            bgcolor: "status.discovery.bg",
           },
           transition: "all 0.15s",
         }}
       >
-        {member ? (
+        {shown ? (
           <>
             <Box
+              component="span"
               sx={{
                 width: 16,
                 height: 16,
                 borderRadius: "50%",
-                bgcolor: alpha("#7857FC", 0.2),
+                bgcolor: "status.discovery.bg",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -511,51 +569,55 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
               }}
             >
               <Typography
-                fontSize="8px"
-                fontWeight={700}
-                sx={{ color: isDark ? "#A792FD" : "#7857FC" }}
+                component="span"
+                fontSize="12px"
+                fontWeight={600}
+                sx={{ color: "status.discovery.fg" }}
               >
-                {getInitials(member.name, member.email)}
+                {getInitials(shown.name, shown.email)}
               </Typography>
             </Box>
             <Typography
-              fontSize="11px"
+              component="span"
+              fontSize="12px"
               color="text.primary"
               noWrap
               sx={{ maxWidth: 90 }}
             >
-              {member.name || member.email.split("@")[0]}
+              {shown.name || shown.email.split("@")[0]}
             </Typography>
           </>
         ) : (
           <>
             <Iconify
-              icon="mdi:account-plus-outline"
+              icon="solar:user-plus-linear"
               width={12}
               sx={{ color: "text.disabled" }}
             />
-            <Typography fontSize="11px" color="text.disabled">
+            <Typography component="span" fontSize="12px" color="text.disabled">
               Assign
             </Typography>
           </>
         )}
         <Iconify
-          icon="mdi:chevron-down"
-          width={11}
+          icon="solar:alt-arrow-down-linear"
+          width={12}
           sx={{ color: "text.disabled", opacity: 0.7 }}
         />
-      </Box>
+      </ButtonBase>
       <Menu
         anchorEl={anchorEl}
         open={Boolean(anchorEl)}
-        onClose={() => setAnchorEl(null)}
+        onClose={close}
+        // The search field takes focus on open, not the first member.
+        autoFocus={false}
         PaperProps={{
-          elevation: 3,
           sx: {
-            borderRadius: 1,
+            borderRadius: "8px",
             border: "1px solid",
             borderColor: "divider",
-            minWidth: 180,
+            minWidth: 200,
+            maxHeight: 360,
             mt: 0.5,
           },
         }}
@@ -563,28 +625,59 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
         <Box sx={{ px: 1.5, py: 0.75 }}>
           <Typography
             sx={{
-              fontSize: "10px",
+              fontSize: "12px",
               fontWeight: 600,
               color: "text.disabled",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
+              textTransform: "none",
+              letterSpacing: 0,
             }}
           >
             Assign to
           </Typography>
         </Box>
+        <Box sx={{ px: 1, pb: 0.75 }}>
+          <TextField
+            autoFocus
+            size="small"
+            fullWidth
+            placeholder="Search members"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              // Typed letters go to the field, not the menu's jump-to-item;
+              // Escape and Tab still close the menu, ArrowDown moves to the
+              // list.
+              if (e.key === "Escape" || e.key === "Tab") return;
+              e.stopPropagation();
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                e.currentTarget
+                  .closest('[role="menu"]')
+                  ?.querySelector('[role="menuitem"]')
+                  ?.focus();
+              }
+            }}
+            inputProps={{ "aria-label": "Search members" }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Iconify
+                    icon="solar:magnifier-linear"
+                    width={14}
+                    sx={{ color: "text.disabled" }}
+                  />
+                </InputAdornment>
+              ),
+              sx: { fontSize: "12px" },
+            }}
+          />
+        </Box>
         <Divider sx={{ borderColor: "divider" }} />
         {current && (
-          <MenuItem
-            onClick={() => {
-              onChange?.(null);
-              setAnchorEl(null);
-            }}
-            sx={{ gap: 1, py: 0.75 }}
-          >
+          <MenuItem onClick={() => pick(null)} sx={{ gap: 1, py: 0.75 }}>
             <Iconify
-              icon="mdi:account-remove-outline"
-              width={15}
+              icon="solar:user-minus-linear"
+              width={16}
               sx={{ color: "text.disabled" }}
             />
             <Typography fontSize="12px" color="text.secondary">
@@ -597,10 +690,7 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
           .map((m) => (
             <MenuItem
               key={m.email}
-              onClick={() => {
-                onChange?.(m.email);
-                setAnchorEl(null);
-              }}
+              onClick={() => pick(m.email)}
               sx={{ gap: 1, py: 0.75 }}
             >
               <Box
@@ -608,7 +698,7 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
                   width: 20,
                   height: 20,
                   borderRadius: "50%",
-                  bgcolor: alpha("#7857FC", 0.18),
+                  bgcolor: "status.discovery.bg",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -616,9 +706,9 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
                 }}
               >
                 <Typography
-                  fontSize="9px"
-                  fontWeight={700}
-                  sx={{ color: isDark ? "#A792FD" : "#7857FC" }}
+                  fontSize="12px"
+                  fontWeight={600}
+                  sx={{ color: "status.discovery.fg" }}
                 >
                   {getInitials(m.name, m.email)}
                 </Typography>
@@ -628,6 +718,24 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
               </Typography>
             </MenuItem>
           ))}
+        {!isFetching && members.length === 0 && (
+          <Typography
+            sx={{ px: 1.5, py: 0.75, fontSize: "12px", color: "text.disabled" }}
+          >
+            No members found
+          </Typography>
+        )}
+        {hasNextPage && (
+          <MenuItem
+            disabled={isFetchingNextPage}
+            onClick={() => fetchNextPage()}
+            sx={{ py: 0.75 }}
+          >
+            <Typography fontSize="12px" color="text.secondary">
+              {isFetchingNextPage ? "Loading…" : "Show more members"}
+            </Typography>
+          </MenuItem>
+        )}
       </Menu>
     </>
   );
@@ -635,19 +743,19 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
 AssigneeDropdown.propTypes = {
   current: PropTypes.string,
   onChange: PropTypes.func,
-  members: PropTypes.array,
+  orgId: PropTypes.string,
 };
 
 // ── Eval row ──────────────────────────────────────────────────────────────────
 function EvalRow({ label, type, result, score, value }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
 
   const passed = result === "passed";
-  const resultColor = passed ? "#5ACE6D" : "#DB2F2D";
+  const resultColors = statusColors(theme, passed ? "success" : "danger");
+  const resultColor = resultColors.solid;
   const resultIcon = passed
-    ? "mdi:check-circle-outline"
-    : "mdi:close-circle-outline";
+    ? "solar:check-circle-linear"
+    : "solar:close-circle-linear";
 
   // Deterministic: use the returned value as the display label (coloured by pass/fail)
   // Pass/Fail: "Passed" / "Failed"
@@ -663,12 +771,12 @@ function EvalRow({ label, type, result, score, value }) {
         borderRadius: "6px",
         border: "1px solid",
         borderColor: "divider",
-        bgcolor: isDark ? alpha("#fff", 0.018) : alpha("#000", 0.015),
+        bgcolor: "action.hover",
       }}
     >
       {/* Header: name only */}
       <Typography
-        fontSize="11px"
+        fontSize="12px"
         fontWeight={500}
         color="text.primary"
         noWrap
@@ -686,7 +794,7 @@ function EvalRow({ label, type, result, score, value }) {
               height: 3,
               borderRadius: 2,
               overflow: "hidden",
-              bgcolor: isDark ? alpha("#fff", 0.08) : alpha("#000", 0.07),
+              bgcolor: "action.selected",
             }}
           >
             <Box
@@ -699,7 +807,7 @@ function EvalRow({ label, type, result, score, value }) {
             />
           </Box>
           <Typography
-            fontSize="10px"
+            fontSize="12px"
             fontWeight={600}
             sx={{
               color: "text.secondary",
@@ -715,11 +823,15 @@ function EvalRow({ label, type, result, score, value }) {
       {/* Pass/Fail + Deterministic — verdict label with result colour */}
       {(type === "pass" || type === "deterministic") && (
         <Stack direction="row" alignItems="center" gap={0.35}>
-          <Iconify icon={resultIcon} width={11} sx={{ color: resultColor }} />
+          <Iconify
+            icon={resultIcon}
+            width={12}
+            sx={{ color: resultColors.fg }}
+          />
           <Typography
-            fontSize="10px"
-            fontWeight={600}
-            sx={{ color: resultColor }}
+            fontSize="12px"
+            fontWeight={500}
+            sx={{ color: resultColors.fg }}
           >
             {verdictLabel}
           </Typography>
@@ -738,8 +850,6 @@ EvalRow.propTypes = {
 
 // ── Activity timeline item ────────────────────────────────────────────────────
 function ActivityItem({ text, meta, isLast }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   return (
     <Stack direction="row" gap={1} alignItems="flex-start">
       {/* Timeline spine */}
@@ -751,8 +861,8 @@ function ActivityItem({ text, meta, isLast }) {
             borderRadius: "50%",
             flexShrink: 0,
             border: "1.5px solid",
-            borderColor: isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.35)",
-            bgcolor: isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.06)",
+            borderColor: "text.disabled",
+            bgcolor: "action.selected",
             mt: "3px",
           }}
         />
@@ -762,7 +872,7 @@ function ActivityItem({ text, meta, isLast }) {
               width: 1.5,
               flex: 1,
               minHeight: 14,
-              bgcolor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
+              bgcolor: "divider",
               mt: "2px",
             }}
           />
@@ -770,13 +880,13 @@ function ActivityItem({ text, meta, isLast }) {
       </Stack>
       <Stack gap={0} pb={isLast ? 0 : 1}>
         <Typography
-          fontSize="11px"
+          fontSize="12px"
           color="text.primary"
           sx={{ lineHeight: 1.5 }}
         >
           {text}
         </Typography>
-        <Typography fontSize="10px" color="text.secondary">
+        <Typography fontSize="12px" color="text.secondary">
           {meta}
         </Typography>
       </Stack>
@@ -790,21 +900,12 @@ ActivityItem.propTypes = {
 };
 
 // ── Co-occurring issues ───────────────────────────────────────────────────────
-const SEV_COLOR = {
-  critical: "#DB2F2D",
-  high: "#E9690C",
-  medium: "#F5A623",
-  low: "#71717a",
-};
 
 function CoOccurringList({ issues, readOnly = false }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const navigate = useNavigate();
   return (
     <Stack gap={0.5}>
       {issues.map((issue) => {
-        const c = SEV_COLOR[issue.severity] || "#71717a";
         return (
           <Stack
             key={issue.id}
@@ -822,22 +923,20 @@ function CoOccurringList({ issues, readOnly = false }) {
               border: "1px solid",
               borderColor: "divider",
               borderRadius: "6px",
-              bgcolor: isDark ? alpha("#fff", 0.02) : "transparent",
+              bgcolor: "transparent",
               cursor: "pointer",
               "&:hover": {
-                borderColor: alpha("#7857FC", 0.3),
-                bgcolor: isDark
-                  ? alpha("#7857FC", 0.05)
-                  : alpha("#7857FC", 0.02),
+                borderColor: "status.discovery.border",
+                bgcolor: "status.discovery.bg",
               },
               transition: "all 0.15s",
             }}
           >
             <Stack gap={0.1} flex={1} minWidth={0}>
-              <Typography fontSize="11px" color="text.primary" noWrap>
+              <Typography fontSize="12px" color="text.primary" noWrap>
                 {issue.title}
               </Typography>
-              <Typography fontSize="10px" color="text.secondary">
+              <Typography fontSize="12px" color="text.secondary">
                 {issue.count?.toLocaleString()} shared
                 {issue.co_occurrence != null &&
                   ` · ${Math.round(issue.co_occurrence * 100)}%`}
@@ -857,8 +956,6 @@ CoOccurringList.propTypes = {
 // ── Integrations ──────────────────────────────────────────────────────────────
 
 export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const { enqueueSnackbar } = useSnackbar();
   // Use the live active org (matches the X-Organization-Id header) instead of
   // the cached user.organization.id, which can drift and 404 the request
@@ -895,10 +992,15 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
           }
           onClose();
         },
+        // The refusal the API gave, once (the mutation's meta.errorHandled
+        // keeps the app's error handler from adding a second toast).
         onError: (err) => {
-          const message =
-            err?.response?.data?.result || "Failed to create Linear issue";
-          enqueueSnackbar(message, { variant: "error" });
+          enqueueSnackbar(
+            getErrorMessage(err, "Failed to create Linear issue"),
+            {
+              variant: "error",
+            },
+          );
         },
       },
     );
@@ -908,12 +1010,13 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="xs"
+      maxWidth={false}
       fullWidth
       PaperProps={{
         sx: {
+          maxWidth: 560,
           borderRadius: "12px",
-          bgcolor: isDark ? "#111111" : "background.paper",
+          bgcolor: "background.paper",
           backgroundImage: "none",
           border: "1px solid",
           borderColor: "divider",
@@ -927,23 +1030,16 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
           justifyContent="space-between"
         >
           <Stack gap={0.2}>
-            <Typography fontSize="14px" fontWeight={700} color="text.primary">
+            <Typography fontSize="13px" fontWeight={600} color="text.primary">
               Create Linear Issue
             </Typography>
-            <Typography fontSize="11px" color="text.secondary">
+            <Typography fontSize="12px" color="text.secondary">
               Select a team to create the issue in.
             </Typography>
           </Stack>
-          <Box
-            onClick={onClose}
-            sx={{
-              cursor: "pointer",
-              color: "text.disabled",
-              "&:hover": { color: "text.primary" },
-            }}
-          >
-            <Iconify icon="mdi:close" width={18} />
-          </Box>
+          <IconButton size="small" onClick={onClose} aria-label="Close">
+            <Iconify icon="solar:close-linear" width={20} />
+          </IconButton>
         </Stack>
       </DialogTitle>
       <DialogContent sx={{ px: 2.5, pb: 2.5, pt: 0 }}>
@@ -974,10 +1070,10 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
                   borderRadius: "8px",
                   cursor: createIssue.isPending ? "wait" : "pointer",
                   "&:hover": {
+                    // eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear)
                     borderColor: "#5E6AD2",
-                    bgcolor: isDark
-                      ? alpha("#5E6AD2", 0.06)
-                      : alpha("#5E6AD2", 0.03),
+                    // eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear)
+                    bgcolor: alpha("#5E6AD2", 0.04),
                   },
                   transition: "all 0.15s",
                 }}
@@ -987,16 +1083,16 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
                     width: 28,
                     height: 28,
                     borderRadius: "6px",
-                    bgcolor: isDark
-                      ? alpha("#5E6AD2", 0.12)
-                      : alpha("#5E6AD2", 0.08),
+                    // eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear)
+                    bgcolor: alpha("#5E6AD2", 0.1),
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     flexShrink: 0,
                   }}
                 >
-                  <Typography fontSize="12px" fontWeight={700} color="#5E6AD2">
+                  {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear) */}
+                  <Typography fontSize="12px" fontWeight={600} color="#5E6AD2">
                     {t.key}
                   </Typography>
                 </Box>
@@ -1009,6 +1105,7 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
                   {t.name}
                 </Typography>
                 {createIssue.isPending && (
+                  // eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear)
                   <CircularProgress size={14} sx={{ color: "#5E6AD2" }} />
                 )}
               </Stack>
@@ -1026,9 +1123,17 @@ LinearTeamPicker.propTypes = {
   traceId: PropTypes.string,
 };
 
-function ConnectorRow({ icon, color, name, subtitle, action, onAction }) {
+function ConnectorRow({
+  icon,
+  color,
+  name,
+  subtitle,
+  action,
+  onAction,
+  disabledReason,
+}) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
+  const disabled = Boolean(disabledReason);
 
   return (
     <Stack
@@ -1041,62 +1146,57 @@ function ConnectorRow({ icon, color, name, subtitle, action, onAction }) {
         border: "1px solid",
         borderColor: "divider",
         borderRadius: "6px",
-        bgcolor: isDark ? alpha("#fff", 0.02) : "transparent",
+        bgcolor: "transparent",
       }}
     >
       <Box
         sx={{
           width: 22,
           height: 22,
-          borderRadius: "5px",
-          bgcolor: isDark ? alpha(color, 0.12) : alpha(color, 0.08),
+          borderRadius: "4px",
+          bgcolor: alpha(color, 0.1),
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           flexShrink: 0,
         }}
       >
-        <Iconify icon={icon} width={13} sx={{ color }} />
+        <Iconify icon={icon} width={14} sx={{ color }} />
       </Box>
 
       <Stack gap={0} flex={1} minWidth={0}>
-        <Typography fontSize="11px" fontWeight={600} color="text.primary">
+        <Typography fontSize="12px" fontWeight={600} color="text.primary">
           {name}
         </Typography>
         <Typography
-          fontSize="10px"
+          fontSize="12px"
           color={subtitle === "Connected" ? undefined : "text.secondary"}
-          sx={subtitle === "Connected" ? { color: "#5ACE6D" } : undefined}
+          sx={
+            subtitle === "Connected"
+              ? { color: statusColors(theme, "success").fg }
+              : undefined
+          }
         >
           {subtitle}
         </Typography>
       </Stack>
 
       {action && (
-        <Box
-          onClick={onAction}
-          sx={{
-            px: 0.75,
-            py: 0.25,
-            borderRadius: "4px",
-            cursor: "pointer",
-            border: "1px solid",
-            borderColor: alpha(color, 0.3),
-            bgcolor: isDark ? alpha(color, 0.1) : alpha(color, 0.07),
-            "&:hover": {
-              bgcolor: isDark ? alpha(color, 0.18) : alpha(color, 0.12),
-            },
-            transition: "all 0.15s",
-          }}
-        >
-          <Typography
-            fontSize="10px"
-            fontWeight={600}
-            sx={{ color, whiteSpace: "nowrap" }}
+        <Tooltip title={disabledReason || ""} describeChild>
+          <Button
+            size="small"
+            variant="outlined"
+            aria-disabled={disabled || undefined}
+            onClick={disabled ? undefined : onAction}
+            sx={{
+              whiteSpace: "nowrap",
+              flexShrink: 0,
+              ...(disabled && { cursor: "not-allowed", opacity: 0.5 }),
+            }}
           >
             {action}
-          </Typography>
-        </Box>
+          </Button>
+        </Tooltip>
       )}
     </Stack>
   );
@@ -1108,6 +1208,7 @@ ConnectorRow.propTypes = {
   subtitle: PropTypes.string.isRequired,
   action: PropTypes.string,
   onAction: PropTypes.func,
+  disabledReason: PropTypes.string,
 };
 
 function SharedLinearLink({ url, issueId }) {
@@ -1146,7 +1247,8 @@ SharedLinearLink.propTypes = {
   issueId: PropTypes.string,
 };
 
-function Integrations({
+// The issue's connector rows (Linear): exported for its role tests.
+export function Integrations({
   clusterId,
   traceId,
   externalIssueUrl,
@@ -1163,6 +1265,11 @@ function Integrations({
   } = useLinearTeams(currentOrganizationId);
   const linearConnected = linearData?.connected === true;
   const [teamPickerOpen, setTeamPickerOpen] = useState(false);
+  const { role } = useAuthContext();
+  const canConnect = canManageIntegrations(role);
+  const canCreate =
+    RolePermission.OBSERVABILITY[PERMISSIONS.CREATE_EDIT_PROJECT]?.[role] ===
+    true;
 
   const linked = !!externalIssueUrl;
 
@@ -1194,17 +1301,29 @@ function Integrations({
       : linearConnected
         ? "Create issue"
         : "Connect";
+  const linearDisabledReason =
+    linked || linearLoading
+      ? undefined
+      : linearConnected
+        ? canCreate
+          ? undefined
+          : LINEAR_CREATE_VIEWER
+        : canConnect
+          ? undefined
+          : LINEAR_CONNECT_ADMIN_ONLY;
 
   return (
     <>
       <Stack gap={0.75}>
         <ConnectorRow
           icon="simple-icons:linear"
+          // eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear)
           color="#5E6AD2"
           name="Linear"
           subtitle={linearSubtitle}
           action={linearAction}
           onAction={handleLinearAction}
+          disabledReason={linearDisabledReason}
         />
       </Stack>
 
@@ -1234,29 +1353,54 @@ const EVAL_TYPE_MAP = {
 };
 
 export default function ErrorMetadataPanel({ error }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const [severity, setSeverityLocal] = useState(error?.severity ?? "high");
   const [assignee, setAssigneeLocal] = useState(error?.assignees?.[0] ?? null);
+  // Severity shows the issue's own value, as the header badge does, except
+  // while a pick is saving: then the pick shows. It gives way when its save
+  // settles, saved or refused, or as soon as the issue's own severity changes
+  // (an assessment or another user's pick), so the latest issue value shows.
+  // New data for the same issue with the same severity keeps the pick.
+  const [pendingSeverity, setPendingSeverity] = useState(null);
+  const [issueSeverity, setIssueSeverity] = useState(error?.severity);
+  if (error?.severity !== issueSeverity) {
+    setIssueSeverity(error?.severity);
+    setPendingSeverity(null);
+  }
   // Use the live active org (matches the X-Organization-Id header) instead of
   // the cached user.organization.id, which can drift and 404 the members
   // request (TH-6156).
   // A shared issue is read-only and its viewer may be signed out: nothing
-  // here fetches, and triage shows as text.
+  // here fetches (the Assignee picker that loads members is not rendered),
+  // and triage shows as text.
   const shared = useSharedIssue();
   const { currentOrganizationId } = useOrganization();
-  const { data: orgMembers = [] } = useOrgMembers(
-    shared ? null : currentOrganizationId,
-  );
   const updateIssue = useUpdateErrorFeedIssue();
+  // Severity saves on a mutation of its own: a mutation runs the per-call
+  // callbacks of its latest call only, so an Assignee save made meanwhile on
+  // a shared one would drop this save's settle and leave the pick showing.
+  const updateSeverity = useUpdateErrorFeedIssue();
 
   const setSeverity = (val) => {
-    setSeverityLocal(val);
-    updateIssue.mutate({ clusterId: error?.cluster_id, severity: val });
+    setPendingSeverity(val);
+    updateSeverity.mutate(
+      { clusterId: error?.cluster_id, severity: val },
+      {
+        onSettled: () =>
+          setPendingSeverity((shown) => (shown === val ? null : shown)),
+      },
+    );
   };
   const setAssignee = (val) => {
+    const previous = assignee;
     setAssigneeLocal(val);
-    updateIssue.mutate({ clusterId: error?.cluster_id, assignee: val });
+    updateIssue.mutate(
+      { clusterId: error?.cluster_id, assignee: val },
+      {
+        // A refused save puts the previous assignee back, unless a later
+        // pick has replaced this one since.
+        onError: () =>
+          setAssigneeLocal((shown) => (shown === val ? previous : shown)),
+      },
+    );
   };
 
   const selectedTraceId = useErrorFeedStore(
@@ -1309,7 +1453,7 @@ export default function ErrorMetadataPanel({ error }) {
   const activityLog = error.first_seen
     ? [
         {
-          color: "#F5A623",
+          color: "status.warning.solid",
           text: "First detected",
           meta: `System · ${error.firstSeenHuman ?? humanizeTime(error.first_seen)}${
             ageDays != null ? ` — ${ageDays} days open` : ""
@@ -1321,11 +1465,10 @@ export default function ErrorMetadataPanel({ error }) {
   return (
     <Box
       sx={{
-        width: 260,
+        width: 280,
         flexShrink: 0,
         borderLeft: "1px solid",
         borderColor: "divider",
-        bgcolor: isDark ? "background.neutral" : "background.default",
         overflowY: "auto",
         display: "flex",
         flexDirection: "column",
@@ -1354,7 +1497,18 @@ export default function ErrorMetadataPanel({ error }) {
                   reason={error.severity_reason}
                 />
               ) : (
-                <SeverityDropdown current={severity} onChange={setSeverity} />
+                <SeverityDropdown
+                  current={pendingSeverity ?? error.severity}
+                  // A pick is a manual severity, as the saved issue will say,
+                  // so it shows by name even over a placeholder severity.
+                  source={pendingSeverity ? "manual" : error.severity_source}
+                  assessmentStatus={
+                    pendingSeverity
+                      ? "manual"
+                      : error.severity_assessment_status
+                  }
+                  onChange={setSeverity}
+                />
               )}
             </FieldRow>
             <FieldRow label="Assignee">
@@ -1366,7 +1520,7 @@ export default function ErrorMetadataPanel({ error }) {
                 <AssigneeDropdown
                   current={assignee}
                   onChange={setAssignee}
-                  members={orgMembers}
+                  orgId={currentOrganizationId}
                 />
               )}
             </FieldRow>
@@ -1387,17 +1541,17 @@ export default function ErrorMetadataPanel({ error }) {
               {
                 label: "Users affected",
                 value: error.users_affected?.toLocaleString(),
-                icon: "mdi:account-group-outline",
+                icon: "solar:users-group-rounded-linear",
               },
               {
                 label: "Sessions",
                 value: error.sessions?.toLocaleString(),
-                icon: "mdi:monitor-eye",
+                icon: "solar:monitor-linear",
               },
               {
                 label: "Cluster ID",
                 value: error.cluster_id,
-                icon: "mdi:identifier",
+                icon: "solar:hashtag-linear",
               },
             ].map((item) => (
               <Box
@@ -1405,7 +1559,7 @@ export default function ErrorMetadataPanel({ error }) {
                 sx={{
                   border: "1px solid",
                   borderColor: "divider",
-                  borderRadius: "5px",
+                  borderRadius: "4px",
                   px: 1,
                   py: 0.6,
                 }}
@@ -1413,15 +1567,15 @@ export default function ErrorMetadataPanel({ error }) {
                 <Stack direction="row" alignItems="center" gap={0.4} mb={0.2}>
                   <Iconify
                     icon={item.icon}
-                    width={10}
+                    width={12}
                     sx={{ color: "text.secondary" }}
                   />
-                  <Typography fontSize="9px" color="text.secondary">
+                  <Typography fontSize="12px" color="text.secondary">
                     {item.label}
                   </Typography>
                 </Stack>
                 <Typography
-                  fontSize="11px"
+                  fontSize="12px"
                   fontWeight={600}
                   color="text.primary"
                   noWrap
@@ -1439,18 +1593,18 @@ export default function ErrorMetadataPanel({ error }) {
             <MetaRow
               label="First seen"
               value={error.firstSeenHuman ?? humanizeTime(error.first_seen)}
-              icon="mdi:clock-start"
+              icon="solar:stopwatch-linear"
             />
             <MetaRow
               label="Last seen"
               value={error.lastSeenHuman ?? humanizeTime(error.last_seen)}
-              icon="mdi:clock-outline"
+              icon="solar:clock-circle-linear"
             />
             {ageDays != null && (
               <MetaRow
                 label="Age"
                 value={`${ageDays} days`}
-                icon="mdi:calendar-clock"
+                icon="solar:calendar-mark-linear"
               />
             )}
           </Stack>
@@ -1462,19 +1616,19 @@ export default function ErrorMetadataPanel({ error }) {
             <MetaRow
               label="Model"
               value={sidebar?.ai_metadata?.model ?? error.model}
-              icon="mdi:brain"
+              icon="solar:brain-linear"
               monospace
             />
             <MetaRow
               label="Version"
               value={sidebar?.ai_metadata?.model_version ?? error.model_version}
-              icon="mdi:tag-outline"
+              icon="solar:tag-linear"
               monospace
             />
             <MetaRow
               label="Agent"
               value={error.agent}
-              icon="mdi:robot-outline"
+              icon="solar:bot-linear"
               monospace
             />
             <MetaRow label="Pipeline" value={error.pipeline} icon="mdi:pipe" />
@@ -1482,13 +1636,13 @@ export default function ErrorMetadataPanel({ error }) {
               <MetaRow
                 label="Connector"
                 value={error.connector}
-                icon="mdi:connection"
+                icon="solar:plug-circle-linear"
               />
             )}
             <MetaRow
               label="Project"
               value={sidebar?.ai_metadata?.project ?? error.project}
-              icon="mdi:folder-outline"
+              icon="solar:folder-linear"
             />
             {(sidebar?.ai_metadata?.eval_score ?? error.eval_score) != null && (
               <MetaRow
@@ -1496,13 +1650,13 @@ export default function ErrorMetadataPanel({ error }) {
                 value={`${(
                   sidebar?.ai_metadata?.eval_score ?? error.eval_score
                 ).toFixed(2)} / 1.00`}
-                icon="mdi:chart-line"
+                icon="solar:graph-up-linear"
               />
             )}
             <MetaRow
               label="Trace ID"
               value={sidebar?.ai_metadata?.trace_id ?? error.trace_id}
-              icon="mdi:sitemap-outline"
+              icon="solar:graph-linear"
               monospace
             />
           </Stack>
@@ -1517,13 +1671,13 @@ export default function ErrorMetadataPanel({ error }) {
                   <Skeleton
                     width={90}
                     height={12}
-                    sx={{ borderRadius: "3px" }}
+                    sx={{ borderRadius: "4px" }}
                   />
                   <Box sx={{ flex: 1 }} />
                   <Skeleton
                     width={36}
                     height={12}
-                    sx={{ borderRadius: "3px" }}
+                    sx={{ borderRadius: "4px" }}
                   />
                 </Stack>
               ))}
@@ -1557,13 +1711,13 @@ export default function ErrorMetadataPanel({ error }) {
                   <Skeleton
                     width="65%"
                     height={12}
-                    sx={{ borderRadius: "3px" }}
+                    sx={{ borderRadius: "4px" }}
                   />
                   <Box sx={{ flex: 1 }} />
                   <Skeleton
                     width={28}
                     height={12}
-                    sx={{ borderRadius: "3px" }}
+                    sx={{ borderRadius: "4px" }}
                   />
                 </Stack>
               ))}
@@ -1597,11 +1751,11 @@ export default function ErrorMetadataPanel({ error }) {
         <Stack gap={1}>
           <Typography
             sx={{
-              fontSize: "10px",
+              fontSize: "12px",
               fontWeight: 600,
               color: "text.disabled",
-              textTransform: "uppercase",
-              letterSpacing: "0.07em",
+              textTransform: "none",
+              letterSpacing: 0,
             }}
           >
             Integrations

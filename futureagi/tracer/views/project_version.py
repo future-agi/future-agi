@@ -1,6 +1,5 @@
 import ast
 import io
-import json
 import statistics
 
 import pandas as pd
@@ -27,9 +26,11 @@ from django.db.models.functions import Cast, Coalesce, Concat, JSONObject, Round
 from django.http import FileResponse
 from django.utils import timezone
 from rest_framework.decorators import action
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
+from common.utils.page_limits import enforce_page_size, page_bounds
 from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
@@ -74,7 +75,9 @@ def _get_request_organization(request):
 def _project_workspace_scope_q(request, project_prefix="project__"):
     workspace = getattr(request, "workspace", None)
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     workspace_field = f"{project_prefix}workspace"
     organization_field = f"{project_prefix}organization_id"
@@ -130,8 +133,8 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
 
         # Get base queryset with automatic filtering from mixin, then add an
         # explicit organization guard for ProjectVersion's indirect project FK.
-        query_Set = super().get_queryset().filter(
-            project__organization=request_organization
+        query_Set = (
+            super().get_queryset().filter(project__organization=request_organization)
         )
 
         if project_version_id:
@@ -257,9 +260,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
 
             # Get all eval configs from the project version
             eval_configs = CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(
-                    observation_span__project=project
-                )
+                id__in=EvalLogger.objects.filter(observation_span__project=project)
                 .values("custom_eval_config_id")
                 .distinct(),
                 deleted=False,
@@ -477,6 +478,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
     @action(detail=False, methods=["post"])
     def get_export_data(self, request, *args, **kwargs):
         try:
+            enforce_page_size(request.query_params.get("page_size"))
             serializer = ProjectVersionExportSerializer(data=request.data)
             if serializer.is_valid():
                 validated_data = serializer.validated_data
@@ -539,9 +541,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
 
             # Get all eval configs from the project version
             eval_configs = CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(
-                    observation_span__project=project
-                )
+                id__in=EvalLogger.objects.filter(observation_span__project=project)
                 .values("custom_eval_config_id")
                 .distinct(),
                 deleted=False,
@@ -959,11 +959,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             # Apply pagination
             page_number = int(self.request.query_params.get("page_number", 0))
             page_size = int(self.request.query_params.get("page_size", 30))
-            start = page_number * page_size
-            end = start + page_size
-
-            # Get total count and paginated results
-            base_query.count()
+            start, end = page_bounds(page_number, page_size, base_query.count())
 
             # # Log all available columns for sorting
             # if results := base_query.order_by('project_version_id').first():
@@ -1053,6 +1049,8 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
 
             return response
 
+        except APIException:
+            raise
         except Exception as e:
             logger.exception(f"Error in fetching the export data: {str(e)}")
             return self._gm.bad_request(
@@ -1126,24 +1124,20 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
     )
     def get_project_version_ids(self, request, *args, **kwargs):
         try:
-            # KNOWN PERF BUG (independent of routing): this paginates in
-            # memory after serializing the entire queryset. Worth fixing
-            # separately to push pagination down to SQL.
+            enforce_page_size(request.query_params.get("page_size"))
+            page_number = int(request.query_params.get("page_number", 0))
+            page_size = int(request.query_params.get("page_size", 30))
             queryset = self.get_queryset().using(DATABASE_FOR_PROJECT_VERSION_IDS)
-            serializer = self.get_serializer(queryset, many=True)
+            total = queryset.count()
+            start, end = page_bounds(page_number, page_size, total)
+            # Slice the database read before the serializer can materialize it.
+            serializer = self.get_serializer(queryset[start:end], many=True)
 
             project_version_ids = [
                 {"id": project_version["id"], "name": project_version["name"]}
                 for project_version in serializer.data
             ]
 
-            page_number = self.request.query_params.get("page_number", 0)
-            page_size = self.request.query_params.get("page_size", 30)
-            start = int(page_number) * int(page_size)
-            end = start + int(page_size)
-            total = len(project_version_ids)
-
-            project_version_ids = project_version_ids[start:end]
             return self._gm.success_response(
                 {
                     "project_version_ids": project_version_ids,
@@ -1151,6 +1145,8 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                     "next": end < total,
                 }
             )
+        except APIException:
+            raise
         except Exception as e:
             logger.exception(f"Error in fetching project version ids: {str(e)}")
 
@@ -1275,18 +1271,12 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 for s in ch_spans
                 if s.parent_span_id == "" and s.latency_ms is not None
             ]
-            costs_with_value = [
-                float(s.cost) for s in ch_spans if s.cost is not None
-            ]
+            costs_with_value = [float(s.cost) for s in ch_spans if s.cost is not None]
             tokens_with_value = [
-                int(s.total_tokens)
-                for s in ch_spans
-                if s.total_tokens is not None
+                int(s.total_tokens) for s in ch_spans if s.total_tokens is not None
             ]
 
-            latency_mean = (
-                statistics.fmean(root_latencies) if root_latencies else 0
-            )
+            latency_mean = statistics.fmean(root_latencies) if root_latencies else 0
             # ``statistics.pstdev`` matches Django's default ``StdDev``,
             # which is **population** stddev (``STDDEV_POP``) — see
             # django/db/models/aggregates.py::StdDev.__init__ where
@@ -1296,19 +1286,11 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             # n<2 without raising, so the explicit ``if root_latencies else
             # 0`` guard stays only to preserve the downstream divide-by-
             # zero protection at the z-score sites.
-            latency_std = (
-                statistics.pstdev(root_latencies) if root_latencies else 0
-            )
+            latency_std = statistics.pstdev(root_latencies) if root_latencies else 0
             cost_mean = (
-                round(statistics.fmean(costs_with_value), 6)
-                if costs_with_value
-                else 0
+                round(statistics.fmean(costs_with_value), 6) if costs_with_value else 0
             )
-            cost_std = (
-                statistics.pstdev(costs_with_value)
-                if costs_with_value
-                else 0
-            )
+            cost_std = statistics.pstdev(costs_with_value) if costs_with_value else 0
             avg_tokens = (
                 round(statistics.fmean(tokens_with_value), 2)
                 if tokens_with_value
@@ -1500,9 +1482,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             # Get configuration objects once
             eval_configs = list(
                 CustomEvalConfig.objects.filter(
-                    id__in=EvalLogger.objects.filter(
-                        observation_span__project=project
-                    )
+                    id__in=EvalLogger.objects.filter(observation_span__project=project)
                     .values("custom_eval_config_id")
                     .distinct(),
                     deleted=False,

@@ -1,0 +1,1235 @@
+{
+  "schema": "connector-manifest/v1#tools-generated",
+  "spec": {
+    "url": "https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/docs/v1/docs-api.json",
+    "sha256": "1f1a507a4b6314ce3a613ecc92475a313ed88156f05526f0218452fa2de7db16"
+  },
+  "tools": [
+    {
+      "name": "get_document",
+      "title": "Get document",
+      "description": "Read document text and structure for an app-authorized documentId, for example doc-fixture.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1/documents/{documentId}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "description": "The ID of the document to retrieve."
+          },
+          "commentsViewMode": {
+            "type": "string",
+            "enum": [
+              "COMMENTS_VIEW_MODE_UNSPECIFIED",
+              "COMMENTS_VIEW_MODE_DEFAULT_FOR_CURRENT_ACCESS",
+              "COMMENTS_VIEW_MODE_OMITTED",
+              "COMMENTS_VIEW_MODE_INCLUDED"
+            ],
+            "description": "The comments view mode to apply to the document. This allows viewing the document with comments omitted or included. If one is not specified, COMMENTS_VIEW_MODE_OMITTED is used. If you set comments_view_mode to any value, you must also set include_tabs_content to `true` or use a field mask that references the Document.tabs field (or any subfield). If you set comments_view_mode to COMMENTS_VIEW_MODE_INCLUDED, you must also explicitly set suggestions_view_mode to SUGGESTIONS_INLINE. If you set comments_view_mode to COMMENTS_VIEW_MODE_INCLUDED or COMMENTS_VIEW_MODE_DEFAULT_FOR_CURRENT_ACCESS, you may not set suggestions_view_mode to PREVIEW_WITHOUT_SUGGESTIONS or PREVIEW_SUGGESTIONS_ACCEPTED."
+          },
+          "includeTabsContent": {
+            "type": "boolean",
+            "description": "Whether to populate the `Document.tabs` field instead of the text content fields like `body` and `documentStyle` on `Document`. - When `true`: Document content populates in the `Document.tabs` field instead of the text content fields in `Document`. - When `false`: The content of the document's first tab populates the content fields in `Document` excluding `Document.tabs`. If a document has only one tab, then that tab is used to populate the document content. `Document.tabs` will be empty. If you use a field mask that references the `Document.tabs` field (or any subfield), the API implicitly treats the request as if you set `include_tabs_content` to `true`."
+          },
+          "suggestionsViewMode": {
+            "type": "string",
+            "enum": [
+              "DEFAULT_FOR_CURRENT_ACCESS",
+              "SUGGESTIONS_INLINE",
+              "PREVIEW_SUGGESTIONS_ACCEPTED",
+              "PREVIEW_WITHOUT_SUGGESTIONS"
+            ],
+            "description": "The suggestions view mode to apply to the document. This allows viewing the document with all suggestions inline, accepted or rejected. If one is not specified, DEFAULT_FOR_CURRENT_ACCESS is used."
+          }
+        },
+        "required": ["documentId"],
+        "additionalProperties": false,
+        "x-origin": "https://docs.googleapis.com"
+      }
+    },
+    {
+      "name": "create_document",
+      "title": "Create document",
+      "description": "Create a blank document with a title, for example \"Meeting notes\".",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1/documents"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "description": "Create a blank document with a title, for example \"Meeting notes\".",
+            "properties": {
+              "title": {
+                "type": "string",
+                "description": "The title of the document."
+              }
+            },
+            "additionalProperties": false,
+            "required": ["title"]
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://docs.googleapis.com"
+      }
+    },
+    {
+      "name": "insert_text",
+      "title": "Insert text",
+      "description": "Insert text at a UTF-16 index, for example index=1 and text=\"Hello\".",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1/documents/{documentId}:batchUpdate"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "description": "The ID of the document to update."
+          },
+          "body": {
+            "type": "object",
+            "description": "Insert text at a UTF-16 index, for example index=1 and text=\"Hello\".",
+            "properties": {
+              "requests": {
+                "type": "array",
+                "description": "A list of updates to apply to the document.",
+                "items": {
+                  "type": "object",
+                  "description": "A single update to apply to a document.",
+                  "properties": {
+                    "insertText": {
+                      "type": "object",
+                      "description": "Inserts text at the specified location.",
+                      "properties": {
+                        "endOfSegmentLocation": {
+                          "type": "object",
+                          "description": "Inserts the text at the end of a header, footer, footnote or the document body.",
+                          "properties": {
+                            "segmentId": {
+                              "type": "string",
+                              "description": "The ID of the header, footer or footnote the location is in. An empty segment ID signifies the document's body."
+                            },
+                            "tabId": {
+                              "type": "string",
+                              "description": "The tab that the location is in. When omitted, the request is applied to the first tab. In a document containing a single tab: - If provided, must match the singular tab's ID. - If omitted, the request applies to the singular tab. In a document containing multiple tabs: - If provided, the request applies to the specified tab. - If omitted, the request applies to the first tab in the document."
+                            }
+                          }
+                        },
+                        "location": {
+                          "type": "object",
+                          "description": "Inserts the text at a specific index in the document. Text must be inserted inside the bounds of an existing Paragraph. For instance, text cannot be inserted at a table's start index (i.e. between the table and its preceding paragraph). The text must be inserted in the preceding paragraph.",
+                          "properties": {
+                            "index": {
+                              "type": "integer",
+                              "format": "int32",
+                              "description": "The zero-based index, in UTF-16 code units. The index is relative to the beginning of the segment specified by segment_id."
+                            },
+                            "segmentId": {
+                              "type": "string",
+                              "description": "The ID of the header, footer or footnote the location is in. An empty segment ID signifies the document's body."
+                            },
+                            "tabId": {
+                              "type": "string",
+                              "description": "The tab that the location is in. When omitted, the request is applied to the first tab. In a document containing a single tab: - If provided, must match the singular tab's ID. - If omitted, the request applies to the singular tab. In a document containing multiple tabs: - If provided, the request applies to the specified tab. - If omitted, the request applies to the first tab in the document."
+                            }
+                          }
+                        },
+                        "text": {
+                          "type": "string",
+                          "description": "The text to be inserted. Inserting a newline character will implicitly create a new Paragraph at that index. The paragraph style of the new paragraph will be copied from the paragraph at the current insertion index, including lists and bullets. Text styles for inserted text will be determined automatically, generally preserving the styling of neighboring text. In most cases, the text style for the inserted text will match the text immediately before the insertion index. Some control characters (U+0000-U+0008, U+000C-U+001F) and characters from the Unicode Basic Multilingual Plane Private Use Area (U+E000-U+F8FF) will be stripped out of the inserted text."
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": ["insertText"]
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": ["requests"]
+          }
+        },
+        "required": ["documentId", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://docs.googleapis.com"
+      }
+    },
+    {
+      "name": "replace_text",
+      "title": "Replace text",
+      "description": "Replace matching text, for example containsText.text=\"PLACEHOLDER\", matchCase=true.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "deny",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1/documents/{documentId}:batchUpdate"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "description": "The ID of the document to update."
+          },
+          "body": {
+            "type": "object",
+            "description": "Replace matching text, for example containsText.text=\"PLACEHOLDER\", matchCase=true.",
+            "properties": {
+              "requests": {
+                "type": "array",
+                "description": "A list of updates to apply to the document.",
+                "items": {
+                  "type": "object",
+                  "description": "A single update to apply to a document.",
+                  "properties": {
+                    "replaceAllText": {
+                      "type": "object",
+                      "description": "Replaces all instances of the specified text.",
+                      "properties": {
+                        "containsText": {
+                          "type": "object",
+                          "description": "Finds text in the document matching this substring.",
+                          "properties": {
+                            "matchCase": {
+                              "type": "boolean",
+                              "description": "Indicates whether the search should respect case: - `True`: the search is case sensitive. - `False`: the search is case insensitive."
+                            },
+                            "searchByRegex": {
+                              "type": "boolean",
+                              "description": "Optional. True if the find value should be treated as a regular expression. Any backslashes in the pattern should be escaped. - `True`: the search text is treated as a regular expressions. - `False`: the search text is treated as a substring for matching."
+                            },
+                            "text": {
+                              "type": "string",
+                              "description": "The text to search for in the document."
+                            }
+                          }
+                        },
+                        "replaceText": {
+                          "type": "string",
+                          "description": "The text that will replace the matched text."
+                        },
+                        "tabsCriteria": {
+                          "type": "object",
+                          "description": "Optional. The criteria used to specify in which tabs the replacement occurs. When omitted, the replacement applies to all tabs. In a document containing a single tab: - If provided, must match the singular tab's ID. - If omitted, the replacement applies to the singular tab. In a document containing multiple tabs: - If provided, the replacement applies to the specified tabs. - If omitted, the replacement applies to all tabs.",
+                          "properties": {
+                            "tabIds": {
+                              "type": "array",
+                              "description": "The list of tab IDs in which the request executes.",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": ["replaceAllText"]
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": ["requests"]
+          }
+        },
+        "required": ["documentId", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://docs.googleapis.com"
+      }
+    },
+    {
+      "name": "delete_text",
+      "title": "Delete text",
+      "description": "Delete a UTF-16 index range, for example startIndex=1 and endIndex=3.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "deny",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1/documents/{documentId}:batchUpdate"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "description": "The ID of the document to update."
+          },
+          "body": {
+            "type": "object",
+            "description": "Delete a UTF-16 index range, for example startIndex=1 and endIndex=3.",
+            "properties": {
+              "requests": {
+                "type": "array",
+                "description": "A list of updates to apply to the document.",
+                "items": {
+                  "type": "object",
+                  "description": "A single update to apply to a document.",
+                  "properties": {
+                    "deleteContentRange": {
+                      "type": "object",
+                      "description": "Deletes content from the document.",
+                      "properties": {
+                        "range": {
+                          "type": "object",
+                          "description": "The range of content to delete. Deleting text that crosses a paragraph boundary may result in changes to paragraph styles, lists, positioned objects and bookmarks as the two paragraphs are merged. Attempting to delete certain ranges can result in an invalid document structure in which case a 400 bad request error is returned. Some examples of invalid delete requests include: * Deleting one code unit of a surrogate pair. * Deleting the last newline character of a Body, Header, Footer, Footnote, TableCell or TableOfContents. * Deleting the start or end of a Table, TableOfContents or Equation without deleting the entire element. * Deleting the newline character before a Table, TableOfContents or SectionBreak without deleting the element. * Deleting individual rows or cells of a table. Deleting the content within a table cell is allowed.",
+                          "properties": {
+                            "endIndex": {
+                              "type": "integer",
+                              "format": "int32",
+                              "description": "The zero-based end index of this range, exclusive, in UTF-16 code units. In all current uses, an end index must be provided. This field is an Int32Value in order to accommodate future use cases with open-ended ranges."
+                            },
+                            "segmentId": {
+                              "type": "string",
+                              "description": "The ID of the header, footer, or footnote that this range is contained in. An empty segment ID signifies the document's body."
+                            },
+                            "startIndex": {
+                              "type": "integer",
+                              "format": "int32",
+                              "description": "The zero-based start index of this range, in UTF-16 code units. In all current uses, a start index must be provided. This field is an Int32Value in order to accommodate future use cases with open-ended ranges."
+                            },
+                            "tabId": {
+                              "type": "string",
+                              "description": "The tab that contains this range. When omitted, the request applies to the first tab. In a document containing a single tab: - If provided, must match the singular tab's ID. - If omitted, the request applies to the singular tab. In a document containing multiple tabs: - If provided, the request applies to the specified tab. - If omitted, the request applies to the first tab in the document."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": ["deleteContentRange"]
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": ["requests"]
+          }
+        },
+        "required": ["documentId", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://docs.googleapis.com"
+      }
+    },
+    {
+      "name": "insert_table",
+      "title": "Insert table",
+      "description": "Insert a table, for example rows=2, columns=2, location.index=1.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1/documents/{documentId}:batchUpdate"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "description": "The ID of the document to update."
+          },
+          "body": {
+            "type": "object",
+            "description": "Insert a table, for example rows=2, columns=2, location.index=1.",
+            "properties": {
+              "requests": {
+                "type": "array",
+                "description": "A list of updates to apply to the document.",
+                "items": {
+                  "type": "object",
+                  "description": "A single update to apply to a document.",
+                  "properties": {
+                    "insertTable": {
+                      "type": "object",
+                      "description": "Inserts a table at the specified location.",
+                      "properties": {
+                        "columns": {
+                          "type": "integer",
+                          "format": "int32",
+                          "description": "The number of columns in the table."
+                        },
+                        "endOfSegmentLocation": {
+                          "type": "object",
+                          "description": "Inserts the table at the end of the given header, footer or document body. A newline character will be inserted before the inserted table. Tables cannot be inserted inside a footnote.",
+                          "properties": {
+                            "segmentId": {
+                              "type": "string",
+                              "description": "The ID of the header, footer or footnote the location is in. An empty segment ID signifies the document's body."
+                            },
+                            "tabId": {
+                              "type": "string",
+                              "description": "The tab that the location is in. When omitted, the request is applied to the first tab. In a document containing a single tab: - If provided, must match the singular tab's ID. - If omitted, the request applies to the singular tab. In a document containing multiple tabs: - If provided, the request applies to the specified tab. - If omitted, the request applies to the first tab in the document."
+                            }
+                          }
+                        },
+                        "location": {
+                          "type": "object",
+                          "description": "Inserts the table at a specific model index. A newline character will be inserted before the inserted table, therefore the table start index will be at the specified location index + 1. The table must be inserted inside the bounds of an existing Paragraph. For instance, it cannot be inserted at a table's start index (i.e. between an existing table and its preceding paragraph). Tables cannot be inserted inside a footnote or equation.",
+                          "properties": {
+                            "index": {
+                              "type": "integer",
+                              "format": "int32",
+                              "description": "The zero-based index, in UTF-16 code units. The index is relative to the beginning of the segment specified by segment_id."
+                            },
+                            "segmentId": {
+                              "type": "string",
+                              "description": "The ID of the header, footer or footnote the location is in. An empty segment ID signifies the document's body."
+                            },
+                            "tabId": {
+                              "type": "string",
+                              "description": "The tab that the location is in. When omitted, the request is applied to the first tab. In a document containing a single tab: - If provided, must match the singular tab's ID. - If omitted, the request applies to the singular tab. In a document containing multiple tabs: - If provided, the request applies to the specified tab. - If omitted, the request applies to the first tab in the document."
+                            }
+                          }
+                        },
+                        "rows": {
+                          "type": "integer",
+                          "format": "int32",
+                          "description": "The number of rows in the table."
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": ["insertTable"]
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": ["requests"]
+          }
+        },
+        "required": ["documentId", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://docs.googleapis.com"
+      }
+    },
+    {
+      "name": "format_text",
+      "title": "Format text",
+      "description": "Apply text style to a range. For bold text use textStyle.bold=true and fields=\"bold\".",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1/documents/{documentId}:batchUpdate"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "description": "The ID of the document to update."
+          },
+          "body": {
+            "type": "object",
+            "description": "Apply text style to a range. For bold text use textStyle.bold=true and fields=\"bold\".",
+            "properties": {
+              "requests": {
+                "type": "array",
+                "description": "A list of updates to apply to the document.",
+                "items": {
+                  "type": "object",
+                  "description": "A single update to apply to a document.",
+                  "properties": {
+                    "updateTextStyle": {
+                      "type": "object",
+                      "description": "Updates the text style at the specified range.",
+                      "properties": {
+                        "fields": {
+                          "type": "string",
+                          "format": "google-fieldmask",
+                          "description": "The fields that should be updated. At least one field must be specified. The root `text_style` is implied and should not be specified. A single `\"*\"` can be used as short-hand for listing every field. For example, to update the text style to bold, set `fields` to `\"bold\"`. To reset a property to its default value, include its field name in the field mask but leave the field itself unset."
+                        },
+                        "range": {
+                          "type": "object",
+                          "description": "The range of text to style. The range may be extended to include adjacent newlines. If the range fully contains a paragraph belonging to a list, the paragraph's bullet is also updated with the matching text style. Ranges cannot be inserted inside a relative UpdateTextStyleRequest.",
+                          "properties": {
+                            "endIndex": {
+                              "type": "integer",
+                              "format": "int32",
+                              "description": "The zero-based end index of this range, exclusive, in UTF-16 code units. In all current uses, an end index must be provided. This field is an Int32Value in order to accommodate future use cases with open-ended ranges."
+                            },
+                            "segmentId": {
+                              "type": "string",
+                              "description": "The ID of the header, footer, or footnote that this range is contained in. An empty segment ID signifies the document's body."
+                            },
+                            "startIndex": {
+                              "type": "integer",
+                              "format": "int32",
+                              "description": "The zero-based start index of this range, in UTF-16 code units. In all current uses, a start index must be provided. This field is an Int32Value in order to accommodate future use cases with open-ended ranges."
+                            },
+                            "tabId": {
+                              "type": "string",
+                              "description": "The tab that contains this range. When omitted, the request applies to the first tab. In a document containing a single tab: - If provided, must match the singular tab's ID. - If omitted, the request applies to the singular tab. In a document containing multiple tabs: - If provided, the request applies to the specified tab. - If omitted, the request applies to the first tab in the document."
+                            }
+                          }
+                        },
+                        "textStyle": {
+                          "type": "object",
+                          "description": "The styles to set on the text. If the value for a particular style matches that of the parent, that style will be set to inherit. Certain text style changes may cause other changes in order to to mirror the behavior of the Docs editor. See the documentation of TextStyle for more information.",
+                          "properties": {
+                            "backgroundColor": {
+                              "type": "object",
+                              "description": "The background color of the text. If set, the color is either an RGB color or transparent, depending on the `color` field.",
+                              "properties": {
+                                "color": {
+                                  "type": "object",
+                                  "description": "If set, this will be used as an opaque color. If unset, this represents a transparent color.",
+                                  "properties": {
+                                    "rgbColor": {
+                                      "type": "object",
+                                      "description": "The RGB color value."
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "baselineOffset": {
+                              "type": "string",
+                              "enum": [
+                                "BASELINE_OFFSET_UNSPECIFIED",
+                                "NONE",
+                                "SUPERSCRIPT",
+                                "SUBSCRIPT"
+                              ],
+                              "description": "The text's vertical offset from its normal position. Text with `SUPERSCRIPT` or `SUBSCRIPT` baseline offsets is automatically rendered in a smaller font size, computed based on the `font_size` field. Changes in this field don't affect the `font_size`."
+                            },
+                            "bold": {
+                              "type": "boolean",
+                              "description": "Whether or not the text is rendered as bold."
+                            },
+                            "fontSize": {
+                              "type": "object",
+                              "description": "The size of the text's font.",
+                              "properties": {
+                                "magnitude": {
+                                  "type": "number",
+                                  "format": "double",
+                                  "description": "The magnitude."
+                                },
+                                "unit": {
+                                  "type": "string",
+                                  "enum": ["UNIT_UNSPECIFIED", "PT"],
+                                  "description": "The units for magnitude."
+                                }
+                              }
+                            },
+                            "foregroundColor": {
+                              "type": "object",
+                              "description": "The foreground color of the text. If set, the color is either an RGB color or transparent, depending on the `color` field.",
+                              "properties": {
+                                "color": {
+                                  "type": "object",
+                                  "description": "If set, this will be used as an opaque color. If unset, this represents a transparent color.",
+                                  "properties": {
+                                    "rgbColor": {
+                                      "type": "object",
+                                      "description": "The RGB color value."
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "italic": {
+                              "type": "boolean",
+                              "description": "Whether or not the text is italicized."
+                            },
+                            "link": {
+                              "type": "object",
+                              "description": "The hyperlink destination of the text. If unset, there's no link. Links are not inherited from parent text. Changing the link in an update request causes some other changes to the text style of the range: * When setting a link, the text foreground color will be updated to the default link color and the text will be underlined. If these fields are modified in the same request, those values will be used instead of the link defaults. * Setting a link on a text range that overlaps with an existing link will also update the existing link to point to the new URL. * Links are not settable on newline characters. As a result, setting a link on a text range that crosses a paragraph boundary, such as `\"ABC\\n123\"`, will separate the newline character(s) into their own text runs. The link will be applied separately to the runs before and after the newline. * Removing a link will update the text style of the range to match the style of the preceding text (or the default text styles if the preceding text is another link) unless different styles are being set in the same request.",
+                              "properties": {
+                                "bookmark": {
+                                  "type": "object",
+                                  "description": "A bookmark in this document. In documents containing a single tab, links to bookmarks within the singular tab continue to return Link.bookmarkId when the includeTabsContent parameter is set to `false` or unset. Otherwise, this field is returned.",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "description": "The ID of a bookmark in this document."
+                                    },
+                                    "tabId": {
+                                      "type": "string",
+                                      "description": "The ID of the tab containing this bookmark."
+                                    }
+                                  }
+                                },
+                                "bookmarkId": {
+                                  "type": "string",
+                                  "description": "The ID of a bookmark in this document. Legacy field: Instead, set includeTabsContent to `true` and use Link.bookmark for read and write operations. This field is only returned when includeTabsContent is set to `false` in documents containing a single tab and links to a bookmark within the singular tab. Otherwise, Link.bookmark is returned. If this field is used in a write request, the bookmark is considered to be from the tab ID specified in the request. If a tab ID is not specified in the request, it is considered to be from the first tab in the document."
+                                },
+                                "heading": {
+                                  "type": "object",
+                                  "description": "A heading in this document. In documents containing a single tab, links to headings within the singular tab continue to return Link.headingId when the includeTabsContent parameter is set to `false` or unset. Otherwise, this field is returned.",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "description": "The ID of a heading in this document."
+                                    },
+                                    "tabId": {
+                                      "type": "string",
+                                      "description": "The ID of the tab containing this heading."
+                                    }
+                                  }
+                                },
+                                "headingId": {
+                                  "type": "string",
+                                  "description": "The ID of a heading in this document. Legacy field: Instead, set includeTabsContent to `true` and use Link.heading for read and write operations. This field is only returned when includeTabsContent is set to `false` in documents containing a single tab and links to a heading within the singular tab. Otherwise, Link.heading is returned. If this field is used in a write request, the heading is considered to be from the tab ID specified in the request. If a tab ID is not specified in the request, it is considered to be from the first tab in the document."
+                                },
+                                "tabId": {
+                                  "type": "string",
+                                  "description": "The ID of a tab in this document."
+                                },
+                                "url": {
+                                  "type": "string",
+                                  "description": "An external URL."
+                                }
+                              }
+                            },
+                            "smallCaps": {
+                              "type": "boolean",
+                              "description": "Whether or not the text is in small capital letters."
+                            },
+                            "strikethrough": {
+                              "type": "boolean",
+                              "description": "Whether or not the text is struck through."
+                            },
+                            "underline": {
+                              "type": "boolean",
+                              "description": "Whether or not the text is underlined."
+                            },
+                            "weightedFontFamily": {
+                              "type": "object",
+                              "description": "The font family and rendered weight of the text. If an update request specifies values for both `weighted_font_family` and `bold`, the `weighted_font_family` is applied first, then `bold`. If `weighted_font_family#weight` is not set, it defaults to `400`. If `weighted_font_family` is set, then `weighted_font_family#font_family` must also be set with a non-empty value. Otherwise, a 400 bad request error is returned.",
+                              "properties": {
+                                "fontFamily": {
+                                  "type": "string",
+                                  "description": "The font family of the text. The font family can be any font from the Font menu in Docs or from [Google Fonts] (https://fonts.google.com/). If the font name is unrecognized, the text is rendered in `Arial`."
+                                },
+                                "weight": {
+                                  "type": "integer",
+                                  "format": "int32",
+                                  "description": "The weight of the font. This field can have any value that's a multiple of `100` between `100` and `900`, inclusive. This range corresponds to the numerical values described in the CSS 2.1 Specification, [section 15.6](https://www.w3.org/TR/CSS21/fonts.html#font-boldness), with non-numerical values disallowed. The default value is `400` (\"normal\"). The font weight makes up just one component of the rendered font weight. A combination of the `weight` and the text style's resolved `bold` value determine the rendered weight, after accounting for inheritance: * If the text is bold and the weight is less than `400`, the rendered weight is 400. * If the text is bold and the weight is greater than or equal to `400` but is less than `700`, the rendered weight is `700`. * If the weight is greater than or equal to `700`, the rendered weight is equal to the weight. * If the text is not bold, the rendered weight is equal to the weight."
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": ["updateTextStyle"]
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": ["requests"]
+          }
+        },
+        "required": ["documentId", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://docs.googleapis.com"
+      }
+    },
+    {
+      "name": "format_paragraph",
+      "title": "Format paragraph",
+      "description": "Apply paragraph style to a range. For a heading use namedStyleType=\"HEADING_1\" and fields=\"namedStyleType\".",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1/documents/{documentId}:batchUpdate"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "description": "The ID of the document to update."
+          },
+          "body": {
+            "type": "object",
+            "description": "Apply paragraph style to a range. For a heading use namedStyleType=\"HEADING_1\" and fields=\"namedStyleType\".",
+            "properties": {
+              "requests": {
+                "type": "array",
+                "description": "A list of updates to apply to the document.",
+                "items": {
+                  "type": "object",
+                  "description": "A single update to apply to a document.",
+                  "properties": {
+                    "updateParagraphStyle": {
+                      "type": "object",
+                      "description": "Updates the paragraph style at the specified range.",
+                      "properties": {
+                        "fields": {
+                          "type": "string",
+                          "format": "google-fieldmask",
+                          "description": "The fields that should be updated. At least one field must be specified. The root `paragraph_style` is implied and should not be specified. A single `\"*\"` can be used as short-hand for listing every field. For example, to update the paragraph style's alignment property, set `fields` to `\"alignment\"`. To reset a property to its default value, include its field name in the field mask but leave the field itself unset."
+                        },
+                        "paragraphStyle": {
+                          "type": "object",
+                          "description": "The styles to set on the paragraphs. Certain paragraph style changes may cause other changes in order to mirror the behavior of the Docs editor. See the documentation of ParagraphStyle for more information.",
+                          "properties": {
+                            "alignment": {
+                              "type": "string",
+                              "enum": [
+                                "ALIGNMENT_UNSPECIFIED",
+                                "START",
+                                "CENTER",
+                                "END",
+                                "JUSTIFIED"
+                              ],
+                              "description": "The text alignment for this paragraph."
+                            },
+                            "avoidWidowAndOrphan": {
+                              "type": "boolean",
+                              "description": "Whether to avoid widows and orphans for the paragraph. If unset, the value is inherited from the parent."
+                            },
+                            "borderBetween": {
+                              "type": "object",
+                              "description": "The border between this paragraph and the next and previous paragraphs. If unset, the value is inherited from the parent. The between border is rendered when the adjacent paragraph has the same border and indent properties. Paragraph borders cannot be partially updated. When changing a paragraph border, the new border must be specified in its entirety.",
+                              "properties": {
+                                "color": {
+                                  "type": "object",
+                                  "description": "The color of the border.",
+                                  "properties": {
+                                    "color": {
+                                      "type": "object",
+                                      "description": "If set, this will be used as an opaque color. If unset, this represents a transparent color."
+                                    }
+                                  }
+                                },
+                                "dashStyle": {
+                                  "type": "string",
+                                  "enum": [
+                                    "DASH_STYLE_UNSPECIFIED",
+                                    "SOLID",
+                                    "DOT",
+                                    "DASH"
+                                  ],
+                                  "description": "The dash style of the border."
+                                },
+                                "padding": {
+                                  "type": "object",
+                                  "description": "The padding of the border.",
+                                  "properties": {
+                                    "magnitude": {
+                                      "type": "number",
+                                      "description": "The magnitude."
+                                    },
+                                    "unit": {
+                                      "type": "string",
+                                      "description": "The units for magnitude."
+                                    }
+                                  }
+                                },
+                                "width": {
+                                  "type": "object",
+                                  "description": "The width of the border.",
+                                  "properties": {
+                                    "magnitude": {
+                                      "type": "number",
+                                      "description": "The magnitude."
+                                    },
+                                    "unit": {
+                                      "type": "string",
+                                      "description": "The units for magnitude."
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "borderBottom": {
+                              "type": "object",
+                              "description": "The border at the bottom of this paragraph. If unset, the value is inherited from the parent. The bottom border is rendered when the paragraph below has different border and indent properties. Paragraph borders cannot be partially updated. When changing a paragraph border, the new border must be specified in its entirety.",
+                              "properties": {
+                                "color": {
+                                  "type": "object",
+                                  "description": "The color of the border.",
+                                  "properties": {
+                                    "color": {
+                                      "type": "object",
+                                      "description": "If set, this will be used as an opaque color. If unset, this represents a transparent color."
+                                    }
+                                  }
+                                },
+                                "dashStyle": {
+                                  "type": "string",
+                                  "enum": [
+                                    "DASH_STYLE_UNSPECIFIED",
+                                    "SOLID",
+                                    "DOT",
+                                    "DASH"
+                                  ],
+                                  "description": "The dash style of the border."
+                                },
+                                "padding": {
+                                  "type": "object",
+                                  "description": "The padding of the border.",
+                                  "properties": {
+                                    "magnitude": {
+                                      "type": "number",
+                                      "description": "The magnitude."
+                                    },
+                                    "unit": {
+                                      "type": "string",
+                                      "description": "The units for magnitude."
+                                    }
+                                  }
+                                },
+                                "width": {
+                                  "type": "object",
+                                  "description": "The width of the border.",
+                                  "properties": {
+                                    "magnitude": {
+                                      "type": "number",
+                                      "description": "The magnitude."
+                                    },
+                                    "unit": {
+                                      "type": "string",
+                                      "description": "The units for magnitude."
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "borderLeft": {
+                              "type": "object",
+                              "description": "The border to the left of this paragraph. If unset, the value is inherited from the parent. Paragraph borders cannot be partially updated. When changing a paragraph border, the new border must be specified in its entirety.",
+                              "properties": {
+                                "color": {
+                                  "type": "object",
+                                  "description": "The color of the border.",
+                                  "properties": {
+                                    "color": {
+                                      "type": "object",
+                                      "description": "If set, this will be used as an opaque color. If unset, this represents a transparent color."
+                                    }
+                                  }
+                                },
+                                "dashStyle": {
+                                  "type": "string",
+                                  "enum": [
+                                    "DASH_STYLE_UNSPECIFIED",
+                                    "SOLID",
+                                    "DOT",
+                                    "DASH"
+                                  ],
+                                  "description": "The dash style of the border."
+                                },
+                                "padding": {
+                                  "type": "object",
+                                  "description": "The padding of the border.",
+                                  "properties": {
+                                    "magnitude": {
+                                      "type": "number",
+                                      "description": "The magnitude."
+                                    },
+                                    "unit": {
+                                      "type": "string",
+                                      "description": "The units for magnitude."
+                                    }
+                                  }
+                                },
+                                "width": {
+                                  "type": "object",
+                                  "description": "The width of the border.",
+                                  "properties": {
+                                    "magnitude": {
+                                      "type": "number",
+                                      "description": "The magnitude."
+                                    },
+                                    "unit": {
+                                      "type": "string",
+                                      "description": "The units for magnitude."
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "borderRight": {
+                              "type": "object",
+                              "description": "The border to the right of this paragraph. If unset, the value is inherited from the parent. Paragraph borders cannot be partially updated. When changing a paragraph border, the new border must be specified in its entirety.",
+                              "properties": {
+                                "color": {
+                                  "type": "object",
+                                  "description": "The color of the border.",
+                                  "properties": {
+                                    "color": {
+                                      "type": "object",
+                                      "description": "If set, this will be used as an opaque color. If unset, this represents a transparent color."
+                                    }
+                                  }
+                                },
+                                "dashStyle": {
+                                  "type": "string",
+                                  "enum": [
+                                    "DASH_STYLE_UNSPECIFIED",
+                                    "SOLID",
+                                    "DOT",
+                                    "DASH"
+                                  ],
+                                  "description": "The dash style of the border."
+                                },
+                                "padding": {
+                                  "type": "object",
+                                  "description": "The padding of the border.",
+                                  "properties": {
+                                    "magnitude": {
+                                      "type": "number",
+                                      "description": "The magnitude."
+                                    },
+                                    "unit": {
+                                      "type": "string",
+                                      "description": "The units for magnitude."
+                                    }
+                                  }
+                                },
+                                "width": {
+                                  "type": "object",
+                                  "description": "The width of the border.",
+                                  "properties": {
+                                    "magnitude": {
+                                      "type": "number",
+                                      "description": "The magnitude."
+                                    },
+                                    "unit": {
+                                      "type": "string",
+                                      "description": "The units for magnitude."
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "borderTop": {
+                              "type": "object",
+                              "description": "The border at the top of this paragraph. If unset, the value is inherited from the parent. The top border is rendered when the paragraph above has different border and indent properties. Paragraph borders cannot be partially updated. When changing a paragraph border, the new border must be specified in its entirety.",
+                              "properties": {
+                                "color": {
+                                  "type": "object",
+                                  "description": "The color of the border.",
+                                  "properties": {
+                                    "color": {
+                                      "type": "object",
+                                      "description": "If set, this will be used as an opaque color. If unset, this represents a transparent color."
+                                    }
+                                  }
+                                },
+                                "dashStyle": {
+                                  "type": "string",
+                                  "enum": [
+                                    "DASH_STYLE_UNSPECIFIED",
+                                    "SOLID",
+                                    "DOT",
+                                    "DASH"
+                                  ],
+                                  "description": "The dash style of the border."
+                                },
+                                "padding": {
+                                  "type": "object",
+                                  "description": "The padding of the border.",
+                                  "properties": {
+                                    "magnitude": {
+                                      "type": "number",
+                                      "description": "The magnitude."
+                                    },
+                                    "unit": {
+                                      "type": "string",
+                                      "description": "The units for magnitude."
+                                    }
+                                  }
+                                },
+                                "width": {
+                                  "type": "object",
+                                  "description": "The width of the border.",
+                                  "properties": {
+                                    "magnitude": {
+                                      "type": "number",
+                                      "description": "The magnitude."
+                                    },
+                                    "unit": {
+                                      "type": "string",
+                                      "description": "The units for magnitude."
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "direction": {
+                              "type": "string",
+                              "enum": [
+                                "CONTENT_DIRECTION_UNSPECIFIED",
+                                "LEFT_TO_RIGHT",
+                                "RIGHT_TO_LEFT"
+                              ],
+                              "description": "The text direction of this paragraph. If unset, the value defaults to LEFT_TO_RIGHT since paragraph direction is not inherited."
+                            },
+                            "headingId": {
+                              "type": "string",
+                              "description": "The heading ID of the paragraph. If empty, then this paragraph is not a heading. This property is read-only."
+                            },
+                            "indentEnd": {
+                              "type": "object",
+                              "description": "The amount of indentation for the paragraph on the side that corresponds to the end of the text, based on the current paragraph direction. If unset, the value is inherited from the parent.",
+                              "properties": {
+                                "magnitude": {
+                                  "type": "number",
+                                  "format": "double",
+                                  "description": "The magnitude."
+                                },
+                                "unit": {
+                                  "type": "string",
+                                  "enum": ["UNIT_UNSPECIFIED", "PT"],
+                                  "description": "The units for magnitude."
+                                }
+                              }
+                            },
+                            "indentFirstLine": {
+                              "type": "object",
+                              "description": "The amount of indentation for the first line of the paragraph. If unset, the value is inherited from the parent.",
+                              "properties": {
+                                "magnitude": {
+                                  "type": "number",
+                                  "format": "double",
+                                  "description": "The magnitude."
+                                },
+                                "unit": {
+                                  "type": "string",
+                                  "enum": ["UNIT_UNSPECIFIED", "PT"],
+                                  "description": "The units for magnitude."
+                                }
+                              }
+                            },
+                            "indentStart": {
+                              "type": "object",
+                              "description": "The amount of indentation for the paragraph on the side that corresponds to the start of the text, based on the current paragraph direction. If unset, the value is inherited from the parent.",
+                              "properties": {
+                                "magnitude": {
+                                  "type": "number",
+                                  "format": "double",
+                                  "description": "The magnitude."
+                                },
+                                "unit": {
+                                  "type": "string",
+                                  "enum": ["UNIT_UNSPECIFIED", "PT"],
+                                  "description": "The units for magnitude."
+                                }
+                              }
+                            },
+                            "keepLinesTogether": {
+                              "type": "boolean",
+                              "description": "Whether all lines of the paragraph should be laid out on the same page or column if possible. If unset, the value is inherited from the parent."
+                            },
+                            "keepWithNext": {
+                              "type": "boolean",
+                              "description": "Whether at least a part of this paragraph should be laid out on the same page or column as the next paragraph if possible. If unset, the value is inherited from the parent."
+                            },
+                            "lineSpacing": {
+                              "type": "number",
+                              "format": "float",
+                              "description": "The amount of space between lines, as a percentage of normal, where normal is represented as 100.0. If unset, the value is inherited from the parent."
+                            },
+                            "namedStyleType": {
+                              "type": "string",
+                              "enum": [
+                                "NAMED_STYLE_TYPE_UNSPECIFIED",
+                                "NORMAL_TEXT",
+                                "TITLE",
+                                "SUBTITLE",
+                                "HEADING_1",
+                                "HEADING_2",
+                                "HEADING_3",
+                                "HEADING_4",
+                                "HEADING_5",
+                                "HEADING_6"
+                              ],
+                              "description": "The named style type of the paragraph. Since updating the named style type affects other properties within ParagraphStyle, the named style type is applied before the other properties are updated."
+                            },
+                            "pageBreakBefore": {
+                              "type": "boolean",
+                              "description": "Whether the current paragraph should always start at the beginning of a page. If unset, the value is inherited from the parent. Attempting to update page_break_before for paragraphs in unsupported regions, including Table, Header, Footer and Footnote, can result in an invalid document state that returns a 400 bad request error."
+                            },
+                            "shading": {
+                              "type": "object",
+                              "description": "The shading of the paragraph. If unset, the value is inherited from the parent.",
+                              "properties": {
+                                "backgroundColor": {
+                                  "type": "object",
+                                  "description": "The background color of this paragraph shading.",
+                                  "properties": {
+                                    "color": {
+                                      "type": "object",
+                                      "description": "If set, this will be used as an opaque color. If unset, this represents a transparent color."
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "spaceAbove": {
+                              "type": "object",
+                              "description": "The amount of extra space above the paragraph. If unset, the value is inherited from the parent.",
+                              "properties": {
+                                "magnitude": {
+                                  "type": "number",
+                                  "format": "double",
+                                  "description": "The magnitude."
+                                },
+                                "unit": {
+                                  "type": "string",
+                                  "enum": ["UNIT_UNSPECIFIED", "PT"],
+                                  "description": "The units for magnitude."
+                                }
+                              }
+                            },
+                            "spaceBelow": {
+                              "type": "object",
+                              "description": "The amount of extra space below the paragraph. If unset, the value is inherited from the parent.",
+                              "properties": {
+                                "magnitude": {
+                                  "type": "number",
+                                  "format": "double",
+                                  "description": "The magnitude."
+                                },
+                                "unit": {
+                                  "type": "string",
+                                  "enum": ["UNIT_UNSPECIFIED", "PT"],
+                                  "description": "The units for magnitude."
+                                }
+                              }
+                            },
+                            "spacingMode": {
+                              "type": "string",
+                              "enum": [
+                                "SPACING_MODE_UNSPECIFIED",
+                                "NEVER_COLLAPSE",
+                                "COLLAPSE_LISTS"
+                              ],
+                              "description": "The spacing mode for the paragraph."
+                            },
+                            "tabStops": {
+                              "type": "array",
+                              "description": "A list of the tab stops for this paragraph. The list of tab stops is not inherited. This property is read-only.",
+                              "items": {
+                                "type": "object",
+                                "description": "A tab stop within a paragraph.",
+                                "properties": {
+                                  "alignment": {
+                                    "type": "string",
+                                    "description": "The alignment of this tab stop. If unset, the value defaults to START."
+                                  },
+                                  "offset": {
+                                    "type": "object",
+                                    "description": "The offset between this tab stop and the start margin."
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "range": {
+                          "type": "object",
+                          "description": "The range overlapping the paragraphs to style.",
+                          "properties": {
+                            "endIndex": {
+                              "type": "integer",
+                              "format": "int32",
+                              "description": "The zero-based end index of this range, exclusive, in UTF-16 code units. In all current uses, an end index must be provided. This field is an Int32Value in order to accommodate future use cases with open-ended ranges."
+                            },
+                            "segmentId": {
+                              "type": "string",
+                              "description": "The ID of the header, footer, or footnote that this range is contained in. An empty segment ID signifies the document's body."
+                            },
+                            "startIndex": {
+                              "type": "integer",
+                              "format": "int32",
+                              "description": "The zero-based start index of this range, in UTF-16 code units. In all current uses, a start index must be provided. This field is an Int32Value in order to accommodate future use cases with open-ended ranges."
+                            },
+                            "tabId": {
+                              "type": "string",
+                              "description": "The tab that contains this range. When omitted, the request applies to the first tab. In a document containing a single tab: - If provided, must match the singular tab's ID. - If omitted, the request applies to the singular tab. In a document containing multiple tabs: - If provided, the request applies to the specified tab. - If omitted, the request applies to the first tab in the document."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": ["updateParagraphStyle"]
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": ["requests"]
+          }
+        },
+        "required": ["documentId", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://docs.googleapis.com"
+      }
+    }
+  ]
+}

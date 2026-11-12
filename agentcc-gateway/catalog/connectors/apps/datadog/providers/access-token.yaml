@@ -1,0 +1,73 @@
+# Datadog's MCP server with a personal or service access token (PAT or SAT)
+# as the bearer, the header method Datadog prefers ("No API key is
+# required"). Each Datadog site has its own MCP host, so the org picks its
+# site: {site} admits exactly the sites whose PAT/SAT instructions Datadog
+# publishes (US1, US3, US5, EU1, AP1, AP2; the PAT callout does not list UK1,
+# and Datadog does not support the MCP server on US1-FED or US2-FED).
+#
+# The setup page renders each site's endpoint from a site selector; the
+# literal hosts are in the region table the docs site loads (the hashed
+# main-dd-js asset, cited beside the page): mcp_server_endpoint
+# us "https://mcp.datadoghq.com/v1/mcp" ... uk1 "https://mcp.uk1.datadoghq.com/v1/mcp".
+#
+# The org also needs "MCP Access" on in Organization Settings, and the
+# token's role needs mcp_read (and mcp_write for write tools). Without
+# toolsets in the URL, the server offers its core tools.
+schema: "connector-manifest/v1#provider"
+app: datadog
+id: access-token
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.{site}/v1/mcp
+  urlVariables:
+    site:
+      description: "Your Datadog site: datadoghq.com (US1), us3.datadoghq.com, us5.datadoghq.com, datadoghq.eu, ap1.datadoghq.com or ap2.datadoghq.com."
+      pattern: '^(datadoghq\.com|us3\.datadoghq\.com|us5\.datadoghq\.com|datadoghq\.eu|ap1\.datadoghq\.com|ap2\.datadoghq\.com)$'
+      default: datadoghq.com
+      scope: org
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Access token
+      help: "A Datadog personal access token (PAT) or service access token (SAT). The org needs MCP Access on, and the token's role needs mcp_read (mcp_write for write tools)."
+      helpUrl: https://docs.datadoghq.com/mcp_server/setup/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.datadoghq.com/mcp_server/setup/
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://docs.datadoghq.com/static/main-dd-js.1175d8fe61a1c9c602a81b2fd4f131ebf4e94d0771c15a71d7851adf9943a2280763d0b476c8d027acb05f8744e6763a2e847a96f95c41f68986ad33a7087ace.js
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.site
+    url: https://docs.datadoghq.com/static/main-dd-js.1175d8fe61a1c9c602a81b2fd4f131ebf4e94d0771c15a71d7851adf9943a2280763d0b476c8d027acb05f8744e6763a2e847a96f95c41f68986ad33a7087ace.js
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.site
+    url: https://docs.datadoghq.com/mcp_server/setup.md
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://docs.datadoghq.com/mcp_server/setup/
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.datadoghq.com/mcp_server/setup.md
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://docs.datadoghq.com/mcp_server/setup.md
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

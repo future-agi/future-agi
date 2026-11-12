@@ -99,22 +99,55 @@ const TaskCreatePage = () => {
           ),
         }
       : draftValues || {};
+  // The draft also records whether the user picked the run type. That is
+  // page state, not a form field.
+  const { runTypeChosen: draftRunTypeChosen, ...draftFields } = draft;
 
   const { control, handleSubmit, getValues, setValue, watch } = useForm({
     // Spread saved draft values OVER the defaults so any new fields
     // we add later still get their defaults when an old draft loads.
-    defaultValues: { ...baseDefaults, ...draft },
+    defaultValues: { ...baseDefaults, ...draftFields },
     resolver: zodResolver(NewTaskValidationSchema()),
   });
+
+  // Whether the user picked a When to run card. Until they do, the run type
+  // is only our default and may be set from what the preview finds. Saved
+  // with the draft, so reopening a draft keeps the user's pick. Add
+  // evaluators drafts save false; an older draft that never saved it keeps
+  // the run type it has.
+  const runTypeChosenRef = useRef(
+    Boolean(draftValues) && draftRunTypeChosen !== false,
+  );
 
   // Persist every form change to localStorage (debounced inside the
   // hook so we don't write on every keystroke).
   useEffect(() => {
-    const subscription = watch((values) => {
-      saveDraft(values);
+    const subscription = watch((values, { name: changedField, type } = {}) => {
+      // Only a field's own onChange (a user action) carries a type;
+      // setValue below does not.
+      if (changedField === "runType" && type === "change") {
+        runTypeChosenRef.current = true;
+      }
+      saveDraft({ ...values, runTypeChosen: runTypeChosenRef.current });
     });
     return () => subscription.unsubscribe();
   }, [watch, saveDraft]);
+
+  // A historical task on a window with no data finishes at once having
+  // evaluated nothing, and never looks at data that arrives later. So when
+  // the preview's first definite answer is that the project has no data yet,
+  // default to new incoming data instead. Decided once, so later edits to
+  // the window never flip it, and never over a run type the user picked.
+  const runTypeDefaultSettledRef = useRef(false);
+  useEffect(() => {
+    if (runTypeDefaultSettledRef.current || testState.noDataYet == null) {
+      return;
+    }
+    runTypeDefaultSettledRef.current = true;
+    if (!testState.noDataYet || runTypeChosenRef.current) return;
+    if (getValues("runType") !== "historical") return;
+    setValue("runType", "continuous");
+  }, [testState.noDataYet, getValues, setValue]);
 
   const project = useWatch({ control, name: "project" });
   const name = useWatch({ control, name: "name" });
@@ -227,7 +260,6 @@ const TaskCreatePage = () => {
           variant="outlined"
           size="small"
           onClick={() => navigate(cancelDestination)}
-          sx={{ textTransform: "none", fontWeight: 500 }}
         >
           Cancel
         </Button>
@@ -238,7 +270,7 @@ const TaskCreatePage = () => {
           disabled={!testState.canTest || !canCreateTask}
           onClick={() => previewRef.current?.runTest()}
           startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
-          sx={{ textTransform: "none", fontWeight: 500, minWidth: 120 }}
+          sx={{ minWidth: 120 }}
         >
           Test
         </LoadingButton>
@@ -248,7 +280,7 @@ const TaskCreatePage = () => {
           onClick={handleSubmit(onSubmit)}
           loading={isPending}
           disabled={!canCreateTask}
-          sx={{ textTransform: "none", fontWeight: 500, minWidth: 140 }}
+          sx={{ minWidth: 140 }}
         >
           Create Task
         </LoadingButton>

@@ -4,9 +4,9 @@ from django.db import migrations, models
 
 def backfill_webhook_secret(apps, schema_editor):
     AgentVersion = apps.get_model('simulate', 'AgentVersion')
-    for agent_version in AgentVersion.objects.all():
+    for agent_version in AgentVersion.objects.using(schema_editor.connection.alias).all():
         agent_version.configuration_snapshot['webhook_secret'] = ""
-        agent_version.save()
+        agent_version.save(using=schema_editor.connection.alias)
 
 class Migration(migrations.Migration):
 

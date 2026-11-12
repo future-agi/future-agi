@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import { Box, Button, Stack, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
@@ -97,11 +98,7 @@ const CloudProviderCardComponent = ({
   const buttonStyles = useMemo(
     () => ({
       minWidth: "90px",
-      height: theme.spacing(4.75), // 38/8 = 4.75
-      borderRadius: "8px",
       whiteSpace: "nowrap",
-      fontSize: "12px",
-      fontWeight: 500,
     }),
     [theme],
   );
@@ -120,7 +117,7 @@ const CloudProviderCardComponent = ({
             }}
           >
             <Image
-              src={provider.logoUrl}
+              src={localProviderLogo(provider)}
               alt={provider.display_name}
               width={25}
               height={25}

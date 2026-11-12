@@ -1,3 +1,5 @@
+import json
+
 from model_hub.models.choices import AnnotationTypeChoices
 from tfc.settings.settings import BASE_URL
 
@@ -45,9 +47,9 @@ os.environ["FI_SECRET_KEY"] = "{}"
 os.environ["FI_BASE_URL"] = "{}"
 
 # Get existing dataset
-config = DatasetConfig(name="{}", model_type= ModelTypes.GENERATIVE_LLM)
+config = DatasetConfig(name={}, model_type= ModelTypes.GENERATIVE_LLM)
 dataset = Dataset(dataset_config=config)
-dataset = Dataset.get_dataset_config("{}")
+dataset = Dataset.get_dataset_config({})
 
 # Define columns
 columns = [
@@ -118,6 +120,21 @@ except Exception as e:
     print(f"Failed to add data: {{e}}")
 """
 )
+
+
+def _string_literal(value):
+    """A double-quoted literal that Python and JavaScript both read as ``value``.
+
+    Quotes, backslashes and newlines in dataset and column names are escaped, so
+    any name gives an example that parses.
+    """
+    return json.dumps(value, ensure_ascii=False)
+
+
+def get_python_add_columns_code(dataset_name, api_key, secret_key):
+    """The Python example that adds sample columns and rows to a dataset."""
+    name = _string_literal(dataset_name)
+    return PYTHON_ADD_COLS.format(api_key, secret_key, BASE_URL, name, name)
 
 
 def get_curl_ts_code(dataset_id, api_key, secret_key, dataset_name):
@@ -195,32 +212,32 @@ process.env["FI_BASE_URL"] = "{BASE_URL}";
 
 async function main() {{
   try {{
-    const dsName = "{dataset_name}";
+    const dsName = {_string_literal(dataset_name)};
 
     // 1) Open the dataset (fetch if it exists, create if not)
     const dataset = await Dataset.open(dsName);
 
     // 2) Define columns
     const columns = [
-      {{ name: "user_query", dataType: DataTypeChoices.TEXT }},
-      {{ name: "response_quality", dataType: DataTypeChoices.INTEGER }},
-      {{ name: "is_helpful", dataType: DataTypeChoices.BOOLEAN }},
+      {{ name: "user_query", data_type: DataTypeChoices.TEXT }},
+      {{ name: "response_quality", data_type: DataTypeChoices.INTEGER }},
+      {{ name: "is_helpful", data_type: DataTypeChoices.BOOLEAN }},
     ];
 
     // 3) Define rows
     const rows = [
       createRow({{
         cells: [
-          createCell({{ columnName: "user_query", value: "What is machine learning?" }}),
-          createCell({{ columnName: "response_quality", value: 8 }}),
-          createCell({{ columnName: "is_helpful", value: true }}),
+          createCell({{ column_name: "user_query", value: "What is machine learning?" }}),
+          createCell({{ column_name: "response_quality", value: 8 }}),
+          createCell({{ column_name: "is_helpful", value: true }}),
         ],
       }}),
       createRow({{
         cells: [
-          createCell({{ columnName: "user_query", value: "Explain quantum computing" }}),
-          createCell({{ columnName: "response_quality", value: 9 }}),
-          createCell({{ columnName: "is_helpful", value: true }}),
+          createCell({{ column_name: "user_query", value: "Explain quantum computing" }}),
+          createCell({{ column_name: "response_quality", value: 9 }}),
+          createCell({{ column_name: "is_helpful", value: true }}),
         ],
       }}),
     ];
@@ -246,7 +263,7 @@ process.env["FI_BASE_URL"] = "{BASE_URL}";
 
 async function main() {{
   try {{
-    const dsName = "{dataset_name}";
+    const dsName = {_string_literal(dataset_name)};
 
     // 1) Open the dataset (fetch if it exists, create if not)
     const dataset = await Dataset.open(dsName);
@@ -255,16 +272,16 @@ async function main() {{
     const rows = [
       createRow({{
         cells: [
-          createCell({{ columnName: "user_query", value: "What is machine learning?" }}),
-          createCell({{ columnName: "response_quality", value: 8 }}),
-          createCell({{ columnName: "is_helpful", value: true }}),
+          createCell({{ column_name: "user_query", value: "What is machine learning?" }}),
+          createCell({{ column_name: "response_quality", value: 8 }}),
+          createCell({{ column_name: "is_helpful", value: true }}),
         ],
       }}),
       createRow({{
         cells: [
-          createCell({{ columnName: "user_query", value: "Explain quantum computing" }}),
-          createCell({{ columnName: "response_quality", value: 9 }}),
-          createCell({{ columnName: "is_helpful", value: true }}),
+          createCell({{ column_name: "user_query", value: "Explain quantum computing" }}),
+          createCell({{ column_name: "response_quality", value: 9 }}),
+          createCell({{ column_name: "is_helpful", value: true }}),
         ],
       }}),
     ];
@@ -287,6 +304,157 @@ main();
     # Generate Python code
 
 
+# The value the add-rows examples show for each column type. Types without one
+# (image, audio, document, persona, ...) get an empty value and a note to add
+# it.
+ADD_ROW_SAMPLE_VALUES = {
+    "text": "sample text",
+    "integer": 1,
+    "float": 0.5,
+    "boolean": True,
+    "datetime": "2026-01-01T00:00:00Z",
+    "json": {"key": "value"},
+    "array": ["first", "second"],
+}
+
+NO_COLUMNS_NOTE = (
+    "This dataset has no columns yet, so this example adds three sample columns "
+    "and two rows."
+)
+
+
+def _python_value(value):
+    if isinstance(value, bool):
+        return "True" if value else "False"
+    return json.dumps(value, ensure_ascii=False)
+
+
+def get_add_rows_code(dataset_id, dataset_name, columns, api_key, secret_key):
+    """The add-rows examples (Python, TypeScript, cURL) for an existing dataset.
+
+    ``columns`` are the dataset's data columns as ``(name, data_type)`` pairs, in
+    the order the dataset shows them. Each example adds one row with a cell for
+    every column. A dataset without data columns gets the add-columns examples,
+    which create sample columns first.
+    """
+    if not columns:
+        curl_columns, curl_rows, typescript_columns, _ = get_curl_ts_code(
+            dataset_id=dataset_id,
+            api_key=api_key,
+            secret_key=secret_key,
+            dataset_name=dataset_name,
+        )
+        python = get_python_add_columns_code(dataset_name, api_key, secret_key)
+        return (
+            f"# {NO_COLUMNS_NOTE}\n{python}",
+            f"// {NO_COLUMNS_NOTE}\n{typescript_columns}",
+            f"# {NO_COLUMNS_NOTE}\n{curl_columns}\n\n{curl_rows}",
+        )
+
+    python_cells, typescript_cells, payload_cells = [], [], []
+    empty_types = set()
+    for name, data_type in columns:
+        if data_type in ADD_ROW_SAMPLE_VALUES:
+            value, note = ADD_ROW_SAMPLE_VALUES[data_type], ""
+        else:
+            value, note = "", f"{data_type} column: add its value"
+            empty_types.add(str(data_type))
+        python_cells.append(
+            f"            Cell(column_name={_string_literal(name)}, "
+            f"value={_python_value(value)}),"
+            + (f"  # {note}" if note else "")
+        )
+        typescript_cells.append(
+            f"          createCell({{ column_name: {_string_literal(name)}, "
+            f"value: {json.dumps(value, ensure_ascii=False)} }}),"
+            + (f"  // {note}" if note else "")
+        )
+        payload_cells.append({"column_name": name, "value": value})
+    python_rows = "\n".join(python_cells)
+    typescript_rows = "\n".join(typescript_cells)
+    name = _string_literal(dataset_name)
+
+    python = f"""# pip install futureagi
+
+import os
+from fi.datasets import Dataset
+from fi.datasets.types import Cell, Row
+
+# Set environment variables
+os.environ["FI_API_KEY"] = "{api_key}"
+os.environ["FI_SECRET_KEY"] = "{secret_key}"
+os.environ["FI_BASE_URL"] = "{BASE_URL}"
+
+# Get the existing dataset
+dataset = Dataset.get_dataset_config({name})
+
+# One row with a value for each of the dataset's columns
+rows = [
+    Row(
+        cells=[
+{python_rows}
+        ]
+    )
+]
+
+try:
+    dataset = dataset.add_rows(rows=rows)
+    print("✓ Data added successfully")
+except Exception as e:
+    print(f"Failed to add data: {{e}}")
+"""
+
+    typescript = f"""import {{ Dataset, createRow, createCell }} from "@future-agi/sdk";
+
+process.env["FI_API_KEY"] = "{api_key}";
+process.env["FI_SECRET_KEY"] = "{secret_key}";
+process.env["FI_BASE_URL"] = "{BASE_URL}";
+
+async function main() {{
+  try {{
+    // Open the existing dataset; fail rather than create one if it is not found
+    const dataset = await Dataset.open({name}, {{ createIfMissing: false }});
+
+    // One row with a value for each of the dataset's columns
+    const rows = [
+      createRow({{
+        cells: [
+{typescript_rows}
+        ],
+      }}),
+    ];
+
+    await dataset.addRows(rows);
+    console.log("✓ Data added successfully");
+  }} catch (err) {{
+    console.error("Failed to add data:", err);
+  }}
+}}
+
+main();
+"""
+
+    # The body is single-quoted for the shell, so a quote in a name is closed,
+    # escaped and reopened.
+    payload = json.dumps({"rows": [{"cells": payload_cells}]}, indent=2)
+    payload = payload.replace("'", "'\\''")
+    curl_lines = []
+    if empty_types:
+        curl_lines.append(
+            f"# Cells of {', '.join(sorted(empty_types))} columns are left empty: "
+            "add their values."
+        )
+    curl_lines.append(
+        "curl --request POST \\\n"
+        f"    --url {BASE_URL}/model-hub/develops/{dataset_id}/add_rows/ \\\n"
+        "    --header 'content-type: application/json' \\\n"
+        f"    --header 'X-Api-Key: {api_key}' \\\n"
+        f"    --header 'X-Secret-Key: {secret_key}' \\\n"
+        f"    --data '{payload}'"
+    )
+    return python, typescript, "\n".join(curl_lines)
+
+
 PROMPT_PYTHON_CODE = """
 import requests
 
@@ -298,7 +466,8 @@ headers = {{
 }}
 
 data = {{
-    "name": "{name}",
+    "name": {name},
+    "version": {version},
     "prompt_config": {prompt_config},
     "variable_names": {variable_names},
     "evaluation_configs": {evaluation_configs},
@@ -319,7 +488,8 @@ const headers = {{
 }};
 
 const data = {{
-    "name": "{name}",
+    "name": {name},
+    "version": {version},
     "prompt_config": {prompt_config},
     "variable_names": {variable_names},
     "evaluation_configs": {evaluation_configs},
@@ -339,11 +509,12 @@ fetch(url, {{
 # Generate cURL code
 PROMPT_CURL_CODE = """
 curl --location '{api_url}' \\
---header 'X-Api-Key: YOUR_API_KEY' \\
---header 'X-Secret-Key: YOUR_SECRET_KEY' \\
+--header 'X-Api-Key: <YOUR_API_KEY>' \\
+--header 'X-Secret-Key: <YOUR_SECRET_KEY>' \\
 --header 'Content-Type: application/json' \\
 --data '{{
-    "name": "{name}",
+    "name": {name},
+    "version": {version},
     "prompt_config": {prompt_config},
     "variable_names": {variable_names},
     "evaluation_configs": {evaluation_configs},
@@ -364,7 +535,8 @@ chat = ChatOpenAI(
 
 # Prepare the data
 data = {{
-    "name": "{name}",
+    "name": {name},
+    "version": {version},
     "prompt_config": {prompt_config},
     "variable_names": {variable_names},
     "evaluation_configs": {evaluation_configs},
@@ -390,7 +562,8 @@ const axios = require('axios');
 async function runPrompt() {{
     const url = "{api_url}";
     const data = {{
-        name: "{name}",
+        name: {name},
+        version: {version},
         prompt_config: {prompt_config},
         variable_names: {variable_names},
         evaluation_configs: {evaluation_configs},
@@ -425,28 +598,29 @@ import (
     "net/http"
 )
 
-func main() {{{{
+func main() {{
     url := "{api_url}"
 
-    data := map[string]interface{{}}{{{{
-        "name": "{name}",
+    data := map[string]interface{{}}{{
+        "name": {name},
+        "version": {version},
         "prompt_config": {prompt_config},
         "variable_names": {variable_names},
         "evaluation_configs": {evaluation_configs},
         "is_run": {is_run},
-    }}}}
+    }}
 
     jsonData, err := json.Marshal(data)
-    if err != nil {{{{
+    if err != nil {{
         fmt.Printf("Error marshaling JSON: %v\\n", err)
         return
-    }}}}
+    }}
 
     req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-    if err != nil {{{{
+    if err != nil {{
         fmt.Printf("Error creating request: %v\\n", err)
         return
-    }}}}
+    }}
 
     req.Header.Set("X-Api-Key", "YOUR_API_KEY")
     req.Header.Set("X-Secret-Key", "YOUR_SECRET_KEY")
@@ -454,20 +628,20 @@ func main() {{{{
 
     client := &http.Client{{}}
     resp, err := client.Do(req)
-    if err != nil {{{{
+    if err != nil {{
         fmt.Printf("Error making request: %v\\n", err)
         return
-    }}}}
+    }}
     defer resp.Body.Close()
 
     body, err := ioutil.ReadAll(resp.Body)
-    if err != nil {{{{
+    if err != nil {{
         fmt.Printf("Error reading response: %v\\n", err)
         return
-    }}}}
+    }}
 
     fmt.Println(string(body))
-}}}}
+}}
 """
 
 CREATE_KB_SDK_CODE = """
@@ -480,7 +654,7 @@ client = KnowledgeBase(
     fi_api_key="{}",
     fi_secret_key="{}",
 )
-kb_client = client.create_kb(name="{}",file_paths=['PATH_TO_FILE_1', 'PATH_TO_FILE_2',])
+kb_client = client.create_kb(name={},file_paths=['PATH_TO_FILE_1', 'PATH_TO_FILE_2',])
 """
 
 UPDATE_KB_SDK_CODE = """
@@ -488,18 +662,12 @@ UPDATE_KB_SDK_CODE = """
 # export FI_API_KEY="{}"
 # export FI_SECRET_KEY="{}"
 from fi.kb.client import KnowledgeBase
-from fi.kb.types import KnowledgeBaseConfig
-# To update a knowledge base
-kbase = KnowledgeBaseConfig(
-    name="{}",
-    files=["PATH_TO_FILE_1", "PATH_TO_FILE_2"]
-)
+# To add files to an existing knowledge base
 client = KnowledgeBase(
-    kbase = kbase,
     fi_api_key="{}",
     fi_secret_key="{}",
 )
-updated_kb = client.update_kb(name = "{}", file_paths=['PATH_TO_FILE_3', 'PATH_TO_FILE_4',])
+updated_kb = client.update_kb(kb_name={}, file_paths=['PATH_TO_FILE_3', 'PATH_TO_FILE_4',])
 """
 
 MAX_KB_SIZE = 1024 * 1024 * 1024
@@ -524,11 +692,11 @@ print(result.eval_results[0].output)
 print(result.eval_results[0].reason)"""
 
 
-EVAL_PLAYGROUND_CURL_CODE = """curl '{}/model-hub/eval-playground/' \n
-  -H 'X-Api-Key: {}' \n
-  -H 'X-Secret-Key: {}' \n
-  -H 'Accept: application/json, text/plain, */*' \n
-  -H 'Content-Type: application/json' \n
+EVAL_PLAYGROUND_CURL_CODE = """curl '{}/model-hub/eval-playground/' \\
+  -H 'X-Api-Key: {}' \\
+  -H 'X-Secret-Key: {}' \\
+  -H 'Accept: application/json, text/plain, */*' \\
+  -H 'Content-Type: application/json' \\
   --data-raw '{}'"""
 
 EVAL_PLAYGROUND_JS_CODE = """async function runEval() {{
@@ -543,9 +711,10 @@ EVAL_PLAYGROUND_JS_CODE = """async function runEval() {{
     body: '{}'
   }});
 
-  const result = await response.json();
-  console.log(result.eval_results[0].output);
-  console.log(result.eval_results[0].reason);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message);
+  console.log(data.result.output);
+  console.log(data.result.reason);
 }}
 
 runEval();"""

@@ -1,5 +1,7 @@
 import { alpha } from "@mui/material/styles";
 
+import { dsPalette } from "./ds-tokens";
+
 // ----------------------------------------------------------------------
 
 // SETUP COLORS
@@ -387,87 +389,63 @@ export {
   darkSyntax,
 };
 
+// Text-on-tint label tokens (a11y #14). Light: warning.dark and error.main
+// are used as text on their soft chips (#FEFCEC, #FAEEEE); the shipped
+// #B8AC47 / #DB2F2D read at 2.3:1 / 4.2:1 there. Dark: the same tokens sit on
+// #111 / #18181b and dark tinted chips, so they are lifted instead.
+export const LIGHT_TEXT_DISABLED = "#6B6B6B";
+export const LABEL_TOKENS = Object.freeze({
+  light: { warningDark: "#7A6F14", errorMain: "#C62828" },
+  dark: { warningDark: "#E5D97A", errorMain: "#E5484D" },
+});
+
+// The status colours keep the `alert` (tint) and `icon` (text-on-tint) pair
+// that screens still read, for example warning.icon in the code panel, where
+// warning.main is pale on white. Both now come from the design-system status
+// roles instead of fixed hex values.
+const withStatus = (color, role) => ({
+  ...color,
+  alert: role.bg,
+  icon: role.fg,
+});
+
+// The light and dark palettes come from the Future AGI Design System
+// (frontend/design-system/tokens/tokens.json → ds-tokens.js). The ramps above stay
+// exported for files that import them directly.
 export function palette(mode) {
-  const light = {
+  const isLight = mode !== "dark";
+  const ds = dsPalette(isLight ? "light" : "dark");
+
+  return {
     ...base,
-    mode: "light",
-    text: {
-      primary: black[1000],
-      secondary: black[800],
-      disabled: black[300],
-      muted: black[800],
-      subtitle: black[600],
-    },
+    ...(isLight
+      ? {}
+      : {
+          hull: darkHull,
+          space: darkSpace,
+          whiteScale: darkWhiteScale,
+          accent: darkAccent,
+          syntax: darkSyntax,
+        }),
+    ...ds,
+    mode: /** @type {"light" | "dark"} */ (ds.mode),
+    info: withStatus({ ...base.info, ...ds.info }, ds.status.info),
+    success: withStatus({ ...base.success, ...ds.success }, ds.status.success),
+    warning: withStatus({ ...base.warning, ...ds.warning }, ds.status.warning),
+    error: withStatus({ ...base.error, ...ds.error }, ds.status.danger),
     background: {
-      paper: "#FFFFFF",
-      default: "#FBFBFB",
-      neutral: "#F8F8F8",
-      subtle: "#F8F8F8",
-      accent: grey[100],
+      ...ds.background,
       // Falcon AI surfaces (inline AI bar background + AI-action hover)
-      aiSurface: "#fafafe",
-      aiHover: "rgba(124, 77, 255, 0.06)",
-    },
-    action: {
-      ...base.action,
-      active: grey[600],
-      selected: alpha(grey[400], 0.12),
+      aiSurface: isLight ? "#fafafe" : "#1a1a2e",
+      aiHover: isLight
+        ? "rgba(124, 77, 255, 0.06)"
+        : "rgba(124, 77, 255, 0.12)",
     },
     border: {
-      default: grey[300],
-      hover: grey[400],
-      active: grey[500],
-      bright: grey[600],
-      light: black[100],
+      ...ds.border,
+      active: ds.action.active,
+      bright: ds.text.tertiary,
+      light: ds.border.default,
     },
   };
-
-  const dark = {
-    ...base,
-    mode: "dark",
-    // Dark mode: monochrome primary (no purple) — matching brand guide
-    primary: {
-      lighter: "#E4E4E7",
-      light: "#FFFFFF",
-      main: "#FAFAFA",
-      dark: "#D4D4D8",
-      darker: "#A1A1AA",
-      contrastText: "#0A0A0A",
-    },
-    text: {
-      primary: darkText.starBright,
-      secondary: darkText.distantStar,
-      disabled: darkText.faintStar, // #71717a — readable helper text
-      muted: darkText.distantStar,
-      subtitle: darkText.distantStar, // #a1a1aa — same as secondary
-    },
-    background: {
-      paper: darkSpace.nebulaDark,
-      default: darkSpace.void,
-      neutral: darkSpace.asteroid,
-      subtle: darkSpace.dust,
-      accent: darkSpace.shadow,
-      // Falcon AI surfaces (inline AI bar background + AI-action hover)
-      aiSurface: "#1a1a2e",
-      aiHover: "rgba(124, 77, 255, 0.12)",
-    },
-    divider: darkBorder.default,
-    action: {
-      ...base.action,
-      active: darkText.distantStar,
-      hover: alpha(common.white, 0.08),
-      selected: alpha(common.white, 0.12),
-      disabled: alpha(common.white, 0.3),
-      disabledBackground: alpha(common.white, 0.12),
-      focus: alpha(common.white, 0.12),
-    },
-    border: darkBorder,
-    hull: darkHull,
-    space: darkSpace,
-    whiteScale: darkWhiteScale,
-    accent: darkAccent,
-    syntax: darkSyntax,
-  };
-
-  return mode === "light" ? light : dark;
 }

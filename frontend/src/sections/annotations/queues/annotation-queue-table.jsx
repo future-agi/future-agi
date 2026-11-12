@@ -1,4 +1,7 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
+import EmptyContent from "src/components/empty-content";
 import PropTypes from "prop-types";
+import DataTablePagination from "src/components/data-table/DataTablePagination";
 import { useState, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuthContext } from "src/auth/hooks";
@@ -20,9 +23,12 @@ import {
 import { alpha } from "@mui/material/styles";
 import { AgGridReact } from "ag-grid-react";
 import Iconify from "src/components/iconify";
+import { statusColors } from "src/utils/runStatus";
 import SvgColor from "src/components/svg-color";
 import StatusBadge from "./components/status-badge";
-import { fToNow } from "src/utils/format-time";
+import RelativeTime from "src/sections/common/ux/RelativeTime";
+import CustomTooltip from "src/components/tooltip";
+import { reviewPageUrl } from "src/sections/develop-detail/Review/reviewModel";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { paths } from "src/routes/paths";
@@ -66,15 +72,17 @@ function NameCellRenderer({ data }) {
   return (
     <Box
       sx={{
-        py: 1,
+        // Two-line row (44px): name 12/500 over meta 11, no extra padding
+        // or gap, so neither line gets clipped.
         display: "flex",
         flexDirection: "column",
         justifyContent: "center",
         gap: 0.5,
+        minWidth: 0,
         height: "100%",
       }}
     >
-      <Typography variant="body2" fontWeight={600} noWrap>
+      <Typography variant="body2" fontWeight={500} noWrap>
         {data.name}
       </Typography>
       {data.description && (
@@ -104,6 +112,73 @@ function StatusCellRenderer({ data }) {
   );
 }
 
+TypeCellRenderer.propTypes = { data: PropTypes.object };
+
+/** RW#38: Pairwise / Rubric / Labelling, and the run pair it reviews. */
+export function queueTypeOf(data) {
+  const m = data?.metadata ?? {};
+  if (m.kind !== "experiment_review") return { type: "Labelling", runs: null };
+  if (m.mode === "pairwise")
+    return {
+      type: m.focus === "regressions" ? "Pairwise · regressions" : "Pairwise",
+      runs:
+        m.run_b_label && m.run_a_label
+          ? `${m.run_b_label} vs ${m.run_a_label}`
+          : null,
+      blind: Boolean(m.blind),
+    };
+  return { type: "Rubric", runs: m.run_label ?? null };
+}
+
+function TypeCellRenderer({ data }) {
+  if (!data) return null;
+  const t = queueTypeOf(data);
+  return (
+    <Stack
+      justifyContent="center"
+      gap={0.25}
+      sx={{ height: "100%", minWidth: 0 }}
+    >
+      <Typography variant="body2" noWrap>
+        {t.type}
+      </Typography>
+      <Stack direction="row" alignItems="center" gap={0.5}>
+        {t.runs && (
+          <Box
+            component="span"
+            sx={{
+              typography: "caption",
+              px: 0.75,
+              borderRadius: 0.5,
+              border: "1px solid",
+              borderColor: "divider",
+              color: "text.secondary",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {t.runs}
+          </Box>
+        )}
+        {t.blind && (
+          <CustomTooltip
+            show
+            size="small"
+            placement="top"
+            title="Blind: run names hidden from reviewers until they finish"
+          >
+            <Box
+              component="span"
+              sx={{ display: "inline-flex", color: "text.disabled" }}
+            >
+              <Iconify icon="mdi:eye-off-outline" width={14} />
+            </Box>
+          </CustomTooltip>
+        )}
+      </Stack>
+    </Stack>
+  );
+}
+
 ProgressCellRenderer.propTypes = {
   data: PropTypes.object,
 };
@@ -124,6 +199,7 @@ function ProgressCellRenderer({ data }) {
     );
   }
 
+  const left = Math.max(0, total - done);
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
       <Stack spacing={0.5} sx={{ minWidth: 100 }}>
@@ -142,6 +218,16 @@ function ProgressCellRenderer({ data }) {
             },
           }}
         />
+        {data.metadata?.kind === "experiment_review" && left > 0 ? (
+          <Typography
+            variant="caption"
+            color="primary.main"
+            fontWeight={600}
+            noWrap
+          >
+            Continue ({left} left)
+          </Typography>
+        ) : null}
       </Stack>
     </Box>
   );
@@ -156,7 +242,9 @@ function LabelsCellRenderer({ data }) {
   const count = data.label_count ?? data.labels?.length ?? 0;
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-      <Typography variant="body2">{count} labels</Typography>
+      <Typography variant="body2">
+        {count} {count === 1 ? "label" : "labels"}
+      </Typography>
     </Box>
   );
 }
@@ -232,23 +320,15 @@ function queueMembersByPerson(members) {
 
 function memberRoleChipSx(role) {
   return (theme) => {
-    const paletteKey = rolePaletteKey(role);
-    const paletteColor =
-      paletteKey === "neutral" ? null : theme.palette[paletteKey];
-    const roleColor =
-      theme.palette.mode === "dark"
-        ? paletteColor?.light || theme.palette.text.secondary
-        : paletteColor?.dark ||
-          paletteColor?.main ||
-          theme.palette.text.secondary;
+    const tone = statusColors(theme, rolePaletteKey(role));
     return {
       height: 20,
-      fontSize: 11,
-      fontWeight: 700,
-      borderRadius: 0.75,
-      color: roleColor,
-      borderColor: alpha(roleColor, theme.palette.mode === "dark" ? 0.28 : 0.2),
-      bgcolor: alpha(roleColor, theme.palette.mode === "dark" ? 0.12 : 0.06),
+      fontSize: 12,
+      fontWeight: 600,
+      borderRadius: "4px",
+      color: tone.fg,
+      borderColor: tone.border,
+      bgcolor: tone.bg,
       "& .MuiChip-label": { px: 0.75 },
     };
   };
@@ -258,11 +338,7 @@ function membersTooltipPaperSx(theme) {
   return {
     bgcolor: "background.paper",
     color: "text.primary",
-    border: `1px solid ${alpha(theme.palette.text.primary, 0.12)}`,
-    boxShadow:
-      theme.palette.mode === "dark"
-        ? `0 18px 42px ${alpha(theme.palette.common.black, 0.48)}`
-        : `0 18px 42px ${alpha(theme.palette.grey[700], 0.16)}`,
+    border: `1px solid ${theme.palette.divider}`,
     borderRadius: 1,
     p: 0,
     maxWidth: 380,
@@ -273,7 +349,7 @@ function membersTooltipArrowSx(theme) {
   return {
     color: theme.palette.background.paper,
     "&::before": {
-      border: `1px solid ${alpha(theme.palette.text.primary, 0.12)}`,
+      border: `1px solid ${theme.palette.divider}`,
     },
   };
 }
@@ -283,11 +359,11 @@ function memberAvatarSx(size = 28) {
     width: size,
     height: size,
     fontSize: size <= 26 ? 11 : 12,
-    fontWeight: 700,
+    fontWeight: 600,
     flexShrink: 0,
     color: theme.palette.text.primary,
-    bgcolor: alpha(theme.palette.text.primary, 0.08),
-    border: `1px solid ${alpha(theme.palette.text.primary, 0.12)}`,
+    bgcolor: theme.palette.action.selected,
+    border: `1px solid ${theme.palette.divider}`,
   });
 }
 
@@ -316,6 +392,7 @@ function MembersCellRenderer({ data }) {
       sx={{ display: "flex", alignItems: "center", height: "100%" }}
     >
       <Tooltip
+        classes={{ tooltip: "ds-hovercard" }}
         title={
           <Stack
             spacing={1.25}
@@ -362,7 +439,7 @@ function MembersCellRenderer({ data }) {
                     <Typography
                       variant="body2"
                       color="text.primary"
-                      fontWeight={700}
+                      fontWeight={600}
                       noWrap
                       sx={{ display: "block" }}
                     >
@@ -419,15 +496,7 @@ function MembersCellRenderer({ data }) {
               width: 28,
               height: 28,
               fontSize: 12,
-              fontWeight: 700,
-              bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08),
-              color: "text.primary",
-              border: "2px solid",
-              borderColor: "background.paper",
-            },
-            "& .MuiAvatar-root:first-of-type": {
-              bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08),
-              color: "text.primary",
+              fontWeight: 600,
             },
           }}
         >
@@ -452,7 +521,7 @@ function CreatedCellRenderer({ data }) {
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
       <Typography variant="body2" color="text.secondary">
-        {date ? fToNow(date) : "—"}
+        {date ? <RelativeTime iso={date} by={data.created_by_name} /> : "—"}
       </Typography>
     </Box>
   );
@@ -498,7 +567,7 @@ function ActionsCellRenderer({ data, context }) {
           context?.onOpenMenu(e, data);
         }}
       >
-        <Iconify icon="eva:more-vertical-fill" />
+        <Iconify icon="solar:menu-dots-vertical-linear" />
       </IconButton>
     </Box>
   );
@@ -579,20 +648,24 @@ export default function AnnotationQueueTable({
   const getStatusActions = (queue) => {
     const transitions = {
       draft: [
-        { value: "active", label: "Activate", icon: "eva:play-circle-fill" },
+        {
+          value: "active",
+          label: "Activate",
+          icon: "solar:play-circle-linear",
+        },
       ],
       active: [
-        { value: "paused", label: "Pause", icon: "eva:pause-circle-fill" },
+        { value: "paused", label: "Pause", icon: "solar:pause-circle-linear" },
       ],
       paused: [
-        { value: "active", label: "Resume", icon: "eva:play-circle-fill" },
+        { value: "active", label: "Resume", icon: "solar:play-circle-linear" },
       ],
       completed: [
-        { value: "active", label: "Re-open", icon: "eva:refresh-fill" },
+        { value: "active", label: "Re-open", icon: "solar:refresh-linear" },
         {
           value: "paused",
           label: "Pause to Edit",
-          icon: "eva:pause-circle-fill",
+          icon: "solar:pause-circle-linear",
         },
       ],
     };
@@ -616,6 +689,14 @@ export default function AnnotationQueueTable({
         flex: 1,
         minWidth: 120,
         cellRenderer: loading ? SkeletonCell : StatusCellRenderer,
+      },
+      {
+        field: "type",
+        headerName: "Type",
+        flex: 1.3,
+        minWidth: 170,
+        sortable: false,
+        cellRenderer: loading ? SkeletonCell : TypeCellRenderer,
       },
       {
         field: "progress",
@@ -650,6 +731,10 @@ export default function AnnotationQueueTable({
         headerName: "",
         width: 60,
         maxWidth: 60,
+        // Pinned so the row menu stays in view when narrow widths make
+        // the other columns scroll sideways (1024 and 1280).
+        pinned: "right",
+        lockPinned: true,
         cellRenderer: loading ? SkeletonCell : ActionsCellRenderer,
         sortable: false,
         resizable: false,
@@ -684,6 +769,19 @@ export default function AnnotationQueueTable({
       if (!event?.data) return;
       if (event.column?.getColId() === "actions") return;
       if (archivedView) return;
+      // RW#38: a review queue with work left opens the review page at the
+      // next pending row ("Continue (8 left)"); others open the queue.
+      const m = event.data.metadata ?? {};
+      const left =
+        (event.data.item_count ?? 0) - (event.data.completed_count ?? 0);
+      if (m.kind === "experiment_review" && m.dataset_id && left > 0) {
+        navigate(
+          reviewPageUrl(m.dataset_id, event.data.id, {
+            from: "/dashboard/annotations/queues",
+          }),
+        );
+        return;
+      }
       navigate(paths.dashboard.annotations.queueDetail(event.data.id));
     },
     [navigate, archivedView],
@@ -694,20 +792,7 @@ export default function AnnotationQueueTable({
   // Compute paginated slice — the parent manages pagination state, and
   // the API returns already-paginated data in `data`, so just pass it through.
   const CustomNoRowsOverlay = useCallback(
-    () => (
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "100%",
-        }}
-      >
-        <Typography variant="body2" color="text.secondary">
-          No queues match your filters
-        </Typography>
-      </Box>
-    ),
+    () => <EmptyContent title="No queues match your filters" />,
     [],
   );
 
@@ -721,26 +806,9 @@ export default function AnnotationQueueTable({
           overflow: "hidden",
         }}
       >
-        <Box
-          sx={{
-            flex: 1,
-            "& .ag-row": {
-              borderBottom: "1px solid",
-              borderBottomColor: "divider",
-            },
-            "& .ag-cell": {
-              borderRight: "1px solid",
-              borderRightColor: "divider",
-            },
-            "& .ag-cell:last-of-type": {
-              borderRight: 0,
-            },
-            "& .ag-header-cell": {
-              borderRight: "1px solid",
-              borderRightColor: "divider",
-            },
-          }}
-        >
+        {/* Rows, header and hairlines come from the theme's grid: no column
+            borders, 44px two-line rows, 32px header. */}
+        <Box sx={{ flex: 1 }}>
           <AgGridReact
             ref={gridRef}
             theme={agTheme}
@@ -748,8 +816,7 @@ export default function AnnotationQueueTable({
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             context={gridContext}
-            rowHeight={64}
-            headerHeight={42}
+            rowHeight={ROW_HEIGHT.twoLine}
             pagination={false}
             animateRows={false}
             suppressRowClickSelection
@@ -762,67 +829,13 @@ export default function AnnotationQueueTable({
           />
         </Box>
 
-        {/* Pagination — sticky at the bottom */}
-        <Box
-          sx={{
-            display: "flex",
-            justifyContent: "flex-end",
-            alignItems: "center",
-            gap: 2,
-            py: 1,
-            px: 2,
-            fontSize: 14,
-            color: "text.secondary",
-            flexShrink: 0,
-            borderTop: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Box component="span">
-            Rows per page:
-            <Box
-              component="select"
-              value={rowsPerPage}
-              onChange={(e) =>
-                onRowsPerPageChange?.(parseInt(e.target.value, 10))
-              }
-              sx={{
-                ml: 1,
-                border: "none",
-                background: "transparent",
-                color: "text.primary",
-                fontSize: 14,
-                cursor: "pointer",
-                outline: "none",
-              }}
-            >
-              {[10, 25, 50].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </Box>
-          </Box>
-          <Typography variant="body2" color="text.secondary">
-            {totalCount > 0
-              ? `${page * rowsPerPage + 1}–${Math.min((page + 1) * rowsPerPage, totalCount)} of ${totalCount}`
-              : "0 of 0"}
-          </Typography>
-          <IconButton
-            size="small"
-            disabled={page === 0}
-            onClick={() => onPageChange?.(page - 1)}
-          >
-            <Iconify icon="eva:chevron-left-fill" width={20} />
-          </IconButton>
-          <IconButton
-            size="small"
-            disabled={(page + 1) * rowsPerPage >= totalCount}
-            onClick={() => onPageChange?.(page + 1)}
-          >
-            <Iconify icon="eva:chevron-right-fill" width={20} />
-          </IconButton>
-        </Box>
+        <DataTablePagination
+          page={page}
+          pageSize={rowsPerPage}
+          total={totalCount}
+          onPageChange={onPageChange}
+          onPageSizeChange={onRowsPerPageChange}
+        />
       </Box>
 
       {/* Actions popover menu */}
@@ -836,7 +849,7 @@ export default function AnnotationQueueTable({
         <Box sx={{ py: 0.5 }}>
           {archivedView ? (
             <MenuItem onClick={() => handleAction("restore")}>
-              <Iconify icon="solar:archive-up-bold" width={18} sx={{ mr: 1 }} />
+              <Iconify icon="solar:archive-up-bold" width={16} sx={{ mr: 1 }} />
               Restore
             </MenuItem>
           ) : (
@@ -865,19 +878,16 @@ export default function AnnotationQueueTable({
                     onStatusChange?.(queue, sa.value);
                   }}
                 >
-                  <Iconify icon={sa.icon} width={18} sx={{ mr: 1 }} />
+                  <Iconify icon={sa.icon} width={16} sx={{ mr: 1 }} />
                   {sa.label}
                 </MenuItem>
               ))}
 
-              <MenuItem
-                onClick={() => handleAction("archive")}
-                sx={{ color: "error.main" }}
-              >
+              <MenuItem onClick={() => handleAction("archive")}>
                 <Iconify
                   icon="solar:archive-down-bold"
-                  width={18}
-                  sx={{ mr: 1, color: "error.main" }}
+                  width={16}
+                  sx={{ mr: 1 }}
                 />
                 Archive
               </MenuItem>

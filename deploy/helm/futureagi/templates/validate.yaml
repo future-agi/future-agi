@@ -4,6 +4,17 @@ Renders nothing when the values are consistent.
 */ -}}
 {{- $v := .Values -}}
 {{- $errors := list -}}
+{{- /* Validate the original values, before the name helpers truncate them.
+The reserved-label map-key check cannot detect a scalar containing raw YAML:
+a multiline name used to inject the trusted Omega sender label onto every pod
+and its immutable selector, including the code executor, even with Omega off.
+The label helpers also quote their scalars; validation is not serialization. */ -}}
+{{- range $key := list "nameOverride" "fullnameOverride" -}}
+{{- $name := get $v $key | default "" | toString -}}
+{{- if and $name (or (gt (len $name) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $name))) -}}
+{{- $errors = append $errors (printf "%s must be empty or a DNS label (1-63 lowercase letters, digits or hyphens, starting and ending with a letter or digit)" $key) -}}
+{{- end -}}
+{{- end -}}
 {{- $hint := "Quick evaluation with every datastore in the cluster: helm install futureagi deploy/helm/futureagi -n futureagi --create-namespace -f deploy/helm/futureagi/examples/bundled.yaml --timeout 20m" -}}
 {{- range $store := list "postgres" "clickhouse" "redis" "temporal" "objectStorage" -}}
 {{- $mode := (index $v $store).mode -}}
@@ -126,8 +137,65 @@ Renders nothing when the values are consistent.
 {{- $errors = append $errors "agentccGateway runs more than one replica without Redis, so each replica would count rate limits and budgets on its own: set agentccGateway.redis.enabled=true (or auto), set AGENTCC_REDIS_ADDRESS in agentccGateway.extraEnv, or run one replica" -}}
 {{- end -}}
 {{- end -}}
+{{- /* The gateway's own ServiceAccount is a separate identity (Workload
+Identity, IRSA): a created one may not take another account's name. Under
+gatewayOnly, an existing account must be exclusive too. Workloads omitting
+serviceAccountName use the namespace default account. */ -}}
+{{- $custody := include "futureagi.providerCredentials.gatewayOnly" . -}}
+{{- $gatewayAccount := include "futureagi.gatewayServiceAccountName" . | default "default" -}}
+{{- $accounts := list (include "futureagi.serviceAccountName" . | default "default") (include "futureagi.bootstrapServiceAccountName" . | default "default") -}}
+{{- if $custody -}}
+{{- $gatewayAccount = include "futureagi.providerCredentials.name" $gatewayAccount | default "default" -}}
+{{- $accounts = list
+      (include "futureagi.serviceAccountName" . | include "futureagi.providerCredentials.name" | default "default")
+      (include "futureagi.bootstrapServiceAccountName" . | include "futureagi.providerCredentials.name" | default "default") -}}
+{{- if include "futureagi.omega.enabled" . -}}
+{{- $accounts = append $accounts (include "futureagi.omega.gateway.serviceAccountName" . | include "futureagi.providerCredentials.name" | default "default") -}}
+{{- end -}}
+{{- end -}}
+{{- if or (dig "serviceAccount" "create" false $gw) $custody -}}
+{{- if has $gatewayAccount $accounts -}}
+{{- $errors = append $errors "agentccGateway.serviceAccount.name must differ from serviceAccount.name and bootstrap.serviceAccount.name: the gateway's identity is its own" -}}
+{{- end -}}
+{{- end -}}
+{{- if $custody -}}
+{{- if eq $gatewayAccount "default" -}}
+{{- $errors = append $errors "agentccGateway.serviceAccount.name: set a dedicated non-default ServiceAccount with agentccGateway.providerCredentials.gatewayOnly; the namespace default account is shared by other workloads" -}}
+{{- end -}}
+{{- /* These account selectors exhaust all pod templates. Hosted migration,
+connectors, datastores and test pods omit the selector: the default refusal
+above covers them. Init containers and sidecars share their parent account. */ -}}
+{{- $selectors := dict "serviceAccount" $v.serviceAccount "bootstrap.serviceAccount" $v.bootstrap.serviceAccount "agentccGateway.serviceAccount" ($gw.serviceAccount | default dict) -}}
+{{- $others := list ($v.serviceAccount.annotations | default dict) ($v.bootstrap.serviceAccount.annotations | default dict) -}}
+{{- if include "futureagi.omega.enabled" . -}}
+{{- $_ := set $selectors "omega.gateway.serviceAccount" ($v.omega.gateway.serviceAccount | default dict) -}}
+{{- $others = append $others ($v.omega.gateway.serviceAccount.annotations | default dict) -}}
+{{- end -}}
+{{- range $path, $selector := $selectors -}}
+{{- $raw := $selector.name | default "" | toString -}}
+{{- $name := include "futureagi.providerCredentials.name" $raw -}}
+{{- if and $raw (or (ne $raw $name) (gt (len $name) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" $name))) -}}
+{{- $errors = append $errors (printf "%s.name: ServiceAccount names must be DNS subdomains without padding or quotes" $path) -}}
+{{- end -}}
+{{- end -}}
+{{- $annotations := dig "serviceAccount" "annotations" dict $gw -}}
+{{- range $name := list "iam.gke.io/gcp-service-account" "eks.amazonaws.com/role-arn" "azure.workload.identity/client-id" -}}
+{{- $identity := get $annotations $name | default "" | toString | trim -}}
+{{- range $other := $others -}}
+{{- if and $identity (eq $identity (get $other $name | default "" | toString | trim)) -}}
+{{- $errors = append $errors "agentccGateway.serviceAccount.annotations: cloud identity must not be shared with other workloads" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- /* Provider credentials that reach only the gateway (_provider_credentials.tpl). */ -}}
+{{- $errors = concat $errors (include "futureagi.providerCredentials.errors" . | fromJsonArray) -}}
 {{- if and $v.config.recaptcha (not (hasKey $v.secrets.extra "RECAPTCHA_SECRET_KEY")) (not (hasKey $v.config.extraEnv "RECAPTCHA_SECRET_KEY")) (not $v.config.extraEnvFrom) -}}
+{{- if include "futureagi.providerCredentials.gatewayOnly" . -}}
+{{- $errors = append $errors "config.recaptcha needs secrets.extra.RECAPTCHA_SECRET_KEY: without it every login from outside localhost is refused" -}}
+{{- else -}}
 {{- $errors = append $errors "config.recaptcha needs secrets.extra.RECAPTCHA_SECRET_KEY (or a config.extraEnvFrom source with it): without it every login from outside localhost is refused" -}}
+{{- end -}}
 {{- end -}}
 {{- /* A StatefulSet's volumeClaimTemplates cannot change after install. Only
 checkable against a live release: `lookup` finds nothing in `helm template`. */ -}}
@@ -221,6 +289,42 @@ empty is no storageClassName (the cluster default), "-" is storageClassName
 {{- if not (or (dig "data" nil ($spec | default dict)) (dig "dataFrom" nil ($spec | default dict))) -}}
 {{- $errors = append $errors (printf "externalSecrets.secrets.%s needs data (key map) or dataFrom" $group) -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+{{- /* The Python pods' variable names reach Kubernetes as written (quoted):
+"LOG_FORMAT " would be a variable of its own, not LOG_FORMAT. */ -}}
+{{- range $scope := include "futureagi.env.userMaps" . | fromJsonArray -}}
+{{- range $name := keys (index $scope 1) | sortAlpha -}}
+{{- if ne $name (trim $name) -}}
+{{- $errors = append $errors (printf "%s[%q]: a variable name with whitespace around it reaches the pods as written, so it is not the variable it looks like; remove the whitespace" (index $scope 0) $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $errors = concat $errors (include "futureagi.omega.errors" . | fromJsonArray) -}}
+{{- $errors = concat $errors (include "futureagi.hub.errors" . | fromJsonArray) -}}
+{{- /* Keep webhook key material out of values and the chart-owned Secret.
+Check names only, including padding or injected YAML containing the reserved
+name. Do not include the supplied name or value in the refusal. */ -}}
+{{- $userMaps := list
+      ($v.config.extraEnv | default dict)
+      ($v.backend.extraEnv | default dict)
+      ($v.worker.extraEnv | default dict)
+      ($v.secrets.extra | default dict) -}}
+{{- range $queue := $v.worker.queues | default list -}}
+{{- $userMaps = append $userMaps ($queue.extraEnv | default dict) -}}
+{{- end -}}
+{{- range $map := $userMaps -}}
+{{- range $name := keys $map -}}
+{{- if contains "WEBHOOKS_ENCRYPTION_KEYS" $name -}}
+{{- $errors = append $errors "WEBHOOKS_ENCRYPTION_KEYS must come only from secrets.existingSecret; do not set it in extraEnv or secrets.extra" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- /* Secret data keys cannot contain YAML quoting or escapes. Refuse invalid
+names before they can decode into a different key in the chart-owned Secret. */ -}}
+{{- range $name := keys ($v.secrets.extra | default dict) -}}
+{{- if not (regexMatch "^[-._a-zA-Z0-9]+$" $name) -}}
+{{- $errors = append $errors "secrets.extra keys must contain only letters, digits, '-', '_' or '.'" -}}
 {{- end -}}
 {{- end -}}
 {{- if $errors -}}

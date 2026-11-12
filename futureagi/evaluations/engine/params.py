@@ -12,8 +12,6 @@ Extracted from EvaluationRunner.map_fields() (eval_runner.py:981).
 
 import structlog
 
-from evaluations.constants import FUTUREAGI_EVAL_TYPES
-
 logger = structlog.get_logger(__name__)
 
 
@@ -38,7 +36,7 @@ def prepare_run_params(
         is_futureagi: whether this is a FutureAGI eval type
         criteria: criteria override (from version resolution or config)
         organization_id: for few-shot RAG retrieval
-        workspace_id: for few-shot RAG retrieval
+        workspace_id: admitted run workspace for few-shot RAG retrieval
 
     Returns:
         dict: The complete run_params ready for eval_instance.run()
@@ -97,10 +95,15 @@ def _get_few_shot_examples(
     Retrieve few-shot examples via RAG embedding similarity.
 
     Returns a list of processed few-shot examples for the evaluator.
-    Returns empty list if retrieval fails or no org context.
+    Returns empty list if retrieval fails or the admitted run lacks tenant scope.
+    The caller supplies the executing EvalRequest's scope, not template ownership
+    or ambient request context. Legacy unbound runs receive no feedback.
     """
     if not organization_id:
-        # print(f"[FEEDBACK RETRIEVAL] Skipped — no organization_id for eval_template={eval_template.id}", flush=True)
+        logger.warning("feedback_retrieval_missing_organization")
+        return []
+    if not workspace_id:
+        logger.warning("feedback_retrieval_missing_workspace")
         return []
 
     try:
@@ -118,8 +121,7 @@ def _get_few_shot_examples(
                 inputs=input_values,
                 input_cols=input_keys,
                 organization_id=organization_id,
-                # Feedback retrieval is org-scoped; writes still tag workspace_id.
-                workspace_id=None,
+                workspace_id=workspace_id,
             )
             # print(f"[FEEDBACK RETRIEVAL] RAG returned {len(examples)} examples for eval_template={eval_template.id}", flush=True)
 
@@ -130,13 +132,13 @@ def _get_few_shot_examples(
                 corrected_label_col_name="feedback_value",
             )
 
-            shot_count = (
+            shot_count = (  # noqa: F841
                 len(few_shots)
                 if isinstance(few_shots, list)
                 else (1 if few_shots else 0)
             )
             # print(f"[FEEDBACK RETRIEVAL] Processed {shot_count} few-shot content blocks for eval_template={eval_template.id}", flush=True)
-            return few_shots
+            return few_shots or []
         finally:
             embedding_manager.close()
 

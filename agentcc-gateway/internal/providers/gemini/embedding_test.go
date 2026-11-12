@@ -96,11 +96,10 @@ func TestTranslateSingleEmbedResponse(t *testing.T) {
 		t.Errorf("embedding length = %d, want 3", len(values))
 	}
 
-	if resp.Usage == nil {
-		t.Fatal("Usage should not be nil")
-	}
-	if resp.Usage.PromptTokens != 0 { // Gemini doesn't provide token counts
-		t.Errorf("PromptTokens = %d, want 0", resp.Usage.PromptTokens)
+	// The upstream reported no usage: none is invented here (the handler
+	// asks EstimateEmbeddingUsage for an estimate it marks as one).
+	if resp.Usage != nil {
+		t.Errorf("Usage = %+v, want nil when the upstream reports none", *resp.Usage)
 	}
 }
 
@@ -143,12 +142,9 @@ func TestTranslateBatchEmbedResponse(t *testing.T) {
 		t.Errorf("Data[1].Index = %d, want 1", resp.Data[1].Index)
 	}
 
-	if resp.Usage == nil {
-		t.Fatal("Usage should not be nil")
-	}
-	// Gemini doesn't provide token counts — expect 0.
-	if resp.Usage.TotalTokens != 0 {
-		t.Errorf("TotalTokens = %d, want 0", resp.Usage.TotalTokens)
+	// The upstream reported no usage: none is invented here.
+	if resp.Usage != nil {
+		t.Errorf("Usage = %+v, want nil when the upstream reports none", *resp.Usage)
 	}
 }
 

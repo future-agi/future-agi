@@ -8,9 +8,13 @@ import {
   Tabs,
   Tab,
   Skeleton,
+  Tooltip,
 } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
+import ErrorState from "src/components/error-state";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { readQuery, endpoints } from "src/utils/axios";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
@@ -26,8 +30,10 @@ import { useParams } from "react-router";
 import { useTraceDrawerStore } from "./useTraceDrawerStore";
 import { formatMs } from "src/utils/utils";
 import InlineAnnotator from "src/components/InlineAnnotator";
+import { CaptureCoverageNotice } from "src/components/traceDetail/TraceDetailPanel";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { formatCost } from "../LLMTracing/formatters";
+import { observedUsageExplanation } from "../LLMTracing/Renderers/ObservedUsageValue";
 
 function a11yProps(index) {
   return {
@@ -71,12 +77,16 @@ const TracesDrawer = ({
     data: queryData,
     isPlaceholderData,
     isLoading,
+    isError,
+    error,
+    refetch,
     fetchNextPage,
     isFetchingNextPage,
     isFetching,
   } = useInfiniteQuery({
     queryKey: [
       "traceSession",
+      "capture-coverage-v1",
       activeSessionId,
       userIdForUserMode,
       currentWorkspaceId,
@@ -84,19 +94,16 @@ const TracesDrawer = ({
     ],
     queryFn: ({ pageParam }) => {
       if (!contextInScope) throw new Error("Session list workspace changed");
-      return readQuery(
-        endpoints.project.traceSessionQuery(activeSessionId),
-        {
-          params: {
-            page_number: pageParam,
-            page_size: 10,
-            ...(userIdForUserMode ? { user_id: userIdForUserMode } : {}),
-            ...(navigationContext !== undefined
-              ? { navigation_context: JSON.stringify(navigationContext) }
-              : {}),
-          },
+      return readQuery(endpoints.project.traceSessionQuery(activeSessionId), {
+        params: {
+          page_number: pageParam,
+          page_size: 10,
+          ...(userIdForUserMode ? { user_id: userIdForUserMode } : {}),
+          ...(navigationContext !== undefined
+            ? { navigation_context: JSON.stringify(navigationContext) }
+            : {}),
         },
-      );
+      });
     },
     getNextPageParam: (page, _, pageParams) => {
       return page.data?.result?.next ? pageParams + 1 : null;
@@ -131,6 +138,8 @@ const TracesDrawer = ({
 
   const sessionMetadata =
     _traceDetail?.pages[0]?.data?.result?.session_metadata;
+  const captureCoverage =
+    _traceDetail?.pages[0]?.data?.result?.capture_coverage;
   const traceDetail =
     _traceDetail?.pages?.reduce((acc, page) => {
       logger.debug({ page });
@@ -158,12 +167,19 @@ const TracesDrawer = ({
     setActiveTab(0);
   };
 
-  // Separate loading states
-  const isInitialLoading = isLoading && !_traceDetail;
+  // Separate loading states. A Retry after a failed read with no rows
+  // counts as loading too, so the button never looks inert.
+  const isInitialLoading =
+    (isLoading || (isError && isFetching)) && !_traceDetail;
+  // A failed read with nothing loaded is an error, not an empty session.
+  // Loaded rows stay visible when only a later page fails.
+  const isLoadFailed = isError && !isFetching && !_traceDetail;
   const isNavigationLoading =
     isFetching && !isFetchingNextPage && !sessionMetadata;
   const isNextLoading = isNavigationLoading && navigationDirection === "next";
   const isPrevLoading = isNavigationLoading && navigationDirection === "prev";
+
+  const covered = useDrawerCovered(open);
 
   React.useEffect(() => {
     if (!isFetching && navigationDirection) {
@@ -171,13 +187,16 @@ const TracesDrawer = ({
     }
   }, [isFetching, navigationDirection]);
 
+  // The drawer stops short of the left edge on purpose (click there to
+  // close), so it keeps the theme's backdrop: the strip of page left showing
+  // is dimmed, not a live-looking slice of the sidebar.
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={handleClose}
-      BackdropProps={{ invisible: true }}
       sx={{
+        ...coveredDrawerSx(covered),
         width: "97.5vw",
         flexShrink: 0,
         "& .MuiDrawer-paper": {
@@ -260,20 +279,14 @@ const TracesDrawer = ({
                         : "N/A"}
                     </Typography>
                   }
-                  icon={<Iconify icon="radix-icons:clock" width={14} />}
+                  icon={<Iconify icon="solar:clock-circle-linear" width={14} />}
                   sx={{
                     border: "1px solid",
                     borderColor: "divider",
                     backgroundColor: "background.default",
                     color: "text.secondary",
-                    height: "25px",
-                    paddingX: 0.5,
-                    borderRadius: "8px",
                     "& .MuiChip-icon": {
-                      color:
-                        theme.palette.mode === "light"
-                          ? "text.primary"
-                          : "text.secondary",
+                      color: "text.secondary",
                     },
                     "&:hover": {
                       backgroundColor: "background.paper",
@@ -288,10 +301,35 @@ const TracesDrawer = ({
                       sx={{ color: "text.primary" }}
                       fontWeight={"fontWeightRegular"}
                     >
-                      Total Cost:{" "}
+                      {"Total Cost: "}
                       {sessionMetadata?.total_cost == null
                         ? "N/A"
                         : formatCost(sessionMetadata.total_cost)}
+                      {captureCoverage?.coverage_unknown && "*"}
+                      {captureCoverage?.coverage_unknown && (
+                        <Tooltip
+                          title={observedUsageExplanation(
+                            captureCoverage.request_count,
+                          )}
+                          arrow
+                          placement="bottom"
+                        >
+                          <Box
+                            component="span"
+                            sx={{
+                              display: "inline-flex",
+                              verticalAlign: "middle",
+                              ml: 0.5,
+                            }}
+                          >
+                            <Iconify
+                              icon="solar:question-circle-linear"
+                              width={14}
+                              color="text.secondary"
+                            />
+                          </Box>
+                        </Tooltip>
+                      )}
                     </Typography>
                   }
                   icon={
@@ -309,9 +347,6 @@ const TracesDrawer = ({
                     borderColor: "divider",
                     backgroundColor: "background.default",
                     color: "text.secondary",
-                    height: "25px",
-                    paddingX: 0.5,
-                    borderRadius: "8px",
                     "& .MuiChip-icon": {
                       filter:
                         theme.palette.mode === "light"
@@ -342,9 +377,6 @@ const TracesDrawer = ({
                     borderColor: "divider",
                     backgroundColor: "background.default",
                     color: "text.secondary",
-                    height: "25px",
-                    paddingX: 0.5,
-                    borderRadius: "8px",
                     "&:hover": {
                       backgroundColor: "background.paper",
                       borderColor: "divider",
@@ -372,9 +404,6 @@ const TracesDrawer = ({
                     borderColor: "divider",
                     backgroundColor: "background.default",
                     color: "text.secondary",
-                    height: "25px",
-                    paddingX: 0.5,
-                    borderRadius: "8px",
                     "&:hover": {
                       backgroundColor: "background.paper",
                       borderColor: "divider",
@@ -392,20 +421,14 @@ const TracesDrawer = ({
                         User ID: {sessionMetadata.user_id}
                       </Typography>
                     }
-                    icon={<Iconify icon="mdi:account-outline" width={14} />}
+                    icon={<Iconify icon="solar:user-linear" width={14} />}
                     sx={{
                       border: "1px solid",
                       borderColor: "divider",
                       backgroundColor: "background.default",
                       color: "text.secondary",
-                      height: "25px",
-                      paddingX: 0.5,
-                      borderRadius: "8px",
                       "& .MuiChip-icon": {
-                        color:
-                          theme.palette.mode === "light"
-                            ? "text.primary"
-                            : "text.secondary",
+                        color: "text.secondary",
                       },
                       "&:hover": {
                         backgroundColor: "background.paper",
@@ -417,6 +440,7 @@ const TracesDrawer = ({
               </>
             )}
           </Box>
+          <CaptureCoverageNotice coverage={captureCoverage} />
           <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
             <Tabs
               value={activeTab}
@@ -425,14 +449,7 @@ const TracesDrawer = ({
               textColor="primary"
               indicatorColor="primary"
               sx={{
-                typography: "s2",
-                "& .Mui-selected": {
-                  color: "primary.main",
-                  fontWeight: "fontWeightSemiBold",
-                },
-                "& .MuiTabs-indicator": {
-                  backgroundColor: "primary.main",
-                },
+                boxShadow: "none",
                 "& .MuiTab-root": {
                   paddingX: 1.75,
                 },
@@ -441,11 +458,7 @@ const TracesDrawer = ({
               <Tab
                 icon={
                   <SvgColor
-                    sx={{
-                      bgcolor: "primary.main",
-                      height: "16px",
-                      width: "16px",
-                    }}
+                    sx={{ width: "16px" }}
                     src={"/assets/icons/ic_message.svg"}
                   />
                 }
@@ -454,13 +467,7 @@ const TracesDrawer = ({
                 {...a11yProps(0)}
               />
               <Tab
-                icon={
-                  <Iconify
-                    icon="solar:chart-square-bold"
-                    width={16}
-                    sx={{ color: "primary.main" }}
-                  />
-                }
+                icon={<Iconify icon="solar:chart-square-bold" width={16} />}
                 iconPosition="start"
                 label="Evals"
                 {...a11yProps(1)}
@@ -488,7 +495,15 @@ const TracesDrawer = ({
           }}
           ref={scrollRef}
         >
-          {activeTab === 0 ? (
+          {activeTab === 0 && isLoadFailed ? (
+            <ErrorState
+              role="alert"
+              title="Failed to load session"
+              detail={getRequestErrorMessage(error, "Please try again.")}
+              onRetry={() => refetch()}
+              sx={{ height: "auto", flexGrow: 0 }}
+            />
+          ) : activeTab === 0 ? (
             <SessionHistory
               traceDetail={traceDetail}
               loading={isInitialLoading}

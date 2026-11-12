@@ -14,6 +14,7 @@ import importlib
 
 import pytest
 from django.apps import apps as django_apps
+from django.db import connection
 from rest_framework import serializers
 
 import model_hub.tasks  # noqa: F401
@@ -55,7 +56,7 @@ def _make_task(project, filters):
 
 
 def _run_migration():
-    migration.forwards(django_apps, None)
+    migration.forwards(django_apps, connection.schema_editor())
 
 
 @pytest.mark.django_db

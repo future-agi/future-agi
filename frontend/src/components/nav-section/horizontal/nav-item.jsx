@@ -15,6 +15,15 @@ import Iconify from "../../iconify";
 
 // ----------------------------------------------------------------------
 
+// Match vertical navigation: the anchor owns keyboard focus, not its visual row.
+const NAV_LINK_FOCUS = {
+  outline: "none",
+  "&:focus-visible": {
+    outline: (theme) => `2px solid ${theme.palette.primary.main}`,
+    outlineOffset: "-2px",
+  },
+};
+
 // eslint-disable-next-line react/display-name
 const NavItem = forwardRef(
   (
@@ -31,6 +40,7 @@ const NavItem = forwardRef(
       open,
       depth,
       active,
+      "aria-current": ariaCurrent,
       hasChild,
       externalLink,
       currentRole = "admin",
@@ -48,6 +58,7 @@ const NavItem = forwardRef(
         active={active}
         disabled={disabled}
         {...other}
+        {...(!disabled && { tabIndex: -1, role: "presentation" })}
       >
         {icon && (
           <Box component="span" className="icon">
@@ -63,7 +74,11 @@ const NavItem = forwardRef(
 
         {caption && (
           <Tooltip title={caption} arrow>
-            <Iconify width={16} icon="eva:info-outline" className="caption" />
+            <Iconify
+              width={16}
+              icon="solar:info-circle-linear"
+              className="caption"
+            />
           </Tooltip>
         )}
 
@@ -79,8 +94,8 @@ const NavItem = forwardRef(
             className="arrow"
             icon={
               subItem
-                ? "eva:arrow-ios-forward-fill"
-                : "eva:arrow-ios-downward-fill"
+                ? "solar:alt-arrow-right-linear"
+                : "solar:alt-arrow-down-linear"
             }
           />
         )}
@@ -114,6 +129,7 @@ const NavItem = forwardRef(
           color="inherit"
           underline="none"
           sx={{
+            ...NAV_LINK_FOCUS,
             ...(disabled && {
               cursor: "default",
             }),
@@ -127,9 +143,11 @@ const NavItem = forwardRef(
       <Link
         component={RouterLink}
         href={path}
+        aria-current={ariaCurrent || (active ? "page" : undefined)}
         color="inherit"
         underline="none"
         sx={{
+          ...NAV_LINK_FOCUS,
           ...(disabled && {
             cursor: "default",
           }),
@@ -142,6 +160,7 @@ const NavItem = forwardRef(
 );
 
 NavItem.propTypes = {
+  "aria-current": PropTypes.string,
   open: PropTypes.bool,
   active: PropTypes.bool,
   path: PropTypes.string,

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
+import ButtonBase from "@mui/material/ButtonBase";
 import PropTypes from "prop-types";
 import { useNavigate, useLocation } from "react-router-dom";
 import Box from "@mui/material/Box";
@@ -9,9 +10,17 @@ import Menu from "@mui/material/Menu";
 import MenuItem from "@mui/material/MenuItem";
 import InputAdornment from "@mui/material/InputAdornment";
 import CircularProgress from "@mui/material/CircularProgress";
-import { alpha, useTheme } from "@mui/material/styles";
+import Button from "@mui/material/Button";
+import Dialog from "@mui/material/Dialog";
+import DialogTitle from "@mui/material/DialogTitle";
+import DialogContent from "@mui/material/DialogContent";
+import DialogActions from "@mui/material/DialogActions";
+import { useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import { enqueueSnackbar } from "src/components/snackbar";
+import ConfirmDialog from "src/sections/common/ux/ConfirmDialog";
 import useFalconStore from "../store/useFalconStore";
+import { captureFalconRequest } from "../store/falconRequestGuard";
 import {
   fetchConversations,
   getConversation,
@@ -58,14 +67,7 @@ function groupByDate(conversations) {
 // ---------------------------------------------------------------------------
 // ConversationItem — isolated for clean hover behavior
 // ---------------------------------------------------------------------------
-function ConversationItem({
-  conv,
-  isActive,
-  onSelect,
-  onMenuOpen,
-  theme,
-  isDark,
-}) {
+function ConversationItem({ conv, isActive, onSelect, onMenuOpen, theme }) {
   return (
     <Box
       onClick={() => onSelect(conv.id)}
@@ -76,32 +78,13 @@ function ConversationItem({
         height: 36,
         px: 1.5,
         mx: 0.5,
-        borderRadius: "8px",
+        borderRadius: "6px",
         cursor: "pointer",
         transition: "background 0.15s ease",
-        bgcolor: isActive
-          ? isDark
-            ? alpha(theme.palette.common.white, 0.08)
-            : alpha(theme.palette.common.black, 0.06)
-          : "transparent",
+        bgcolor: isActive ? "action.selected" : "transparent",
         "&:hover": {
-          bgcolor: isDark
-            ? alpha(theme.palette.common.white, 0.06)
-            : alpha(theme.palette.common.black, 0.04),
+          bgcolor: "action.hover",
         },
-        // Left accent bar for active item
-        ...(isActive && {
-          "&::before": {
-            content: '""',
-            position: "absolute",
-            left: 0,
-            top: "20%",
-            bottom: "20%",
-            width: 3,
-            borderRadius: 2,
-            bgcolor: "primary.main",
-          },
-        }),
         // Hover: show action button with gradient fade
         "&:hover .conv-actions": {
           opacity: 1,
@@ -113,7 +96,7 @@ function ConversationItem({
         sx={{
           flex: 1,
           fontSize: 13,
-          fontWeight: isActive ? 600 : 400,
+          fontWeight: isActive ? 500 : 400,
           color: "text.primary",
           lineHeight: 1.3,
         }}
@@ -135,31 +118,24 @@ function ConversationItem({
           pl: 3,
           opacity: 0,
           transition: "opacity 0.15s ease",
-          background: isActive
-            ? `linear-gradient(to right, transparent, ${
-                isDark
-                  ? alpha(theme.palette.common.white, 0.08)
-                  : alpha(theme.palette.common.black, 0.06)
-              } 40%)`
-            : `linear-gradient(to right, transparent, ${
-                isDark
-                  ? alpha(theme.palette.common.white, 0.06)
-                  : alpha(theme.palette.common.black, 0.04)
-              } 40%)`,
-          borderRadius: "0 8px 8px 0",
+          background: `linear-gradient(to right, transparent, ${
+            isActive
+              ? theme.palette.action.selected
+              : theme.palette.action.hover
+          } 40%)`,
+          borderRadius: "0 6px 6px 0",
         }}
       >
         <IconButton
           size="small"
+          aria-label="Chat options"
           onClick={(e) => onMenuOpen(e, conv.id)}
           sx={{
-            width: 24,
-            height: 24,
             color: "text.secondary",
             "&:hover": { color: "text.primary" },
           }}
         >
-          <Iconify icon="mdi:dots-horizontal" width={16} />
+          <Iconify icon="solar:menu-dots-linear" width={16} />
         </IconButton>
       </Box>
     </Box>
@@ -175,7 +151,84 @@ ConversationItem.propTypes = {
   onSelect: PropTypes.func.isRequired,
   onMenuOpen: PropTypes.func.isRequired,
   theme: PropTypes.object.isRequired,
-  isDark: PropTypes.bool,
+};
+
+// ---------------------------------------------------------------------------
+// RenameChatDialog — Enter saves, Escape cancels; an empty or unchanged name
+// is never sent.
+// ---------------------------------------------------------------------------
+// The server's limit for a conversation title.
+const TITLE_MAX_LENGTH = 255;
+
+function RenameChatDialog({ open, title, saving, onCancel, onSave }) {
+  const [value, setValue] = useState(title);
+  const inputRef = useRef(null);
+
+  // Start from the chat's current name each time the dialog opens.
+  useEffect(() => {
+    if (open) setValue(title);
+  }, [open, title]);
+
+  const next = value.trim();
+  const canSave = !saving && next.length > 0 && next !== title.trim();
+  const submit = () => {
+    if (canSave) onSave(next);
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onClose={saving ? undefined : onCancel}
+      fullWidth
+      maxWidth="xs"
+      // The menu gives focus back to its button as it closes, so put focus
+      // in the field (name selected) once the dialog is in.
+      TransitionProps={{
+        onEntered: () => {
+          inputRef.current?.focus();
+          inputRef.current?.select();
+        },
+      }}
+    >
+      <DialogTitle sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
+        Rename chat
+      </DialogTitle>
+      <DialogContent>
+        <TextField
+          inputRef={inputRef}
+          fullWidth
+          size="small"
+          label="Chat name"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+          inputProps={{ maxLength: TITLE_MAX_LENGTH }}
+          sx={{ mt: 1 }}
+        />
+      </DialogContent>
+      <DialogActions>
+        <Button color="inherit" onClick={onCancel} disabled={saving}>
+          Cancel
+        </Button>
+        <Button variant="contained" onClick={submit} disabled={!canSave}>
+          {saving ? "Saving…" : "Save"}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+RenameChatDialog.propTypes = {
+  open: PropTypes.bool.isRequired,
+  title: PropTypes.string.isRequired,
+  saving: PropTypes.bool,
+  onCancel: PropTypes.func.isRequired,
+  onSave: PropTypes.func.isRequired,
 };
 
 // ---------------------------------------------------------------------------
@@ -183,9 +236,14 @@ ConversationItem.propTypes = {
 // ---------------------------------------------------------------------------
 const PAGE_SIZE = 30;
 
-export default function ChatListPanel() {
+// A chat deleted elsewhere, or kept in another workspace, answers "not found".
+const CHAT_UNAVAILABLE =
+  "This chat isn't available. It may have been deleted, or it may be in another workspace.";
+
+// onResume(conversationId) asks the live connection to replay an answer that
+// is still being written for the chat the user just opened.
+export default function ChatListPanel({ onResume }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const isOnFalconPage = pathname.startsWith("/dashboard/falcon-ai");
@@ -197,6 +255,7 @@ export default function ChatListPanel() {
     (s) => s.setCurrentConversation,
   );
   const setMessages = useFalconStore((s) => s.setMessages);
+  const addMessage = useFalconStore((s) => s.addMessage);
   const setStreaming = useFalconStore((s) => s.setStreaming);
   const resetChat = useFalconStore((s) => s.resetChat);
 
@@ -205,15 +264,42 @@ export default function ChatListPanel() {
   const [menuConvId, setMenuConvId] = useState(null);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
+  // Each dialog keeps its chat after closing so its text does not change
+  // while it fades out.
+  const [renameTarget, setRenameTarget] = useState({ id: null, title: "" });
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState({ id: null, title: "" });
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const searchTimerRef = useRef(null);
   const loadingRef = useRef(false);
   const scrollRef = useRef(null);
+
+  // Local pagination/search state must be invalidated along with store history.
+  useEffect(
+    () =>
+      useFalconStore.subscribe((state, previous) => {
+        if (state.resetGeneration === previous.resetGeneration) return;
+        clearTimeout(searchTimerRef.current);
+        loadingRef.current = false;
+        setLoading(false);
+        setHasMore(true);
+        setSearch("");
+        setMenuAnchor(null);
+        setMenuConvId(null);
+        setRenameOpen(false);
+        setDeleteOpen(false);
+      }),
+    [],
+  );
 
   // ── Fetch ────────────────────────────────────────────────────────────
   const loadConversations = useCallback(
     async (offset = 0, searchQuery = "", append = false) => {
       if (loadingRef.current) return;
-      loadingRef.current = true;
+      const isCurrent = captureFalconRequest();
+      loadingRef.current = isCurrent;
       setLoading(true);
       try {
         const data = await fetchConversations({
@@ -221,6 +307,7 @@ export default function ChatListPanel() {
           offset,
           search: searchQuery,
         });
+        if (!isCurrent() || loadingRef.current !== isCurrent) return;
         const results = data.results || [];
         if (append) {
           const current = useFalconStore.getState().conversations || [];
@@ -234,8 +321,10 @@ export default function ChatListPanel() {
       } catch {
         /* silent */
       } finally {
-        setLoading(false);
-        loadingRef.current = false;
+        if (loadingRef.current === isCurrent) {
+          setLoading(false);
+          loadingRef.current = false;
+        }
       }
     },
     [setConversations],
@@ -247,7 +336,9 @@ export default function ChatListPanel() {
 
   useEffect(() => {
     clearTimeout(searchTimerRef.current);
+    const isCurrent = captureFalconRequest();
     searchTimerRef.current = setTimeout(() => {
+      if (!isCurrent()) return;
       setHasMore(true);
       loadConversations(0, search);
     }, 300);
@@ -274,12 +365,19 @@ export default function ChatListPanel() {
 
   const handleSelect = useCallback(
     async (id) => {
+      // An answer may still be written in the chat being left. It does not
+      // show in another chat, and Stop would cancel it there, so the chosen
+      // chat starts with its message box usable. An answer still being
+      // written in the chosen chat is picked up again below.
+      setStreaming(false);
       setCurrentConversation(id);
+      const isCurrent = captureFalconRequest({ conversation: true });
       useFalconStore.getState().setShowCustomize(false);
       if (isOnFalconPage)
         navigate(`/dashboard/falcon-ai/${id}`, { replace: true });
       try {
         const data = await getConversation(id);
+        if (!isCurrent()) return;
         const conv = data.result || data;
         // Normalize camelCase API response to snake_case for components
         const msgs = (conv.messages || []).map((m) => ({
@@ -291,19 +389,47 @@ export default function ChatListPanel() {
         setMessages(msgs);
         try {
           const s = await checkStreamStatus(id);
-          if (["running", "done"].includes(s.result?.stream_status))
-            setStreaming(true, null);
+          if (!isCurrent()) return;
+          // "done" stays reported for 5 minutes after an answer finishes, and
+          // that answer is already in the messages loaded above: leave the
+          // message box alone. Only an answer still being written (its
+          // question is the last saved message) gets a reply that fills in as
+          // the server replays it, with Stop available meanwhile.
+          if (
+            s.result?.stream_status === "running" &&
+            msgs[msgs.length - 1]?.role === "user"
+          ) {
+            const replyId = `assistant-${Date.now()}`;
+            addMessage({
+              id: replyId,
+              role: "assistant",
+              content: "",
+              created_at: new Date().toISOString(),
+            });
+            setStreaming(true, replyId);
+            onResume?.(id);
+          }
         } catch {
           /* non-critical */
         }
-      } catch {
-        /* failed */
+      } catch (error) {
+        // Not found: the chat was deleted (or is in another workspace). Say so
+        // and start a new chat, so the next message is not sent to it.
+        if (!isCurrent() || error?.statusCode !== 404) return;
+        const current = useFalconStore.getState().conversations || [];
+        setConversations(current.filter((c) => c.id !== id));
+        enqueueSnackbar(CHAT_UNAVAILABLE, { variant: "error" });
+        handleNewChat();
       }
     },
     [
       setCurrentConversation,
+      setConversations,
       setMessages,
+      addMessage,
       setStreaming,
+      handleNewChat,
+      onResume,
       isOnFalconPage,
       navigate,
     ],
@@ -319,35 +445,73 @@ export default function ChatListPanel() {
     setMenuConvId(null);
   };
 
-  const handleDelete = async () => {
-    if (!menuConvId) return;
-    try {
-      await deleteConversation(menuConvId);
-      setConversations(conversations.filter((c) => c.id !== menuConvId));
-      if (currentConversationId === menuConvId) handleNewChat();
-    } catch {
-      /* silent */
-    }
+  const openRename = () => {
+    const conv = conversations.find((c) => c.id === menuConvId);
     handleMenuClose();
+    if (!conv) return;
+    setRenameTarget({ id: conv.id, title: conv.title || "" });
+    setRenameOpen(true);
   };
 
-  const handleRename = async () => {
-    if (!menuConvId) return;
+  const openDelete = () => {
     const conv = conversations.find((c) => c.id === menuConvId);
-    const newTitle = window.prompt("Rename conversation", conv?.title || "");
-    if (newTitle && newTitle !== conv?.title) {
-      try {
-        await renameConversation(menuConvId, newTitle);
-        setConversations(
-          conversations.map((c) =>
-            c.id === menuConvId ? { ...c, title: newTitle } : c,
-          ),
-        );
-      } catch {
-        /* silent */
-      }
-    }
     handleMenuClose();
+    if (!conv) return;
+    setDeleteTarget({ id: conv.id, title: conv.title || "Untitled" });
+    setDeleteOpen(true);
+  };
+
+  // List writes read the store when the request ends: the list may have
+  // changed (more pages, a new chat) while the request was running.
+  const handleRename = async (title) => {
+    const { id } = renameTarget;
+    if (!id || renaming) return;
+    const isCurrent = captureFalconRequest();
+    setRenaming(true);
+    try {
+      await renameConversation(id, title);
+      if (!isCurrent()) return;
+      const current = useFalconStore.getState().conversations || [];
+      setConversations(current.map((c) => (c.id === id ? { ...c, title } : c)));
+      setRenameOpen(false);
+    } catch {
+      // After a workspace reset the user has already been told why.
+      if (!isCurrent()) return;
+      // The dialog stays open with the typed name, so Save tries again.
+      enqueueSnackbar("Couldn't rename the chat. Try again.", {
+        variant: "error",
+      });
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    const { id } = deleteTarget;
+    if (!id || deleting) return;
+    const isCurrent = captureFalconRequest();
+    setDeleting(true);
+    let deleted = true;
+    try {
+      await deleteConversation(id);
+    } catch (error) {
+      // Not found: the chat is already gone on the server.
+      deleted = error?.statusCode === 404;
+    } finally {
+      setDeleting(false);
+    }
+    // After a workspace reset the user has already been told why.
+    if (!isCurrent()) return;
+    setDeleteOpen(false);
+    if (!deleted) {
+      enqueueSnackbar("Couldn't delete the chat. Try again.", {
+        variant: "error",
+      });
+      return;
+    }
+    const state = useFalconStore.getState();
+    setConversations((state.conversations || []).filter((c) => c.id !== id));
+    if (state.currentConversationId === id) handleNewChat();
   };
 
   const grouped = search
@@ -358,15 +522,14 @@ export default function ChatListPanel() {
   return (
     <Box
       sx={{
-        width: 260,
-        minWidth: 260,
+        width: 224,
+        minWidth: 224,
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
-        borderRight: (t) => `1px solid ${t.palette.divider}`,
-        bgcolor: isDark
-          ? "background.default"
-          : alpha(theme.palette.grey[500], 0.04),
+        borderRight: "1px solid",
+        borderColor: "border.default",
+        bgcolor: "background.paper",
         height: "100%",
       }}
     >
@@ -381,54 +544,56 @@ export default function ChatListPanel() {
           gap: 0.25,
         }}
       >
-        <Box
+        <ButtonBase
+          component="div"
           onClick={handleNewChat}
           sx={{
+            justifyContent: "flex-start",
+            textAlign: "left",
             display: "flex",
             alignItems: "center",
             gap: 1,
             px: 1.5,
-            py: 1,
-            borderRadius: "10px",
+            height: 36,
+            borderRadius: "6px",
             cursor: "pointer",
             color: "text.primary",
             "&:hover": {
-              bgcolor: isDark
-                ? alpha(theme.palette.common.white, 0.06)
-                : alpha(theme.palette.common.black, 0.04),
+              bgcolor: "action.hover",
             },
           }}
         >
-          <Iconify icon="mdi:plus" width={18} />
+          <Iconify icon="solar:add-linear" width={16} />
           <Typography sx={{ fontSize: 13, fontWeight: 500 }}>
             New chat
           </Typography>
-        </Box>
+        </ButtonBase>
 
-        <Box
+        <ButtonBase
+          component="div"
           onClick={() => useFalconStore.getState().setShowCustomize(true)}
           sx={{
+            justifyContent: "flex-start",
+            textAlign: "left",
             display: "flex",
             alignItems: "center",
             gap: 1,
             px: 1.5,
-            py: 1,
-            borderRadius: "10px",
+            height: 36,
+            borderRadius: "6px",
             cursor: "pointer",
             color: "text.secondary",
             "&:hover": {
-              bgcolor: isDark
-                ? alpha(theme.palette.common.white, 0.06)
-                : alpha(theme.palette.common.black, 0.04),
+              bgcolor: "action.hover",
               color: "text.primary",
             },
           }}
         >
-          <Iconify icon="mdi:tune-variant" width={18} />
+          <Iconify icon="solar:tuning-2-linear" width={16} />
           <Typography sx={{ fontSize: 13, fontWeight: 500 }}>
             Customize
           </Typography>
-        </Box>
+        </ButtonBase>
       </Box>
 
       {/* ── Search ─────────────────────────────────────────────────── */}
@@ -443,7 +608,7 @@ export default function ChatListPanel() {
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="mdi:magnify"
+                  icon="solar:magnifier-linear"
                   width={16}
                   sx={{ color: "text.disabled" }}
                 />
@@ -452,12 +617,8 @@ export default function ChatListPanel() {
             ...(search && {
               endAdornment: (
                 <InputAdornment position="end">
-                  <IconButton
-                    size="small"
-                    onClick={() => setSearch("")}
-                    sx={{ width: 20, height: 20 }}
-                  >
-                    <Iconify icon="mdi:close" width={14} />
+                  <IconButton size="small" onClick={() => setSearch("")}>
+                    <Iconify icon="solar:close-linear" width={14} />
                   </IconButton>
                 </InputAdornment>
               ),
@@ -467,16 +628,14 @@ export default function ChatListPanel() {
             "& .MuiInputBase-root": {
               fontSize: 13,
               height: 36,
-              borderRadius: "10px",
+              borderRadius: "8px",
               bgcolor: "transparent",
             },
             "& .MuiOutlinedInput-notchedOutline": {
               borderColor: "transparent",
             },
             "& .MuiInputBase-root:hover .MuiOutlinedInput-notchedOutline": {
-              borderColor: isDark
-                ? alpha(theme.palette.common.white, 0.12)
-                : alpha(theme.palette.common.black, 0.12),
+              borderColor: "border.default",
             },
             "& .MuiInputBase-root.Mui-focused .MuiOutlinedInput-notchedOutline":
               {
@@ -499,9 +658,7 @@ export default function ChatListPanel() {
           // Slim scrollbar
           "&::-webkit-scrollbar": { width: 4 },
           "&::-webkit-scrollbar-thumb": {
-            bgcolor: isDark
-              ? alpha(theme.palette.common.white, 0.15)
-              : alpha(theme.palette.common.black, 0.15),
+            bgcolor: "action.hover",
             borderRadius: 2,
           },
           "&::-webkit-scrollbar-track": { bgcolor: "transparent" },
@@ -513,9 +670,9 @@ export default function ChatListPanel() {
               <Typography
                 key={`h-${entry.label}`}
                 sx={{
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: 600,
-                  color: "text.disabled",
+                  color: "text.tertiary",
                   px: 2,
                   pt: idx === 0 ? 0.5 : 2,
                   pb: 0.5,
@@ -535,7 +692,6 @@ export default function ChatListPanel() {
               onSelect={handleSelect}
               onMenuOpen={handleMenuOpen}
               theme={theme}
-              isDark={isDark}
             />
           );
         })}
@@ -568,33 +724,45 @@ export default function ChatListPanel() {
         onClose={handleMenuClose}
         PaperProps={{
           sx: {
-            minWidth: 160,
-            borderRadius: "10px",
-            boxShadow: isDark
-              ? `0 4px 24px ${alpha(theme.palette.common.black, 0.5)}`
-              : `0 4px 24px ${alpha(theme.palette.common.black, 0.12)}`,
+            minWidth: 200,
+            borderRadius: "8px",
           },
         }}
       >
-        <MenuItem
-          onClick={handleRename}
-          sx={{ fontSize: 13, py: 0.75, gap: 1.5 }}
-        >
+        <MenuItem onClick={openRename} sx={{ py: 0.75, gap: 1.5 }}>
           <Iconify
-            icon="mdi:pencil-outline"
+            icon="solar:pen-linear"
             width={16}
             sx={{ color: "text.secondary" }}
           />
           Rename
         </MenuItem>
-        <MenuItem
-          onClick={handleDelete}
-          sx={{ fontSize: 13, py: 0.75, gap: 1.5, color: "error.main" }}
-        >
-          <Iconify icon="mdi:delete-outline" width={16} />
+        <MenuItem onClick={openDelete} sx={{ py: 0.75, gap: 1.5 }}>
+          <Iconify icon="solar:trash-bin-trash-linear" width={16} />
           Delete
         </MenuItem>
       </Menu>
+
+      <RenameChatDialog
+        open={renameOpen}
+        title={renameTarget.title}
+        saving={renaming}
+        onCancel={() => setRenameOpen(false)}
+        onSave={handleRename}
+      />
+
+      <ConfirmDialog
+        open={deleteOpen}
+        title={`Delete "${deleteTarget.title}"?`}
+        body="This removes the chat and its messages."
+        busy={deleting}
+        onConfirm={handleDelete}
+        onClose={() => setDeleteOpen(false)}
+      />
     </Box>
   );
 }
+
+ChatListPanel.propTypes = {
+  onResume: PropTypes.func,
+};

@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: neon
+version: 1.0.0
+name: Neon
+description: "Neon Postgres: projects, branches, SQL queries and schema changes."
+vendor:
+  name: Neon
+  domains: [neon.com]
+eeCategory: developer
+group: other
+categories: [developer, database]
+tags: [postgres, sql, database]
+docsUrl: https://neon.com/docs/ai/neon-mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://neon.com/docs/ai/neon-mcp-server
+    fetchedAt: 2026-10-21

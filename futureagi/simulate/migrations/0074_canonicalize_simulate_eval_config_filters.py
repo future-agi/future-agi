@@ -127,11 +127,11 @@ def _canonicalize_filter_list(filters):
 
 def canonicalize_simulate_eval_config_filters(apps, schema_editor):
     SimulateEvalConfig = apps.get_model("simulate", "SimulateEvalConfig")
-    for config in SimulateEvalConfig.objects.all().only("id", "filters").iterator():
+    for config in SimulateEvalConfig.objects.using(schema_editor.connection.alias).all().only("id", "filters").iterator():
         next_filters, changed = _canonicalize_filter_list(config.filters or [])
         if changed:
             config.filters = next_filters
-            config.save(update_fields=["filters"])
+            config.save(using=schema_editor.connection.alias, update_fields=["filters"])
 
 
 class Migration(migrations.Migration):

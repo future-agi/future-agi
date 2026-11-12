@@ -1,0 +1,44 @@
+# Firecrawl's MCP server with a Firecrawl API key as the bearer. The same
+# endpoint answers without a key in keyless mode (rate limited, Search, Scrape
+# and Parse only); a key reaches the full tool surface on the team's plan.
+schema: "connector-manifest/v1#provider"
+app: firecrawl
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.firecrawl.dev/v2/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+      help: "A Firecrawl API key, sent as a bearer token. It reaches the full tool surface on your team's plan."
+      helpUrl: https://docs.firecrawl.dev/mcp-server/keyless
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing:
+  model: vendor_plan
+  source: https://docs.firecrawl.dev/mcp-server
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.firecrawl.dev/mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.firecrawl.dev/mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://docs.firecrawl.dev/mcp-server/keyless
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

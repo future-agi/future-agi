@@ -15,6 +15,11 @@ from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
     EvalFilterMetadata,
 )
+from tracer.services.clickhouse.query_builders.trace_usage import (
+    SUMMARY_NAME,
+    usage_aggregate_sql,
+    usage_coverage_sql,
+)
 from tracer.services.clickhouse.v2.id_remap_sql import (
     bounded_survivor_map_subquery,
     literal_survivor_map_subquery,
@@ -216,6 +221,115 @@ def _touched_survivor_map_subquery(
             GROUP BY new_id
         )
         GROUP BY any_id
+    """
+
+
+def _latest_user_usage_sql(*, include_num_sessions: bool = False) -> str:
+    """Select usage, ownership and compact flags from ONE physical winner.
+
+    Attribute maps are inspected at the source, never retained in aggregate
+    state. Wrapping nullable fields in the row tuple also prevents argMax from
+    reviving an older non-null owner/end time.
+    """
+    coverage = usage_coverage_sql(attrs="spans.attrs_string", prefix="spans.", include_summary=True)
+    known_fact = """(
+        spans.total_tokens > 0 OR spans.prompt_tokens > 0
+        OR spans.completion_tokens > 0 OR spans.observation_type = 'llm'
+        OR spans.cost != 0 OR spans.attrs_string['fi.usage.scope'] = 'turn'
+        OR spans.attrs_string['fi.cost.kind'] IN ('provider_reported', 'estimated')
+    )"""
+    fields = (
+        ("end_user_id", "spans.end_user_id"),
+        ("start_time", "spans.start_time"),
+        ("end_time", "spans.end_time"),
+        ("cost", "spans.cost"),
+        ("total_tokens", "spans.total_tokens"),
+        ("prompt_tokens", "spans.prompt_tokens"),
+        ("completion_tokens", "spans.completion_tokens"),
+        ("is_deleted", "spans.is_deleted"),
+        ("coverage", coverage),
+        ("known_cost_fact", known_fact),
+        ("parent_span_id", "spans.parent_span_id"),
+        ("name", f"if(spans.name = '{SUMMARY_NAME}', '{SUMMARY_NAME}', '')"),
+        (
+            "trace_session_id",
+            "spans.trace_session_id"
+            if include_num_sessions
+            else "CAST(NULL, 'Nullable(UUID)')",
+        ),
+        ("observation_type", "spans.observation_type"),
+    )
+    return ",\n".join(
+        [
+            "argMax(tuple("
+            + ", ".join(value for _, value in fields)
+            + "), spans._version) AS latest_usage_state",
+            "id AS latest_id",
+            *(
+                f"tupleElement(latest_usage_state, {index}) AS latest_{name}"
+                for index, (name, _) in enumerate(fields, 1)
+            ),
+        ]
+    )
+
+
+def _user_trace_usage_sql() -> str:
+    """Keep one complete usage array and summary proof per user/trace."""
+    return usage_aggregate_sql(
+        prefix="latest_",
+        coverage="latest_coverage",
+        known_cost_fact="latest_known_cost_fact",
+    )
+
+
+def _user_trace_metrics_projection() -> str:
+    """Explicit projection of the materialized singleton tuple (CH 25)."""
+    return ",\n".join(
+        f"tupleElement(trace_metrics, {index}) AS {column}"
+        for index, column in enumerate(
+            (
+                "known_cost_subtotal",
+                "known_cost_fact_count",
+                "unknown_cost_fact_count",
+                "usage_total_tokens",
+                "usage_prompt_tokens",
+                "usage_completion_tokens",
+            ),
+            1,
+        )
+    )
+
+
+def _user_trace_latency_ctes() -> str:
+    """Average one measured time envelope per canonical user/project/trace.
+
+    The input is already latest-live and window-fenced. Derive each measured
+    span's end from its start and latency so nullable latency winners stay
+    unknown rather than reviving an older duration. Integer microseconds keep
+    the bounds precise before converting the trace duration to milliseconds.
+    """
+    return """
+        trace_durations AS (
+            SELECT
+                end_user_id,
+                project_id,
+                trace_id,
+                if(
+                    countIf(isNotNull(latency_ms)) = 0,
+                    NULL,
+                    (
+                        max(toUnixTimestamp64Micro(start_time) + latency_ms * 1000)
+                        - minIf(toUnixTimestamp64Micro(start_time), isNotNull(latency_ms))
+                    ) / 1000.0
+                ) AS duration_ms
+            FROM resolved_candidate_spans
+            GROUP BY end_user_id, project_id, trace_id
+        ),
+        trace_latency_metrics AS (
+            SELECT end_user_id, avg(duration_ms) AS avg_trace_latency
+            FROM trace_durations
+            GROUP BY end_user_id
+        )
     """
 
 
@@ -1336,26 +1450,25 @@ class UserListQueryBuilder(BaseQueryBuilder):
         # resurrect an older version.  The first scan is only an identity
         # superset.  The second scan replays *all* versions of each selected
         # immutable identity and applies user/deletion predicates afterward.
-        embedded_session_state = (
-            "argMax(tuple(trace_session_id), _version).1 AS latest_trace_session_id,"
-            if self.include_num_sessions
-            else ""
-        )
         if self.include_num_sessions:
             # This presentation-only count deliberately skips canonical
             # session-remap folding. The manager labels it approximate and
             # never uses it to decide num_sessions filter membership.
             embedded_session_projection = """
-            uniqExactIf(
+            uniqExactIfState(
                 latest_trace_session_id,
                 isNotNull(latest_trace_session_id)
                 AND latest_trace_session_id != toUUID(
                     '00000000-0000-0000-0000-000000000000'
                 )
-            ) AS num_sessions,
+            ) AS session_count_state,
             """
+            merged_session_projection = (
+                "uniqExactIfMerge(session_count_state) AS num_sessions,"
+            )
         else:
-            embedded_session_projection = "toUInt64(0) AS num_sessions,"
+            embedded_session_projection = ""
+            merged_session_projection = "toUInt64(0) AS num_sessions,"
         # With scalar acquisition, the final INNER JOIN already applies this
         # dimension membership. Repeating it here expands the witness/dimension
         # CTE branch again. Keep it for unseeded reads to bound aggregation.
@@ -1433,15 +1546,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             toStartOfHour(start_time) AS identity_hour,
             trace_id,
             id,
-            argMax(tuple(end_user_id), _version).1 AS latest_end_user_id,
-            argMax(start_time, _version) AS latest_start_time,
-            argMax(tuple(end_time), _version).1 AS latest_end_time,
-            argMax(cost, _version) AS latest_cost,
-            argMax(total_tokens, _version) AS latest_total_tokens,
-            argMax(prompt_tokens, _version) AS latest_prompt_tokens,
-            argMax(completion_tokens, _version) AS latest_completion_tokens,
-            {embedded_session_state}
-            argMax(is_deleted, _version) AS latest_is_deleted
+            {_latest_user_usage_sql(include_num_sessions=self.include_num_sessions)}
         FROM spans
         PREWHERE {self._project_predicate("spans")}
           AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
@@ -1454,15 +1559,17 @@ class UserListQueryBuilder(BaseQueryBuilder):
             trace_id,
             id
     ),
-    exact_usage AS (
+    user_trace_usage AS (
+        SELECT project_id, trace_id, end_user_id, last_active,
+            {"session_count_state," if self.include_num_sessions else ""}
+            {_user_trace_metrics_projection()}
+        FROM (
         SELECT
+            project_id,
+            trace_id,
             {resolved_latest_eu} AS end_user_id,
             {embedded_session_projection}
-            sum(latest_cost) AS total_cost,
-            sum(toInt64(latest_total_tokens)) AS total_tokens,
-            sum(toInt64(latest_prompt_tokens)) AS input_tokens,
-            sum(toInt64(latest_completion_tokens)) AS output_tokens,
-            uniqExact(trace_id) AS num_traces,
+            {_user_trace_usage_sql()},
             max(latest_end_time) AS last_active
         FROM latest_candidate_spans
         LEFT JOIN eu_survivor_map AS span_eu_remap
@@ -1471,6 +1578,23 @@ class UserListQueryBuilder(BaseQueryBuilder):
           AND latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
           AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
           {usage_user_filter}
+        GROUP BY project_id, trace_id, end_user_id
+        )
+        ARRAY JOIN trace_usage_metrics AS trace_metrics
+    ),
+    exact_usage AS (
+        SELECT
+            end_user_id,
+            {merged_session_projection}
+            sum(known_cost_subtotal) AS total_cost,
+            sum(known_cost_fact_count) AS known_cost_fact_count,
+            sum(unknown_cost_fact_count) AS unknown_cost_fact_count,
+            sum(toInt64(usage_total_tokens)) AS total_tokens,
+            sum(toInt64(usage_prompt_tokens)) AS input_tokens,
+            sum(toInt64(usage_completion_tokens)) AS output_tokens,
+            uniqExact(trace_id) AS num_traces,
+            max(last_active) AS last_active
+        FROM user_trace_usage
         GROUP BY end_user_id
     )
         """
@@ -1519,6 +1643,10 @@ class UserListQueryBuilder(BaseQueryBuilder):
             SELECT
                 eu.user_id AS user_id,
                 coalesce(xu.total_cost, 0) AS total_cost,
+                xu.known_cost_fact_count AS known_cost_fact_count,
+                xu.unknown_cost_fact_count AS unknown_cost_fact_count,
+                if(xu.unknown_cost_fact_count = 0, xu.total_cost,
+                    CAST(NULL, 'Nullable(Float64)')) AS complete_cost,
                 coalesce(xu.total_tokens, 0) AS total_tokens,
                 coalesce(xu.input_tokens, 0) AS input_tokens,
                 coalesce(xu.output_tokens, 0) AS output_tokens,
@@ -1575,6 +1703,9 @@ class UserListQueryBuilder(BaseQueryBuilder):
         SELECT
             user_id,
             total_cost,
+            known_cost_fact_count,
+            unknown_cost_fact_count,
+            complete_cost,
             total_tokens,
             input_tokens,
             output_tokens,
@@ -1901,7 +2032,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 "argMax(tuple(trace_session_id), _version).1 AS latest_trace_session_id",
                 "argMax(status, _version) AS latest_status",
                 "argMax(tuple(end_time), _version).1 AS latest_end_time",
-                "argMax(latency_ms, _version) AS latest_latency_ms",
+                "argMax(tuple(latency_ms), _version).1 AS latest_latency_ms",
             ],
             include_sessions=True,
         )
@@ -1916,6 +2047,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             SELECT
                 {resolved_latest_eu} AS end_user_id,
                 {resolved_latest_session} AS trace_session_id,
+                project_id,
                 trace_id,
                 latest_start_time AS start_time,
                 latest_end_time AS end_time,
@@ -1932,12 +2064,12 @@ class UserListQueryBuilder(BaseQueryBuilder):
               AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
               AND {resolved_latest_eu} IN %(candidate_end_user_ids)s
         ),
+        {_user_trace_latency_ctes()},
         extra_metrics AS (
             SELECT
                 end_user_id,
                 countIf(observation_type = 'llm') AS num_llm_calls,
                 uniqExactIf(trace_id, observation_type = 'guardrail') AS num_guardrails_triggered,
-                round(avgIf(latency_ms, isNotNull(latency_ms)), 2) AS avg_trace_latency,
                 uniqExact(toDate(start_time)) AS num_active_days,
                 uniqExactIf(trace_id, status = 'ERROR') AS num_traces_with_errors
             FROM resolved_candidate_spans
@@ -1971,7 +2103,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             ids.end_user_id AS end_user_id,
             coalesce(sa.num_sessions, 0) AS num_sessions,
             coalesce(sa.avg_session_duration, 0) AS avg_session_duration,
-            coalesce(em.avg_trace_latency, 0) AS avg_trace_latency,
+            coalesce(round(tl.avg_trace_latency, 2), 0) AS avg_trace_latency,
             coalesce(em.num_llm_calls, 0) AS num_llm_calls,
             coalesce(em.num_guardrails_triggered, 0) AS num_guardrails_triggered,
             coalesce(em.num_active_days, 0) AS num_active_days,
@@ -1979,6 +2111,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         FROM metric_user_ids AS ids
         LEFT JOIN session_aggregates AS sa ON sa.end_user_id = ids.end_user_id
         LEFT JOIN extra_metrics AS em ON em.end_user_id = ids.end_user_id
+        LEFT JOIN trace_latency_metrics AS tl ON tl.end_user_id = ids.end_user_id
         """
         return query, params
 
@@ -2403,19 +2536,25 @@ class UserListQueryBuilder(BaseQueryBuilder):
         )
         if span_fields:
             state_selects: list[str] = []
+            resolved_columns = ["project_id", "trace_id", "latest_start_time"]
             projections: list[str] = []
-            if "avg_trace_latency" in span_fields:
+            needs_latency = "avg_trace_latency" in span_fields
+            if needs_latency:
                 state_selects.append(
                     "argMax(tuple(latency_ms), _version).1 AS latest_latency_ms"
                 )
-                projections.append(
-                    "avgIf(latest_latency_ms, "
-                    "isNotNull(latest_latency_ms)) AS avg_trace_latency"
+                resolved_columns.extend(
+                    [
+                        "latest_start_time AS start_time",
+                        "latest_latency_ms AS latency_ms",
+                    ]
                 )
+                projections.append("any(tl.avg_trace_latency) AS avg_trace_latency")
             if {"num_llm_calls", "num_guardrails_triggered"} & set(span_fields):
                 state_selects.append(
                     "argMax(observation_type, _version) AS latest_observation_type"
                 )
+                resolved_columns.append("latest_observation_type")
             if "num_llm_calls" in span_fields:
                 projections.append(
                     "countIf(latest_observation_type = 'llm') AS num_llm_calls"
@@ -2433,6 +2572,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 state_selects.append(
                     "argMax(tuple(status), _version).1 AS latest_status"
                 )
+                resolved_columns.append("latest_status")
                 projections.append(
                     "uniqExactIf(trace_id, latest_status = 'ERROR') "
                     "AS num_traces_with_errors"
@@ -2442,19 +2582,34 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 state_selects,
                 include_sessions=False,
             )
+            latency_ctes = f", {_user_trace_latency_ctes()}" if needs_latency else ""
+            latency_join = (
+                "LEFT JOIN trace_latency_metrics AS tl "
+                "ON tl.end_user_id = metric_spans.end_user_id"
+                if needs_latency
+                else ""
+            )
             query = f"""
-            {prefix}
+            {prefix},
+            resolved_candidate_spans AS (
+                SELECT
+                    {resolved_eu} AS end_user_id,
+                    {", ".join(resolved_columns)}
+                FROM latest_candidate_spans
+                LEFT JOIN eu_survivor_map AS span_eu_remap
+                    ON latest_end_user_id = span_eu_remap.any_id
+                WHERE latest_is_deleted = 0
+                  AND latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+                  AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
+                  AND {resolved_eu} IN %(candidate_end_user_ids)s
+            )
+            {latency_ctes}
             SELECT
-                toString({resolved_eu}) AS end_user_id,
+                toString(metric_spans.end_user_id) AS end_user_id,
                 {", ".join(projections)}
-            FROM latest_candidate_spans
-            LEFT JOIN eu_survivor_map AS span_eu_remap
-                ON latest_end_user_id = span_eu_remap.any_id
-            WHERE latest_is_deleted = 0
-              AND latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
-              AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
-              AND {resolved_eu} IN %(candidate_end_user_ids)s
-            GROUP BY end_user_id
+            FROM resolved_candidate_spans AS metric_spans
+            {latency_join}
+            GROUP BY metric_spans.end_user_id
             """
             queries.append((query, dict(base_params), span_fields))
 
@@ -2512,6 +2667,54 @@ class UserListQueryBuilder(BaseQueryBuilder):
             pagination = ""
             total_count_select = "0 AS total_count"
 
+        candidate_selection = f"""
+            SELECT
+                *,
+                {total_count_select}
+            FROM base_rows
+            {final_filter}
+            {order_by}
+            {pagination}
+        """
+        candidate_ctes = f"candidate_users AS ({candidate_selection})"
+        if self.end_user_id or (
+            pagination and self.params["limit" if paginated else "max_rows"] >= 0
+        ):
+            # A limited page is bounded; an exact curated end_user_id also
+            # yields at most one canonical GROUP BY end_user_id row. The user
+            # metrics endpoint uses that latter path without pagination.
+            # A tuple keeps nullable members; never array-materialize all users.
+            candidate_columns = (
+                "user_id",
+                "total_cost",
+                "known_cost_fact_count",
+                "unknown_cost_fact_count",
+                "complete_cost",
+                "total_tokens",
+                "input_tokens",
+                "output_tokens",
+                "num_traces",
+                "activated_at",
+                "last_active",
+                "project_id",
+                "user_id_type",
+                "user_id_hash",
+                "end_user_id",
+                "total_count",
+            )
+            candidate_projection = ",\n".join(
+                f"tupleElement(candidate_user_row, {index}) AS {column}"
+                for index, column in enumerate(candidate_columns, 1)
+            )
+            candidate_ctes = f"""(
+            SELECT groupArray(tuple({", ".join(candidate_columns)}))
+            FROM ({candidate_selection})
+        ) AS candidate_user_rows,
+        candidate_users AS (
+            SELECT {candidate_projection}
+            FROM (SELECT arrayJoin(candidate_user_rows) AS candidate_user_row)
+        )"""
+
         eu_map = _touched_survivor_map_subquery(
             remap_table="end_user_id_remap",
             candidate_cte="filtered_end_users_raw",
@@ -2523,9 +2726,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             candidate_column="trace_session_id",
         )
         resolved_curated_eu = resolved_id_expr("eu.end_user_id", "eu_remap")
-        resolved_usage_eu = resolved_id_expr(
-            "latest_usage_end_user_id", "usage_eu_remap"
-        )
+        resolved_usage_eu = resolved_id_expr("latest_end_user_id", "usage_eu_remap")
         resolved_latest_eu = resolved_id_expr("latest_end_user_id", "span_eu_remap")
         resolved_latest_session = resolved_id_expr(
             "latest_trace_session_id", "span_ts_remap"
@@ -2576,9 +2777,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
         usage_candidate_span_identities AS (
             SELECT DISTINCT
                 project_id,
+                observation_type,
+                service_name,
+                toStartOfHour(start_time) AS identity_hour,
                 trace_id,
-                id,
-                start_time
+                id
             FROM spans
             PREWHERE {self._project_predicate("spans")}
               AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
@@ -2591,49 +2794,66 @@ class UserListQueryBuilder(BaseQueryBuilder):
         latest_usage_spans AS (
             SELECT
                 project_id,
+                observation_type,
+                service_name,
+                toStartOfHour(start_time) AS identity_hour,
                 trace_id,
                 id,
-                start_time,
-                argMax(tuple(end_user_id), _version).1 AS latest_usage_end_user_id,
-                argMax(tuple(end_time), _version).1 AS latest_usage_end_time,
-                argMax(cost, _version) AS latest_usage_cost,
-                argMax(total_tokens, _version) AS latest_usage_total_tokens,
-                argMax(prompt_tokens, _version) AS latest_usage_prompt_tokens,
-                argMax(completion_tokens, _version) AS latest_usage_completion_tokens,
-                argMax(is_deleted, _version) AS latest_usage_is_deleted
+                {_latest_user_usage_sql()}
             FROM spans
             PREWHERE {self._project_predicate("spans")}
               AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
-              AND start_time >= %(start_date)s
-              AND start_time < %(end_date)s
-              AND (project_id, trace_id, id, start_time) IN (
-                  SELECT project_id, trace_id, id, start_time
+              AND (project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id) IN (
+                  SELECT project_id, observation_type, service_name, identity_hour, trace_id, id
                   FROM usage_candidate_span_identities
               )
-            GROUP BY project_id, trace_id, id, start_time
+            GROUP BY project_id, observation_type, service_name, identity_hour, trace_id, id
         ),
-        exact_usage AS (
+        user_trace_usage AS (
+            SELECT project_id, trace_id, end_user_id, last_active,
+                {_user_trace_metrics_projection()}
+            FROM (
             SELECT
+                project_id,
+                trace_id,
                 {resolved_usage_eu} AS end_user_id,
-                sum(latest_usage_cost) AS total_cost,
-                sum(toInt64(latest_usage_total_tokens)) AS total_tokens,
-                sum(toInt64(latest_usage_prompt_tokens)) AS input_tokens,
-                sum(toInt64(latest_usage_completion_tokens)) AS output_tokens,
-                uniqExact(trace_id) AS num_traces,
-                max(latest_usage_end_time) AS last_active
+                {_user_trace_usage_sql()},
+                max(latest_end_time) AS last_active
             FROM latest_usage_spans
             LEFT JOIN eu_survivor_map AS usage_eu_remap
-                ON latest_usage_end_user_id = usage_eu_remap.any_id
-            WHERE latest_usage_is_deleted = 0
+                ON latest_end_user_id = usage_eu_remap.any_id
+            WHERE latest_is_deleted = 0
+              AND latest_start_time >= %(start_date)s
+              AND latest_start_time < %(end_date)s
               AND {resolved_usage_eu} IN (
                   SELECT end_user_id FROM filtered_end_users
               )
+            GROUP BY project_id, trace_id, end_user_id
+            )
+            ARRAY JOIN trace_usage_metrics AS trace_metrics
+        ),
+        exact_usage AS (
+            SELECT
+                end_user_id,
+                sum(known_cost_subtotal) AS total_cost,
+                sum(known_cost_fact_count) AS known_cost_fact_count,
+                sum(unknown_cost_fact_count) AS unknown_cost_fact_count,
+                sum(toInt64(usage_total_tokens)) AS total_tokens,
+                sum(toInt64(usage_prompt_tokens)) AS input_tokens,
+                sum(toInt64(usage_completion_tokens)) AS output_tokens,
+                uniqExact(trace_id) AS num_traces,
+                max(last_active) AS last_active
+            FROM user_trace_usage
             GROUP BY end_user_id
         ),
         base_rows AS (
             SELECT
                 eu.user_id AS user_id,
                 coalesce(xu.total_cost, 0) AS total_cost,
+                xu.known_cost_fact_count AS known_cost_fact_count,
+                xu.unknown_cost_fact_count AS unknown_cost_fact_count,
+                if(xu.unknown_cost_fact_count = 0, xu.total_cost,
+                    CAST(NULL, 'Nullable(Float64)')) AS complete_cost,
                 coalesce(xu.total_tokens, 0) AS total_tokens,
                 coalesce(xu.input_tokens, 0) AS input_tokens,
                 coalesce(xu.output_tokens, 0) AS output_tokens,
@@ -2647,15 +2867,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             FROM filtered_end_users AS eu
             INNER JOIN exact_usage AS xu ON xu.end_user_id = eu.end_user_id
         ),
-        candidate_users AS (
-            SELECT
-                *,
-                {total_count_select}
-            FROM base_rows
-            {final_filter}
-            {order_by}
-            {pagination}
-        ),
+        {candidate_ctes},
         expanded_candidate_user_ids AS (
             SELECT any_id AS end_user_id
             FROM eu_survivor_map
@@ -2689,7 +2901,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 argMax(observation_type, _version) AS latest_observation_type,
                 argMax(status, _version) AS latest_status,
                 argMax(tuple(end_time), _version).1 AS latest_end_time,
-                argMax(latency_ms, _version) AS latest_latency_ms,
+                argMax(tuple(latency_ms), _version).1 AS latest_latency_ms,
                 argMax(is_deleted, _version) AS latest_is_deleted
             FROM spans
             PREWHERE {self._project_predicate("spans")}
@@ -2714,6 +2926,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             SELECT
                 {resolved_latest_eu} AS end_user_id,
                 {resolved_latest_session} AS trace_session_id,
+                project_id,
                 trace_id,
                 start_time,
                 latest_end_time AS end_time,
@@ -2730,12 +2943,12 @@ class UserListQueryBuilder(BaseQueryBuilder):
                   SELECT end_user_id FROM candidate_users
               )
         ),
+        {_user_trace_latency_ctes()},
         extra_metrics AS (
             SELECT
                 end_user_id,
                 countIf(observation_type = 'llm') AS num_llm_calls,
                 uniqExactIf(trace_id, observation_type = 'guardrail') AS num_guardrails_triggered,
-                round(avgIf(latency_ms, isNotNull(latency_ms)), 2) AS avg_trace_latency,
                 uniqExact(toDate(start_time)) AS num_active_days,
                 uniqExactIf(trace_id, status = 'ERROR') AS num_traces_with_errors
             FROM resolved_candidate_spans
@@ -2763,13 +2976,16 @@ class UserListQueryBuilder(BaseQueryBuilder):
         SELECT
             cu.user_id AS user_id,
             cu.total_cost AS total_cost,
+            cu.known_cost_fact_count AS known_cost_fact_count,
+            cu.unknown_cost_fact_count AS unknown_cost_fact_count,
+            cu.complete_cost AS complete_cost,
             cu.total_tokens AS total_tokens,
             cu.input_tokens AS input_tokens,
             cu.output_tokens AS output_tokens,
             cu.num_traces AS num_traces,
             coalesce(sa.num_sessions, 0) AS num_sessions,
             coalesce(sa.avg_session_duration, 0) AS avg_session_duration,
-            coalesce(em.avg_trace_latency, 0) AS avg_trace_latency,
+            coalesce(round(tl.avg_trace_latency, 2), 0) AS avg_trace_latency,
             coalesce(em.num_llm_calls, 0) AS num_llm_calls,
             coalesce(em.num_guardrails_triggered, 0) AS num_guardrails_triggered,
             cu.activated_at AS activated_at,
@@ -2786,6 +3002,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         FROM candidate_users AS cu
         LEFT JOIN session_aggregates AS sa ON sa.end_user_id = cu.end_user_id
         LEFT JOIN extra_metrics AS em ON em.end_user_id = cu.end_user_id
+        LEFT JOIN trace_latency_metrics AS tl ON tl.end_user_id = cu.end_user_id
         {order_by}
         """
         return query, self.params
@@ -2899,6 +3116,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 continue
             config = item.get("filter_config") or {}
             column = self.OUTPUT_FILTER_MAP[item.get("column_id")]
+            if column == "total_cost":
+                column = "complete_cost"
             clause, clause_params = self._condition(
                 column=column,
                 op=config.get("filter_op"),
@@ -2906,6 +3125,13 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 prefix=f"user_filter_{index}",
             )
             if clause:
+                # CH's nullable IN/not_in semantics must not make an unknown
+                # complete price compare equal (or unequal) to a numeric price.
+                if column == "complete_cost" and config.get("filter_op") not in {
+                    "is_null",
+                    "is_not_null",
+                }:
+                    clause = f"isNotNull(complete_cost) AND ({clause})"
                 clauses.append(clause)
                 params.update(clause_params)
         return " AND ".join(clauses), params
@@ -2923,6 +3149,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
             direction = str(sort.get("direction") or "desc").upper()
             if direction not in ("ASC", "DESC"):
                 direction = "DESC"
+            if column == "total_cost":
+                column = "complete_cost"
             parts.append(f"{column} {direction} NULLS LAST")
             has_end_user_tiebreaker = has_end_user_tiebreaker or column == "end_user_id"
         if parts and not has_end_user_tiebreaker:
@@ -3092,6 +3320,23 @@ class UserListQueryBuilder(BaseQueryBuilder):
                     ),
                 }
             )
+            # The old (unqualified) internal row boundary may omit both counts.
+            # New SQL always emits both; never default an incomplete companion.
+            if "known_cost_fact_count" in row or "unknown_cost_fact_count" in row:
+                known = int(row["known_cost_fact_count"])
+                unknown = int(row["unknown_cost_fact_count"])
+                table[-1]["cost_coverage"] = {
+                    "status": (
+                        "complete"
+                        if unknown == 0
+                        else "partial"
+                        if known
+                        else "unknown"
+                    ),
+                    "known_subtotal": float(row["total_cost"]),
+                    "known_fact_count": known,
+                    "unknown_fact_count": unknown,
+                }
         return {"table": table, "total_count": total_count}
 
     @staticmethod

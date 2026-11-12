@@ -12,6 +12,8 @@ import PropTypes from "prop-types";
 import React, { useMemo } from "react";
 import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField";
 import SvgColor from "src/components/svg-color";
+import { RouterLink } from "src/routes/components";
+import { paths } from "src/routes/paths";
 import { useProjectList } from "src/sections/projects/LLMTracing/common";
 
 export default function SelectProject({
@@ -32,13 +34,19 @@ export default function SelectProject({
       })) || [],
     [projectList],
   );
+  // Only a list that loaded and came back empty means there is nothing to
+  // pick; while loading or after an error the picker stays.
+  const noObserveProjects =
+    !isLoadingProjects &&
+    Array.isArray(projectList) &&
+    projectList.length === 0;
   return (
     <Dialog
       PaperProps={{
         sx: {
           p: 2,
-          maxWidth: "540px",
-          minWidth: "540px",
+          maxWidth: "560px",
+          minWidth: "560px",
         },
       }}
       open={open}
@@ -83,15 +91,27 @@ export default function SelectProject({
           padding: `${theme.spacing(2.5, 0, 0, 0)} !important`,
         }}
       >
-        <FormSearchSelectFieldState
-          fullWidth
-          size="small"
-          label="Project"
-          value={value}
-          onChange={(e) => onChange(e?.target?.value)}
-          options={projectOptions}
-          inputProps={{ "data-alert-field": "project" }}
-        />
+        {noObserveProjects ? (
+          <Typography variant="s1" color={"text.secondary"}>
+            Alerts watch an Observe project. There are no Observe projects yet:
+            send your first trace to create one.
+          </Typography>
+        ) : (
+          <FormSearchSelectFieldState
+            fullWidth
+            size="small"
+            label="Project"
+            value={value}
+            onChange={(e) => onChange(e?.target?.value)}
+            options={projectOptions}
+            noOptions={
+              isLoadingProjects
+                ? "Loading projects…"
+                : "Couldn't load projects. Refresh the page to try again."
+            }
+            inputProps={{ "data-alert-field": "project" }}
+          />
+        )}
       </DialogContent>
       <DialogActions
         sx={{
@@ -109,19 +129,35 @@ export default function SelectProject({
         >
           Cancel
         </Button>
-        <Button
-          disabled={!value || isLoadingProjects}
-          color={"primary"}
-          size="small"
-          variant="contained"
-          data-alert-project-action="next"
-          onClick={() => {
-            if (!value) return;
-            onAction();
-          }}
-        >
-          Next
-        </Button>
+        {noObserveProjects ? (
+          <Button
+            component={RouterLink}
+            href={paths.dashboard.observe}
+            color={"primary"}
+            size="small"
+            variant="contained"
+            onClick={() => {
+              onClose();
+              onChange(null);
+            }}
+          >
+            Set up Observe
+          </Button>
+        ) : (
+          <Button
+            disabled={!value || isLoadingProjects}
+            color={"primary"}
+            size="small"
+            variant="contained"
+            data-alert-project-action="next"
+            onClick={() => {
+              if (!value) return;
+              onAction();
+            }}
+          >
+            Next
+          </Button>
+        )}
       </DialogActions>
     </Dialog>
   );

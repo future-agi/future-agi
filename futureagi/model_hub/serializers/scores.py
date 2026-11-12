@@ -127,6 +127,15 @@ class ScoreForSourceQuerySerializer(StrictInputSerializer):
         ),
     )
 
+    def to_internal_value(self, data):
+        if hasattr(data, "keys"):
+            data = data.copy()
+            # This action returns every score, not a page. Released clients
+            # expose paging arguments even though this endpoint never paginates.
+            data.pop("page", None)
+            data.pop("limit", None)
+        return super().to_internal_value(data)
+
 
 class ScoreResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)

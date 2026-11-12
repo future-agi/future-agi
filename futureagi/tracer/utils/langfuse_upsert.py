@@ -20,6 +20,10 @@ from tracer.services.clickhouse.v2.deterministic_id import (
     deterministic_end_user_id,
     deterministic_trace_session_id,
 )
+from tracer.services.clickhouse.v2.span_writer import (
+    mirror_spans_to_clickhouse,
+    span_to_pg_row,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -42,6 +46,100 @@ def parse_langfuse_timestamp(ts):
         return None
 
 
+def merge_langfuse_observation(saved, patch):
+    """Merge one live event without inventing values for absent fields.
+
+    Usage aliases are normalized before merging so a later legacy ``usage``
+    event can update a persisted ``usageDetails`` counter (including zero).
+    """
+    merged = {**saved, **patch}
+    if "usageDetails" in patch or "usage" in patch:
+        usage = patch.get("usageDetails", patch.get("usage"))
+        if usage is None:
+            merged["usageDetails"] = None
+        else:
+            counters = {}
+            for key, alias in (
+                ("input", "promptTokens"),
+                ("output", "completionTokens"),
+                ("total", "totalTokens"),
+            ):
+                if key in usage or alias in usage:
+                    value = usage.get(key)
+                    # Match transformer precedence: None falls back, zero does not.
+                    counters[key] = value if value is not None else usage.get(alias)
+            combined = dict(saved.get("usageDetails") or {})
+            if "total" not in counters and (
+                "input" in counters or "output" in counters
+            ):
+                combined.pop("total", None)
+            merged["usageDetails"] = {**combined, **counters}
+        merged.pop("usage", None)
+    if "costDetails" in patch and "calculatedTotalCost" not in patch:
+        merged.pop("calculatedTotalCost", None)
+    start = parse_langfuse_timestamp(merged.get("startTime"))
+    end = parse_langfuse_timestamp(merged.get("endTime"))
+    merged["latency"] = (end - start).total_seconds() if start and end else 0
+    return merged
+
+
+def _saved_observation(span, root_span_id):
+    """Reconstruct transformer input from persisted fields, not lossy defaults."""
+    return {
+        "id": span.id,
+        "type": {"llm": "GENERATION", "chain": "SPAN"}.get(
+            span.observation_type, "EVENT"
+        ),
+        "parentObservationId": (
+            None if span.parent_span_id == root_span_id else span.parent_span_id
+        ),
+        "name": span.name,
+        "model": span.model,
+        "input": span.input,
+        "output": span.output,
+        "metadata": span.metadata,
+        "modelParameters": span.model_parameters,
+        "startTime": span.start_time.isoformat() if span.start_time else None,
+        "endTime": span.end_time.isoformat() if span.end_time else None,
+        "usageDetails": {
+            "input": span.prompt_tokens,
+            "output": span.completion_tokens,
+            "total": span.total_tokens,
+        },
+        "calculatedTotalCost": span.cost,
+        "level": {"OK": "DEFAULT", "ERROR": "ERROR"}.get(span.status, "UNSET"),
+    }
+
+
+def _merge_live_trace(assembled_trace, trace, saved_spans, root_span_id):
+    """Hydrate only live patches; integration snapshots retain replacement semantics."""
+    saved = {}
+    if trace is not None:
+        saved = {
+            key: getattr(trace, key)
+            for key in ("name", "input", "output", "metadata", "tags")
+        }
+        # Raw user/session strings are stored as attributes; PG FK ids are not
+        # reversible. Prefer the synthetic root, then an existing observation.
+        root = saved_spans.get(root_span_id)
+        context_spans = ([root] if root is not None else []) + list(
+            saved_spans.values()
+        )
+        for span in context_spans:
+            attrs = span.span_attributes or {}
+            for field, attr in (("userId", "user.id"), ("sessionId", "session.id")):
+                if attr in attrs and field not in saved:
+                    saved[field] = attrs[attr]
+    combined = {**saved, **assembled_trace}
+    observations = []
+    for patch in assembled_trace.get("observations") or []:
+        span = saved_spans.get(patch.get("id"))
+        previous = _saved_observation(span, root_span_id) if span is not None else {}
+        observations.append(merge_langfuse_observation(previous, patch))
+    combined["observations"] = observations
+    return combined
+
+
 def upsert_langfuse_trace(
     assembled_trace,
     transformer,
@@ -49,6 +147,8 @@ def upsert_langfuse_trace(
     org,
     workspace,
     org_id,
+    *,
+    patch_mode=False,
 ):
     """Upsert a single assembled Langfuse trace with observations and scores.
 
@@ -57,16 +157,57 @@ def upsert_langfuse_trace(
     our frontend expects a root ``ObservationSpan`` with children linked
     via ``parent_span_id``.
 
+    ``patch_mode`` is reserved for the live JSON ingestion endpoint. Snapshot
+    imports keep the transformer's original replacement/defaulting behavior.
+
     Returns:
         Tuple of ``(was_created, spans_count, scores_count)``.
     """
-    trace_data = transformer.transform_trace(assembled_trace, project_id)
-
+    external_id = assembled_trace["id"]
+    root_span_id = f"root-{external_id[:245]}"
     with transaction.atomic():
-        # Use filter().first() instead of update_or_create to tolerate
-        # duplicate Trace rows.  Vapi sends concurrent batches that can
-        # race past update_or_create's internal get(), creating duplicates
-        # (no DB-level unique constraint on project_id + external_id).
+        # Tolerate historical duplicate trace rows, but serialize updates to
+        # an existing trace so two partial batches cannot lose each other's fields.
+        trace = (
+            Trace.no_workspace_objects.select_for_update()
+            .filter(
+                project_id=project_id,
+                external_id=external_id,
+            )
+            .order_by("created_at")
+            .first()
+        )
+        changed_ids = [root_span_id] + [
+            obs["id"]
+            for obs in assembled_trace.get("observations") or []
+            if obs.get("id")
+        ]
+        saved_spans = (
+            {
+                span.id: span
+                for span in ObservationSpan.no_workspace_objects.filter(
+                    trace=trace, id__in=changed_ids
+                )
+            }
+            if trace is not None
+            else {}
+        )
+        previous_rows = [
+            span_to_pg_row(span, trace.session_id) for span in saved_spans.values()
+        ]
+        if patch_mode:
+            assembled_trace = _merge_live_trace(
+                assembled_trace, trace, saved_spans, root_span_id
+            )
+        trace_data = transformer.transform_trace(assembled_trace, project_id)
+        if patch_mode:
+            # Use the same canonical context on the first and later flushes:
+            # persisted metadata/tags already contain the integration markers.
+            assembled_trace = {
+                **assembled_trace,
+                "metadata": trace_data["metadata"],
+                "tags": trace_data["tags"],
+            }
         defaults = {
             "name": trace_data["name"],
             "input": trace_data.get("input"),
@@ -74,14 +215,6 @@ def upsert_langfuse_trace(
             "metadata": trace_data.get("metadata", {}),
             "tags": trace_data.get("tags", []),
         }
-        trace = (
-            Trace.no_workspace_objects.filter(
-                project_id=project_id,
-                external_id=trace_data["external_id"],
-            )
-            .order_by("created_at")
-            .first()
-        )
         if trace:
             created = False
             for key, val in defaults.items():
@@ -144,6 +277,16 @@ def upsert_langfuse_trace(
         # absorbs the root span into the trace record, leaving child spans
         # pointing to a parent that doesn't exist in the observation set.
         obs_ids = {obs["id"] for obs in obs_dicts}
+        if patch_mode:
+            # A parent from an earlier flush is not an orphan.
+            parent_ids = {
+                obs["parent_span_id"] for obs in obs_dicts if obs.get("parent_span_id")
+            }
+            obs_ids.update(
+                ObservationSpan.no_workspace_objects.filter(
+                    trace=trace, id__in=parent_ids
+                ).values_list("id", flat=True)
+            )
         promoted_root_name = None
         for obs_data in obs_dicts:
             if (
@@ -165,12 +308,6 @@ def upsert_langfuse_trace(
             trace.name = promoted_root_name
             trace.save(update_fields=["name"])
 
-        # Create a synthetic root span so the trace renders as a tree.
-        # Use a deterministic ID so re-ingestion is idempotent.
-        # Truncate external_id to stay within CharField(max_length=255).
-        external_id = trace_data["external_id"]
-        root_span_id = f"root-{external_id[:245]}"
-
         # Parent all top-level observations to the root span BEFORE
         # upserting them, so every child is linked from the start.
         for obs_data in obs_dicts:
@@ -179,6 +316,7 @@ def upsert_langfuse_trace(
 
         # Upsert observation spans first so timing query covers all of them.
         spans_count = 0
+        span_rows = []
         for obs_data in obs_dicts:
             obs_id = obs_data.pop("id")
             obs_data.pop("trace_id", None)
@@ -187,7 +325,7 @@ def upsert_langfuse_trace(
             if end_user_id is not None:
                 obs_data["end_user_id"] = end_user_id
 
-            ObservationSpan.no_workspace_objects.update_or_create(
+            span, _ = ObservationSpan.no_workspace_objects.update_or_create(
                 id=obs_id,
                 defaults={
                     "trace": trace,
@@ -196,6 +334,7 @@ def upsert_langfuse_trace(
                     **obs_data,
                 },
             )
+            span_rows.append(span_to_pg_row(span, trace.session_id))
             spans_count += 1
 
         # Now compute root span timing from ALL existing observation spans
@@ -203,17 +342,8 @@ def upsert_langfuse_trace(
         # in multiple batches, so we must query the DB to get the full range.
         from django.db.models import Max, Min
 
-        # CH25-TODO(read-after-write-inside-atomic; revisit after OTel
-        # direct-to-CH cutover): this aggregate reads spans that were JUST
-        # update_or_create()'d at line 182 inside the same transaction.atomic()
-        # block. CH analytics today are populated via PeerDB CDC from PG
-        # to CH (see tracer/services/clickhouse/__init__.py:4) — there is
-        # an inherent replication lag, so a CHSpanReader.trace_aggregate(
-        # trace.id) call here would NOT see the spans we just wrote and
-        # would silently under-count earliest_start/latest_end (resulting
-        # in a 0-latency root span). After the OTel direct-to-CH cutover
-        # spans are written directly to CH at request time and the lag
-        # disappears; only then can this be safely migrated.
+        # Read the writes in this PG transaction; the CH mirror runs only
+        # after commit and cannot supply the root's complete timing here.
         timing = (
             ObservationSpan.no_workspace_objects.filter(trace=trace)
             .exclude(id=root_span_id)
@@ -232,7 +362,7 @@ def upsert_langfuse_trace(
             "org_id": org_id,
             "parent_span_id": None,
             "observation_type": "chain",
-            "name": trace_data["name"] or "Langfuse Trace",
+            "name": trace.name or "Langfuse Trace",
             "start_time": earliest_start,
             "end_time": latest_end,
             "latency_ms": root_latency,
@@ -252,11 +382,17 @@ def upsert_langfuse_trace(
         }
         if end_user_id is not None:
             root_defaults["end_user_id"] = end_user_id
+        # Keep the reversible context on the root for later observation-only
+        # batches; deterministic dimension UUIDs alone cannot recover it.
+        for field, attr in (("userId", "user.id"), ("sessionId", "session.id")):
+            if assembled_trace.get(field):
+                root_defaults["span_attributes"][attr] = assembled_trace[field]
 
-        ObservationSpan.no_workspace_objects.update_or_create(
+        root, _ = ObservationSpan.no_workspace_objects.update_or_create(
             id=root_span_id,
             defaults=root_defaults,
         )
+        span_rows.append(span_to_pg_row(root, trace.session_id))
 
         # Scores
         score_dicts = transformer.transform_scores(assembled_trace, trace_id)
@@ -312,6 +448,14 @@ def upsert_langfuse_trace(
                 },
             )
             scores_count += 1
+
+    # Capture the saved revision, not a later wall-clock version, so callbacks
+    # arriving out of order cannot resurrect an older observation/root payload.
+    transaction.on_commit(
+        lambda rows=tuple(span_rows), previous=tuple(previous_rows): (
+            mirror_spans_to_clickhouse(rows, previous_spans=previous)
+        )
+    )
 
     # CH25: mirror this trace into the CH `traces` table — the app-level
     # replacement for the removed PeerDB CDC path feeding trace_dict. The

@@ -66,6 +66,7 @@ from tracer.selectors.trace_filter_reads import (
     numbered_page_depth_exceeded,
 )
 from tracer.serializers.filters import (
+    ObserveGraphDataErrorResponseSerializer,
     ObserveGraphDataQuerySerializer,
     ObserveGraphDataResponseSerializer,
     PageDepthExceededErrorSerializer,
@@ -195,6 +196,7 @@ from tracer.utils.helper import (
     get_annotation_labels_for_project,
     get_default_trace_config,
     get_project_eval_configs,
+    unvalidated_relation_keys,
     update_column_config_based_on_eval_config,
     update_span_column_config_based_on_annotations,
 )
@@ -471,7 +473,54 @@ class TraceNavigationReadUnavailable(RuntimeError):
 
 
 class TraceTagsUpdateSerializer(serializers.Serializer):
-    tags = serializers.ListField(child=serializers.CharField(), allow_empty=True)
+    tags = serializers.ListField(allow_empty=True)
+
+    class Meta:
+        # The UI sends objects; legacy strings remain accepted by validate_tags.
+        swagger_schema_fields = {
+            "properties": {
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["name"],
+                        "properties": {
+                            "name": {"type": "string", "minLength": 1},
+                            "color": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        }
+
+    def validate_tags(self, tags):
+        normalized = []
+        seen = set()
+        for index, tag in enumerate(tags):
+            name = tag.get("name") if isinstance(tag, dict) else tag
+            if (
+                not isinstance(name, str)
+                or not name.strip()
+                or (
+                    isinstance(tag, dict)
+                    and (
+                        set(tag) - {"name", "color"}
+                        or ("color" in tag and not isinstance(tag["color"], str))
+                    )
+                )
+            ):
+                raise serializers.ValidationError(
+                    f"Tag at index {index} must be a non-empty string or an object "
+                    "with a non-empty string name and optional string color."
+                )
+            name = name.strip()
+            if name not in seen:
+                seen.add(name)
+                # Preserve rich tags in PG's JSON field; first name wins.
+                normalized.append(
+                    {**tag, "name": name} if isinstance(tag, dict) else name
+                )
+        return normalized
 
 
 def _sanitize_nonfinite_floats(value):
@@ -1179,7 +1228,8 @@ def _trace_session_queryset_for_request(request):
 
 def _soft_delete_trace_tree(traces):
     now = timezone.now()
-    trace_ids = [trace.id for trace in traces if trace]
+    traces = [trace for trace in traces if trace]
+    trace_ids = [trace.id for trace in traces]
     if not trace_ids:
         return []
 
@@ -1201,6 +1251,15 @@ def _soft_delete_trace_tree(traces):
     Trace.no_workspace_objects.filter(id__in=trace_ids).update(
         deleted=True, deleted_at=now
     )
+    from tracer.services.analysis_retention import retire_analysis_sources
+
+    for project_id in sorted({trace.project_id for trace in traces}):
+        selected = [trace for trace in traces if trace.project_id == project_id]
+        retire_analysis_sources(
+            project_id=project_id,
+            trace_ids=[trace.id for trace in selected],
+            session_ids=[trace.session_id for trace in selected if trace.session_id],
+        )
     return [str(trace_id) for trace_id in trace_ids]
 
 
@@ -1616,7 +1675,7 @@ def _build_annotation_map_from_scores_ch(trace_ids, annotation_label_ids, label_
             )
             entry["_sum"] += score_val
             entry["_count"] += 1
-            entry["score"] = int(entry["_sum"] / entry["_count"])
+            entry["score"] = entry["_sum"] / entry["_count"]
             if uid:
                 anno = entry["annotators"].setdefault(
                     uid,
@@ -1870,7 +1929,7 @@ def _build_annotation_map_from_scores_pg(
             )
             entry["_sum"] += score_val
             entry["_count"] += 1
-            entry["score"] = int(entry["_sum"] / entry["_count"])
+            entry["score"] = entry["_sum"] / entry["_count"]
             if uid:
                 anno = entry["annotators"].setdefault(
                     uid,
@@ -2108,6 +2167,23 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     def perform_destroy(self, instance):
         _soft_delete_trace_tree([instance])
 
+    # Size limits of the bounded trace-detail read (trace_detail_reads). A
+    # stored trace over one always fails the same way, so it is not reported
+    # as a temporary outage that a retry could fix.
+    _TRACE_TOO_LARGE_MESSAGES = {
+        "span_limit_exceeded": (
+            "This trace has more than 1,000 spans, more than the trace view can open."
+        ),
+        "eval_limit_exceeded": (
+            "This trace has more than 5,000 eval results, more than the trace "
+            "view can open."
+        ),
+        "annotation_limit_exceeded": (
+            "This trace has more than 5,000 annotations, more than the trace "
+            "view can open."
+        ),
+    }
+
     @validated_request(
         query_serializer=TraceDetailQuerySerializer,
         responses={
@@ -2157,6 +2233,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 trace_id=str(kwargs.get("pk") or ""),
                 error_code=exc.code,
             )
+            too_large_message = self._TRACE_TOO_LARGE_MESSAGES.get(exc.code)
+            if too_large_message is not None:
+                return self._gm.custom_error_response(
+                    status.HTTP_400_BAD_REQUEST,
+                    too_large_message,
+                    code="trace_too_large",
+                )
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "Trace details are temporarily unavailable. Please retry.",
@@ -2606,15 +2689,37 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     @validated_request(request_serializer=TraceTagsUpdateSerializer)
     @action(detail=True, methods=["patch"], url_path="tags")
     def update_tags(self, request, *args, **kwargs):
-        """Update tags for a trace."""
+        """Update tags for a PostgreSQL-backed or collector-only trace."""
+        from tracer.services.trace_tags import (
+            TraceTagsNotFound,
+            update_collector_trace_tags,
+        )
+
         try:
             trace_id = kwargs.get("pk")
-            trace = self.get_queryset().get(id=trace_id)
             tags = request.validated_data["tags"]
+            project_id = request.query_params.get("project_id")
+            traces = self.get_queryset()
+            if project_id:
+                traces = traces.filter(project_id=project_id)
+            try:
+                trace = traces.get(id=trace_id)
+            except Trace.DoesNotExist:
+                projects = _project_queryset_for_request(request)
+                if project_id:
+                    projects = projects.filter(id=project_id)
+                result = update_collector_trace_tags(
+                    trace_id=trace_id,
+                    project_ids=list(projects.values_list("id", flat=True)[:4097]),
+                    tags=tags,
+                )
+                # Echo the validated tags (the UI's {name, color} shape) like the
+                # PostgreSQL branch; the collector row itself stores tag names.
+                return self._gm.success_response({"id": result["id"], "tags": tags})
             trace.tags = tags
             trace.save(update_fields=["tags", "updated_at"])
             return self._gm.success_response({"id": str(trace.id), "tags": trace.tags})
-        except Trace.DoesNotExist:
+        except (Trace.DoesNotExist, TraceTagsNotFound):
             return self._gm.bad_request("Trace not found")
         except Exception as e:
             logger.exception(f"Error updating trace tags: {e}")
@@ -2831,7 +2936,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             200: ObserveGraphDataResponseSerializer,
             400: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,
-            503: ApiErrorResponseSerializer,
+            503: ObserveGraphDataErrorResponseSerializer,
         },
     )
     @action(detail=False, methods=["post"])
@@ -2992,10 +3097,24 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     graph,
                     allow_sampled=False,
                 ):
+                    logger.warning(
+                        "trace_graph_degraded",
+                        query_error_code=graph.get("query_error_code"),
+                        project_id=project_id,
+                        eval_config_id=metric_id if metric_type == "EVAL" else None,
+                    )
+                    graph = {
+                        **graph,
+                        "data": [],
+                        "query_complete": False,
+                        "query_status": "degraded",
+                        "query_sampled": False,
+                        "message": "Graph data is temporarily unavailable. Please retry.",
+                    }
                     return finish(
                         self._gm.custom_error_response(
                             status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "Graph data is temporarily unavailable. Please retry.",
+                            graph,
                             code="service_unavailable",
                         )
                     )
@@ -3056,6 +3175,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         try:
             traces_data = self.request.data.get("traces", [])
             for trace in traces_data:
+                if unvalidated_relation_keys(
+                    Trace, trace, {"project", "project_version", "session"}
+                ):
+                    raise ValueError("Unsupported trace fields")
                 project = (
                     _project_queryset_for_request(request)
                     .filter(id=trace.get("project"))
@@ -5620,11 +5743,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             column_config, annotation_labels
         )
 
-        # Format response matching PG format
+        # Format response matching PG format. Keep the typed sidecar separate
+        # from arbitrary attributes/eval columns, which may use the same names.
+        trace_capture_coverage = {}
         table_data = []
         for row in result.data:
             trace_id = str(row.get("trace_id", ""))
-            raw_cost = row.get("cost")
+            raw_cost = row.get("cost", 0)
             entry = {
                 "trace_id": trace_id,
                 "project_id": (
@@ -5647,7 +5772,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     if isinstance(raw_cost, (int, float))
                     and not isinstance(raw_cost, bool)
                     and math.isfinite(raw_cost)
-                    else 0
+                    else (None if raw_cost is None else 0)
                 ),
                 "trace_name": row.get("trace_name") or row.get("span_name") or "",
                 "start_time": row.get("start_time"),
@@ -5659,6 +5784,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     (str(row.get("project_id") or project_id or ""), trace_id)
                 ),
             }
+
+            if row.get("capture_coverage") is not None:
+                trace_capture_coverage.setdefault(entry["project_id"], {})[trace_id] = (
+                    row["capture_coverage"]
+                )
 
             # Add eval metrics
             trace_evals = eval_map.get(trace_id, {})
@@ -5877,6 +6007,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "metadata": metadata,
             "table": _sanitize_nonfinite_floats(table_data),
             "config": column_config,
+            **(
+                {"trace_capture_coverage": trace_capture_coverage}
+                if trace_capture_coverage
+                else {}
+            ),
         }
 
         return self._gm.success_response(response)
@@ -7522,11 +7657,17 @@ class GetUserCodeExampleView(APIView):
         responses={200: UserCodeExampleResponseSerializer, **ERROR_RESPONSES},
     )
     def get(self, request, *args, **kwargs):
-        project_name = "New Project"
+        # Without a project (the top-level Users page) the snippet shows a
+        # placeholder name and asks the user to replace it.
+        project_name = "my-project"
+        project_name_note = "  # Replace with your project name"
         project_id = request.GET.get("project_id")
         if project_id:
-            project = get_object_or_404(Project, id=project_id)
+            project = get_object_or_404(
+                _project_queryset_for_request(request), id=project_id
+            )
             project_name = project.name
+            project_name_note = ""
             project_type = project.trace_type
             if project_type != "observe":
                 return self._gm.bad_request("Project type must be 'observe'.")
@@ -7538,7 +7679,7 @@ from traceai_openai import OpenAIInstrumentor
 
 trace_provider = register(
     project_type=ProjectType.OBSERVE,
-    project_name="{project_name}",
+    project_name="{project_name}",{project_name_note}
 )
 
 tracer = FITracer(trace_provider.get_tracer(__name__))

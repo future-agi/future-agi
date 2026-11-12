@@ -1,4 +1,4 @@
-import { Box, LinearProgress, Skeleton, useTheme } from "@mui/material";
+import { Box, LinearProgress, Link, Skeleton, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import React, {
@@ -10,6 +10,7 @@ import React, {
 } from "react";
 import PropTypes from "prop-types";
 import { getRandomId } from "src/utils/utils";
+import EmptyContent from "src/components/empty-content";
 import TotalRowsStatusBar from "src/sections/develop-detail/Common/TotalRowsStatusBar";
 import { readQuery, endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
@@ -25,6 +26,7 @@ import { Events, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
 import {
+  DOC_LINKS,
   normalizeConfigKeys,
   toBackendFilters,
 } from "src/sections/projects/LLMTracing/common";
@@ -69,12 +71,12 @@ const getSessionGridThemeParams = (theme) => ({
   headerColumnBorder: false,
   wrapperBorder: { width: 0 },
   wrapperBorderRadius: 0,
-  rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+  rowBorder: { width: 1, color: theme.palette.border.subtle },
   headerFontSize: "13px",
   headerFontWeight: theme.typography.fontWeightMedium,
   headerBackgroundColor: "transparent",
   headerTextColor: theme.palette.text.primary,
-  rowHoverColor: "rgba(120,87,252,0.04)",
+  rowHoverColor: theme.palette.action.hover,
 });
 
 const sessionRowIdentity = (row) => {
@@ -85,6 +87,26 @@ const sessionRowIdentity = (row) => {
 const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
 };
+
+// Shown instead of AG Grid's bare "No Rows To Show" when a read finds no
+// sessions. AG Grid's no-rows overlay ignores the pointer, so the docs link
+// turns pointer events back on to stay clickable.
+const SessionsNoRowsOverlay = () => (
+  <EmptyContent
+    title="No sessions in this time range"
+    description="Sessions group traces that share a session.id attribute. Add it to your spans to see sessions here, or try a wider time range."
+    action={
+      <Link
+        href={DOC_LINKS.sessions}
+        target="_blank"
+        rel="noopener noreferrer"
+        sx={{ pointerEvents: "auto" }}
+      >
+        How to add sessions
+      </Link>
+    }
+  />
+);
 
 const SessionGrid = React.forwardRef(
   (
@@ -127,6 +149,7 @@ const SessionGrid = React.forwardRef(
     const {
       beginPageLoad,
       endUnknown,
+      exactTotal,
       frontierPage,
       hasMore,
       page,
@@ -138,6 +161,7 @@ const SessionGrid = React.forwardRef(
       isPageLoading,
       publishPage,
       resetPagination,
+      visibleRowCount,
     } = useCursorGridPagination(gridApiRef, gridElementRef);
     const continueCursorSearch = useCallback(() => {
       if (!continuationNotice) return;
@@ -148,7 +172,8 @@ const SessionGrid = React.forwardRef(
     const refreshGrid = useCallback(() => {
       // Same-query refresh replaces cached pages, not the currently visible rows.
       const pendingReads = [...inFlightPageLoads.current.values()];
-      if (refreshSettledRef.current) pendingReads.push(refreshSettledRef.current);
+      if (refreshSettledRef.current)
+        pendingReads.push(refreshSettledRef.current);
       inFlightPageLoads.current.clear();
       cursorPagination.current.reset();
       const generation = cursorPagination.current.generation();
@@ -250,7 +275,7 @@ const SessionGrid = React.forwardRef(
         suppressSizeToFit: false,
         cellStyle: {
           padding: "0px 20px",
-          fontSize: "14px",
+          fontSize: "12px",
           height: "100%",
         },
       }),
@@ -379,9 +404,7 @@ const SessionGrid = React.forwardRef(
     // make a page that was genuinely visited unreachable again. `frontierPage`
     // is 1-indexed (matches the UI); `canReachPage` takes the same 0-indexed
     // convention as `requestParams`.
-    const furthestPage = cursorPagination.current.canReachPage(
-      frontierPage - 1,
-    )
+    const furthestPage = cursorPagination.current.canReachPage(frontierPage - 1)
       ? frontierPage
       : 0;
 
@@ -423,6 +446,7 @@ const SessionGrid = React.forwardRef(
               );
               const backendFilters = toBackendFilters(filters);
               const queryKey = JSON.stringify({
+                responseVersion: "capture-coverage-v1",
                 projectId: projectId || null,
                 filters: backendFilters,
                 dateInterval: dateInterval || null,
@@ -600,15 +624,21 @@ const SessionGrid = React.forwardRef(
               if (listReadMessage) throw new Error(listReadMessage);
               // Bind the actual successful request to its rows, not the route
               // project or a later filter/sort render. Never lose decorated IDs.
-              const context = JSON.parse(JSON.stringify({
-                project_id: projectId || null,
-                workspace_id: workspaceId,
-                filters: backendFilters,
-                sort_params: sortParams,
-                cursor_mode: !sortParams.length && Boolean(buildParams(pageNumber).cursor_mode),
-                ...(userIdForUserMode ? { user_id: userIdForUserMode } : {}),
-              }));
-              rows.forEach((row) => rowNavigationContexts.current.set(row, context));
+              const context = JSON.parse(
+                JSON.stringify({
+                  project_id: projectId || null,
+                  workspace_id: workspaceId,
+                  filters: backendFilters,
+                  sort_params: sortParams,
+                  cursor_mode:
+                    !sortParams.length &&
+                    Boolean(buildParams(pageNumber).cursor_mode),
+                  ...(userIdForUserMode ? { user_id: userIdForUserMode } : {}),
+                }),
+              );
+              rows.forEach((row) =>
+                rowNavigationContexts.current.set(row, context),
+              );
 
               const isLastPage = exactPage.isLastPage;
               // A terminal cursor is an exact exhaustion proof. Normalize an
@@ -782,7 +812,9 @@ const SessionGrid = React.forwardRef(
       }
 
       setCurrentRowData(event.data);
-      setNavigationContext(rowNavigationContexts.current.get(event.data) || null);
+      setNavigationContext(
+        rowNavigationContexts.current.get(event.data) || null,
+      );
       setOpen(true);
       trackEvent(Events.observeSessionidClicked);
     };
@@ -842,7 +874,7 @@ const SessionGrid = React.forwardRef(
                 loading={false}
                 suppressServerSideFullWidthLoadingRow={true}
                 noRowsOverlayComponent={
-                  continuationNotice ? () => null : undefined
+                  continuationNotice ? () => null : SessionsNoRowsOverlay
                 }
                 serverSideInitialRowCount={pageSize}
                 defaultColDef={defaultColDef}
@@ -878,6 +910,8 @@ const SessionGrid = React.forwardRef(
               furthestPage={furthestPage}
               hasMore={hasMore}
               provenNext={provenNext}
+              rowCount={visibleRowCount}
+              totalCount={exactTotal}
               onPageChange={goToPage}
               onPageSizeChange={changePageSize}
             />

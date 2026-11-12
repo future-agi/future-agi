@@ -1,3 +1,4 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
 import {
   Avatar,
   Box,
@@ -8,12 +9,7 @@ import {
   Typography,
 } from "@mui/material";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import {
-  NavLink,
-  useNavigate,
-  useParams,
-  useSearchParams,
-} from "react-router-dom";
+import { NavLink, useParams } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import { format, isValid, parseISO } from "date-fns";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
@@ -23,7 +19,6 @@ import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { stringAvatar } from "src/utils/utils";
 import SvgColor from "src/components/svg-color";
 import EditIndividualGroupDetailsDialog from "./EditIndividualGroupDetailsDialog";
-import { useEvalStore } from "../store/useEvalStore";
 import DeleteEvalFromGroupDialog from "./DeleteEvalFromGroupDialog";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useQuery } from "@tanstack/react-query";
@@ -40,13 +35,8 @@ const IndividualGroup = ({ groupId, onReset }) => {
   const id = groupId || paramsGroupId;
   const apiref = useRef();
   const [searchQuery, setSearchQuery] = useState("");
-  const [_, setSearchParams] = useSearchParams();
   const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
-  const { setSelectedEvals, setCreateGroupMode, setEditGroupMode } =
-    useEvalStore();
-  const navigate = useNavigate();
-  const { setVisibleSection, setSelectedEval, setCurrentTab } =
-    useEvaluationContext();
+  const { setVisibleSection, setSelectedEval } = useEvaluationContext();
   const [currentRowCount, setCurrentRowCount] = useState(0);
 
   // Only fetch basic group info, not the members
@@ -91,7 +81,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
           justifyContent="center"
         >
           <Typography
-            sx={{ fontSize: "14px", fontWeight: 500, color: "text.primary" }}
+            sx={{ fontSize: "12px", fontWeight: 500, color: "text.primary" }}
           >
             {data?.name}
           </Typography>
@@ -123,9 +113,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
               sx={{
                 width: (theme) => theme.spacing(3),
                 height: (theme) => theme.spacing(3),
-                fontSize: "11px",
-                color: "pink.500",
-                backgroundColor: "background.neutral",
+                fontSize: "12px",
               }}
             />
             <Typography typography="s2" fontWeight={"fontWeightRegular"}>
@@ -163,11 +151,10 @@ const IndividualGroup = ({ groupId, onReset }) => {
           >
             <span style={{ display: "inline-block" }}>
               <IconButton
+                className="row-hover-action"
                 sx={{
                   border: "1px solid",
-                  borderRadius: "2px",
                   borderColor: "divider",
-                  padding: 0.5,
                 }}
                 disabled={evalGroupBasicData?.evalGroup?.is_sample}
                 onClick={() => {
@@ -255,45 +242,6 @@ const IndividualGroup = ({ groupId, onReset }) => {
     [getDataSource],
   );
 
-  const handleEditGroupList = async () => {
-    try {
-      // Fetch current members for editing
-      const response = await axios.get(
-        `${endpoints.develop.eval.groupEvals}${id}/`,
-      );
-      const members = evalGroupDetailPayload(response.data)?.members || [];
-
-      setSelectedEvals(
-        members?.map((member) => ({
-          id: member?.eval_template_id,
-          name: member?.name,
-          evalTemplateTags: member?.tags,
-          description: member?.description,
-          type: member?.tags?.includes("FUTURE_EVALS")
-            ? "futureagi_built"
-            : "user_built",
-          ...member,
-        })),
-      );
-
-      if (groupId) {
-        setSearchParams((prev) => ({
-          ...Object.fromEntries(prev),
-          "group-id": groupId,
-        }));
-        onReset();
-        setCurrentTab("evals");
-        setEditGroupMode(true);
-        setCreateGroupMode(true);
-      } else {
-        setCreateGroupMode(true);
-        setEditGroupMode(true);
-        navigate(`/dashboard/evaluations?group-id=${id}`);
-      }
-    } catch (error) {
-      logger.error("Error fetching group members for editing:", error);
-    }
-  };
   // Refresh grid data
   const handleRefresh = () => {
     if (apiref.current?.api) {
@@ -363,7 +311,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
           </NavLink>
 
           <Iconify
-            icon="fluent:chevron-right-12-regular"
+            icon="solar:alt-arrow-right-linear"
             style={{ display: "flex", alignItems: "center" }}
           />
           {isLoadingBasicData ? (
@@ -371,7 +319,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
           ) : (
             <Typography
               sx={{
-                fontSize: "14px",
+                fontSize: "12px",
                 fontWeight: 500,
                 display: "flex",
                 alignItems: "center",
@@ -385,7 +333,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
           <Skeleton width={"200px"} height={"16px"} />
         ) : (
           <Typography
-            sx={{ fontSize: "11px", fontWeight: 400, color: "text.primary" }}
+            sx={{ fontSize: "12px", fontWeight: 400, color: "text.primary" }}
           >
             {formatted}
           </Typography>
@@ -394,7 +342,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
 
       <Stack display={"flex"} gap={1} paddingY={0.5}>
         <Box sx={{ display: "flex", gap: 1 }}>
-          <Typography sx={{ fontSize: "16px", fontWeight: "700" }}>
+          <Typography sx={{ fontSize: "16px", fontWeight: "600" }}>
             {isLoadingBasicData ? (
               <Skeleton width={200} />
             ) : (
@@ -411,9 +359,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
                 disabled={
                   isLoadingBasicData || evalGroupBasicData?.evalGroup?.is_sample
                 }
-                sx={{
-                  padding: 0.5,
-                }}
+                size="small"
                 onClick={() => {
                   setSelectedDrawerType({
                     type: "edit",
@@ -467,52 +413,15 @@ const IndividualGroup = ({ groupId, onReset }) => {
             gap: 1,
           }}
         >
-          <CustomTooltip
-            show={evalGroupBasicData?.evalGroup?.is_sample}
-            placement="top"
-            title="This evaluation group is pre-defined based on use case and cannot be customized"
-          >
-            <span style={{ display: "inline-block" }}>
-              <Button
-                variant="outlined"
-                color="secondary"
-                disabled={
-                  isLoadingBasicData || evalGroupBasicData?.evalGroup?.is_sample
-                }
-                sx={{
-                  px: "24px",
-                  borderRadius: "8px",
-                  height: "38px",
-                  // border: "1px solid",
-                }}
-                startIcon={
-                  <SvgColor
-                    src="/assets/icons/ic_edit_pencil.svg"
-                    sx={{
-                      width: 20,
-                      height: 20,
-                      color: "primary.main",
-                    }}
-                  />
-                }
-                onClick={handleEditGroupList}
-              >
-                <Typography typography="s1" fontWeight={"fontWeightMedium"}>
-                  Edit List
-                </Typography>
-              </Button>
-            </span>
-          </CustomTooltip>
+          {/* L7c g7 (groups:detail): no "Edit List" here: it led to no
+              list editor. Members are removed with each row's trash; a
+              group's evaluations are chosen when it is created. */}
           <ShowComponent condition={!!groupId}>
             <Button
-              variant="outline"
+              variant="outlined"
               color="secondary"
               disabled={isLoadingBasicData}
               sx={{
-                px: "24px",
-                borderRadius: "8px",
-                height: "38px",
-                border: "1px solid",
                 borderColor: "primary.main",
                 color: "primary.main",
               }}
@@ -520,10 +429,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
                 <SvgColor
                   src="/assets/icons/ic_create-and-run.svg"
                   color="primary.main"
-                  sx={{
-                    width: "20px",
-                    height: "20px",
-                  }}
+                  width="16px"
                 />
               }
               onClick={handleeRunEvaluations}
@@ -562,13 +468,13 @@ const IndividualGroup = ({ groupId, onReset }) => {
           ref={apiref}
           theme={agTheme}
           getRowHeight={(params) =>
-            params.node.rowPinned === "bottom" ? 30 : 70
+            params.node.rowPinned === "bottom" ? ROW_HEIGHT.default : ROW_HEIGHT.twoLine
           }
           defaultColDef={defaultColDef}
           columnDefs={columnDefs}
           cacheBlockSize={10}
           serverSideInitialRowCount={10}
-          rowHeight={65}
+          rowHeight={ROW_HEIGHT.twoLine}
           rowModelType="serverSide"
           suppressContextMenu
           getRowId={(params) => {

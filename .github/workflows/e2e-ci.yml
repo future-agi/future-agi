@@ -17,8 +17,12 @@ on:
         type: choice
         options: [distributed, standalone]
         default: standalone
+      host_update_fallibility:
+        description: Prove SET-E2E-002 assertion fallibility after the normal suite (distributed only)
+        type: boolean
+        default: false
       sdk-ref:
-        description: "futureagi-sdk branch, tag or SHA for the SDK live suites. Default: the branch named like this one, else the base branch"
+        description: "futureagi-sdk branch, tag or full 40-character SHA. Automatic selection requires live-test prerequisites; explicit overrides fail closed."
         required: false
         type: string
 
@@ -30,6 +34,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # HR-JRN-01: this certifying workflow has no value-free opt-out.
+  E2E_VALUE_FREE: "1"
   CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
   # The release builds' layer cache, read only (the slim backend's).
   BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
@@ -48,6 +54,23 @@ jobs:
       gateway: ${{ steps.filter.outputs.gateway || steps.always.outputs.gateway }}
       stacks: ${{ steps.stacks.outputs.stacks }}
     steps:
+      - name: Require mandatory value-free mode
+        shell: bash
+        run: |
+          if [ "${E2E_VALUE_FREE:-}" != "1" ]; then
+            printf '%s\n' '::error::Mandatory value-free mode is required.'
+            exit 1
+          fi
+      - name: Validate host update fallibility opt-in
+        if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack != 'distributed'
+        run: |
+          printf '%s\n' '::error::host_update_fallibility=true requires stack=distributed; no builds were started.'
+          exit 1
+      - name: Reject unsealed host update fallibility proof
+        if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack == 'distributed'
+        run: |
+          printf '%s\n' '::error::Host update fallibility proof is unavailable in the value-free certifying workflow; no builds were started.'
+          exit 1
       - uses: actions/checkout@v4
       - id: filter
         if: github.event_name == 'pull_request'
@@ -78,6 +101,8 @@ jobs:
               - 'bin/uninstall'
               - 'scripts/reclaim-runner-disk.sh'
               - '.github/workflows/e2e-ci.yml'
+              - '.github/scripts/resolve-sdk-test-ref.py'
+              - '.github/scripts/test_resolve_sdk_test_ref.py'
       - id: always
         if: github.event_name != 'pull_request'
         run: |
@@ -118,7 +143,9 @@ jobs:
       matrix:
         stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Keep dev's 120-minute budget for image builds and the growing Playwright
+    # suite. SDK live suites are disabled below, not part of this job's coverage.
+    timeout-minutes: 120
     permissions:
       contents: read
       packages: write # ghcr build-cache: read on PRs, written on pushes
@@ -139,6 +166,13 @@ jobs:
       # :latest that predates that behavior.
       BUILD_GATEWAY: "true"
     steps:
+      - name: Require mandatory value-free mode
+        shell: bash
+        run: |
+          if [ "${E2E_VALUE_FREE:-}" != "1" ]; then
+            printf '%s\n' '::error::Mandatory value-free mode is required.'
+            exit 1
+          fi
       - uses: actions/checkout@v4
 
       - name: Tag for the images built below
@@ -278,6 +312,13 @@ jobs:
             printf '\n%s\n' "AGENTCC_GATEWAY_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
           fi
 
+      - name: Prepare public host status directory
+        if: matrix.stack == 'distributed'
+        run: |
+          status_dir="$HOME/.cache/futureagi-e2e/futureagi-e2e/host-update-status"
+          install -d -m 0755 "$status_dir"
+          echo "E2E_HOST_UPDATE_STATUS_DIR=$status_dir" >> "$GITHUB_ENV"
+
       - name: Prefetch vendor images
         # fi-collector, agentcc-gateway and the app images are deliberately
         # absent: their tag is the locally built IMAGE_TAG and a pull would
@@ -342,51 +383,66 @@ jobs:
         id: boot
         run: bin/e2e up
 
+      # Mandatory value-free mode (HR-JRN-01): suite output leaves the runner only
+      # through the publication choke point (e2e/lib/value-free-boundary.mjs).
+      # Prepare a 0700 registries root holding the run's adopted registry and a
+      # runner-private file holding suite stdout/stderr. No unheld suite arm exists.
+      - name: Prepare the value-free registry
+        if: ${{ env.E2E_VALUE_FREE == '1' }}
+        run: |
+          root=$(mktemp -d "$RUNNER_TEMP/vf-XXXXXX")
+          mkdir -m 700 "$root/registries" "$root/registries/run"
+          {
+            echo "E2E_VALUE_FREE_REGISTRIES=$root/registries"
+            echo "E2E_VALUE_FREE_REGISTRY=$root/registries/run"
+            echo "E2E_VALUE_FREE_HELD=$root/held.log"
+          } >> "$GITHUB_ENV"
+
       - name: Run E2E suite
-        run: bin/e2e test
+        run: |
+          bin/e2e test > "$E2E_VALUE_FREE_HELD" 2>&1
+
+      # Value-free: the choke point decides what the upload may take and prints the held suite
+      # output. An intact publication uploads its html/ alone and a refused run its REFUSED.json
+      # alone, each only when it, its path, the held output and this step's output line hold no
+      # registered value; then it prints exactly the bytes it scanned. Anything else (a broken
+      # seal, which leaves the upload path, a missing directory, no html/, a hit, registries it
+      # cannot read whole) uploads nothing and prints one STATUS constant. Its output is never
+      # captured or echoed here. No upload can select an unsealed fallback directory.
+      - name: Value-free publication boundary
+        id: value_free_seal
+        if: ${{ !cancelled() && env.E2E_VALUE_FREE == '1' }}
+        working-directory: e2e
+        run: node lib/value-free-boundary.mjs ci --registries "$E2E_VALUE_FREE_REGISTRIES" --print "$E2E_VALUE_FREE_HELD" --publish "${E2E_VALUE_FREE_PUBLISH:-value-free-publish}" --github-output "$GITHUB_OUTPUT"
 
       - name: Upload report
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.value_free_seal.outputs.path != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.stack == 'standalone' && 'playwright-report-standalone' || 'playwright-report' }}
-          path: e2e/playwright-report
+          path: ${{ steps.value_free_seal.outputs.path }}
           retention-days: 7
           # A job that dies before the suite runs has no report; the real
           # failure is upstream and must not be buried by an upload error.
           if-no-files-found: warn
 
-      # --- SDK live suites -------------------------------------------------
-      # The futureagi-sdk repository's E2E tests against this stack, so a
-      # backend change that breaks the SDKs fails here, before a release:
-      # python/tests/platform calls every operation of the generated client,
-      # src/platform/__tests__/live.test.ts covers the TypeScript transport.
-      # The SDK ref is the branch of this PR's name when the SDK repo has one,
-      # else the base branch (dev or main). They run after the Playwright
-      # suite whatever its result, on a stack that booted.
+      # --- SDK live suites: deliberately disabled --------------------------
+      # The FA e2e certifying workflow does not run the SDK live suites; SDK behaviour is covered by the SDK repositories' own test suites.
+      # Preserve dev's step bodies as union context, but no input can enable
+      # these unheld producers. There is no SDK held-output adapter here.
       - name: Resolve the futureagi-sdk ref
         id: sdk-ref
-        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        if: ${{ false }}
         env:
           SDK_REF_INPUT: ${{ inputs.sdk-ref }}
           HEAD_REF: ${{ github.head_ref || github.ref_name }}
           BASE_REF: ${{ github.base_ref || github.ref_name }}
         run: |
-          repo=https://github.com/future-agi/futureagi-sdk.git
-          for candidate in "$SDK_REF_INPUT" "$HEAD_REF" "$BASE_REF" dev main; do
-            [ -n "$candidate" ] || continue
-            if git ls-remote --exit-code --heads --tags "$repo" "$candidate" >/dev/null 2>&1 \
-               || echo "$candidate" | grep -Eq '^[0-9a-fA-F]{7,40}$'; then
-              echo "ref=$candidate" >> "$GITHUB_OUTPUT"
-              echo "futureagi-sdk ref: $candidate"
-              exit 0
-            fi
-          done
-          echo "::error::no futureagi-sdk ref among: $SDK_REF_INPUT $HEAD_REF $BASE_REF dev main"
-          exit 1
+          python3 -I .github/scripts/test_resolve_sdk_test_ref.py
+          python3 -I .github/scripts/resolve-sdk-test-ref.py
 
       - name: Check out futureagi-sdk
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ false }}
         uses: actions/checkout@v4
         with:
           repository: future-agi/futureagi-sdk
@@ -395,12 +451,12 @@ jobs:
           fetch-depth: 1
 
       - uses: actions/setup-python@v5
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ false }}
         with:
           python-version: "3.12"
 
       - name: Install the Python SDK and sign up an account on the stack
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ false }}
         working-directory: futureagi-sdk
         run: |
           python -m pip install --quiet --upgrade pip
@@ -410,14 +466,14 @@ jobs:
           python sdkgen/local_api_key.py --signup --base-url http://localhost:8100 --label "gh${{ github.run_id }}"
 
       - name: Python SDK live suite
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ false }}
         working-directory: futureagi-sdk
         env:
           FI_E2E_REQUIRED: "1"
         run: PYTHONPATH=python pytest -q python/tests/platform
 
       - name: TypeScript SDK live suite
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ false }}
         working-directory: futureagi-sdk/typescript/futureagi
         env:
           FI_E2E_REQUIRED: "1"
@@ -435,7 +491,7 @@ jobs:
         # (futureagi-sdk: sdkgen/check_mcp_parity.py). A tool this tree gained
         # since that release shows up here first, as the reminder to add its
         # catalog entry.
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ false }}
         run: |
           python3 -m pip install --quiet pyyaml
           python3 - <<'EOF'
@@ -452,13 +508,8 @@ jobs:
               print(f"{len(tools)} MCP tools, same names in the SDK catalog")
           EOF
 
-      - name: Dump stack state on failure
-        if: failure()
-        run: |
-          df -h / /mnt
-          cat /tmp/e2e-pull.log || true
-          bin/e2e ps
-          bin/e2e logs --tail 200
+      # Value-free: the stack's logs hold what the run registered and are never scanned, so they
+      # stay on the runner.
 
   e2e-tests:
     name: E2E Tests Pass
@@ -467,6 +518,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Require mandatory value-free mode
+        shell: bash
+        run: |
+          if [ "${E2E_VALUE_FREE:-}" != "1" ]; then
+            printf '%s\n' '::error::Mandatory value-free mode is required.'
+            exit 1
+          fi
       - name: Fail closed unless every dependency succeeded or was skipped
         env:
           NEEDS: ${{ toJSON(needs) }}

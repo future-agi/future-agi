@@ -33,6 +33,7 @@ class MCPConnection(BaseModel):
         default="remote",
     )
     is_active = models.BooleanField(default=True)
+    reconnect_required = models.BooleanField(default=False)
     oauth_token_encrypted = models.TextField(null=True, blank=True)
     oauth_refresh_token_encrypted = models.TextField(null=True, blank=True)
     oauth_token_expires_at = models.DateTimeField(null=True, blank=True)

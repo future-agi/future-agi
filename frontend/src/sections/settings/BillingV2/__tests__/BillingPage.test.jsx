@@ -1,6 +1,12 @@
+import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "src/utils/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+// Billing writes require authority in the selected organization.
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ orgLevel: 15 }),
+}));
 
 const mockGet = vi.fn();
 const mockPost = vi.fn();
@@ -31,6 +37,16 @@ vi.mock("src/utils/axios", () => ({
       },
     },
   },
+}));
+
+// These tests cover the cloud platform plan; BillingPage-gateway.test covers
+// the AI Gateway credits on this page.
+vi.mock("../useCentralBilling", () => ({
+  useCentralBilling: () => ({
+    isCloud: true,
+    creditsAvailable: false,
+    isLoading: false,
+  }),
 }));
 
 vi.mock("src/utils/format-number", () => ({
@@ -150,7 +166,7 @@ describe("BillingPageV2", () => {
     renderWithQuery(<BillingPageV2 />);
 
     await waitFor(() => {
-      expect(screen.getByText("Current Period")).toBeInTheDocument();
+      expect(screen.getByText("Current period")).toBeInTheDocument();
     });
 
     expect(screen.getAllByText("$125.50").length).toBeGreaterThanOrEqual(1);
@@ -173,7 +189,7 @@ describe("BillingPageV2", () => {
     renderWithQuery(<BillingPageV2 />);
 
     await waitFor(() => {
-      expect(screen.getByText("Invoice History")).toBeInTheDocument();
+      expect(screen.getByText("Invoice history")).toBeInTheDocument();
     });
 
     // Invoice row visible
@@ -181,12 +197,32 @@ describe("BillingPageV2", () => {
     expect(screen.getByText("Paid")).toBeInTheDocument();
   });
 
+  it("says No invoices when there are none", async () => {
+    const overview = mockGet.getMockImplementation();
+    mockGet.mockImplementation((url) =>
+      url.includes("invoices")
+        ? Promise.resolve({ data: { result: { invoices: [] } } })
+        : overview(url),
+    );
+    const { default: BillingPageV2 } = await import("../BillingPage");
+    renderWithQuery(<BillingPageV2 />);
+
+    // Title and description render as separate elements; the empty state makes no forward promise
+    // (credit-only and free accounts may never receive an end-of-period invoice).
+    expect(await screen.findByText("No invoices")).toBeInTheDocument();
+    expect(
+      screen.getByText("Issued invoices are listed here."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/first invoice will appear/i)).toBeNull();
+    expect(screen.queryByText(/No invoices yet/)).toBeNull();
+  });
+
   it("renders payment methods section with card details", async () => {
     const { default: BillingPageV2 } = await import("../BillingPage");
     renderWithQuery(<BillingPageV2 />);
 
     await waitFor(() => {
-      expect(screen.getByText("Payment Methods")).toBeInTheDocument();
+      expect(screen.getByText("Payment methods")).toBeInTheDocument();
     });
 
     expect(screen.getByText("Visa •••• 4242")).toBeInTheDocument();
@@ -198,7 +234,7 @@ describe("BillingPageV2", () => {
     renderWithQuery(<BillingPageV2 />);
 
     await waitFor(() => {
-      expect(screen.getByText("Usage Budgets")).toBeInTheDocument();
+      expect(screen.getByText("Usage budgets")).toBeInTheDocument();
     });
 
     expect(screen.getByText("Add Budget")).toBeInTheDocument();
@@ -230,6 +266,89 @@ describe("BillingPageV2", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Free plan/i)).toBeInTheDocument();
+    });
+  });
+
+  describe("when /usage/v2 fails", () => {
+    const notFound = () =>
+      Promise.reject(
+        Object.assign(new Error("Not found"), { statusCode: 404 }),
+      );
+
+    it("shows Billing couldn't be loaded with Retry, and no Free-plan default", async () => {
+      let overviewCalls = 0;
+      mockGet.mockImplementation((url) => {
+        if (url.includes("billing-overview")) {
+          overviewCalls += 1;
+          return notFound();
+        }
+        return notFound();
+      });
+
+      const { default: BillingPageV2 } = await import("../BillingPage");
+      renderWithQuery(<BillingPageV2 />);
+
+      expect(
+        await screen.findByText("Billing couldn't be loaded"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Free plan/i)).toBeNull();
+      expect(screen.queryByText(/No billing this period/i)).toBeNull();
+      expect(screen.queryByText(/No invoices yet/i)).toBeNull();
+      expect(screen.queryByText(/No payment methods on file/i)).toBeNull();
+      expect(screen.queryByText("$0.00")).toBeNull();
+
+      const before = overviewCalls;
+      screen.getByRole("button", { name: "Retry" }).click();
+      await waitFor(() => expect(overviewCalls).toBe(before + 1));
+    });
+
+    it("shows the page once Retry succeeds", async () => {
+      let fail = true;
+      mockGet.mockImplementation((url) => {
+        if (url.includes("billing-overview"))
+          return fail ? notFound() : Promise.resolve(MOCK_BILLING);
+        if (url.includes("invoices")) return Promise.resolve(MOCK_INVOICES);
+        if (url.includes("notifications"))
+          return Promise.resolve(MOCK_NOTIFICATIONS);
+        if (url.includes("budgets")) return Promise.resolve(MOCK_BUDGETS);
+        if (url.includes("payment-methods"))
+          return Promise.resolve(MOCK_PAYMENT_METHODS);
+        return notFound();
+      });
+
+      const { default: BillingPageV2 } = await import("../BillingPage");
+      renderWithQuery(<BillingPageV2 />);
+      await screen.findByText("Billing couldn't be loaded");
+      fail = false;
+      screen.getByRole("button", { name: "Retry" }).click();
+      expect(await screen.findByText("Current period")).toBeInTheDocument();
+      expect(screen.queryByText("Billing couldn't be loaded")).toBeNull();
+    });
+
+    it("shows a failed section in place of an empty one when only invoices, budgets and cards fail", async () => {
+      mockGet.mockImplementation((url) => {
+        if (url.includes("billing-overview"))
+          return Promise.resolve(MOCK_BILLING);
+        if (url.includes("notifications"))
+          return Promise.resolve(MOCK_NOTIFICATIONS);
+        return notFound();
+      });
+
+      const { default: BillingPageV2 } = await import("../BillingPage");
+      renderWithQuery(<BillingPageV2 />);
+
+      expect(
+        await screen.findByText("Invoices couldn't be loaded"),
+      ).toBeInTheDocument();
+      expect(
+        await screen.findByText("Usage budgets couldn't be loaded"),
+      ).toBeInTheDocument();
+      expect(
+        await screen.findByText("Payment methods couldn't be loaded"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/No invoices yet/i)).toBeNull();
+      expect(screen.queryByText(/No budgets set/i)).toBeNull();
+      expect(screen.queryByText(/No payment methods on file/i)).toBeNull();
     });
   });
 });

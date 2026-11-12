@@ -13,12 +13,12 @@ import re
 
 import structlog
 
+from agentic_eval.core.llm.llm import LLM
+from agentic_eval.core.utils.model_config import ModelConfigs
 from ee.agenthub.traceerroragent.prompts_v2 import (
     CHAUFFEUR_READER_PROMPT,
     CHAUFFEUR_SYSTEM_PROMPT,
 )
-from agentic_eval.core.llm.llm import LLM
-from agentic_eval.core.utils.model_config import ModelConfigs
 
 logger = structlog.get_logger(__name__)
 
@@ -26,15 +26,22 @@ logger = structlog.get_logger(__name__)
 class ChauffeurAgent:
     """Explores traces and acts as an on-demand reader for the Judge."""
 
-    def __init__(self, trace_execution_summary: str):
+    def __init__(self, trace_execution_summary: str, completion_witness=None):
         """
         Args:
             trace_execution_summary: Full trace execution text (outline + details)
                 built by TraceErrorAnalysisAgent.create_trace_execution_summary().
         """
         self.trace_execution_summary = trace_execution_summary
+        self.completion_witness = completion_witness
         config = ModelConfigs.HAIKU_4_5_BEDROCK_ARN
-        self.llm = LLM(
+        llm_class, llm_kwargs = LLM, {}
+        if completion_witness is not None:
+            from ee.agenthub.traceerroragent.background_llm import BackgroundLLM
+
+            llm_class, llm_kwargs = BackgroundLLM, {"witness": completion_witness}
+        self.llm = llm_class(
+            **llm_kwargs,
             provider=config.provider,
             model_name=config.model_name,
             temperature=config.temperature,
@@ -59,8 +66,18 @@ class ChauffeurAgent:
                 messages=messages,
                 model=self.llm.model_name,
             )
+            if getattr(self, "completion_witness", None) is not None:
+                from ee.agenthub.traceerroragent.background_payload_reports import (
+                    chauffeur_report,
+                )
+
+                return chauffeur_report(response, self.completion_witness, decode=True)
             return self._parse_response(response)
         except Exception as e:
+            if getattr(self, "completion_witness", None) is not None:
+                from ee.agenthub.traceerroragent.background_payloads import refuse
+
+                refuse(self.completion_witness)
             logger.error(f"Chauffeur agent failed: {str(e)}")
             return {"sub_flows": [], "trace_overview": ""}
 
@@ -88,14 +105,33 @@ class ChauffeurAgent:
                 messages=messages,
                 model=self.llm.model_name,
             )
+            if getattr(self, "completion_witness", None) is not None:
+                from ee.agenthub.traceerroragent.background_payload_reports import (
+                    reader_report,
+                )
+
+                return reader_report(summary, self.completion_witness)
             return summary
         except Exception as e:
+            if getattr(self, "completion_witness", None) is not None:
+                from ee.agenthub.traceerroragent.background_payloads import refuse
+
+                refuse(self.completion_witness)
             logger.error(f"Chauffeur reader failed for span {span_id}: {str(e)}")
             # Fallback: return truncated content
-            return content[:2000] + "\n... [Chauffeur summary failed, showing truncated content]"
+            return (
+                content[:2000]
+                + "\n... [Chauffeur summary failed, showing truncated content]"
+            )
 
     def _parse_response(self, response: str) -> dict:
         """Parse the Chauffeur's JSON response for sub-flows."""
+        if getattr(self, "completion_witness", None) is not None:
+            from ee.agenthub.traceerroragent.background_payload_reports import (
+                chauffeur_report,
+            )
+
+            return chauffeur_report(response, self.completion_witness, decode=True)
         try:
             # Try to extract JSON from markdown code blocks
             if "```json" in response:
@@ -122,6 +158,12 @@ class ChauffeurAgent:
 
     def _validate_sub_flows(self, parsed: dict) -> dict:
         """Validate and normalize the parsed response into sub_flows format."""
+        if getattr(self, "completion_witness", None) is not None:
+            from ee.agenthub.traceerroragent.background_payload_reports import (
+                chauffeur_report,
+            )
+
+            return chauffeur_report(parsed, self.completion_witness)
         # Handle both old format (span_groups) and new format (sub_flows)
         if "sub_flows" in parsed:
             return {
@@ -132,12 +174,14 @@ class ChauffeurAgent:
             # Backward compat: convert old format to new
             sub_flows = []
             for group in parsed["span_groups"]:
-                sub_flows.append({
-                    "name": group.get("signal", "unnamed group"),
-                    "spans": group.get("spans", []),
-                    "summary": group.get("signal", ""),
-                    "flags": [],
-                })
+                sub_flows.append(
+                    {
+                        "name": group.get("signal", "unnamed group"),
+                        "spans": group.get("spans", []),
+                        "summary": group.get("signal", ""),
+                        "flags": [],
+                    }
+                )
             return {"sub_flows": sub_flows, "trace_overview": ""}
 
         logger.warning("Chauffeur response missing sub_flows key")

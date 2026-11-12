@@ -13,6 +13,9 @@ import {
   StatusCell,
 } from "../components/AlertsListView/AlertCells";
 import { useAlertSheetStore } from "./useAlertSheetStore";
+import { useAlertStore } from "./useAlertStore";
+import { useAlertSheetFilterStore } from "./useAlertSheetFilterStore";
+import { buildFilterParams } from "./alertFilterState";
 import { buildAlertTraceLink } from "../alertTraceLink";
 
 // The window "View trace" should scope to. A row action names one fire and uses
@@ -28,7 +31,8 @@ export const pickTraceWindow = (alertRuleDetails, clickedLog) => {
     };
   }
   return {
-    windowStart: alertRuleDetails?.windowStart ?? alertRuleDetails?.window_start,
+    windowStart:
+      alertRuleDetails?.windowStart ?? alertRuleDetails?.window_start,
     windowEnd: alertRuleDetails?.windowEnd ?? alertRuleDetails?.window_end,
   };
 };
@@ -39,12 +43,61 @@ export const useAlertSheetView = () => {
   const navigate = useNavigate();
 
   const { mutate: resolveAlerts, isPending: isResolving } = useMutation({
-    mutationFn: (data) => axios.post(endpoints.project.resolveAlerts, data),
+    mutationFn: async ({ monitor, log_ids }) => {
+      let ids = log_ids;
+      if (monitor) {
+        // The resolve endpoint treats select_all as workspace-wide. Enumerate
+        // this monitor instead, and do not resolve anything until every page
+        // has loaded. Keeping this inside the mutation also keeps it pending.
+        const selectedIds = new Set();
+        let pageNumber = 0;
+        let totalPages = 1;
+        do {
+          const { data } = await axios.get(
+            endpoints.project.getAlertDetails(monitor.id),
+            {
+              params: {
+                ...monitor.params,
+                page_number: pageNumber,
+                page_size: 100,
+              },
+            },
+          );
+          const logs = data?.result?.logs;
+          if (
+            !Array.isArray(logs?.results) ||
+            !Number.isInteger(logs?.metadata?.total_pages) ||
+            logs.metadata.total_pages < 0
+          ) {
+            throw new Error("Could not load the selected issues");
+          }
+          // Bound the walk to the first response rather than chasing new fires.
+          if (pageNumber === 0) totalPages = logs.metadata.total_pages;
+          if (pageNumber < totalPages && logs.results.length === 0) {
+            throw new Error("Could not load the selected issues");
+          }
+          for (const log of logs.results) {
+            if (!log?.id) throw new Error("Could not load the selected issues");
+            if (!monitor.excludingIds.has(log.id)) selectedIds.add(log.id);
+          }
+          pageNumber += 1;
+        } while (pageNumber < totalPages);
+        ids = Array.from(selectedIds);
+      }
+      if (!ids?.length) return null;
+      return axios.post(endpoints.project.resolveAlerts, { log_ids: ids });
+    },
     onSuccess: (data) => {
+      if (!data) return;
       enqueueSnackbar(data.data.result, { variant: "success" });
       store.handleClearSelection();
       refreshGrid();
       handleCancelSelection();
+    },
+    onError: () => {
+      enqueueSnackbar("Failed to resolve issues. Please try again.", {
+        variant: "error",
+      });
     },
   });
 
@@ -96,9 +149,19 @@ export const useAlertSheetView = () => {
 
   const handleResolveAlerts = () => {
     if (store?.selectedAll) {
+      const monitorId = useAlertStore.getState().openSheetView;
+      if (!monitorId || monitorId !== store?.alertRuleDetails?.id) return;
       resolveAlerts({
-        select_all: true,
-        exclude_ids: Array.from(store?.excludingIds),
+        monitor: {
+          id: monitorId,
+          params: {
+            search_text: store.searchQuery,
+            ...buildFilterParams(
+              useAlertSheetFilterStore.getState().activeFilters,
+            ),
+          },
+          excludingIds: new Set(store.excludingIds),
+        },
       });
       trackEvent(Events.alertIssueResolvedClicked, {
         [PropertyName.id]: store?.alertRuleDetails?.id,
@@ -139,10 +202,13 @@ export const useAlertSheetView = () => {
         field: "resolved",
         flex: 1,
         cellRenderer: StatusCell,
-        cellRendererParams: (params) => ({
-          ...params,
-          value: params?.data?.resolved === true ? "resolved" : "",
-        }),
+        cellRendererParams: (params) => {
+          let value = "";
+          if (params?.data) {
+            value = params.data.resolved === true ? "resolved" : "open";
+          }
+          return { ...params, value };
+        },
       },
       {
         headerName: "Triggered at",

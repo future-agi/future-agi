@@ -92,6 +92,7 @@ def embed_feedback(manager, feedback, inputs=("prompt", "response")):
         insert=True,
         eval_id=str(feedback.eval_template_id),
         organization_id=str(feedback.organization_id),
+        workspace_id="vector-lifecycle-workspace",
     )
 
 
@@ -108,6 +109,7 @@ def formatted_context(manager, feedback):
         inputs=["What is the identifier?", "The identifier is ABC."],
         input_cols=["prompt", "response"],
         organization_id=str(feedback.organization_id),
+        workspace_id="vector-lifecycle-workspace",
     )
     return str(
         manager.process_examples(

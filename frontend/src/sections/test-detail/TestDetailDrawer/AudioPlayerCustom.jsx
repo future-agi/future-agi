@@ -14,6 +14,7 @@ import { normalizeRecordings } from "src/utils/utils";
 import useStereoChannels from "src/hooks/use-stereo-channels";
 import RecordingFailure from "src/components/multi-track-audio-player/RecordingFailure";
 import { UNAVAILABLE } from "src/components/multi-track-audio-player/failureVariants";
+import { statusColors } from "src/utils/runStatus";
 
 const isUpdatedWithinTwoMinutes = (timestamp) => {
   if (!timestamp) return false;
@@ -62,7 +63,7 @@ export const SingleTrackPlayer = ({ url }) => (
       sx={{
         minWidth: "32px",
         mr: 1,
-        borderRadius: 0.5,
+        borderRadius: "4px",
         bgcolor: "background.paper",
       }}
     />
@@ -75,8 +76,9 @@ SingleTrackPlayer.propTypes = {
 
 /**
  * Renders MultiTrackAudioPlayer using stereo channel splitting when a stereo
- * URL is available. Falls back to separate mono assistant/customer URLs, and to
- * the single-track bar when the call has only one mixed recording.
+ * URL is available. Falls back to separate mono assistant/customer URLs, or one
+ * combined track. Standalone mixed recordings keep the single-track bar; callers
+ * using onInstance get the synchronized player even with only one track.
  */
 export const StereoMultiTrackPlayer = ({
   recordings,
@@ -94,7 +96,8 @@ export const StereoMultiTrackPlayer = ({
       ? theme.palette.primary.light
       : theme.palette.primary.main;
   const assistantColor = primary;
-  const customerColor = theme.palette.mode === "dark" ? "#FF9933" : "#E9690C";
+  // The caller is info, as in the transcript and talk ratio.
+  const customerColor = statusColors(theme, "info").fg;
 
   const {
     assistantUrl: stereoAssistant,
@@ -115,39 +118,47 @@ export const StereoMultiTrackPlayer = ({
   const assistantUrl = useStereo ? stereoAssistant : recordings?.assistant;
   const customerUrl = useStereo ? stereoCustomer : recordings?.customer;
 
-  // One mono mix and nothing to split into channels: a two-row waveform can
-  // neither be filled nor tell the speakers apart, and the player only becomes
-  // ready once every track loads. Hand it to the single-track bar instead.
+  // A mixed recording has one playable track, not separate speaker channels.
+  const combinedUrl = recordings?.combined;
   const combinedOnly =
-    !useStereo &&
-    !assistantUrl &&
-    !customerUrl &&
-    Boolean(recordings?.combined);
+    !useStereo && !assistantUrl && !customerUrl && Boolean(combinedUrl);
 
   const trackUrls = useMemo(
-    () => [
-      {
-        url: customerUrl,
-        color: customerColor,
-        name: "Customer Audio",
-      },
-      {
-        url: assistantUrl,
-        color: assistantColor,
-        name: "Assistant Audio",
-      },
+    () =>
+      combinedOnly
+        ? [{ url: combinedUrl, color: assistantColor, name: "Combined Audio" }]
+        : [
+            {
+              url: customerUrl,
+              color: customerColor,
+              name: "Customer Audio",
+            },
+            {
+              url: assistantUrl,
+              color: assistantColor,
+              name: "Assistant Audio",
+            },
+          ],
+    [
+      combinedOnly,
+      combinedUrl,
+      customerUrl,
+      assistantUrl,
+      customerColor,
+      assistantColor,
     ],
-    [customerUrl, assistantUrl, customerColor, assistantColor],
   );
 
-  if (combinedOnly) {
-    return <SingleTrackPlayer url={recordings.combined} />;
+  // Observe's bridge needs the instance for transcript seeks and playback time.
+  // Keep the standalone bar only when no synchronization callback is requested.
+  if (combinedOnly && !onInstance) {
+    return <SingleTrackPlayer url={combinedUrl} />;
   }
 
   // The stereo split was the only source and it failed (403, CORS, decode),
   // or produced nothing: no track has a URL, so the multi-track player would
   // wait on them forever.
-  if (!useStereo && !assistantUrl && !customerUrl) {
+  if (!combinedOnly && !useStereo && !assistantUrl && !customerUrl) {
     return (
       <Box sx={{ position: "relative", height: height * 2 + 20 }}>
         <RecordingFailure variant={UNAVAILABLE} />
@@ -194,6 +205,32 @@ StereoMultiTrackPlayer.propTypes = {
   provider: PropTypes.string,
 };
 
+/**
+ * A call with nothing recorded, in Observe and Simulate alike. The end reason
+ * is shown on its own line, and only when there is one: it says how the call
+ * ended, not why there is no recording.
+ */
+const NoRecordingMessage = ({ endedReason }) => (
+  <Stack
+    justifyContent="center"
+    alignItems="center"
+    minHeight={200}
+    width="100%"
+    gap={0.5}
+  >
+    <Typography typography="s2_1">No recording for this call</Typography>
+    {endedReason ? (
+      <Typography typography="s2_1" color="text.secondary">
+        {`Call ended: ${endedReason}`}
+      </Typography>
+    ) : null}
+  </Stack>
+);
+
+NoRecordingMessage.propTypes = {
+  endedReason: PropTypes.string,
+};
+
 const AudioPlayerCustom = ({ data, onInstance }) => {
   const { isCallInProgress, message: loadingMessage } =
     getLoadingStateWithRespectiveStatus(
@@ -218,18 +255,7 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
   }
   if (isProjectModule) {
     if (!data?.recording_available) {
-      return (
-        <Stack
-          justifyContent="center"
-          alignItems="center"
-          minHeight={200}
-          width="100%"
-        >
-          <Typography typography="s2_1">
-            No recording found - <i>{data?.ended_reason}</i>
-          </Typography>
-        </Stack>
-      );
+      return <NoRecordingMessage endedReason={data?.ended_reason} />;
     }
 
     // Normalize recordings to flat format for project module
@@ -311,9 +337,7 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
       flex={1}
       minHeight={200}
     >
-      <Typography typography="s2_1">
-        No recording found - <i>{data?.ended_reason}</i>
-      </Typography>
+      <NoRecordingMessage endedReason={data?.ended_reason} />
     </Box>
   );
 };

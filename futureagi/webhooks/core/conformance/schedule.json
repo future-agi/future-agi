@@ -1,0 +1,3291 @@
+{
+  "conformance_version": "1.4.0",
+  "file": "schedule",
+  "rules": {
+    "classes": {
+      "standard_delays_s": {
+        "2": 5,
+        "3": 30,
+        "4": 120,
+        "5": 600,
+        "6": 1800,
+        "7": 3600,
+        "8": 7200,
+        "9": 14400,
+        "10": 28800,
+        "11": 43200,
+        "12": 43200,
+        "13": 43200,
+        "14": 43200
+      },
+      "rejected_delays_s": {
+        "2": 5,
+        "3": 60,
+        "4": 600,
+        "5": 2700
+      },
+      "max_attempts": {
+        "standard": 14,
+        "rejected": 5
+      },
+      "rejected_statuses": [
+        400,
+        401,
+        403,
+        404,
+        405,
+        415,
+        422
+      ]
+    },
+    "answer_classes": "2xx success; 410 gone (disable_endpoint gone_410, delivery paused); 413 give_up not_retried_413; 429, or 503 with a usable Retry-After: rate_limited, standard; 400/401/403/404/405/415/422 rejected class; 3xx redirect_refused, standard; any other status http_error, standard; timeout/dns_error/connect_error/tls_error/ssrf_blocked/worker_lost standard. The class follows the LAST answer.",
+    "jitter": "permille = 800 + floor(u32 * 401 / 2^32), u32 = first 4 bytes big-endian of sha256(utf8(jitter_seed + ':' + next_attempt_number)); delay_ms = base_delay_s * permille. Production seeds with the delivery id, so a delivery's schedule is reproducible and deliveries that failed together spread out.",
+    "retry_after": "integer seconds or an HTTP-date, on 429 and 503 only; delay_ms = max(jittered delay, min(retry_after_s, 3600) * 1000); a 429 also sets rate_halved_until = now + 300 s",
+    "max_attempts": "after attempt n fails, give up with max_attempts when n >= max_attempts[class] (checked before max age)",
+    "max_age": "give up with max_age_exceeded when retry_at > created_at + max_age_s (time paused counts)",
+    "time_base": "delays count from the attempt's settled_at_ms",
+    "health": "attempts oldest first; worker_lost, superseded and test attempts are ignored; a success resets the consecutive-failure run. disable: last failure is 410 -> gone_410; the last 3 failures are ssrf_blocked -> unsafe_address; >= 10 consecutive failures whose first is >= 24 h before now -> failing. Failing state: >= 3 consecutive failures spanning >= 10 min (first to last). Slow lane: 20 latency samples with the 10th smallest > 5,000 ms, or >= 3 timeouts with at_ms >= now - 10 min; slow_until = now + 30 min."
+  },
+  "next_action": [
+    {
+      "id": "standard-500-x1",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QAAAAAAAAAAAAAAAAAAA",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 958,
+        "delay_ms": 4790,
+        "retry_at_ms": 1792663204970
+      },
+      "note": "1 consecutive 500s; attempt 2 follows the standard table"
+    },
+    {
+      "id": "standard-500-x2",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QAAAAAAAAAAAAAAAAAAA",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663205150
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 3,
+        "base_delay_s": 30,
+        "jitter_permille": 822,
+        "delay_ms": 24660,
+        "retry_at_ms": 1792663229810
+      },
+      "note": "2 consecutive 500s; attempt 3 follows the standard table"
+    },
+    {
+      "id": "standard-500-x3",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QAAAAAAAAAAAAAAAAAAA",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663205150
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663229990
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 4,
+        "base_delay_s": 120,
+        "jitter_permille": 914,
+        "delay_ms": 109680,
+        "retry_at_ms": 1792663339670
+      },
+      "note": "3 consecutive 500s; attempt 4 follows the standard table"
+    },
+    {
+      "id": "standard-500-x4",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QAAAAAAAAAAAAAAAAAAA",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663205150
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663229990
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663339850
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 5,
+        "base_delay_s": 600,
+        "jitter_permille": 1007,
+        "delay_ms": 604200,
+        "retry_at_ms": 1792663944050
+      },
+      "note": "4 consecutive 500s; attempt 5 follows the standard table"
+    },
+    {
+      "id": "standard-500-x5",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QAAAAAAAAAAAAAAAAAAA",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663205150
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663229990
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663339850
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663944230
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 6,
+        "base_delay_s": 1800,
+        "jitter_permille": 992,
+        "delay_ms": 1785600,
+        "retry_at_ms": 1792665729830
+      },
+      "note": "5 consecutive 500s; attempt 6 follows the standard table"
+    },
+    {
+      "id": "standard-500-x6",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QAAAAAAAAAAAAAAAAAAA",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663205150
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663229990
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663339850
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663944230
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792665730010
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 7,
+        "base_delay_s": 3600,
+        "jitter_permille": 920,
+        "delay_ms": 3312000,
+        "retry_at_ms": 1792669042010
+      },
+      "note": "6 consecutive 500s; attempt 7 follows the standard table"
+    },
+    {
+      "id": "standard-500-x7",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QAAAAAAAAAAAAAAAAAAA",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663205150
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663229990
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663339850
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663944230
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792665730010
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792669042190
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 8,
+        "base_delay_s": 7200,
+        "jitter_permille": 1003,
+        "delay_ms": 7221600,
+        "retry_at_ms": 1792676263790
+      },
+      "note": "7 consecutive 500s; attempt 8 follows the standard table"
+    },
+    {
+      "id": "standard-500-x8",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QAAAAAAAAAAAAAAAAAAA",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663205150
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663229990
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663339850
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663944230
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792665730010
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792669042190
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792676263970
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 9,
+        "base_delay_s": 14400,
+        "jitter_permille": 1182,
+        "delay_ms": 17020800,
+        "retry_at_ms": 1792693284770
+      },
+      "note": "8 consecutive 500s; attempt 9 follows the standard table"
+    },
+    {
+      "id": "standard-500-x9",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QAAAAAAAAAAAAAAAAAAA",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663205150
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663229990
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663339850
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663944230
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792665730010
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792669042190
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792676263970
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792693284950
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 10,
+        "base_delay_s": 28800,
+        "jitter_permille": 822,
+        "delay_ms": 23673600,
+        "retry_at_ms": 1792716958550
+      },
+      "note": "9 consecutive 500s; attempt 10 follows the standard table"
+    },
+    {
+      "id": "standard-500-x10",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QAAAAAAAAAAAAAAAAAAA",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663205150
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663229990
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663339850
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663944230
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792665730010
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792669042190
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792676263970
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792693284950
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792716958730
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 11,
+        "base_delay_s": 43200,
+        "jitter_permille": 972,
+        "delay_ms": 41990400,
+        "retry_at_ms": 1792758949130
+      },
+      "note": "10 consecutive 500s; attempt 11 follows the standard table"
+    },
+    {
+      "id": "standard-500-x11",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QAAAAAAAAAAAAAAAAAAA",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663205150
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663229990
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663339850
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663944230
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792665730010
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792669042190
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792676263970
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792693284950
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792716958730
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792758949310
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 12,
+        "base_delay_s": 43200,
+        "jitter_permille": 1149,
+        "delay_ms": 49636800,
+        "retry_at_ms": 1792808586110
+      },
+      "note": "11 consecutive 500s; attempt 12 follows the standard table"
+    },
+    {
+      "id": "standard-500-x12",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QAAAAAAAAAAAAAAAAAAA",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663205150
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663229990
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663339850
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663944230
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792665730010
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792669042190
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792676263970
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792693284950
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792716958730
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792758949310
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792808586290
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 13,
+        "base_delay_s": 43200,
+        "jitter_permille": 811,
+        "delay_ms": 35035200,
+        "retry_at_ms": 1792843621490
+      },
+      "note": "12 consecutive 500s; attempt 13 follows the standard table"
+    },
+    {
+      "id": "standard-500-x13",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QAAAAAAAAAAAAAAAAAAA",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663205150
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663229990
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663339850
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663944230
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792665730010
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792669042190
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792676263970
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792693284950
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792716958730
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792758949310
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792808586290
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792843621670
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 14,
+        "base_delay_s": 43200,
+        "jitter_permille": 886,
+        "delay_ms": 38275200,
+        "retry_at_ms": 1792881896870
+      },
+      "note": "13 consecutive 500s; attempt 14 follows the standard table"
+    },
+    {
+      "id": "standard-500-x14",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QAAAAAAAAAAAAAAAAAAA",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663205150
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663229990
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663339850
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663944230
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792665730010
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792669042190
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792676263970
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792693284950
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792716958730
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792758949310
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792808586290
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792843621670
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792881897050
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "give_up",
+        "delivery_status": "failed",
+        "final_outcome": "max_attempts"
+      },
+      "note": "the 14th failure: max_attempts"
+    },
+    {
+      "id": "standard-chain-bbbb",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QBBBBBBBBBBBBBBBBBBB",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792663215000
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792663235895
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792663279305
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792663413105
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792663990905
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792665703305
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792669023105
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792675906905
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792692957105
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792727186505
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792763014305
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792803982905
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792843007505
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792893609705
+        }
+      ],
+      "expected": {
+        "outcome": "timeout",
+        "retry_class": "standard",
+        "action": "give_up",
+        "delivery_status": "failed",
+        "final_outcome": "max_attempts"
+      },
+      "note": "a full chain of timeouts with another jitter seed: max_attempts or max_age_exceeded, whichever comes first"
+    },
+    {
+      "id": "standard-chain-cccc",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QCCCCCCCCCCCCCCCCCCC",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792663215000
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792663235560
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792663278880
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792663421080
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792663960480
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792665946480
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792670173480
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792678274080
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792694661880
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792722440080
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792768074280
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792803642880
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792843229080
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792890893680
+        }
+      ],
+      "expected": {
+        "outcome": "timeout",
+        "retry_class": "standard",
+        "action": "give_up",
+        "delivery_status": "failed",
+        "final_outcome": "max_attempts"
+      },
+      "note": "a full chain of timeouts with another jitter seed: max_attempts or max_age_exceeded, whichever comes first"
+    },
+    {
+      "id": "standard-chain-dddd",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QDDDDDDDDDDDDDDDDDDD",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792663215000
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792663235730
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792663278780
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792663407420
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792664012820
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792665804420
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792669775820
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792677566820
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792694185020
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792723028820
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792774149420
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792811446020
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792857166620
+        },
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792908632820
+        }
+      ],
+      "expected": {
+        "outcome": "timeout",
+        "retry_class": "standard",
+        "action": "give_up",
+        "delivery_status": "failed",
+        "final_outcome": "max_attempts"
+      },
+      "note": "a full chain of timeouts with another jitter seed: max_attempts or max_age_exceeded, whichever comes first"
+    },
+    {
+      "id": "rejected-400-x1",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QEEEEEEEEEEEEEEEEEEE",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 400,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "rejected",
+        "retry_class": "rejected",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1121,
+        "delay_ms": 5605,
+        "retry_at_ms": 1792663205785
+      },
+      "note": "rejected class: attempts 2-5 after 5 s, 1 min, 10 min, 45 min; the 5th failure gives up"
+    },
+    {
+      "id": "rejected-400-x2",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QEEEEEEEEEEEEEEEEEEE",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 400,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 400,
+          "settled_at_ms": 1792663205965
+        }
+      ],
+      "expected": {
+        "outcome": "rejected",
+        "retry_class": "rejected",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 3,
+        "base_delay_s": 60,
+        "jitter_permille": 1119,
+        "delay_ms": 67140,
+        "retry_at_ms": 1792663273105
+      },
+      "note": "rejected class: attempts 2-5 after 5 s, 1 min, 10 min, 45 min; the 5th failure gives up"
+    },
+    {
+      "id": "rejected-400-x3",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QEEEEEEEEEEEEEEEEEEE",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 400,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 400,
+          "settled_at_ms": 1792663205965
+        },
+        {
+          "status": 400,
+          "settled_at_ms": 1792663273285
+        }
+      ],
+      "expected": {
+        "outcome": "rejected",
+        "retry_class": "rejected",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 4,
+        "base_delay_s": 600,
+        "jitter_permille": 1094,
+        "delay_ms": 656400,
+        "retry_at_ms": 1792663929685
+      },
+      "note": "rejected class: attempts 2-5 after 5 s, 1 min, 10 min, 45 min; the 5th failure gives up"
+    },
+    {
+      "id": "rejected-400-x4",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QEEEEEEEEEEEEEEEEEEE",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 400,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 400,
+          "settled_at_ms": 1792663205965
+        },
+        {
+          "status": 400,
+          "settled_at_ms": 1792663273285
+        },
+        {
+          "status": 400,
+          "settled_at_ms": 1792663929865
+        }
+      ],
+      "expected": {
+        "outcome": "rejected",
+        "retry_class": "rejected",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 5,
+        "base_delay_s": 2700,
+        "jitter_permille": 931,
+        "delay_ms": 2513700,
+        "retry_at_ms": 1792666443565
+      },
+      "note": "rejected class: attempts 2-5 after 5 s, 1 min, 10 min, 45 min; the 5th failure gives up"
+    },
+    {
+      "id": "rejected-400-x5",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QEEEEEEEEEEEEEEEEEEE",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 400,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 400,
+          "settled_at_ms": 1792663205965
+        },
+        {
+          "status": 400,
+          "settled_at_ms": 1792663273285
+        },
+        {
+          "status": 400,
+          "settled_at_ms": 1792663929865
+        },
+        {
+          "status": 400,
+          "settled_at_ms": 1792666443745
+        }
+      ],
+      "expected": {
+        "outcome": "rejected",
+        "retry_class": "rejected",
+        "action": "give_up",
+        "delivery_status": "failed",
+        "final_outcome": "max_attempts"
+      },
+      "note": "rejected class: attempts 2-5 after 5 s, 1 min, 10 min, 45 min; the 5th failure gives up"
+    },
+    {
+      "id": "400-then-503",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QFFFFFFFFFFFFFFFFFFF",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 400,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 503,
+          "settled_at_ms": 1792663204625
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 3,
+        "base_delay_s": 30,
+        "jitter_permille": 1188,
+        "delay_ms": 35640,
+        "retry_at_ms": 1792663240265
+      },
+      "note": "the class follows the last answer: standard from now on (attempt 3 after 30 s)"
+    },
+    {
+      "id": "503-then-400",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QFFFFFFFFFFFFFFFFFFF",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 503,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 400,
+          "settled_at_ms": 1792663204625
+        }
+      ],
+      "expected": {
+        "outcome": "rejected",
+        "retry_class": "rejected",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 3,
+        "base_delay_s": 60,
+        "jitter_permille": 1188,
+        "delay_ms": 71280,
+        "retry_at_ms": 1792663275905
+      },
+      "note": "rejected after a 503: attempt 3 after 1 min"
+    },
+    {
+      "id": "503-x6-then-400",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QFFFFFFFFFFFFFFFFFFF",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 503,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 503,
+          "settled_at_ms": 1792663204625
+        },
+        {
+          "status": 503,
+          "settled_at_ms": 1792663240445
+        },
+        {
+          "status": 503,
+          "settled_at_ms": 1792663374185
+        },
+        {
+          "status": 503,
+          "settled_at_ms": 1792663993565
+        },
+        {
+          "status": 503,
+          "settled_at_ms": 1792665719945
+        },
+        {
+          "status": 400,
+          "settled_at_ms": 1792670040125
+        }
+      ],
+      "expected": {
+        "outcome": "rejected",
+        "retry_class": "rejected",
+        "action": "give_up",
+        "delivery_status": "failed",
+        "final_outcome": "max_attempts"
+      },
+      "note": "a rejected answer on attempt 7 is past the rejected class's 5 attempts: max_attempts"
+    },
+    {
+      "id": "rejected-401",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 401,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "rejected",
+        "retry_class": "rejected",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "rejected class"
+    },
+    {
+      "id": "rejected-403",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 403,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "rejected",
+        "retry_class": "rejected",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "rejected class"
+    },
+    {
+      "id": "rejected-404",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 404,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "rejected",
+        "retry_class": "rejected",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "rejected class"
+    },
+    {
+      "id": "rejected-405",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 405,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "rejected",
+        "retry_class": "rejected",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "rejected class"
+    },
+    {
+      "id": "rejected-415",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 415,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "rejected",
+        "retry_class": "rejected",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "rejected class"
+    },
+    {
+      "id": "rejected-422",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 422,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "rejected",
+        "retry_class": "rejected",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "rejected class"
+    },
+    {
+      "id": "standard-408",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 408,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "http_error, standard"
+    },
+    {
+      "id": "standard-409",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 409,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "http_error, standard"
+    },
+    {
+      "id": "standard-425",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 425,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "http_error, standard"
+    },
+    {
+      "id": "standard-418",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 418,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "http_error, standard"
+    },
+    {
+      "id": "standard-451",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 451,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "http_error, standard"
+    },
+    {
+      "id": "standard-500",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "http_error, standard"
+    },
+    {
+      "id": "standard-501",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 501,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "http_error, standard"
+    },
+    {
+      "id": "standard-502",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 502,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "http_error, standard"
+    },
+    {
+      "id": "standard-504",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 504,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "http_error, standard"
+    },
+    {
+      "id": "standard-599",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 599,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "http_error, standard"
+    },
+    {
+      "id": "redirect-301",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 301,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "redirect_refused",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "redirects are never followed: redirect_refused, standard"
+    },
+    {
+      "id": "redirect-302",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 302,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "redirect_refused",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "redirects are never followed: redirect_refused, standard"
+    },
+    {
+      "id": "redirect-307",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 307,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "redirect_refused",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "redirects are never followed: redirect_refused, standard"
+    },
+    {
+      "id": "redirect-308",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 308,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "redirect_refused",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "redirects are never followed: redirect_refused, standard"
+    },
+    {
+      "id": "error-connect_error",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "error": "connect_error",
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "connect_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "no HTTP answer: standard"
+    },
+    {
+      "id": "error-dns_error",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "error": "dns_error",
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "dns_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "no HTTP answer: standard"
+    },
+    {
+      "id": "error-ssrf_blocked",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "error": "ssrf_blocked",
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "ssrf_blocked",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "no HTTP answer: standard"
+    },
+    {
+      "id": "error-timeout",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "error": "timeout",
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "timeout",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "no HTTP answer: standard"
+    },
+    {
+      "id": "error-tls_error",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "error": "tls_error",
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "tls_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "no HTTP answer: standard"
+    },
+    {
+      "id": "error-worker_lost",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "error": "worker_lost",
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "worker_lost",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1067,
+        "delay_ms": 5335,
+        "retry_at_ms": 1792663205515
+      },
+      "note": "no HTTP answer: standard"
+    },
+    {
+      "id": "success-200",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 200,
+          "settled_at_ms": 1792663205695
+        }
+      ],
+      "expected": {
+        "outcome": "success",
+        "action": "done",
+        "delivery_status": "succeeded"
+      },
+      "note": "2xx: done"
+    },
+    {
+      "id": "success-201",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 201,
+          "settled_at_ms": 1792663205695
+        }
+      ],
+      "expected": {
+        "outcome": "success",
+        "action": "done",
+        "delivery_status": "succeeded"
+      },
+      "note": "2xx: done"
+    },
+    {
+      "id": "success-204",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 204,
+          "settled_at_ms": 1792663205695
+        }
+      ],
+      "expected": {
+        "outcome": "success",
+        "action": "done",
+        "delivery_status": "succeeded"
+      },
+      "note": "2xx: done"
+    },
+    {
+      "id": "success-299",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QGGGGGGGGGGGGGGGGGGG",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 299,
+          "settled_at_ms": 1792663205695
+        }
+      ],
+      "expected": {
+        "outcome": "success",
+        "action": "done",
+        "delivery_status": "succeeded"
+      },
+      "note": "2xx: done"
+    },
+    {
+      "id": "413",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QHHHHHHHHHHHHHHHHHHH",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 413,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "rejected",
+        "action": "give_up",
+        "delivery_status": "failed",
+        "final_outcome": "not_retried_413"
+      },
+      "note": "never retried: not_retried_413"
+    },
+    {
+      "id": "410",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QHHHHHHHHHHHHHHHHHHH",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 410,
+          "settled_at_ms": 1792663205690
+        }
+      ],
+      "expected": {
+        "outcome": "gone",
+        "action": "disable_endpoint",
+        "disabled_reason": "gone_410",
+        "delivery_status": "paused"
+      },
+      "note": "410 turns the endpoint off at once; the delivery is paused"
+    },
+    {
+      "id": "429-retry-after-7",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QJJJJJJJJJJJJJJJJJJJ",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 429,
+          "retry_after": "7",
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "rate_limited",
+        "retry_class": "standard",
+        "rate_halved_until_ms": 1792663500180,
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1044,
+        "delay_ms": 7000,
+        "retry_at_ms": 1792663207180
+      },
+      "note": "max(jittered 5 s, 7 s); the endpoint's rate is halved for 5 min (WT-10)"
+    },
+    {
+      "id": "429-retry-after-2",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QJJJJJJJJJJJJJJJJJJJ",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 429,
+          "retry_after": "2",
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "rate_limited",
+        "retry_class": "standard",
+        "rate_halved_until_ms": 1792663500180,
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1044,
+        "delay_ms": 5220,
+        "retry_at_ms": 1792663205400
+      },
+      "note": "Retry-After below the schedule: the schedule wins"
+    },
+    {
+      "id": "429-retry-after-7200",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QJJJJJJJJJJJJJJJJJJJ",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 429,
+          "retry_after": "7200",
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "rate_limited",
+        "retry_class": "standard",
+        "rate_halved_until_ms": 1792663500180,
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1044,
+        "delay_ms": 3600000,
+        "retry_at_ms": 1792666800180
+      },
+      "note": "Retry-After is capped at 1 h"
+    },
+    {
+      "id": "429-no-retry-after",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QJJJJJJJJJJJJJJJJJJJ",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 429,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "rate_limited",
+        "retry_class": "standard",
+        "rate_halved_until_ms": 1792663500180,
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1044,
+        "delay_ms": 5220,
+        "retry_at_ms": 1792663205400
+      },
+      "note": "429 without Retry-After"
+    },
+    {
+      "id": "429-retry-after-garbage",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QJJJJJJJJJJJJJJJJJJJ",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 429,
+          "retry_after": "soon",
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "rate_limited",
+        "retry_class": "standard",
+        "rate_halved_until_ms": 1792663500180,
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1044,
+        "delay_ms": 5220,
+        "retry_at_ms": 1792663205400
+      },
+      "note": "an unusable Retry-After is ignored"
+    },
+    {
+      "id": "503-retry-after-http-date",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QJJJJJJJJJJJJJJJJJJJ",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 503,
+          "retry_after": "Thu, 22 Oct 2026 10:01:00 GMT",
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "rate_limited",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1044,
+        "delay_ms": 60000,
+        "retry_at_ms": 1792663260180
+      },
+      "note": "503 with an HTTP-date Retry-After 60 s ahead: rate_limited"
+    },
+    {
+      "id": "503-no-retry-after",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QJJJJJJJJJJJJJJJJJJJ",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 503,
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1044,
+        "delay_ms": 5220,
+        "retry_at_ms": 1792663205400
+      },
+      "note": "503 without Retry-After is http_error"
+    },
+    {
+      "id": "500-retry-after-ignored",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QJJJJJJJJJJJJJJJJJJJ",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "retry_after": "900",
+          "settled_at_ms": 1792663200180
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1044,
+        "delay_ms": 5220,
+        "retry_at_ms": 1792663205400
+      },
+      "note": "Retry-After counts only on 429 and 503"
+    },
+    {
+      "id": "max-age-paused-4-days",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QKKKKKKKKKKKKKKKKKKK",
+        "created_at_ms": 1792317600000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200000
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "give_up",
+        "delivery_status": "failed",
+        "final_outcome": "max_age_exceeded"
+      },
+      "note": "time in paused counts toward max age: created 4 days ago"
+    },
+    {
+      "id": "max-age-1h-endpoint",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QMMMMMMMMMMMMMMMMMMM",
+        "created_at_ms": 1792663200000,
+        "max_age_s": 3600
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200180
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663205915
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663237175
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663380155
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792663977335
+        },
+        {
+          "status": 500,
+          "settled_at_ms": 1792665678515
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "give_up",
+        "delivery_status": "failed",
+        "final_outcome": "max_age_exceeded"
+      },
+      "note": "an endpoint with max_age_s 3600: attempt 7 would fall after 1 h"
+    },
+    {
+      "id": "max-age-71h",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QNNNNNNNNNNNNNNNNNNN",
+        "created_at_ms": 1792407600000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200000
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "retry",
+        "delivery_status": "retrying",
+        "next_attempt": 2,
+        "base_delay_s": 5,
+        "jitter_permille": 1170,
+        "delay_ms": 5850,
+        "retry_at_ms": 1792663205850
+      },
+      "note": "created 71 h ago: a 5 s retry still fits"
+    },
+    {
+      "id": "max-age-71h59m58s",
+      "delivery": {
+        "jitter_seed": "dlv_01JBF3QNNNNNNNNNNNNNNNNNNN",
+        "created_at_ms": 1792404002000,
+        "max_age_s": 259200
+      },
+      "attempts": [
+        {
+          "status": 500,
+          "settled_at_ms": 1792663200000
+        }
+      ],
+      "expected": {
+        "outcome": "http_error",
+        "retry_class": "standard",
+        "action": "give_up",
+        "delivery_status": "failed",
+        "final_outcome": "max_age_exceeded"
+      },
+      "note": "2 s left: the jittered 5 s retry does not fit"
+    }
+  ],
+  "endpoint_health": [
+    {
+      "id": "gone-410",
+      "attempts": [
+        {
+          "outcome": "success",
+          "at_ms": 1792663200000
+        },
+        {
+          "outcome": "gone",
+          "at_ms": 1792663201000
+        }
+      ],
+      "now_ms": 1792663202000,
+      "expected": {
+        "consecutive_failed_attempts": 1,
+        "disable_endpoint": "gone_410",
+        "failing": false,
+        "slow_lane": false,
+        "slow_until_ms": null
+      },
+      "note": "410: off at once"
+    },
+    {
+      "id": "ssrf-x3",
+      "attempts": [
+        {
+          "outcome": "ssrf_blocked",
+          "at_ms": 1792663200000
+        },
+        {
+          "outcome": "ssrf_blocked",
+          "at_ms": 1792663205000
+        },
+        {
+          "outcome": "ssrf_blocked",
+          "at_ms": 1792663210000
+        }
+      ],
+      "now_ms": 1792663220000,
+      "expected": {
+        "consecutive_failed_attempts": 3,
+        "disable_endpoint": "unsafe_address",
+        "failing": false,
+        "slow_lane": false,
+        "slow_until_ms": null
+      },
+      "note": "3 consecutive ssrf_blocked: unsafe_address"
+    },
+    {
+      "id": "ssrf-x2-timeout",
+      "attempts": [
+        {
+          "outcome": "ssrf_blocked",
+          "at_ms": 1792663200000
+        },
+        {
+          "outcome": "ssrf_blocked",
+          "at_ms": 1792663205000
+        },
+        {
+          "outcome": "timeout",
+          "at_ms": 1792663220000
+        }
+      ],
+      "now_ms": 1792663230000,
+      "expected": {
+        "consecutive_failed_attempts": 3,
+        "disable_endpoint": null,
+        "failing": false,
+        "slow_lane": false,
+        "slow_until_ms": null
+      },
+      "note": "not 3 in a row"
+    },
+    {
+      "id": "ssrf-success-ssrf-x2",
+      "attempts": [
+        {
+          "outcome": "ssrf_blocked",
+          "at_ms": 1792663200000
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663200010
+        },
+        {
+          "outcome": "ssrf_blocked",
+          "at_ms": 1792663200020
+        },
+        {
+          "outcome": "ssrf_blocked",
+          "at_ms": 1792663200030
+        }
+      ],
+      "now_ms": 1792663200100,
+      "expected": {
+        "consecutive_failed_attempts": 2,
+        "disable_endpoint": null,
+        "failing": false,
+        "slow_lane": false,
+        "slow_until_ms": null
+      },
+      "note": "a 2xx resets the run"
+    },
+    {
+      "id": "down-24h-10-attempts",
+      "attempts": [
+        {
+          "outcome": "http_error",
+          "at_ms": 1792663200000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792674000000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792684800000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792695600000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792706400000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792717200000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792728000000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792738800000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792749600000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792760400000
+        }
+      ],
+      "now_ms": 1792760400000,
+      "expected": {
+        "consecutive_failed_attempts": 10,
+        "disable_endpoint": "failing",
+        "failing": true,
+        "slow_lane": false,
+        "slow_until_ms": null
+      },
+      "note": "no 2xx for 24 h, >= 10 consecutive failures, the first >= 24 h old: failing"
+    },
+    {
+      "id": "down-23h-10-attempts",
+      "attempts": [
+        {
+          "outcome": "http_error",
+          "at_ms": 1792663200000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792670400000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792677600000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792684800000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792692000000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792699200000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792706400000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792713600000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792720800000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792728000000
+        }
+      ],
+      "now_ms": 1792746000000,
+      "expected": {
+        "consecutive_failed_attempts": 10,
+        "disable_endpoint": null,
+        "failing": true,
+        "slow_lane": false,
+        "slow_until_ms": null
+      },
+      "note": "the first failure is only 23 h old"
+    },
+    {
+      "id": "down-30h-9-attempts",
+      "attempts": [
+        {
+          "outcome": "http_error",
+          "at_ms": 1792663200000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792674000000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792684800000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792695600000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792706400000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792717200000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792728000000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792738800000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792749600000
+        }
+      ],
+      "now_ms": 1792771200000,
+      "expected": {
+        "consecutive_failed_attempts": 9,
+        "disable_endpoint": null,
+        "failing": true,
+        "slow_lane": false,
+        "slow_until_ms": null
+      },
+      "note": "only 9 failures"
+    },
+    {
+      "id": "down-6h",
+      "attempts": [
+        {
+          "outcome": "http_error",
+          "at_ms": 1792663200000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792665600000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792668000000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792670400000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792672800000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792675200000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792677600000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792680000000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792682400000
+        }
+      ],
+      "now_ms": 1792684800000,
+      "expected": {
+        "consecutive_failed_attempts": 9,
+        "disable_endpoint": null,
+        "failing": true,
+        "slow_lane": false,
+        "slow_until_ms": null
+      },
+      "note": "WT-12: a receiver down for 6 h is not turned off"
+    },
+    {
+      "id": "worker-lost-not-counted",
+      "attempts": [
+        {
+          "outcome": "worker_lost",
+          "at_ms": 1792663200000
+        },
+        {
+          "outcome": "worker_lost",
+          "at_ms": 1792674000000
+        },
+        {
+          "outcome": "worker_lost",
+          "at_ms": 1792684800000
+        },
+        {
+          "outcome": "worker_lost",
+          "at_ms": 1792695600000
+        },
+        {
+          "outcome": "worker_lost",
+          "at_ms": 1792706400000
+        },
+        {
+          "outcome": "worker_lost",
+          "at_ms": 1792717200000
+        },
+        {
+          "outcome": "worker_lost",
+          "at_ms": 1792728000000
+        },
+        {
+          "outcome": "worker_lost",
+          "at_ms": 1792738800000
+        },
+        {
+          "outcome": "worker_lost",
+          "at_ms": 1792749600000
+        },
+        {
+          "outcome": "worker_lost",
+          "at_ms": 1792760400000
+        }
+      ],
+      "now_ms": 1792774800000,
+      "expected": {
+        "consecutive_failed_attempts": 0,
+        "disable_endpoint": null,
+        "failing": false,
+        "slow_lane": false,
+        "slow_until_ms": null
+      },
+      "note": "worker_lost is our failure, not the receiver's: it never counts"
+    },
+    {
+      "id": "tests-not-counted",
+      "attempts": [
+        {
+          "outcome": "http_error",
+          "at_ms": 1792663200000,
+          "test": true
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792674000000,
+          "test": true
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792684800000,
+          "test": true
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792695600000,
+          "test": true
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792706400000,
+          "test": true
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792717200000,
+          "test": true
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792728000000,
+          "test": true
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792738800000,
+          "test": true
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792749600000,
+          "test": true
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792760400000,
+          "test": true
+        }
+      ],
+      "now_ms": 1792774800000,
+      "expected": {
+        "consecutive_failed_attempts": 0,
+        "disable_endpoint": null,
+        "failing": false,
+        "slow_lane": false,
+        "slow_until_ms": null
+      },
+      "note": "test deliveries do not change endpoint health"
+    },
+    {
+      "id": "failing-3-over-10min",
+      "attempts": [
+        {
+          "outcome": "http_error",
+          "at_ms": 1792663200000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792663500000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792663800000
+        }
+      ],
+      "now_ms": 1792663860000,
+      "expected": {
+        "consecutive_failed_attempts": 3,
+        "disable_endpoint": null,
+        "failing": true,
+        "slow_lane": false,
+        "slow_until_ms": null
+      },
+      "note": "3 consecutive failures spanning >= 10 min: Failing"
+    },
+    {
+      "id": "failing-3-over-9min",
+      "attempts": [
+        {
+          "outcome": "http_error",
+          "at_ms": 1792663200000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792663470000
+        },
+        {
+          "outcome": "http_error",
+          "at_ms": 1792663740000
+        }
+      ],
+      "now_ms": 1792663800000,
+      "expected": {
+        "consecutive_failed_attempts": 3,
+        "disable_endpoint": null,
+        "failing": false,
+        "slow_lane": false,
+        "slow_until_ms": null
+      },
+      "note": "spanning 9 min: not yet"
+    },
+    {
+      "id": "slow-p50",
+      "attempts": [
+        {
+          "outcome": "success",
+          "at_ms": 1792663200000,
+          "duration_ms": 4000
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663201000,
+          "duration_ms": 4200
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663202000,
+          "duration_ms": 4400
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663203000,
+          "duration_ms": 4600
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663204000,
+          "duration_ms": 4800
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663205000,
+          "duration_ms": 5000
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663206000,
+          "duration_ms": 5200
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663207000,
+          "duration_ms": 5400
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663208000,
+          "duration_ms": 5600
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663209000,
+          "duration_ms": 5800
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663210000,
+          "duration_ms": 6000
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663211000,
+          "duration_ms": 6200
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663212000,
+          "duration_ms": 6400
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663213000,
+          "duration_ms": 6600
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663214000,
+          "duration_ms": 6800
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663215000,
+          "duration_ms": 7000
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663216000,
+          "duration_ms": 7200
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663217000,
+          "duration_ms": 7400
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663218000,
+          "duration_ms": 7600
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663219000,
+          "duration_ms": 7800
+        }
+      ],
+      "now_ms": 1792663230000,
+      "expected": {
+        "consecutive_failed_attempts": 0,
+        "disable_endpoint": null,
+        "failing": false,
+        "slow_lane": true,
+        "slow_until_ms": 1792665030000
+      },
+      "note": "p50 of the last 20 latencies (nearest rank, the 10th smallest) > 5,000 ms"
+    },
+    {
+      "id": "slow-19-samples",
+      "attempts": [
+        {
+          "outcome": "success",
+          "at_ms": 1792663201000,
+          "duration_ms": 4200
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663202000,
+          "duration_ms": 4400
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663203000,
+          "duration_ms": 4600
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663204000,
+          "duration_ms": 4800
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663205000,
+          "duration_ms": 5000
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663206000,
+          "duration_ms": 5200
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663207000,
+          "duration_ms": 5400
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663208000,
+          "duration_ms": 5600
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663209000,
+          "duration_ms": 5800
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663210000,
+          "duration_ms": 6000
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663211000,
+          "duration_ms": 6200
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663212000,
+          "duration_ms": 6400
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663213000,
+          "duration_ms": 6600
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663214000,
+          "duration_ms": 6800
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663215000,
+          "duration_ms": 7000
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663216000,
+          "duration_ms": 7200
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663217000,
+          "duration_ms": 7400
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663218000,
+          "duration_ms": 7600
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663219000,
+          "duration_ms": 7800
+        }
+      ],
+      "now_ms": 1792663230000,
+      "expected": {
+        "consecutive_failed_attempts": 0,
+        "disable_endpoint": null,
+        "failing": false,
+        "slow_lane": false,
+        "slow_until_ms": null
+      },
+      "note": "fewer than 20 samples: the p50 rule does not apply"
+    },
+    {
+      "id": "not-slow-p50-4900",
+      "attempts": [
+        {
+          "outcome": "success",
+          "at_ms": 1792663200000,
+          "duration_ms": 4000
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663201000,
+          "duration_ms": 4100
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663202000,
+          "duration_ms": 4200
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663203000,
+          "duration_ms": 4300
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663204000,
+          "duration_ms": 4400
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663205000,
+          "duration_ms": 4500
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663206000,
+          "duration_ms": 4600
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663207000,
+          "duration_ms": 4700
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663208000,
+          "duration_ms": 4800
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663209000,
+          "duration_ms": 4900
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663210000,
+          "duration_ms": 5000
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663211000,
+          "duration_ms": 5100
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663212000,
+          "duration_ms": 5200
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663213000,
+          "duration_ms": 5300
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663214000,
+          "duration_ms": 5400
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663215000,
+          "duration_ms": 5500
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663216000,
+          "duration_ms": 5600
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663217000,
+          "duration_ms": 5700
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663218000,
+          "duration_ms": 5800
+        },
+        {
+          "outcome": "success",
+          "at_ms": 1792663219000,
+          "duration_ms": 5900
+        }
+      ],
+      "now_ms": 1792663230000,
+      "expected": {
+        "consecutive_failed_attempts": 0,
+        "disable_endpoint": null,
+        "failing": false,
+        "slow_lane": false,
+        "slow_until_ms": null
+      },
+      "note": "p50 4,900 ms"
+    },
+    {
+      "id": "slow-3-timeouts-10min",
+      "attempts": [
+        {
+          "outcome": "timeout",
+          "at_ms": 1792663200000
+        },
+        {
+          "outcome": "timeout",
+          "at_ms": 1792663440000
+        },
+        {
+          "outcome": "timeout",
+          "at_ms": 1792663680000
+        }
+      ],
+      "now_ms": 1792663740000,
+      "expected": {
+        "consecutive_failed_attempts": 3,
+        "disable_endpoint": null,
+        "failing": false,
+        "slow_lane": true,
+        "slow_until_ms": 1792665540000
+      },
+      "note": ">= 3 timeouts in the last 10 min"
+    },
+    {
+      "id": "not-slow-timeout-aged-out",
+      "attempts": [
+        {
+          "outcome": "timeout",
+          "at_ms": 1792663200000
+        },
+        {
+          "outcome": "timeout",
+          "at_ms": 1792663440000
+        },
+        {
+          "outcome": "timeout",
+          "at_ms": 1792663680000
+        }
+      ],
+      "now_ms": 1792663860000,
+      "expected": {
+        "consecutive_failed_attempts": 3,
+        "disable_endpoint": null,
+        "failing": false,
+        "slow_lane": false,
+        "slow_until_ms": null
+      },
+      "note": "the first timeout is 11 min old"
+    }
+  ]
+}

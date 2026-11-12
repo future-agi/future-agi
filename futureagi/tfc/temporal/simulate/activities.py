@@ -56,6 +56,10 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from simulate.models import Scenarios
+from simulate.services.scenario_failure import (  # noqa: E402
+    apply_failure_reason,
+    record_failure_reason,
+)
 from tfc.temporal.simulate.types import (  # Scenario Generation; Scenario Creation; Graph Scenario Sub-Activity Types (v2+v3)
     AddScenarioColumnsInput,
     CategorizeAndValidateInput,
@@ -1905,6 +1909,7 @@ def _create_dataset_scenario_sync(
         try:
             scenario = Scenarios.objects.get(id=scenario_id)
             scenario.status = StatusType.FAILED.value
+            apply_failure_reason(scenario, e)
             scenario.save()
         except Exception:
             pass
@@ -2058,6 +2063,7 @@ def _create_script_scenario_sync(
 
             except Exception as e:
                 scenario.status = StatusType.FAILED.value
+                apply_failure_reason(scenario, e)
                 scenario.save()
                 raise Exception(f"Failed to generate graph: {str(e)}")
 
@@ -2121,6 +2127,7 @@ def _create_script_scenario_sync(
         try:
             scenario = Scenarios.objects.get(id=scenario_id)
             scenario.status = StatusType.FAILED.value
+            apply_failure_reason(scenario, e)
             scenario.save()
         except Exception:
             pass
@@ -2953,6 +2960,7 @@ def _setup_graph_scenario_sync(
                 scenario_graph = graph_generator.generate_graph(save_to_db=True)
             except Exception as e:
                 scenario.status = StatusType.FAILED.value
+                apply_failure_reason(scenario, e)
                 scenario.save()
                 raise Exception(f"Failed to generate graph: {str(e)}")
 
@@ -2971,6 +2979,7 @@ def _setup_graph_scenario_sync(
                     )
             except Exception as e:
                 scenario.status = StatusType.FAILED.value
+                apply_failure_reason(scenario, e)
                 scenario.save()
                 raise Exception(f"Failed to save graph data: {str(e)}")
 
@@ -3090,6 +3099,7 @@ def _setup_graph_scenario_sync(
         try:
             scenario = Scenarios.objects.get(id=scenario_id)
             scenario.status = StatusType.FAILED.value
+            apply_failure_reason(scenario, e)
             scenario.save()
         except Exception:
             pass
@@ -3103,6 +3113,7 @@ def _setup_graph_scenario_sync(
         try:
             scenario = Scenarios.objects.get(id=scenario_id)
             scenario.status = StatusType.FAILED.value
+            apply_failure_reason(scenario, e)
             scenario.save()
         except Exception:
             pass
@@ -4215,6 +4226,7 @@ def _finalize_graph_scenario_sync(
         # If no valid dataset_id, mark scenario as FAILED
         if not dataset_id:
             scenario.status = StatusType.FAILED.value
+            apply_failure_reason(scenario)
             scenario.save()
             return {
                 "scenario_id": scenario_id,
@@ -4251,6 +4263,7 @@ def _finalize_graph_scenario_sync(
         try:
             scenario = Scenarios.objects.get(id=scenario_id)
             scenario.status = StatusType.FAILED.value
+            apply_failure_reason(scenario, e)
             scenario.save()
         except Exception:
             pass
@@ -5262,6 +5275,7 @@ def _prepare_scenario_sync(
 
     except Exception as e:
         logger.exception(f"System error in _prepare_scenario_sync: {e}")
+        record_failure_reason(scenario_id, e)
         return {
             "scenario_id": scenario_id,
             "status": "FAILED",

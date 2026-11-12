@@ -9,7 +9,6 @@ import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from typing import Optional
 
 from temporalio.worker import ResourceBasedSlotConfig, Worker, WorkerTuner
 
@@ -30,9 +29,9 @@ async def run_worker(
     *,
     max_concurrent_activities: int = 100,
     max_concurrent_workflow_tasks: int = 100,
-    graceful_shutdown_timeout: Optional[timedelta] = None,
-    target_memory_usage: Optional[float] = None,
-    target_cpu_usage: Optional[float] = None,
+    graceful_shutdown_timeout: timedelta | None = None,
+    target_memory_usage: float | None = None,
+    target_cpu_usage: float | None = None,
     skip_otel_init: bool = False,
 ) -> None:
     """
@@ -78,7 +77,8 @@ async def run_worker(
             LoggingWorker,
         )
 
-        _noop = lambda *a, **kw: None
+        def _noop(*a, **kw):
+            return None
 
         async def _noop_worker_loop(self):
             return
@@ -103,6 +103,11 @@ async def run_worker(
     close_old_connections()
 
     client = await get_client()
+
+    if task_queue == "webhooks":
+        from webhooks.temporal.boot import start_dispatchers_safely
+
+        await start_dispatchers_safely(client)
 
     workflows = get_workflows_for_queue(task_queue)
     activities = get_activities_for_queue(task_queue)
@@ -201,7 +206,7 @@ async def run_worker(
     await worker.run()
 
 
-def start_worker(task_queue: Optional[str] = None) -> None:
+def start_worker(task_queue: str | None = None) -> None:
     """
     Start Temporal worker for queue specified by arg or TEMPORAL_TASK_QUEUE env var.
 

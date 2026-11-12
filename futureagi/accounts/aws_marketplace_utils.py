@@ -8,6 +8,7 @@ from django.core.cache import cache
 from django.utils import timezone
 from django.utils.functional import SimpleLazyObject
 
+from accounts.services.auth_cache import cache_access_token
 from accounts.authentication import generate_encrypted_message
 from accounts.models.auth_token import AuthToken, AuthTokenType
 from accounts.models.aws_marketplace import AWSMarketplaceCustomer, SubscriptionStatus
@@ -174,6 +175,18 @@ def _create_user_account(email, full_name, aws_customer):
         organization_role=OrganizationRoles.OWNER,
     )
 
+    from accounts.models.organization_membership import OrganizationMembership
+    from tfc.constants.levels import Level
+
+    OrganizationMembership.objects.get_or_create(
+        user=user,
+        organization=aws_customer.organization,
+        defaults={
+            "role": OrganizationRoles.OWNER,
+            "level": Level.OWNER,
+            "is_active": True,
+        },
+    )
     return user, generated_password
 
 
@@ -438,10 +451,12 @@ def _create_access_token(user):
         {"user_id": str(user.id), "id": str(access_token.id)}
     )
 
-    cache.set(
-        f"access_token_{str(access_token.id)}",
-        {"token": access_token_encrypted, "user": user},
-        timeout=getattr(settings, "AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES", 60) * 60,
+    cache_access_token(
+        str(access_token.id),
+        access_token_encrypted,
+        user,
+        timeout=getattr(settings, 'AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES', 60) * 60,
+        cache_backend=cache,
     )
 
     return access_token_encrypted
@@ -468,10 +483,10 @@ def process_aws_launch_software(registration_token):
     This function handles the business logic for launching software:
     1. Resolves the registration token to get customer info
     2. Checks if customer exists and has users
-    3. Returns appropriate response (signup needed or access tokens)
+    3. Returns the appropriate signup or login action
 
     Returns:
-        dict: Response data with either signup info or access tokens
+        dict: Response data with either signup info or a login action
         str: Error message if processing fails
     """
     try:
@@ -509,22 +524,10 @@ def process_aws_launch_software(registration_token):
         ]:
             return None, "Your subscription is not active"
 
-        # Get user for launch
-        user = _get_user_for_launch(aws_customer)
-        if not user:
-            return None, "No user account found. Please complete signup first."
-
-        _deactivate_previous_tokens(user)
-        refresh_token_encrypted = _create_refresh_token(user)
-        access_token_encrypted = _create_access_token(user)
-
-        response_data = {
-            "access": access_token_encrypted,
-            "refresh": refresh_token_encrypted,
-            "new_org": aws_customer.organization.is_new,
-        }
-
-        return response_data, None
+        # An AWS subscription identifies the customer organization, not the
+        # person launching the app. Require normal sign-in rather than choosing
+        # a legacy member and issuing (or revoking) that person's sessions.
+        return {"valid": True, "action": "login"}, None
 
     except Exception as e:
         logger.error(f"Error processing AWS launch software: {str(e)}")

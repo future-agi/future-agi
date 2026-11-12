@@ -10,12 +10,12 @@ so aggregation semantics stay consistent across surfaces.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from evaluations.engine.instance import resolve_pass_threshold
 from model_hub.models.evals_metric import CompositeEvalChild, EvalTemplate
 from model_hub.types import CompositeChildResult
 from model_hub.utils.composite_aggregation import (
@@ -23,7 +23,6 @@ from model_hub.utils.composite_aggregation import (
     aggregate_scores,
     aggregate_summaries,
 )
-from evaluations.engine.instance import resolve_pass_threshold
 from model_hub.utils.scoring import determine_pass_fail, score_eval_output
 
 logger = logging.getLogger(__name__)
@@ -41,6 +40,7 @@ class CompositeRunOutcome:
     summary: str | None
     error_localizer_results: dict | None
     log_id: str | None = field(default=None)
+    jury_report: dict | None = field(default=None)
 
 
 def resolve_child_weights(
@@ -60,6 +60,66 @@ def resolve_child_weights(
         value = overrides.get(key)
         resolved[key] = float(value) if isinstance(value, int | float) else link.weight
     return resolved
+
+
+def _link_run_config(link: CompositeEvalChild) -> dict[str, Any]:
+    run_config = (link.config or {}).get("run_config") or {}
+    return run_config if isinstance(run_config, dict) else {}
+
+
+def live_pinned_version(link: CompositeEvalChild):
+    """The link's pinned version, or None when it pins nothing or the
+    pinned version was deleted (a deleted pin runs the live template)."""
+    version = link.pinned_version
+    if version is None or getattr(version, "deleted", False):
+        return None
+    return version
+
+
+def resolve_child_binding(
+    link: CompositeEvalChild, config: dict[str, Any], model: str | None
+) -> tuple[dict[str, Any], str | None]:
+    """The runtime config and model a composite child runs with.
+
+    The child's pinned version snapshot, then its link config, go over the
+    composite's runtime `config`. Its model is the link's `run_config` → link
+    config → pinned version → child template → `model`.
+    """
+    runtime_config = dict(config) if config else {}
+
+    # Version pinning: if this child is pinned, snapshot overrides the
+    # template's live config/criteria/model for this run only. A pin whose
+    # version was deleted is no pin: the live template runs.
+    version = live_pinned_version(link)
+    if version is not None:
+        if version.config_snapshot:
+            runtime_config.update(version.config_snapshot)
+        if version.criteria:
+            runtime_config["criteria"] = version.criteria
+        if version.model:
+            runtime_config["model"] = version.model
+
+    link_config = link.config or {}
+    if link_config:
+        link_params = link_config.get("params")
+        runtime_config.update({k: v for k, v in link_config.items() if k != "params"})
+        if isinstance(link_params, dict):
+            existing_params = runtime_config.get("params")
+            runtime_config["params"] = {
+                **(existing_params if isinstance(existing_params, dict) else {}),
+                **link_params,
+            }
+
+    pinned_model = version.model if version is not None else None
+    effective_model = (
+        _link_run_config(link).get("model")
+        or link_config.get("model")
+        or pinned_model
+        or link.child.model
+        or model
+        or None
+    )
+    return runtime_config, effective_model
 
 
 def _execute_child(
@@ -89,50 +149,18 @@ def _execute_child(
     from model_hub.views.utils.evals import run_eval_func
 
     try:
-        runtime_config = dict(config) if config else {}
-
-        # Version pinning: if this child is pinned, snapshot overrides the
-        # template's live config/criteria/model for this run only.
-        if link.pinned_version:
-            version = link.pinned_version
-            if version.config_snapshot:
-                runtime_config.update(version.config_snapshot)
-            if version.criteria:
-                runtime_config["criteria"] = version.criteria
-            if version.model:
-                runtime_config["model"] = version.model
-
-        link_config = link.config or {}
-        if link_config:
-            link_params = link_config.get("params")
-            runtime_config.update(
-                {k: v for k, v in link_config.items() if k != "params"}
-            )
-            if isinstance(link_params, dict):
-                existing_params = runtime_config.get("params")
-                runtime_config["params"] = {
-                    **(existing_params if isinstance(existing_params, dict) else {}),
-                    **link_params,
-                }
-
-        link_run_config = link_config.get("run_config") or {}
-        if not isinstance(link_run_config, dict):
-            link_run_config = {}
-
-        pinned_model = link.pinned_version.model if link.pinned_version else None
-        effective_model = (
-            link_run_config.get("model")
-            or link_config.get("model")
-            or pinned_model
-            or child_template.model
-            or model
-            or None
+        runtime_config, effective_model = resolve_child_binding(link, config, model)
+        pinned = live_pinned_version(link)
+        pinned_number = pinned.version_number if pinned is not None else None
+        # A link (or jury seat) that names its own model keeps it.
+        link_chose_model = bool(
+            _link_run_config(link).get("model") or (link.config or {}).get("model")
         )
         effective_error_localizer = bool(
             error_localizer
             or (
                 PER_CHILD_ERROR_LOCALIZER_ENABLED
-                and link_run_config.get("error_localizer_enabled")
+                and _link_run_config(link).get("error_localizer_enabled")
             )
         )
 
@@ -154,7 +182,12 @@ def _execute_child(
             # A pinned child ran the snapshot above, so its usage log must be
             # stamped with the pinned version — not the template default that
             # run_eval_func would otherwise resolve.
-            resolved_version=link.pinned_version if link.pinned_version else None,
+            resolved_version=pinned,
+            # The engine runs the pinned version's prompt and criteria. A
+            # link's own model stays, so a jury seat keeps its judge;
+            # otherwise the pinned version's model runs.
+            version_number=pinned_number,
+            keep_selected_model=pinned_number is not None and link_chose_model,
         )
 
         # None: unscoreable children fall through to the exclusion branch below.
@@ -176,13 +209,15 @@ def _execute_child(
         )
 
     except Exception as e:  # noqa: BLE001
+        from tfc.ee_gates import jev_error_message
+
         logger.warning("Child eval %s failed: %s", child_template.name, str(e))
         return CompositeChildResult(
             child_id=str(child_template.id),
             child_name=child_template.name,
             order=link.order,
             status="failed",
-            error=str(e),
+            error=jev_error_message(e) or str(e),
             weight=weight,
         )
 
@@ -210,6 +245,7 @@ def _log_composite_usage(
     try:
         from sdk.utils.helpers import _get_api_call_type
         from tfc.constants.api_calls import APICallStatusChoices
+
         try:
             from ee.usage.models.usage import APICallLog, APICallType
         except ImportError:
@@ -350,6 +386,27 @@ def execute_composite_children_sync(
     - Providing resolved (non-template) mapping values. For dataset-row
       callers that means inputs already pulled from cells.
     """
+    if (parent.config or {}).get("jury"):
+        from model_hub.services.composite_jury import execute_jury
+
+        return execute_jury(
+            parent=parent,
+            child_links=child_links,
+            mapping=mapping,
+            org=org,
+            workspace=workspace,
+            config=config or {},
+            model=model,
+            input_data_types=input_data_types or {},
+            row_context=row_context,
+            span_context=span_context,
+            trace_context=trace_context,
+            session_context=session_context,
+            call_context=call_context,
+            error_localizer=error_localizer,
+            source=source,
+        )
+
     _start_time = time.time()
     weights = resolve_child_weights(child_links, weight_overrides)
 
@@ -385,7 +442,7 @@ def execute_composite_children_sync(
             str(link.child_id): resolve_pass_threshold(
                 eval_template=link.child,
                 runtime_config=link.config or {},
-                resolved_version=link.pinned_version,
+                resolved_version=live_pinned_version(link),
             )
             for link in child_links
         }

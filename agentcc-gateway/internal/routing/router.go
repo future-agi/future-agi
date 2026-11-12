@@ -31,6 +31,10 @@ func NewRouter(cfg config.RoutingConfig, providerIDs map[string]bool, modelProvi
 	if err != nil {
 		return nil, fmt.Errorf("creating default strategy: %w", err)
 	}
+	if _, ok := strategy.(*AdaptiveStrategy); ok {
+		// Tuned by routing.adaptive; its deps are bound after startup.
+		strategy = NewAdaptiveStrategy(cfg.Adaptive, nil)
+	}
 
 	r := &Router{
 		modelTargets:    make(map[string][]RoutingTarget),
@@ -81,6 +85,17 @@ func NewRouter(cfg config.RoutingConfig, providerIDs map[string]bool, modelProvi
 	)
 
 	return r, nil
+}
+
+// NewTargetRouter returns a router over targets (model -> its targets, in
+// the order given) that selects with s and reads latencies from tracker: a
+// router over an org's own provider instances, whose targets are no
+// config.yaml provider. targets is the router's own from then on.
+func NewTargetRouter(targets map[string][]RoutingTarget, s Strategy, tracker *LatencyTracker) *Router {
+	if tracker == nil {
+		tracker = NewLatencyTracker(0.3)
+	}
+	return &Router{modelTargets: targets, defaultStrategy: s, latencyTracker: tracker}
 }
 
 // HasTargets returns true if the model has routing targets configured.
@@ -135,15 +150,27 @@ func (r *Router) selectMatching(model string, exclude map[string]bool, requireEx
 		return nil, fmt.Errorf("all providers for model %q are unavailable", model)
 	}
 
-	// Single healthy target — no strategy needed.
-	if len(healthy) == 1 {
+	// Single healthy target — no strategy needed, unless the strategy
+	// refuses open circuits (SkipOpenCircuits): a lone target whose circuit
+	// is open is then refused with its 503 rather than returned, so a
+	// failover over one target (an org's single provider for a customer
+	// key) ends with that 503, not with "no targets" after it is excluded.
+	if len(healthy) == 1 && !refusesOpenCircuits(r.defaultStrategy) {
 		return &RoutingResult{
 			Target:       healthy[0],
 			StrategyName: r.defaultStrategy.Name(),
 		}, nil
 	}
 
-	idx, err := r.defaultStrategy.Select(healthy, r.latencyTracker)
+	// A model-aware strategy (cost-optimized, adaptive, circuit-aware) prices
+	// and checks each target for the model it serves.
+	var idx int
+	var err error
+	if ms, ok := r.defaultStrategy.(ModelStrategy); ok {
+		idx, err = ms.SelectModel(model, healthy, r.latencyTracker)
+	} else {
+		idx, err = r.defaultStrategy.Select(healthy, r.latencyTracker)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -151,6 +178,12 @@ func (r *Router) selectMatching(model string, exclude map[string]bool, requireEx
 		Target:       healthy[idx],
 		StrategyName: r.defaultStrategy.Name(),
 	}, nil
+}
+
+// refusesOpenCircuits reports whether s is SkipOpenCircuits' strategy.
+func refusesOpenCircuits(s Strategy) bool {
+	_, ok := s.(*circuitAwareStrategy)
+	return ok
 }
 
 func anyTargetKeepsModel(targets []RoutingTarget, model string) bool {

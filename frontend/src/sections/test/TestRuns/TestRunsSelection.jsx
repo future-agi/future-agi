@@ -12,6 +12,11 @@ import axios, { endpoints } from "src/utils/axios";
 import { useParams } from "react-router";
 import { enqueueSnackbar } from "notistack";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
+import NotInReleaseButton from "src/components/NotInRelease/NotInReleaseButton";
+import {
+  PROMPT_RERUN_NO_CALLS_RUN_AGAIN,
+  isPromptSimulation,
+} from "../promptSimulationRerun";
 
 const ACTION_TYPES = {
   RERUN: "rerun",
@@ -19,14 +24,14 @@ const ACTION_TYPES = {
 };
 
 const TestRunsSelection = () => {
-  const { toggledNodes, selectAll, setToggledNodes, setSelectAll } =
+  const { toggledNodes, setToggledNodes, setSelectAll } =
     useTestRunsGridStoreShallow((s) => ({
       toggledNodes: s.toggledNodes,
-      selectAll: s.selectAll,
       setToggledNodes: s.setToggledNodes,
       setSelectAll: s.setSelectAll,
     }));
   const [actionType, setActionType] = useState();
+  const [actionTarget, setActionTarget] = useState({ ids: [], testId: null });
   const { setOpenTestEvaluation } = useTestEvaluationStoreShallow((s) => ({
     setOpenTestEvaluation: s.setOpenTestEvaluation,
   }));
@@ -34,7 +39,10 @@ const TestRunsSelection = () => {
   const { testId } = useParams();
   const theme = useTheme();
 
-  const { refreshTestRunGrid } = useTestDetailContext();
+  const { refreshTestRunGrid, testData } = useTestDetailContext();
+  // Every run here belongs to this one run test, so a selection is either
+  // all prompt-based or not prompt-based at all.
+  const promptSimulation = isPromptSimulation(testData);
 
   const selectedCount = useTestRunsSelectedCount();
 
@@ -45,9 +53,9 @@ const TestRunsSelection = () => {
 
   const rerunExecutions = useMutation({
     mutationFn: () =>
-      axios.post(endpoints.runTests.rerunSimulation(testId), {
-        test_execution_ids: toggledNodes,
-        select_all: selectAll,
+      axios.post(endpoints.runTests.rerunSimulation(actionTarget.testId), {
+        test_execution_ids: actionTarget.ids,
+        select_all: false,
         rerun_type: "call_and_eval",
       }),
     onSuccess: () => {
@@ -60,9 +68,9 @@ const TestRunsSelection = () => {
   });
   const deleteExecutions = useMutation({
     mutationFn: () =>
-      axios.post(endpoints.runTests.deleteSimulation(testId), {
-        test_execution_ids: toggledNodes,
-        select_all: selectAll,
+      axios.post(endpoints.runTests.deleteSimulation(actionTarget.testId), {
+        test_execution_ids: actionTarget.ids,
+        select_all: false,
       }),
     onSuccess: () => {
       enqueueSnackbar("Simulations deleted successfully", {
@@ -73,7 +81,12 @@ const TestRunsSelection = () => {
     },
   });
 
+  const openAction = (type) => {
+    setActionTarget({ ids: [...toggledNodes], testId });
+    setActionType(type);
+  };
   const handleSubmit = () => {
+    if (!actionTarget.ids.length) return;
     if (actionType === ACTION_TYPES.RERUN) {
       rerunExecutions.mutate();
     } else if (actionType === ACTION_TYPES.DELETE) {
@@ -90,24 +103,36 @@ const TestRunsSelection = () => {
         gap: 1,
       }}
     >
-      <Button
-        onClick={() => setActionType(ACTION_TYPES.RERUN)}
-        startIcon={<SvgColor src="/assets/icons/navbar/ic_get_started.svg" />}
-        size="small"
-        variant="outlined"
-      >
-        <Typography
-          typography={"s1"}
-          fontWeight={"fontWeightMedium"}
-        >{`Re-Run Simulation (${selectedCount})`}</Typography>
-      </Button>
+      {promptSimulation ? (
+        <NotInReleaseButton
+          reason={PROMPT_RERUN_NO_CALLS_RUN_AGAIN}
+          startIcon={<SvgColor src="/assets/icons/navbar/ic_get_started.svg" />}
+          size="small"
+          variant="outlined"
+        >
+          <Typography
+            typography={"s1"}
+            fontWeight={"fontWeightMedium"}
+          >{`Re-Run Simulation (${selectedCount})`}</Typography>
+        </NotInReleaseButton>
+      ) : (
+        <Button
+          onClick={() => openAction(ACTION_TYPES.RERUN)}
+          startIcon={<SvgColor src="/assets/icons/navbar/ic_get_started.svg" />}
+          size="small"
+          variant="outlined"
+        >
+          <Typography
+            typography={"s1"}
+            fontWeight={"fontWeightMedium"}
+          >{`Re-Run Simulation (${selectedCount})`}</Typography>
+        </Button>
+      )}
       <Button
         size="small"
         variant="outlined"
         sx={{
           ...theme.typography.s2_1,
-          fontWeight: 500,
-          paddingX: 2,
         }}
         startIcon={<SvgColor src="/assets/icons/ic_completed.svg" />}
         onClick={() => setOpenTestEvaluation(true)}
@@ -122,11 +147,9 @@ const TestRunsSelection = () => {
         variant="outlined"
         sx={{
           ...theme.typography.s2_1,
-          fontWeight: 500,
-          paddingX: 2,
         }}
         startIcon={<SvgColor src="/assets/icons/ic_delete.svg" />}
-        onClick={() => setActionType(ACTION_TYPES.DELETE)}
+        onClick={() => openAction(ACTION_TYPES.DELETE)}
       >
         <Typography
           typography={"s1"}
@@ -136,7 +159,7 @@ const TestRunsSelection = () => {
       <Button
         size="small"
         variant="outlined"
-        sx={{ ...theme.typography.s1, fontWeight: 400 }}
+        sx={{ ...theme.typography.s1 }}
         onClick={() => {
           clearSelection();
         }}
@@ -150,8 +173,8 @@ const TestRunsSelection = () => {
         onClose={() => setActionType(null)}
         title={
           actionType === ACTION_TYPES.RERUN
-            ? `Re-Run Simulation${selectedCount !== 1 ? "s" : ""}`
-            : `Delete Simulation${selectedCount !== 1 ? "s" : ""}`
+            ? `Re-Run Simulation${actionTarget.ids.length !== 1 ? "s" : ""}`
+            : `Delete Simulation${actionTarget.ids.length !== 1 ? "s" : ""}`
         }
         subTitle={
           actionType === ACTION_TYPES.RERUN
@@ -159,16 +182,16 @@ const TestRunsSelection = () => {
             : `Deleting these runs will remove all simulation results and call details permanently. Are you sure you want to proceed?`
         }
         isValid={true}
-        modalWidth="480px"
+        modalWidth="560px"
         onSubmit={handleSubmit}
         onCancelBtn={() => setActionType(null)}
         actionBtnTitle={actionType === ACTION_TYPES.RERUN ? "Re-Run" : "Delete"}
         actionBtnSx={
           actionType === ACTION_TYPES.DELETE
             ? {
-                bgcolor: "red.500",
+                bgcolor: "status.danger.solid",
                 color: "common.white",
-                "&:hover": { bgcolor: "red.600" },
+                "&:hover": { bgcolor: "status.danger.solid" },
               }
             : {}
         }

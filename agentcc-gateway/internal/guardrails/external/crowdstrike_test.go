@@ -25,7 +25,7 @@ func TestCrowdStrike_ValidToken(t *testing.T) {
 
 	g := New("test-crowdstrike", map[string]interface{}{
 		"provider": "crowdstrike", "client_id": "id", "client_secret": "secret", "base_url": srv.URL,
-	})
+	}, extGuard(t, srv.Listener.Addr().String()))
 
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
 	if !result.Pass {
@@ -52,7 +52,7 @@ func TestCrowdStrike_MissingAccessToken(t *testing.T) {
 
 			g := New("test-crowdstrike", map[string]interface{}{
 				"provider": "crowdstrike", "client_id": "id", "client_secret": "secret", "base_url": srv.URL,
-			})
+			}, extGuard(t, srv.Listener.Addr().String()))
 
 			result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
 			if guardCalls != 0 {

@@ -1,0 +1,16 @@
+{
+  "data": [
+    {
+      "name": "Anthropic | anthropic/claude-sonnet-5.5-20260901",
+      "model_id": "anthropic/claude-sonnet-5.5",
+      "tag": "anthropic",
+      "provider_name": "Anthropic"
+    },
+    {
+      "name": "ElevenLabs | elevenlabs/eleven-flash-v2.5",
+      "model_id": "elevenlabs/eleven-flash-v2.5",
+      "tag": "elevenlabs",
+      "provider_name": "ElevenLabs"
+    }
+  ]
+}

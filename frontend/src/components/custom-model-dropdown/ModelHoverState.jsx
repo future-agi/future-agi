@@ -1,12 +1,6 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import React from "react";
-import {
-  Typography,
-  Divider,
-  Box,
-  Slider,
-  useTheme,
-  alpha,
-} from "@mui/material";
+import { Typography, Divider, Box, Slider, useTheme } from "@mui/material";
 import Image from "../image";
 import { ShowComponent } from "../show";
 import PropTypes from "prop-types";
@@ -81,14 +75,12 @@ export default function ModelHoverState({ modelName }) {
         padding: "16px",
         backgroundColor: "background.paper",
         borderRadius: "8px",
-        boxShadow: (theme) =>
-          `4px 4px 16px 0px ${alpha(theme.palette.common.black, 0.1)}`,
       }}
     >
       <Box sx={{ display: "flex", gap: 1 }}>
         {data?.logoUrl && (
           <Image
-            src={data?.logoUrl}
+            src={localProviderLogo(data)}
             alt=""
             width="24px"
             sx={{ verticalAlign: "middle" }}

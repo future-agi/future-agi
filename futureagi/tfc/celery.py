@@ -94,6 +94,11 @@ celery_app.conf.task_queues = [
 # Load task modules from all registered Django app configs.
 celery_app.autodiscover_tasks(lambda: settings.INSTALLED_APPS)
 celery_app.conf.beat_schedule = {
+    "reconcile_mcp_approvals": {
+        "task": "agentcc.reconcile_mcp_approvals",
+        "schedule": 15.0,
+        "options": {"expires": 15.0},
+    },
     # ==========================================================================
     # MODEL_HUB tasks - MIGRATED TO TEMPORAL
     # See: tfc/temporal/schedules/model_hub.py

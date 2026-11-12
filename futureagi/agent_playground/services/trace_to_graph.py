@@ -88,9 +88,13 @@ def _chspan_to_legacy_dict(span) -> dict[str, Any]:
     }
 
 
-def _legacy_spans_from_postgres(trace_id: str) -> list[dict[str, Any]]:
+def _legacy_spans_from_postgres(
+    trace_id: str, *, project_id: str
+) -> list[dict[str, Any]]:
     return list(
-        ObservationSpan.no_workspace_objects.filter(trace_id=trace_id, deleted=False)
+        ObservationSpan.no_workspace_objects.filter(
+            trace_id=trace_id, project_id=project_id, deleted=False
+        )
         .order_by("start_time")
         .values(
             "id",
@@ -106,14 +110,16 @@ def _legacy_spans_from_postgres(trace_id: str) -> list[dict[str, Any]]:
     )
 
 
-def _legacy_spans_from_clickhouse(trace_id: str) -> list[dict[str, Any]]:
+def _legacy_spans_from_clickhouse(
+    trace_id: str, *, project_id: str
+) -> list[dict[str, Any]]:
     from tracer.services.clickhouse.v2 import get_reader
 
     with get_reader() as reader:
         # list_by_trace orders by start_time, id — matching the prior
         # `.order_by("start_time")` (ties on start_time previously broke
         # by row order; here they break by id, which is stable).
-        chspans = reader.list_by_trace(trace_id)
+        chspans = reader.list_by_trace(trace_id, project_id=project_id)
     return [_chspan_to_legacy_dict(s) for s in chspans]
 
 
@@ -134,7 +140,9 @@ def convert_trace_to_graph(
     trace_id = str(trace.id)
 
     try:
-        spans = _legacy_spans_from_clickhouse(trace_id)
+        spans = _legacy_spans_from_clickhouse(
+            trace_id, project_id=str(trace.project_id)
+        )
     except Exception:
         logger.warning(
             "trace_to_graph_clickhouse_failed, falling back to postgres",
@@ -143,7 +151,7 @@ def convert_trace_to_graph(
         )
         spans = []
     if not spans:
-        spans = _legacy_spans_from_postgres(trace_id)
+        spans = _legacy_spans_from_postgres(trace_id, project_id=str(trace.project_id))
 
     llm_spans = [s for s in spans if s["observation_type"] == "llm"]
     if not llm_spans:

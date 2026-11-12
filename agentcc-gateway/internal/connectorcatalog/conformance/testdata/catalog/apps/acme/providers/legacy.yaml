@@ -1,0 +1,54 @@
+# Fixture for the L3 conformance harness tests, not catalog data. A K1
+# provider on the 2024-11-05 HTTP+SSE transport, pinned to that era, whose
+# key goes in Authorization with a prefix the gateway cannot send (Token),
+# and whose one tool declares an output schema.
+schema: "connector-manifest/v1#provider"
+app: acme
+id: legacy
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: ga, source: https://acme.example/docs/mcp }
+transport:
+  kind: http
+  url: https://legacy.acme.example/sse
+  variant: sse
+  era: 2024-11-05
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Token "
+      secret: true
+      label: Legacy token
+tools:
+  source: upstream_mcp
+  defaultPosture: auto
+  items:
+    - name: doc_stats
+      title: Document statistics
+      description: "Count the workspace's documents and folders."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      inputSchema: { type: object, properties: {} }
+      outputSchema:
+        type: object
+        properties:
+          documents: { type: integer, minimum: 0 }
+          folders: { type: integer, minimum: 0 }
+        required: [documents, folders]
+pricing: { model: vendor_plan }
+quality: { tier: listed }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://acme.example/docs/mcp
+    fetchedAt: 2026-10-19
+x-omega: { ee: exclude, oss: exclude }

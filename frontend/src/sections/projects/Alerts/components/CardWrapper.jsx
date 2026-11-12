@@ -12,7 +12,7 @@ export default function CardWrapper({
   iconColor,
   hideOrder = false,
   bgColor = "background.neutral",
-  textColor = "text.disabled",
+  textColor = "text.secondary",
   titleSx = {},
   sx = {},
 }) {
@@ -23,7 +23,7 @@ export default function CardWrapper({
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         ...sx,
       }}
     >

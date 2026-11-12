@@ -1,0 +1,145 @@
+# Fixture for the REST generator's tests, not catalog data (see ../../../gmail/app.yaml).
+# Each tool cites the Learn page whose permissions table names its least
+# privileged delegated scope (scopeSource). ChannelMessage.Read.All needs a
+# tenant admin's consent.
+schema: connector-gen/rest-overlay/v1
+spec: fixtures/spec/graph-v1.0-openapi.yaml.gz
+tools:
+  - name: list_joined_teams
+    title: List my teams
+    description: List the teams the signed-in user is a member of, with their ids and display names.
+    operation: { operationId: me.ListJoinedTeams }
+    params:
+      exclude: [$skip, $count, $expand, $search, $filter, $orderby]
+      rename: { $top: top, $select: select }
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [Team.ReadBasic.All]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/user-list-joinedteams?view=graph-rest-1.0
+
+  - name: list_channels
+    title: List a team's channels
+    description: >-
+      List the channels of a team, by its id from list_joined_teams, for example
+      19:4a95f7d8db4c4e7fae857bcebe0623e6@thread.tacv2 is a channel id.
+    operation: { operationId: teams.ListChannels }
+    params:
+      exclude: [$top, $skip, $count, $expand, $search, $orderby]
+      rename: { $filter: filter, $select: select }
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [Channel.ReadBasic.All]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/channel-list?view=graph-rest-1.0
+
+  - name: list_channel_messages
+    title: Read a channel's messages
+    description: >-
+      Read the top-level messages of a channel, newest first, by team id and channel id. top is 1-50; each message's
+      id is its chatMessage-id for list_replies and reply_to_channel_message.
+    operation: { operationId: teams.channels.ListMessages }
+    params:
+      exclude: [$skip, $count, $search, $filter, $orderby, $select]
+      rename: { $top: top, $expand: expand }
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [ChannelMessage.Read.All]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/channel-list-messages?view=graph-rest-1.0
+    response:
+      maxBytes: 50000
+
+  - name: list_replies
+    title: Read a thread's replies
+    description: Read the replies to one channel message, by team id, channel id and the message's id.
+    operation: { operationId: teams.channels.messages.ListReplies }
+    params:
+      exclude: [$skip, $count, $search, $filter, $orderby, $select, $expand]
+      rename: { $top: top }
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [ChannelMessage.Read.All]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/chatmessage-list-replies?view=graph-rest-1.0
+    response:
+      maxBytes: 50000
+
+  - name: post_channel_message
+    title: Post to a channel
+    description: >-
+      Post a new message to a channel. body is {"contentType": "text" or "html", "content": "Release 2.4 is out"};
+      subject is an optional headline.
+    operation: { operationId: teams.channels.CreateMessages }
+    body:
+      fields: [body, subject, importance]
+      required: [body]
+      description: The message to post.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [ChannelMessage.Send]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/channel-post-messages?view=graph-rest-1.0
+    response:
+      fields: [id, webUrl, createdDateTime]
+
+  - name: reply_to_channel_message
+    title: Reply in a channel thread
+    description: >-
+      Reply to a channel message, by team id, channel id and the message's id. body is
+      {"contentType": "text", "content": "On it."}.
+    operation: { operationId: teams.channels.messages.CreateReplies }
+    body:
+      fields: [body]
+      required: [body]
+      description: The reply.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [ChannelMessage.Send]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/channel-post-messagereply?view=graph-rest-1.0
+    response:
+      fields: [id, webUrl, createdDateTime]
+
+  - name: list_chats
+    title: List my chats
+    description: >-
+      List the user's one-on-one, group and meeting chats with their ids and topics. filter takes OData, for example
+      "chatType eq 'oneOnOne'".
+    operation: { operationId: chats.chat.ListChat }
+    params:
+      exclude: [$skip, $count, $search, $orderby, $select]
+      rename: { $top: top, $filter: filter, $expand: expand }
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [Chat.ReadBasic]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/chat-list?view=graph-rest-1.0
+    response:
+      maxBytes: 50000
+
+  - name: list_chat_messages
+    title: Read a chat's messages
+    description: Read the messages of one chat, newest first, by its id from list_chats. top is 1-50.
+    operation: { operationId: chats.ListMessages }
+    params:
+      exclude: [$skip, $count, $search, $select, $expand]
+      rename: { $top: top, $filter: filter, $orderby: orderby }
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [Chat.Read]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/chat-list-messages?view=graph-rest-1.0
+    response:
+      maxBytes: 50000
+
+  - name: send_chat_message
+    title: Send a chat message
+    description: >-
+      Send a message in a chat, by its id. body is {"contentType": "text", "content": "Can we move to 3pm?"}.
+    operation: { operationId: chats.CreateMessages }
+    body:
+      fields: [body]
+      required: [body]
+      description: The message to send.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [ChatMessage.Send]
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/chat-post-messages?view=graph-rest-1.0
+    response:
+      fields: [id, chatId, createdDateTime]

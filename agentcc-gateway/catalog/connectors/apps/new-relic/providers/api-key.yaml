@@ -1,0 +1,53 @@
+# New Relic's MCP server with a New Relic user key in the api-key header,
+# the form New Relic's setup page gives for a client without OAuth
+# (Antigravity CLI). The page asks for OAuth wherever a client supports it
+# and warns that other API-key setups may not work as described, so this
+# provider is for agents that cannot complete a browser sign-in; mcp is the
+# default. The account's region decides the host: US, EU or JP.
+schema: "connector-manifest/v1#provider"
+app: new-relic
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://{mcpHost}/mcp/
+  urlVariables:
+    mcpHost:
+      description: "Your New Relic account's region: mcp.newrelic.com (US), mcp.eu.newrelic.com (EU) or mcp.jp.newrelic.com (JP)."
+      pattern: '^mcp(\.eu|\.jp)?\.newrelic\.com$'
+      default: mcp.newrelic.com
+      scope: org
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: api-key
+      secret: true
+      label: User key
+      help: "A New Relic user key, sent in the api-key header. New Relic recommends OAuth where the client supports it."
+      helpUrl: https://docs.newrelic.com/docs/agentic-ai/mcp/setup/
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.newrelic.com/docs/agentic-ai/mcp/setup/
+    fetchedAt: 2026-11-11
+  - fact: transport.urlVariables.mcpHost
+    url: https://docs.newrelic.com/docs/agentic-ai/mcp/setup/
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://docs.newrelic.com/docs/agentic-ai/mcp/setup/
+    fetchedAt: 2026-11-11
+  - fact: auth.credentialParts
+    url: https://docs.newrelic.com/docs/agentic-ai/mcp/setup/
+    fetchedAt: 2026-11-11
+x-omega: { oss: exclude }

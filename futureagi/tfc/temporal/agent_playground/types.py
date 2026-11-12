@@ -175,6 +175,8 @@ class ExecuteGraphInput:
         default_factory=dict
     )  # Per-node overrides keyed by node ID
 
+    native_context: dict | None = None
+
 
 @dataclass
 class ExecuteGraphOutput:

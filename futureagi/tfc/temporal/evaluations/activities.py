@@ -40,6 +40,18 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
             "user", "eval_template", "workspace", "organization"
         ).get(id=evaluation_id)
 
+        # The persisted evaluation is the tenant authority after dispatch. Key
+        # authentication only binds user.organization in memory; the worker's
+        # reloaded user may still have a different legacy organization.
+        if (
+            evaluation.workspace is not None
+            and evaluation.workspace.organization_id != evaluation.organization_id
+        ):
+            raise ValueError("Evaluation workspace does not belong to its organization")
+        # _run_eval uses this binding for quota, ground truth, provider context
+        # and metering. Do not save the user: their legacy organization is unchanged.
+        evaluation.user.organization = evaluation.organization
+
         # Mark as processing
         evaluation.status = StatusChoices.PROCESSING
         evaluation.save(update_fields=["status"])
@@ -88,9 +100,11 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
         }
 
     except Exception as e:
+        from tfc.ee_gates import jev_error_message
+
         # Mark as failed on any error (matches original behavior)
         evaluation.status = StatusChoices.FAILED
-        evaluation.error_message = str(e)
+        evaluation.error_message = jev_error_message(e) or str(e)
         # Don't return here - let finally block save and return
 
         return {

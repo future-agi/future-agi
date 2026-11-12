@@ -3,8 +3,10 @@ package otel
 import (
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/futureagi/agentcc-gateway/internal/credentials"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	otelpkg "github.com/futureagi/agentcc-gateway/internal/otel"
 )
@@ -25,9 +27,9 @@ const metadataAttrPrefix = "agentcc.metadata."
 const metadataDroppedAttr = "agentcc.metadata_dropped"
 
 // attachMetadata emits caller dimensions twice: the `metadata` object platform
-// ingest parses, and flattened copies that are queryable. Not redacted — these
-// are grouping keys.
-func (p *Plugin) attachMetadata(span *otelpkg.Span, rc *models.RequestContext) {
+// ingest parses, and flattened copies that are queryable. Both use the same
+// privacy-filtered values; names and separate system dimensions stay unchanged.
+func (p *Plugin) attachMetadata(span *otelpkg.Span, rc *models.RequestContext, contentMode models.ContentMode) {
 	if len(rc.CustomMetadataKeys) == 0 {
 		return
 	}
@@ -37,6 +39,8 @@ func (p *Plugin) attachMetadata(span *otelpkg.Span, rc *models.RequestContext) {
 	keys := append([]string(nil), rc.CustomMetadataKeys...)
 	sort.Strings(keys)
 
+	redactor := p.redactorFor(rc)
+	mode := privacyMode(rc)
 	custom := make(map[string]string, len(keys))
 	dropped := 0
 	for _, k := range keys {
@@ -51,6 +55,14 @@ func (p *Plugin) attachMetadata(span *otelpkg.Span, rc *models.RequestContext) {
 		if len(k) > maxMetadataKeyLen || len(custom) >= maxMetadataPairs {
 			dropped++
 			continue
+		}
+		v = maskImageJSON(v, contentMode)
+		if redactor != nil && redactor.ShouldRedact() && json.Valid([]byte(v)) {
+			// Metadata strings may themselves contain JSON. Screen decoded
+			// values, so escapes cannot conceal a match in either export form.
+			v = redactJSON(v, redactor, mode)
+		} else {
+			v = redact(v, redactor, mode)
 		}
 		custom[k] = truncateAtRune(v, maxMetadataValueLen)
 	}
@@ -81,21 +93,6 @@ const (
 	headerValueSeparator = ","
 )
 
-// Never exported, whatever the allowlist says. cloneRequestHeaders copies
-// x-api-key into Authorization, so a live credential is always present and a
-// pattern as ordinary as "x-*" would ship it to the trace backend.
-var headerDenylist = map[string]struct{}{
-	"authorization":        {},
-	"proxy-authorization":  {},
-	"www-authenticate":     {},
-	"cookie":               {},
-	"set-cookie":           {},
-	"api-key":              {},
-	"x-api-key":            {},
-	"x-goog-api-key":       {},
-	"x-amz-security-token": {},
-}
-
 // Allowlist only: a blocklist complete enough for the alternative is one you
 // can only be wrong about once.
 type headerMatcher struct {
@@ -124,9 +121,17 @@ func newHeaderMatcher(patterns []string) *headerMatcher {
 	return m
 }
 
-// match reports whether a lower-cased header name may be exported.
+// match reports whether a lower-cased header name may be exported. A
+// credential header never is, whatever the allowlist says
+// (credentials.IsHeader, the list the request log masks too), and neither
+// is x-agentcc-provider-key, an internal caller's own provider key for one
+// decision call (models.ProviderKeyHeader), named here so no change to the
+// credential word rules can ever export it.
+// cloneRequestHeaders copies x-api-key into Authorization, so a live
+// credential is always present, and a pattern as ordinary as "x-*" would
+// ship it to the trace backend.
 func (m *headerMatcher) match(name string) bool {
-	if _, denied := headerDenylist[name]; denied {
+	if credentials.IsHeader(name) || name == models.ProviderKeyHeader {
 		return false
 	}
 	if _, ok := m.exact[name]; ok {
@@ -142,8 +147,8 @@ func (m *headerMatcher) match(name string) bool {
 
 // attachRequestHeaders copies allowlisted headers as http.request.header.<name>.
 // Joined string, not semconv's array: arrays land in the non-queryable
-// attributes_extra. Redacted, unlike metadata.
-func (p *Plugin) attachRequestHeaders(span *otelpkg.Span, rc *models.RequestContext) {
+// attributes_extra. Values follow the selected privacy policy.
+func (p *Plugin) attachRequestHeaders(span *otelpkg.Span, rc *models.RequestContext, contentMode models.ContentMode) {
 	if p.captureHeaders == nil || len(rc.RequestHeaders) == 0 {
 		return
 	}
@@ -166,7 +171,12 @@ func (p *Plugin) attachRequestHeaders(span *otelpkg.Span, rc *models.RequestCont
 	redactor := p.redactorFor(rc)
 	mode := privacyMode(rc)
 	for _, name := range names {
-		v := strings.Join(rc.RequestHeaders.Values(name), headerValueSeparator)
+		values := rc.RequestHeaders.Values(name)
+		safe := make([]string, len(values))
+		for i, value := range values {
+			safe[i] = maskImageJSON(value, contentMode)
+		}
+		v := strings.Join(safe, headerValueSeparator)
 		if v == "" {
 			continue
 		}
@@ -185,7 +195,7 @@ const bodyDroppedAttr = "agentcc.body_dropped"
 // attachBodyExtras emits the body's unknown top-level fields — extra_body, plus
 // every OpenAI param newer than UnmarshalJSON's fixed list, which is why it
 // defaults on. Already provenance-filtered upstream; this caps and redacts.
-func (p *Plugin) attachBodyExtras(span *otelpkg.Span, rc *models.RequestContext) {
+func (p *Plugin) attachBodyExtras(span *otelpkg.Span, rc *models.RequestContext, contentMode models.ContentMode) {
 	if !p.bodyAttributes {
 		return
 	}
@@ -214,9 +224,25 @@ func (p *Plugin) attachBodyExtras(span *otelpkg.Span, rc *models.RequestContext)
 		}
 		v := rc.CallerExtras[k]
 		if sv, ok := v.(string); ok {
-			v = truncateAtRune(redact(sv, redactor, mode), maxMetadataValueLen)
+			v = truncateAtRune(redact(maskImageJSON(sv, contentMode), redactor, mode), maxMetadataValueLen)
+		} else if redactor != nil && redactor.ShouldRedact() {
+			// Caller body scalars are content, not span dimensions. Match their
+			// JSON lexical value, retaining the original scalar type if unchanged.
+			encoded, err := json.Marshal(v)
+			if err != nil {
+				v = "[REDACTED]"
+			} else if masked := redact(string(encoded), redactor, mode); masked != string(encoded) {
+				v = masked
+			}
 		}
-		span.SetAttribute(bodyAttrPrefix+k, v)
+		name := k
+		if redactor != nil && redactor.ShouldRedact() {
+			// Names are caller content too. Sorted categorical slots are
+			// deterministic for this field set, collision-free and disclose
+			// neither the name nor a dictionary-testable hash of it.
+			name = "field_" + strconv.Itoa(kept)
+		}
+		span.SetAttribute(bodyAttrPrefix+name, v)
 		kept++
 	}
 	if dropped > 0 {

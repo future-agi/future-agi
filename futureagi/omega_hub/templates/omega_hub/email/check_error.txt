@@ -1,0 +1,4 @@
+We could not run the automated checks for {{ ref }}@{{ version }} after 3 attempts.
+A maintainer has been told and will run them again.
+
+Submission: {{ status_url }}

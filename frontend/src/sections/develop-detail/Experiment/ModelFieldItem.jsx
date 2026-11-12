@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import React, { useEffect, useState } from "react";
 import {
   Box,
@@ -24,7 +25,6 @@ import {
   // getModelParamsDefaultValue,
   getModelParamsDisplayString,
 } from "./common";
-import CustomAudioDialog from "../CustomAudioDialog";
 import {
   getReasoningFormValues,
   transformParameterType,
@@ -156,7 +156,6 @@ export default function ModelFieldItem({
 }) {
   const [voiceAnchorEl, setVoiceAnchorEl] = useState(null);
   const [modelAnchorEl, setModelAnchorEl] = useState(null);
-  const [customAudioOpen, setCustomAudioOpen] = useState(false);
   const { data: voiceOptions, isLoading: loadingVoices } = useVoiceOptions({
     model: selectedModel?.value,
     enabled: modelType === MODEL_TYPES.TTS,
@@ -242,23 +241,11 @@ export default function ModelFieldItem({
     selectedModel?.value,
   ]);
 
-  const addNewVoice = (newVoice) => {
-    const existing = currentVoiceValue || [];
-    setValue(voiceFieldName, [...existing, newVoice], {
-      shouldValidate: true,
-      shouldDirty: true,
-    });
-  };
-  const handleSuccessCustomAudio = (res) => {
-    const customId = res?.data?.result?.id;
-    if (!customId) return;
-    addNewVoice(customId);
-  };
   return (
     <>
       <Box
         sx={{
-          borderRadius: 0.5,
+          borderRadius: "4px",
           padding: (theme) => theme.spacing(0.75, 1.5),
           border: "1px solid",
           borderColor: "primary.dark",
@@ -275,7 +262,7 @@ export default function ModelFieldItem({
         >
           <Stack direction={"row"} gap={0.75} alignItems={"center"}>
             <Image
-              src={selectedModel?.logoUrl}
+              src={localProviderLogo(selectedModel)}
               alt={selectedModel?.value}
               width="16px"
               disableThemeFilter={
@@ -337,7 +324,7 @@ export default function ModelFieldItem({
                 <Skeleton
                   sx={{
                     bgcolor: "background.neutral",
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                   }}
                   variant="rounded"
                   width="100%"
@@ -409,7 +396,7 @@ export default function ModelFieldItem({
                 <Skeleton
                   sx={{
                     bgcolor: "background.neutral",
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                   }}
                   variant="rectangular"
                   width="100%"
@@ -453,34 +440,13 @@ export default function ModelFieldItem({
         </ShowComponent>
       </Box>
 
-      {/* Custom Audio Dialog */}
-      <CustomAudioDialog
-        open={customAudioOpen}
-        onClose={() => {
-          setCustomAudioOpen(false);
-        }}
-        selectedModel={{
-          value: selectedModel?.value,
-          providers: selectedModel?.providers,
-        }}
-        onSuccess={handleSuccessCustomAudio}
-      />
-
       {/* Voice Selector Popover */}
       {Boolean(voiceAnchorEl) && (
         <VoiceSelectorPopover
           anchorEl={voiceAnchorEl}
           setAnchorEl={setVoiceAnchorEl}
           control={control}
-          isCustomAudio={voiceOptions?.isCustomAudio}
           fieldName={voiceFieldName}
-          openModal={() => {
-            if (customAudioOpen) {
-              return;
-            }
-            setVoiceAnchorEl(null);
-            setCustomAudioOpen(true);
-          }}
           options={voiceOptions?.voices}
           setValue={setValue}
           currentValue={currentVoiceValue}

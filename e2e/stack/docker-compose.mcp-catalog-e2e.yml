@@ -1,0 +1,14 @@
+# mcp-catalog-only overlay. bin/e2e adds it only for E2E_GATEWAY_PROFILE=mcp-catalog.
+# The gateway serves MCP, so the app gets the same fixed test state key as the mcp
+# profile; nothing is mounted, so Django serves the connector catalogue this build
+# bundles and the gateway reads the one it embeds. No MCP mock runs, and no secret
+# is read, mounted or shipped.
+services:
+  app:
+    environment:
+      # Real-catalogue browse/W10 opt into upstream OAuth and K2, never
+      # client OAuth. with-mcp-subfeatures.sh W10 exports these exact values.
+      AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED: ${AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED:-true}
+      AGENTCC_MCP_CLIENT_OAUTH_ENABLED: ${AGENTCC_MCP_CLIENT_OAUTH_ENABLED:-false}
+      AGENTCC_MCP_K2_APPS_ENABLED: ${AGENTCC_MCP_K2_APPS_ENABLED:-true}
+      AGENTCC_MCP_STATE_KEYS: e2e-only-mcp-state-key-not-a-secret-0000

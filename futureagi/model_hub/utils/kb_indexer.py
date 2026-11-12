@@ -403,7 +403,7 @@ class KBIndexer:
         # Process the file based on its extension
         if file_extension == ".pdf":
             text = self.process_pdf(file_path)
-        elif file_extension == ".txt":
+        elif file_extension == ".txt" or file_extension.lower() == ".md":
             text = self.process_text(file_path)
         elif file_extension == ".docx":
             text = self.process_docx(file_path)

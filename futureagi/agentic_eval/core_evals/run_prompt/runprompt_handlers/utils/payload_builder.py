@@ -99,6 +99,7 @@ class PayloadBuilder:
         payload = {
             "messages": messages,
             "model": context.model,
+            "seed": context.run_prompt_config.get("seed"),
             "temperature": float(context.temperature)
             if context.temperature is not None
             else None,

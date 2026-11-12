@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "src/utils/test-utils";
 import RlContractPanel from "../RlContractPanel";
 
 // A voice environment with two tools, two hard rules and a seeded table —
@@ -45,7 +45,7 @@ describe("RlContractPanel", () => {
     expect(screen.queryByText("Check implementations")).toBeNull();
   });
 
-  it("renders the authored run end conditions: terminate, truncate and clock", () => {
+  it("renders the authored run end conditions: how a conversation ends, its limits and the clock", () => {
     renderPanel({
       env: {
         ...voiceEnv,
@@ -58,11 +58,86 @@ describe("RlContractPanel", () => {
       },
     });
     expect(screen.getByText("Run end conditions")).toBeInTheDocument();
-    expect(screen.getByText("Terminate")).toBeInTheDocument();
+    expect(screen.getByText("How a conversation can end")).toBeInTheDocument();
+    expect(screen.getByText("Customer ended the conversation")).toBeInTheDocument();
     expect(screen.getByText("customer-ended-call")).toBeInTheDocument();
-    expect(screen.getByText("Truncate")).toBeInTheDocument();
+    expect(screen.getByText("Limits")).toBeInTheDocument();
     expect(screen.getByText("10 turns")).toBeInTheDocument();
     expect(screen.getByText("Clock · real-time")).toBeInTheDocument();
+  });
+
+  it("W10-SIMULATE-OTHER-U07 says how a run ends in plain words, with each recorded code beside it", () => {
+    const canonical = [
+      "assistant-ended-call",
+      "cancelled",
+      "customer-ended-call",
+      "max-duration-reached",
+      "no-answer",
+      "silence-timed-out",
+    ];
+    renderPanel({
+      env: {
+        ...voiceEnv,
+        endConditions: {
+          ended_reasons: [...canonical, "provider_hung-up"],
+          max_turns: 1,
+          max_duration_seconds: 3600,
+          clock: "real-time",
+        },
+      },
+    });
+
+    [
+      "Your agent ended the conversation",
+      "Cancelled",
+      "Customer ended the conversation",
+      "Time limit reached",
+      "No answer",
+      "Silence timed out",
+    ].forEach((label) => expect(screen.getByText(label)).toBeInTheDocument());
+    expect(screen.getByText("The simulated customer finished or dropped off.")).toBeInTheDocument();
+    // The code stays beside its label: call logs show the code.
+    canonical.forEach((code) => expect(screen.getByText(code)).toBeInTheDocument());
+    // A code outside the known set still reads as words.
+    expect(screen.getByText("Provider hung up")).toBeInTheDocument();
+    expect(screen.getByText("provider_hung-up")).toBeInTheDocument();
+    // Limits read as amounts, not raw seconds.
+    expect(screen.getByText("1 turn")).toBeInTheDocument();
+    expect(screen.getByText("1 hour")).toBeInTheDocument();
+    expect(screen.queryByText("3600s")).toBeNull();
+    // No RL vocabulary.
+    expect(screen.queryByText("Terminate")).toBeNull();
+    expect(screen.queryByText("Truncate")).toBeNull();
+    expect(screen.queryAllByText(/Bootstrap from the last state|Goal verifiers settle/)).toHaveLength(0);
+  });
+
+  it("G4-UX-1 scopes the time limit to the whole run, not to each conversation", () => {
+    // max_duration_seconds is the job's wall-clock ceiling: every scenario in the
+    // run shares it. The max-duration-reached ending is a separate,
+    // per-conversation timeout.
+    renderPanel({
+      env: {
+        ...voiceEnv,
+        endConditions: {
+          ended_reasons: ["max-duration-reached"],
+          max_duration_seconds: 3600,
+          clock: "real-time",
+        },
+      },
+    });
+
+    expect(screen.getByText("How each conversation can end, and the limits on a run")).toBeInTheDocument();
+    expect(screen.getByText("What stops a run early.")).toBeInTheDocument();
+    expect(screen.getByText("1 hour")).toBeInTheDocument();
+    expect(
+      screen.getByText("The whole run, every scenario together, must finish inside this time."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("This conversation hit its own time limit.")).toBeInTheDocument();
+    // Nothing presents the run's ceiling as a per-conversation allowance.
+    expect(screen.queryByText("A conversation stops when it reaches one of these.")).toBeNull();
+    expect(screen.queryByText("The time limit set for this environment.")).toBeNull();
+    expect(screen.queryByText("The conversation ran out of time.")).toBeNull();
+    expect(screen.queryByText("How a conversation can end, and the limits that stop it")).toBeNull();
   });
 
   it("has no seed row: the API carries no seed for it to describe", () => {
@@ -82,7 +157,7 @@ describe("RlContractPanel", () => {
     expect(screen.getByText(/The build writes these once it has read how a run of this agent ends/)).toBeInTheDocument();
     expect(screen.getByText("Run end conditions")).toBeInTheDocument();
     expect(screen.getByText("Not authored yet")).toBeInTheDocument();
-    expect(screen.queryByText("Terminate")).toBeNull();
+    expect(screen.queryByText("How a conversation can end")).toBeNull();
     expect(screen.queryByText(/^Clock ·/)).toBeNull();
   });
 

@@ -1,0 +1,8 @@
+{
+  "about": "The API description the fake server serves at the fixture's upstream.spec url (illustrative, not Google's document). The fixture pins its sha256.",
+  "kind": "discovery#restDescription",
+  "name": "gmail",
+  "version": "v1",
+  "rootUrl": "https://gmail.googleapis.com/",
+  "servicePath": ""
+}

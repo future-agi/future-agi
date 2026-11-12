@@ -1,0 +1,40 @@
+[
+  {
+    "name": "search_docs",
+    "title": "Search docs",
+    "description": "Read only: allowed at add.",
+    "inputSchema": { "type": "object", "properties": { "q": { "type": "string" } } },
+    "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true },
+    "result": { "content": [{ "type": "text", "text": "docs search" }] }
+  },
+  {
+    "name": "get_doc",
+    "title": "Get a doc",
+    "description": "Read only: allowed at add.",
+    "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } } },
+    "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
+    "result": { "content": [{ "type": "text", "text": "docs get" }] }
+  },
+  {
+    "name": "update_doc",
+    "title": "Update a doc",
+    "description": "A write: denied at add until approvals (M26).",
+    "inputSchema": { "type": "object" },
+    "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": true },
+    "result": { "content": [{ "type": "text", "text": "docs updated" }] }
+  },
+  {
+    "name": "delete_doc",
+    "title": "Delete a doc",
+    "description": "Destructive: denied at add until approvals (M26).",
+    "inputSchema": { "type": "object" },
+    "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": true },
+    "result": { "content": [{ "type": "text", "text": "docs deleted" }] }
+  },
+  {
+    "name": "annotate_doc",
+    "description": "No annotations: MCP's defaults read it as a destructive write, so denied at add.",
+    "inputSchema": { "type": "object" },
+    "result": { "content": [{ "type": "text", "text": "docs annotated" }] }
+  }
+]

@@ -1,0 +1,76 @@
+[
+  {
+    "tool": "get_file",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "microsoft-onedrive-item-fixture"
+    }
+  },
+  {
+    "tool": "list_children",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "microsoft-onedrive-item-fixture"
+    }
+  },
+  {
+    "tool": "list_versions",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "microsoft-onedrive-item-fixture"
+    }
+  },
+  {
+    "tool": "get_version",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "microsoft-onedrive-item-fixture",
+      "driveItemVersion-id": "1.0"
+    }
+  },
+  {
+    "tool": "list_permissions",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "microsoft-onedrive-item-fixture"
+    }
+  },
+  {
+    "tool": "copy_template",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "microsoft-onedrive-item-fixture",
+      "body": {
+        "name": "Quarterly-copy.docx",
+        "parentReference": {
+          "driveId": "drive-fixture",
+          "id": "folder-fixture"
+        }
+      }
+    }
+  },
+  {
+    "tool": "rename_file",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "microsoft-onedrive-item-fixture",
+      "body": {
+        "name": "Quarterly-report.docx"
+      }
+    }
+  },
+  {
+    "tool": "delete_file",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "microsoft-onedrive-item-fixture"
+    }
+  },
+  {
+    "tool": "get_file",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "microsoft-onedrive-missing-fixture"
+    }
+  }
+]

@@ -78,6 +78,12 @@ const VersionCard = ({
 
   const toolConfig = version?.prompt_config_snapshot?.configuration;
 
+  // A commit saved with a blank message stores the version name, which the
+  // version chip already shows, so only a real message gets the Commit box.
+  const commitMessage = version?.commit_message?.trim();
+  const showCommit =
+    Boolean(commitMessage) && commitMessage !== version?.template_version;
+
   const { onRestoreVersion, selectedVersions } = usePromptWorkbenchContext();
 
   const { enqueueSnackbar } = useSnackbar();
@@ -185,8 +191,16 @@ const VersionCard = ({
                     </Box>
                   </CustomTooltip>
                 </ShowComponent>
-                <Box sx={{ flexShrink: 0 }}>
-                  <Typography typography="s1.2" fontWeight="fontWeightMedium">
+                {/* On a narrow drawer a long prompt name
+                    ends in an ellipsis; the version name next to it keeps
+                    its full width. */}
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography
+                    typography="s1.2"
+                    fontWeight="fontWeightMedium"
+                    noWrap
+                    title={version?.template_name}
+                  >
                     {version?.template_name}
                   </Typography>
                 </Box>
@@ -194,8 +208,10 @@ const VersionCard = ({
                   typography="s2"
                   fontWeight={"fontWeightMedium"}
                   sx={{
+                    flexShrink: 0,
+                    whiteSpace: "nowrap",
                     backgroundColor: "action.hover",
-                    borderRadius: "2px",
+                    borderRadius: "4px",
                     color: "text.primary",
                     paddingX: theme.spacing(0.75),
                     paddingTop: theme.spacing(0.5),
@@ -237,7 +253,7 @@ const VersionCard = ({
                         sx={{
                           backgroundColor: "action.hover",
                           color: "text.primary",
-                          borderRadius: "2px",
+                          borderRadius: "4px",
                           padding: "4px 8px",
                           display: "flex",
                           alignItems: "center",
@@ -287,7 +303,7 @@ const VersionCard = ({
                             borderColor: "divider",
                             borderRadius: 1,
                             padding: 1,
-                            boxShadow: 4,
+                            boxShadow: theme.customShadows?.dropdown,
                             minWidth: "150px",
                             display: "flex",
                             flexDirection: "column",
@@ -324,7 +340,7 @@ const VersionCard = ({
                 </Box>
               </Box>
               <Typography
-                fontSize={"14px"}
+                fontSize={"13px"}
                 fontWeight={400}
                 color={"text.primary"}
               >
@@ -394,7 +410,7 @@ const VersionCard = ({
                   buttonTitle="Select Model"
                   buttonIcon={
                     <Iconify
-                      icon="radix-icons:box-model"
+                      icon="solar:graph-linear"
                       width="16px"
                       height="16px"
                       sx={{
@@ -435,7 +451,7 @@ const VersionCard = ({
                 src="/assets/icons/ic_variables.svg"
                 sx={{ width: "20px", height: "20px", color: "text.primary" }}
               />
-              <Typography sx={{ fontSize: "15px", fontWeight: 500 }}>
+              <Typography sx={{ fontSize: "13px", fontWeight: 500 }}>
                 Variables :
               </Typography>
 
@@ -454,7 +470,7 @@ const VersionCard = ({
                         bgcolor: "success.lighter",
                         padding: 0.5,
                         color: "success.dark",
-                        fontSize: "15px",
+                        fontSize: "13px",
                         alignItems: "center",
                         fontWeight: 500,
                       }}
@@ -473,7 +489,7 @@ const VersionCard = ({
             </Box>
           </ShowComponent>
 
-          <ShowComponent condition={Boolean(version?.commitMessage?.length)}>
+          <ShowComponent condition={showCommit}>
             <CommitBox>
               <Box sx={{ display: "flex", flexDirection: "row", gap: "2px" }}>
                 <SvgColor
@@ -485,8 +501,12 @@ const VersionCard = ({
                 </Typography>
               </Box>
 
-              <Typography typography="s1" color="text.primary">
-                {version?.commitMessage}
+              <Typography
+                typography="s1"
+                color="text.primary"
+                sx={{ wordBreak: "break-word", whiteSpace: "pre-wrap" }}
+              >
+                {commitMessage}
               </Typography>
             </CommitBox>
           </ShowComponent>

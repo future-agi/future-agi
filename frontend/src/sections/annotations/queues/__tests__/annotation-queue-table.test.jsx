@@ -42,6 +42,9 @@ vi.mock("src/routes/paths", () => ({
   },
 }));
 
+// Column defs the grid last received, so layout tests can read them.
+let lastColumnDefs = [];
+
 // Mock AG Grid
 function MockAgGridReact({
   rowData,
@@ -50,6 +53,7 @@ function MockAgGridReact({
   onCellClicked,
   noRowsOverlayComponent: NoRowsOverlay,
 }) {
+  lastColumnDefs = columnDefs;
   if (!rowData || rowData.length === 0) {
     return NoRowsOverlay ? <NoRowsOverlay /> : null;
   }
@@ -201,7 +205,7 @@ describe("AnnotationQueueTable", () => {
     render(<AnnotationQueueTable {...defaultProps} />);
 
     expect(screen.getByText("2 labels")).toBeInTheDocument();
-    expect(screen.getByText("1 labels")).toBeInTheDocument();
+    expect(screen.getByText("1 label")).toBeInTheDocument();
   });
 
   it("shows all queue members, including managers and reviewers", () => {
@@ -305,7 +309,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
 
@@ -363,7 +368,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
 
@@ -379,7 +385,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
 
@@ -394,7 +401,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[1].closest("button"));
 
@@ -409,7 +417,8 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
       await user.click(screen.getByText("Edit"));
@@ -430,12 +439,31 @@ describe("AnnotationQueueTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
       await user.click(screen.getByText("Activate"));
 
       expect(onStatusChange).toHaveBeenCalledWith(MOCK_QUEUES[0], "active");
+    });
+  });
+
+  describe("row actions at narrow widths", () => {
+    it("keeps the Queue actions column pinned to the right edge", () => {
+      render(<AnnotationQueueTable {...defaultProps} />);
+
+      const actions = lastColumnDefs.find((col) => col.field === "actions");
+      expect(actions.pinned).toBe("right");
+      expect(actions.lockPinned).toBe(true);
+    });
+
+    it("keeps the Restore column pinned right in archived view", () => {
+      render(<AnnotationQueueTable {...defaultProps} archivedView />);
+
+      const actions = lastColumnDefs.find((col) => col.field === "actions");
+      expect(actions.pinned).toBe("right");
+      expect(actions.lockPinned).toBe(true);
     });
   });
 });

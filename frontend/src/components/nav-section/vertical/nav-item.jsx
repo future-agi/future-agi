@@ -5,7 +5,7 @@ import { forwardRef } from "react";
 import Box from "@mui/material/Box";
 import Link from "@mui/material/Link";
 import Tooltip from "@mui/material/Tooltip";
-import { alpha, styled } from "@mui/material/styles";
+import { styled } from "@mui/material/styles";
 import ListItemButton from "@mui/material/ListItemButton";
 import CustomTooltip from "src/components/tooltip";
 
@@ -14,6 +14,16 @@ import { RouterLink } from "src/routes/components";
 import Iconify from "../../iconify";
 
 // ----------------------------------------------------------------------
+
+// One visible focus ring per nav item: 2 px in the primary colour on the
+// link (keyboard focus only), drawn inside so the scroll area never clips it.
+const NAV_LINK_FOCUS = {
+  outline: "none",
+  "&:focus-visible": {
+    outline: (theme) => `2px solid ${theme.palette.primary.main}`,
+    outlineOffset: "-2px",
+  },
+};
 
 // eslint-disable-next-line react/display-name
 const NavItem = forwardRef(
@@ -35,12 +45,18 @@ const NavItem = forwardRef(
       externalLink,
       currentRole = "admin",
       titleIcon,
+      titleTooltip,
       eventTrigger,
+      onClick,
+      "aria-current": ariaCurrent,
       ...other
     },
     ref,
   ) => {
     const subItem = depth !== 1;
+    // A leaf item is wrapped in a link: the link is its one tab stop, so the
+    // inner row is not focusable and has no role of its own (a11y #4).
+    const inLink = !hasChild && !disabled;
 
     const renderContent = (
       <StyledNavItem
@@ -52,30 +68,32 @@ const NavItem = forwardRef(
         disabled={disabled}
         disableRipple
         {...other}
-        onClick={() => {
+        {...(inLink
+          ? { tabIndex: -1, role: "presentation" }
+          : hasChild
+            ? { "aria-expanded": Boolean(open) }
+            : {})}
+        onClick={(event) => {
+          // NavList owns child expansion; preserve its handler for Enter too.
+          onClick?.(event);
           if (eventTrigger) {
             eventTrigger();
           }
         }}
         sx={(theme) => ({
-          paddingLeft: 0,
-          border: "solid",
-          borderWidth: active ? "1px" : "0px",
-          borderColor: active
-            ? alpha(theme.palette.primary.main, 0.1)
-            : undefined,
           width: "100%",
           px: 1,
-          color: active
-            ? theme.palette.primary.dark
-            : theme.palette.text.primary,
+          // Labels read in the main text colour, like a dense app sidebar;
+          // the active row is told apart by its fill and weight.
+          color: theme.palette.text.primary,
           backgroundColor: active
-            ? alpha(theme.palette.primary.main, 0.1)
+            ? theme.palette.action.selected
             : "transparent",
           "&:hover": {
+            color: theme.palette.text.primary,
             backgroundColor: active
-              ? alpha(theme.palette.primary.main, 0.1)
-              : undefined,
+              ? theme.palette.action.selected
+              : theme.palette.action.hover,
           },
         })}
       >
@@ -83,8 +101,8 @@ const NavItem = forwardRef(
           <Box component="span" className="icon">
             {React.cloneElement(icon, {
               sx: {
-                size: 20,
-                color: active ? "primary.main" : "text.primary",
+                size: 14,
+                color: active ? "text.primary" : "action.active",
               },
             })}
           </Box>
@@ -99,15 +117,12 @@ const NavItem = forwardRef(
         )}
 
         {title && (
-          <Box
-            component="span"
-            sx={{ flex: "1 1 auto", minWidth: 0, ml: 0.75 }}
-          >
+          <Box component="span" sx={{ flex: "1 1 auto", minWidth: 0, ml: 1 }}>
             <Box
               component="span"
               className="label"
               sx={{
-                color: active ? "primary.dark" : "text.primary",
+                color: "inherit",
                 display: "flex",
                 gap: 1,
                 alignItems: "center",
@@ -139,12 +154,27 @@ const NavItem = forwardRef(
             className="arrow"
             icon={
               open
-                ? "eva:arrow-ios-downward-fill"
-                : "eva:arrow-ios-forward-fill"
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
             }
           />
         )}
       </StyledNavItem>
+    );
+
+    // A title cut off by the sidebar's width shows whole beside the row, on
+    // hover and on keyboard focus. The control keeps its own text as its
+    // name; the tooltip describes it.
+    const withTitleTooltip = (control) => (
+      <CustomTooltip
+        show={!!titleTooltip}
+        title={titleTooltip}
+        placement="right"
+        describeChild
+        arrow
+      >
+        {control}
+      </CustomTooltip>
     );
 
     // Hidden item by role
@@ -153,7 +183,7 @@ const NavItem = forwardRef(
     }
 
     if (hasChild) {
-      return renderContent;
+      return withTitleTooltip(renderContent);
     }
 
     if (disabled) {
@@ -170,7 +200,7 @@ const NavItem = forwardRef(
     }
 
     if (externalLink)
-      return (
+      return withTitleTooltip(
         <Link
           href={path}
           target="_blank"
@@ -178,38 +208,46 @@ const NavItem = forwardRef(
           color="inherit"
           underline="none"
           sx={{
-            height: "32px",
-            minHeight: "32px",
+            height: "24px",
+            minHeight: "24px",
+            display: "block",
+            borderRadius: "6px",
+            ...NAV_LINK_FOCUS,
             ...(disabled && {
               cursor: "default",
             }),
           }}
         >
           {renderContent}
-        </Link>
+        </Link>,
       );
 
-    return (
+    return withTitleTooltip(
       <Link
         component={RouterLink}
         href={path}
+        aria-current={ariaCurrent || (active ? "page" : undefined)}
         color="inherit"
         underline="none"
         sx={{
-          minHeight: "32px",
-          height: "32px",
+          minHeight: "24px",
+          height: "24px",
+          display: "block",
+          borderRadius: "6px",
+          ...NAV_LINK_FOCUS,
           ...(disabled && {
             cursor: "default",
           }),
         }}
       >
         {renderContent}
-      </Link>
+      </Link>,
     );
   },
 );
 
 NavItem.propTypes = {
+  "aria-current": PropTypes.string,
   open: PropTypes.bool,
   active: PropTypes.bool,
   path: PropTypes.string,
@@ -225,7 +263,10 @@ NavItem.propTypes = {
   currentRole: PropTypes.string,
   roles: PropTypes.arrayOf(PropTypes.string),
   titleIcon: PropTypes.any,
+  // The whole title, given only while the row cuts it off.
+  titleTooltip: PropTypes.string,
   eventTrigger: PropTypes.func,
+  onClick: PropTypes.func,
 };
 
 export default NavItem;
@@ -255,21 +296,22 @@ const StyledNavItem = styled(ListItemButton, {
       marginBottom: 0,
       borderRadius: 6,
       color: theme.palette.text.primary,
-      padding: theme.spacing(0.25, 0.75),
+      padding: theme.spacing(0, 1),
       transition: theme.transitions.create(["background-color", "color"], {
         duration: theme.transitions.duration.shortest,
       }),
     },
     icon: {
-      width: 18,
-      height: 18,
+      width: 14,
+      height: 14,
       flexShrink: 0,
-      color: active ? theme.palette.primary.main : theme.palette.text.primary,
+      color: active ? theme.palette.text.primary : theme.palette.action.active,
     },
     label: {
       ...noWrapStyles,
-      fontSize: "13px",
-      fontWeight: 500,
+      fontSize: "12px",
+      lineHeight: "20px",
+      fontWeight: 400,
       textTransform: "none",
     },
     caption: {
@@ -290,19 +332,25 @@ const StyledNavItem = styled(ListItemButton, {
   };
 
   return {
+    // Keyboard focus on a toggle row (items with children) shows the same
+    // 2 px ring as a link item.
+    "&.Mui-focusVisible": {
+      outline: `2px solid ${theme.palette.primary.main}`,
+      outlineOffset: "-2px",
+    },
     // Root item
     ...(!subItem && {
       ...baseStyles.item,
-      minHeight: 28,
+      minHeight: 24,
       "& .icon": {
         ...baseStyles.icon,
         "& > span": {
-          height: "18px",
-          width: "18px",
+          height: "14px",
+          width: "14px",
         },
         "& svg": {
-          width: "18px",
-          height: "18px",
+          width: "14px",
+          height: "14px",
         },
       },
       "& .sub-icon": {
@@ -310,10 +358,13 @@ const StyledNavItem = styled(ListItemButton, {
       },
       "& .label": {
         ...baseStyles.label,
-        fontWeight: active ? 600 : 500,
+        // Regular weight, medium only when selected: light text on a dark
+        // canvas reads heavier than its size, so the nav stays at 400.
+        fontWeight: active ? 500 : 400,
         color: "inherit",
         "& *": {
           color: "inherit",
+          fontWeight: "inherit",
         },
       },
       "& .caption": {
@@ -326,10 +377,10 @@ const StyledNavItem = styled(ListItemButton, {
         ...baseStyles.arrow,
       },
       ...(active && {
-        color: theme.palette.primary.dark,
-        backgroundColor: alpha(theme.palette.primary.main, 0.12),
+        color: theme.palette.text.primary,
+        backgroundColor: theme.palette.action.selected,
         "&:hover": {
-          backgroundColor: alpha(theme.palette.primary.main, 0.2),
+          backgroundColor: theme.palette.action.selected,
         },
       }),
       ...(opened && {
@@ -341,7 +392,7 @@ const StyledNavItem = styled(ListItemButton, {
     // Sub item
     ...(subItem && {
       ...baseStyles.item,
-      minHeight: 28,
+      minHeight: 24,
       "& .icon": {
         ...baseStyles.icon,
 
@@ -366,7 +417,7 @@ const StyledNavItem = styled(ListItemButton, {
           }),
           ...(active && {
             transform: "scale(2)",
-            backgroundColor: theme.palette.primary.main,
+            backgroundColor: theme.palette.text.primary,
           }),
         },
       },
@@ -383,7 +434,7 @@ const StyledNavItem = styled(ListItemButton, {
         ...baseStyles.arrow,
       },
       ...(active && {
-        color: theme.palette.primary.main,
+        color: theme.palette.text.primary,
       }),
     }),
 

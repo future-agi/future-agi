@@ -5,6 +5,7 @@ from simulate.models.run_test import RunTest
 from simulate.models.scenarios import Scenarios
 from tracer.models.project import Project
 from tracer.models.replay_session import ReplaySession, ReplayType
+from tracer.serializers.filters import session_bounded_filter_list_field
 from tracer.utils.workspace_scope import project_queryset_for_request
 
 
@@ -151,16 +152,62 @@ class CreateReplaySessionSerializer(serializers.Serializer):
         default=list,
     )
     select_all = serializers.BooleanField(default=False)
+    filters = session_bounded_filter_list_field(required=False)
+    exclude_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list
+    )
 
     def validate(self, attrs):
         """Validate that either ids or select_all is provided."""
         ids = attrs.get("ids", [])
         select_all = attrs.get("select_all", False)
+        exclude_ids = attrs.get("exclude_ids", [])
+        session_select_all = select_all and attrs["replay_type"] == ReplayType.SESSION
+        if session_select_all and "filters" not in attrs:
+            raise serializers.ValidationError(
+                {"filters": "Session select-all requires the active session filters."}
+            )
+        if exclude_ids and not session_select_all:
+            raise serializers.ValidationError(
+                {"exclude_ids": "Exclusions require session select-all."}
+            )
 
         if not ids and not select_all:
             raise serializers.ValidationError(
                 "Either 'ids' must be provided or 'select_all' must be True."
             )
+
+        project = self.context.get("project")
+        if project is None:
+            raise serializers.ValidationError("Project not found.")
+
+        # Validate every supplied ID, including mixed lists and select_all=True.
+        # A UUID is not authorization; foreign and missing IDs share one error.
+        if ids or exclude_ids:
+            from tracer.services.clickhouse.v2 import get_reader
+            from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+                resolve_session_fields,
+            )
+
+            requested_ids = {str(identifier) for identifier in [*ids, *exclude_ids]}
+            project_id = str(project.id)
+            # CH is authoritative: post-flip sources need not have PG mirrors.
+            # Resolve the entire batch inside the already-authorized project.
+            if attrs["replay_type"] == ReplayType.TRACE:
+                with get_reader() as reader:
+                    projects = reader.newest_trace_projects(requested_ids, [project_id])
+            else:
+                projects = {
+                    sid: record["project_id"]
+                    for sid, record in resolve_session_fields(
+                        requested_ids,
+                        project_id=project_id,
+                        include_overlay=False,
+                    ).items()
+                }
+            found_ids = {sid for sid, pid in projects.items() if str(pid) == project_id}
+            if found_ids != requested_ids:
+                raise serializers.ValidationError({"ids": "Replay source not found."})
 
         return attrs
 
@@ -168,14 +215,14 @@ class CreateReplaySessionSerializer(serializers.Serializer):
         """Validate project exists and belongs to user's organization. Cache project instance."""
         request = self.context.get("request")
         if not request:
-            return value
+            raise serializers.ValidationError("Project not found.")
 
         try:
             project = project_queryset_for_request(request).get(id=value)
             # Cache project instance in context for use in view
             self.context["project"] = project
         except Project.DoesNotExist:
-            raise serializers.ValidationError("Project not found.")
+            raise serializers.ValidationError("Project not found.") from None
 
         return value
 

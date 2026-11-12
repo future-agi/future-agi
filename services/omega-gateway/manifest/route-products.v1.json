@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "omega-route-products/v1",
+  "about": "Which hosted Omega product each gateway route belongs to (READINESS 3.13, lane 1.10b). A request is admitted only when its verified key names the route's product in the `products` claim: absent is 404 product_not_admitted, present only as paused refuses new work with 503 product_paused. `platform` routes are the ones every tab needs and answer any workspace admitted to at least one product. A route the gateway admits that no entry here covers is refused (default deny). A product list means the route serves each of them (the credential list is read by the Console and by Deployments). whilePaused: the writes a paused product still serves because they stop or decide work rather than start it; EE refuses an approve while its product is paused. When the route manifest (lane 1.3) lands, each of its routes takes the product of the longest prefix below as its `product` field, in the FA copy and the byte-identical EE copy.",
+  "products": ["console", "sandboxes", "deployments", "studio_tab", "hub"],
+  "routes": [
+    { "prefix": "/workspace/capabilities", "product": "platform" },
+    { "prefix": "/workspace/sandboxes", "product": "sandboxes" },
+    {
+      "prefix": "/workspace/sandboxes/computers",
+      "product": ["console", "sandboxes"]
+    },
+    { "prefix": "/workspace/deployments", "product": "deployments" },
+    {
+      "prefix": "/workspace/credentials",
+      "product": ["console", "deployments"]
+    },
+    { "prefix": "/workspace/audit", "product": "console" },
+    { "prefix": "/workspace/kill-switch", "product": "console" },
+    { "prefix": "/workspace/observe", "product": "console" },
+    { "prefix": "/workspace/tool-policy", "product": "console" },
+    { "prefix": "/workspace/otlp", "product": "console" },
+    { "prefix": "/workspace/learning", "product": "console" },
+    { "prefix": "/workspace/conversations", "product": "console" },
+    { "prefix": "/workspace/workforce", "product": "console" },
+    { "prefix": "/workspace/agent-teams", "product": "console" },
+    { "prefix": "/workspace/skills", "product": "console" },
+    { "prefix": "/workspace/approvals", "product": "console" },
+    { "prefix": "/workspace/environments", "product": "console" },
+    { "prefix": "/workspace/schedules", "product": "console" },
+    { "prefix": "/workspace/triggers", "product": "console" },
+    { "prefix": "/workspace/ratings", "product": "console" },
+    { "prefix": "/workspace/integrations", "product": "console" },
+    { "prefix": "/workspace/usage", "product": "console" },
+    { "prefix": "/workspace/one-key", "product": "console" },
+    { "prefix": "/workspace/files", "product": "console" },
+    { "prefix": "/workspace/preview-approvals", "product": "console" },
+    { "prefix": "/auth/orgs", "product": "console" },
+    { "prefix": "/billing", "product": "console" },
+    { "prefix": "/files", "product": "console" }
+  ],
+  "whilePaused": [
+    { "method": "POST", "path": "/workspace/kill-switch/workspace" },
+    { "method": "POST", "path": "/workspace/kill-switch/organization" },
+    { "method": "POST", "path": "/workspace/conversations/{id}/cancel" },
+    { "method": "POST", "path": "/workspace/conversations/{id}/interrupt" },
+    { "method": "POST", "path": "/workspace/approvals/{id}" }
+  ]
+}

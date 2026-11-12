@@ -1,3 +1,4 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 import { Box } from "@mui/material";
 import PropTypes from "prop-types";
 import {
@@ -32,6 +33,10 @@ import { buildAddEvalsDraft } from "../LLMTracing/buildAddEvalsDraft";
 import SelectAllBanner from "../LLMTracing/SelectAllBanner";
 import { getSelectionCountState } from "../LLMTracing/listTotalMetadata";
 import { singleProjectIdFromFilters } from "../LLMTracing/GraphSection/graphFilterUtils";
+import { toBackendFilters } from "../LLMTracing/common";
+import { askLink, insightsReportLink } from "../observeHandoff";
+import { SESSION_FILTER_FIELDS } from "../observeFilterConfig";
+import { viewSeed } from "../observeScope";
 
 // Lazy-load graph
 const PrimaryGraph = lazy(
@@ -42,16 +47,26 @@ const AddToQueueDialog = lazy(
     import("src/sections/annotations/queues/components/add-to-queue-dialog"),
 );
 
+import { openAddData } from "src/sections/common/AddData/addDataStore";
+
 const SESSION_BULK_ACTIONS = [
   {
     id: REPLAY_ACTION_ID,
     label: "Replay Sessions",
-    icon: "mdi:play-outline",
+    icon: "solar:play-linear",
+    tooltip: "Replay as simulation scenarios",
+  },
+  // R2 (P5): sessions into a dataset through the global Add-data sheet.
+  {
+    id: "add_to_dataset",
+    label: "Add to dataset",
+    icon: "mdi:folder-plus-outline",
+    tooltip: "Add to a dataset to run experiments on",
   },
   {
     id: "annotation-queue",
     label: "Add to annotation queue",
-    icon: "mdi:clipboard-list-outline",
+    icon: "solar:clipboard-list-linear",
   },
 ];
 
@@ -77,7 +92,7 @@ import {
   columnStateToOrder,
   isColumnOrderDirty,
 } from "../LLMTracing/savedViewColumns";
-import { filtersContentEqual } from "../saved-view-utils";
+import { dateFilterEqual, filtersContentEqual } from "../saved-view-utils";
 import {
   DEFAULT_OBSERVE_LIST_DATE_OPTION,
   getDefaultObserveListDateRangeForMode,
@@ -92,43 +107,18 @@ const getLiveSessionGridApi = (gridRef) => {
   return isGridApiLive(api) ? api : null;
 };
 
-// ---------------------------------------------------------------------------
-// Base session filter fields (always available)
-// ---------------------------------------------------------------------------
-const BASE_SESSION_FILTER_FIELDS = [
-  { id: "session_id", name: "Session ID", category: "system", type: "string" },
-  {
-    id: "first_message",
-    name: "First Message",
-    category: "system",
-    type: "string",
-  },
-  {
-    id: "last_message",
-    name: "Last Message",
-    category: "system",
-    type: "string",
-  },
-  { id: "user_id", name: "User ID", category: "system", type: "string" },
-  { id: "duration", name: "Duration", category: "system", type: "number" },
-  { id: "total_cost", name: "Total Cost", category: "system", type: "number" },
-  {
-    id: "total_tokens",
-    name: "Total Tokens",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "total_traces_count",
-    name: "Total Traces",
-    category: "system",
-    type: "number",
-  },
-];
+// Sort precedence is independent of the displayed column order.
+const sessionSortSignature = (columnState) =>
+  JSON.stringify(
+    (columnState || [])
+      .filter((column) => column.sort === "asc" || column.sort === "desc")
+      .sort((a, b) => (a.sortIndex ?? Infinity) - (b.sortIndex ?? Infinity))
+      .map(({ colId, sort }) => ({ colId, sort })),
+  );
 
 // Build filter fields dynamically from session columns + base fields
 const buildSessionFilterFields = (sessionColumns) => {
-  const baseIds = new Set(BASE_SESSION_FILTER_FIELDS.map((f) => f.id));
+  const baseIds = new Set(SESSION_FILTER_FIELDS.map((f) => f.id));
   const extra = (sessionColumns || [])
     .filter((col) => !baseIds.has(col.id) && col.name)
     .map((col) => {
@@ -145,7 +135,7 @@ const buildSessionFilterFields = (sessionColumns) => {
         type: col.dataType === "number" ? "number" : "string",
       };
     });
-  return [...BASE_SESSION_FILTER_FIELDS, ...extra];
+  return [...SESSION_FILTER_FIELDS, ...extra];
 };
 
 // Default filter and date range
@@ -179,32 +169,50 @@ export const getDateLabel = (dateFilter) => {
   if (!dates || dates.length < 2)
     return `Past ${DEFAULT_OBSERVE_LIST_DATE_OPTION}`;
   const start = new Date(dates[0]);
-  const end = new Date(dates[1]);
+  const end = getDateRangeDisplayEnd(dates);
   if (isNaN(start.getTime()) || isNaN(end.getTime()))
     return `Past ${DEFAULT_OBSERVE_LIST_DATE_OPTION}`;
   return `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
 };
+
+const USER_MODE_REPLAY_REASON =
+  "Replay needs a project. Open the session from its project to replay it.";
 
 // No-op extra properties for session filters (no reverse eval logic needed)
 const noopExtraProperties = () => ({});
 
 const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
+  const isUserMode = mode === "user";
   const sessionBulkActions = useMemo(
     () =>
       withoutReplayForRestrictedOrgs(
         SESSION_BULK_ACTIONS,
         restrictSimulateToEnvironments,
+      ).map(
+        // Replay needs a project-hosted flow, not a cross-project user view:
+        // listed but disabled there, with the reason (handleBulkAction also
+        // refuses a replay without a project).
+        (action) =>
+          isUserMode && action.id === REPLAY_ACTION_ID
+            ? {
+                ...action,
+                disabled: true,
+                disabledReason: USER_MODE_REPLAY_REASON,
+              }
+            : action,
       ),
-    [restrictSimulateToEnvironments],
+    [restrictSimulateToEnvironments, isUserMode],
   );
-  const isUserMode = mode === "user";
   const { currentWorkspaceId } = useWorkspace();
   const { observeId: routeObserveId } = useParams();
   const observeId = isUserMode ? null : routeObserveId;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const sessionGridApiRef = useRef(null);
+  const [sortSignature, setSortSignature] = useState(null);
+  const sortSubscriptionRef = useRef(null);
+  useEffect(() => () => sortSubscriptionRef.current?.(), []);
   const {
     setHeaderConfig,
     activeViewConfig,
@@ -219,14 +227,15 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   );
   const [sessionColumns, setSessionColumns] = useState([]);
 
-  const { validatedFilters, setDateFilter, dateFilter } = useLLMTracingFilters(
-    defaultFilterBase,
-    defaultDateFilter,
-    "sessionFilter",
-    "sessionDateFilter",
-    sessionColumns,
-    noopExtraProperties,
-  );
+  const { setFilters, validatedFilters, setDateFilter, dateFilter } =
+    useLLMTracingFilters(
+      defaultFilterBase,
+      defaultDateFilter,
+      "sessionFilter",
+      "sessionDateFilter",
+      sessionColumns,
+      noopExtraProperties,
+    );
 
   // --- Extra filters from TraceFilterPanel (popover) ---
   const [extraFilters, setExtraFilters] = useState([]);
@@ -270,8 +279,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const sessionFilterFields = useMemo(
     () =>
       projectFilterField
-        ? [...BASE_SESSION_FILTER_FIELDS, projectFilterField]
-        : BASE_SESSION_FILTER_FIELDS,
+        ? [...SESSION_FILTER_FIELDS, projectFilterField]
+        : SESSION_FILTER_FIELDS,
     [projectFilterField],
   );
   const filterChipLabelMap = useMemo(() => {
@@ -309,6 +318,27 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     if (!extraFilters.length) return base;
     return [...base, ...extraFilters];
   }, [userScopeFilter, validatedFilters, extraFilters]);
+
+  // --- Instant eval / Insights ---
+  // Both ask about exactly the sessions the grid shows (Session-grid sends
+  // toBackendFilters(finalFilters), date window included).
+  // Both open with the view's date preset and filters, editable there.
+  const sessionViewSeed = useMemo(
+    () =>
+      viewSeed({
+        unit: "sessions",
+        filters: toBackendFilters(finalFilters),
+        dateFilter,
+      }),
+    [finalFilters, dateFilter],
+  );
+  // Evaluate → Ask a question: the Ask page, about the sessions in view.
+  const openAsk = useCallback(() => {
+    navigate(askLink(observeId, sessionViewSeed));
+  }, [observeId, sessionViewSeed, navigate]);
+  const openInsights = useCallback(() => {
+    navigate(insightsReportLink(observeId, sessionViewSeed));
+  }, [observeId, sessionViewSeed, navigate]);
 
   // --- Column visibility ---
   const [updateObj, setUpdateObj] = useState(initialVisibility);
@@ -364,10 +394,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       activeViewConfig.extra_filters,
     );
     const baselineDisplay = activeViewConfig.display || {};
-    const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
 
     if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
-    if ((dateFilter?.dateOption ?? null) !== baselineDateOption) return true;
+    if (!dateFilterEqual(dateFilter, baselineDisplay.dateFilter)) return true;
     if (
       baselineDisplay.cellHeight !== undefined &&
       baselineDisplay.cellHeight !== cellHeight
@@ -412,6 +441,12 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     for (let i = 0; i < currentCustomIds.length; i += 1) {
       if (currentCustomIds[i] !== baselineCustomIds[i]) return true;
     }
+    if (
+      sortSignature !== null &&
+      sortSignature !== sessionSortSignature(baselineDisplay.columnState)
+    ) {
+      return true;
+    }
     // Did the user reorder columns (or move the custom-columns group)?
     if (isColumnOrderDirty(sessionColumns, baselineDisplay.columnState)) {
       return true;
@@ -425,6 +460,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     showCompare,
     updateObj,
     sessionColumns,
+    sortSignature,
   ]);
 
   // Deferred so the button doesn't flicker while filter state and the baseline
@@ -779,9 +815,10 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     const idsFromNodes = nodes
       .map((n) => n.data?.session_id || n.data?.id)
       .filter(Boolean);
-    const toggled =
-      Array.isArray(ssState.toggledNodes) && ssState.toggledNodes.length > 0
-        ? ssState.toggledNodes
+    const toggled = Array.isArray(ssState.toggledNodes)
+      ? ssState.toggledNodes
+      : ssState.selectAll
+        ? []
         : idsFromNodes;
     useSessionsGridStore.setState({
       toggledNodes: toggled,
@@ -819,11 +856,14 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const handleBulkAction = useCallback(
     (action, event) => {
       if (action === REPLAY_ACTION_ID) {
+        if (!observeId) return;
         const replayData = {
           project_id: observeId,
           replay_type: REPLAY_MODULES.SESSIONS,
-          ids: toggledNodes,
+          ids: selectAll ? [] : toggledNodes,
           select_all: selectAll,
+          exclude_ids: selectAll ? toggledNodes : [],
+          filters: toBackendFilters(finalFilters),
         };
         createReplaySessions(replayData, {
           onSuccess: (data) => {
@@ -833,6 +873,15 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           },
           onError: () => {
             enqueueSnackbar("Failed to start replay", { variant: "error" });
+          },
+        });
+      } else if (action === "add_to_dataset") {
+        openAddData({
+          source: {
+            kind: "sessions",
+            project_id: observeId,
+            session_ids: toggledNodes,
+            ...(selectAll && { select_all: true }),
           },
         });
       } else if (action === "annotation-queue") {
@@ -849,6 +898,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       observeId,
       toggledNodes,
       selectAll,
+      finalFilters,
       sessionFilterSelectionMode,
       createReplaySessions,
       setCreatedReplay,
@@ -902,7 +952,19 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const onGridReady = useCallback(
     (params) => {
       if (!isGridApiLive(params.api)) return;
+      sortSubscriptionRef.current?.();
       sessionGridApiRef.current = params;
+      const syncSort = () => {
+        if (isGridApiLive(params.api)) {
+          setSortSignature(sessionSortSignature(params.api.getColumnState?.()));
+        }
+      };
+      params.api.addEventListener?.("sortChanged", syncSort);
+      sortSubscriptionRef.current = () => {
+        if (isGridApiLive(params.api)) {
+          params.api.removeEventListener?.("sortChanged", syncSort);
+        }
+      };
       setHeaderConfig((prev) => ({ ...prev, gridApi: params.api }));
       // Drain any saved-view columnState that arrived before the grid mounted.
       if (pendingColumnStateRef.current && params.api?.applyColumnState) {
@@ -912,6 +974,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         });
         pendingColumnStateRef.current = null;
       }
+      syncSort();
       // Drain a queued refresh request — fires when the saved-view apply
       // effect ran before the grid mounted (hard refresh into a saved
       // view URL). Without this drain the queued custom-col ref would
@@ -1010,6 +1073,63 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     );
   }, []);
 
+  const handleResetView = useCallback(() => {
+    // Keep the saved baseline so Reset is an editable, saveable change.
+    // Disarm late hydration before removing customs or changing column defs.
+    pendingColumnStateRef.current = null;
+    pendingSessionOrderRef.current = null;
+    appliedSessionIdSetRef.current = null;
+    sessionUserReorderedRef.current = false;
+    pendingCustomColumnsRef.current = [];
+    pendingRefreshRef.current = false;
+    setFilters(defaultFilterBase);
+    setExtraFilters([]);
+    setDateFilter(getDefaultObserveListDateRangeForMode(isUserMode));
+    setCellHeight("Short");
+    setShowCompare(false);
+    setAutoSizeOn(false);
+    setUpdateObj(initialVisibility);
+    // Default-tab visibility is also stored on the project. Reset that source
+    // too, or the next session-list response hides the columns again.
+    if (!isUserMode && !activeViewTabId) {
+      updateSessionListColumnVisibility(initialVisibility, {
+        onSuccess: () =>
+          getLiveSessionGridApi(sessionGridApiRef)?.refreshServerSide?.({
+            purge: true,
+          }),
+      });
+    }
+    setSessionColumns((prev) =>
+      reorderColumns(
+        prev
+          .filter((col) => col.groupBy !== "Custom Columns")
+          .map((col) => ({
+            ...col,
+            isVisible: initialVisibility[col.id] ?? col.isVisible,
+          })),
+        canonicalOrderRef.current,
+      ),
+    );
+    const api = getLiveSessionGridApi(sessionGridApiRef);
+    api?.resetColumnState?.();
+    api?.setColumnsVisible?.(Object.keys(initialVisibility), true);
+    setSortSignature(sessionSortSignature(api?.getColumnState?.()));
+    try {
+      localStorage.removeItem(displayStorageKey);
+    } catch {
+      /* storage is optional */
+    }
+  }, [
+    isUserMode,
+    activeViewTabId,
+    updateSessionListColumnVisibility,
+    setFilters,
+    setDateFilter,
+    setCellHeight,
+    setShowCompare,
+    displayStorageKey,
+  ]);
+
   // --- Column configure dropdown ---
   const [openColumnConfigure, setOpenColumnConfigure] = useState(false);
   const columnConfigureRef = useRef(null);
@@ -1033,6 +1153,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         hasActiveFilter={hasActiveFilter}
         canSaveView={canSaveViewDeferred}
         onSaveView={handleSaveView}
+        onResetView={handleResetView}
         graphFilters={extraFilters}
         isFilterOpen={isFilterOpen}
         externalFilterAnchor={externalFilterAnchor}
@@ -1066,8 +1187,21 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         onGroupByChange={(key) => {
           if (isUserMode) {
             if (key !== "none" && key !== "trace" && key !== "span") return;
+            setActiveViewConfig(null);
             const params = new URLSearchParams({ userTab: "traces" });
             if (key === "span") params.set("selectedTab", "spans");
+            // Regrouping keeps the investigated window. Trace and Span each
+            // read their own date key, which otherwise opens at the default.
+            // Sessions keeps its key too, as the tab bar does, so a later
+            // Sessions tab click returns to this window.
+            const windowParam = JSON.stringify(dateFilter);
+            params.set("sessionDateFilter", windowParam);
+            params.set(
+              key === "span"
+                ? "primarySpanDateFilter"
+                : "primaryTraceDateFilter",
+              windowParam,
+            );
             navigate({
               pathname: `/dashboard/users/${encodeURIComponent(
                 userIdForUserMode,
@@ -1076,6 +1210,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
             });
             return;
           }
+          if (!["none", "trace", "span", "users"].includes(key)) return;
+          setActiveViewConfig(null);
           switch (key) {
             case "none":
             case "trace":
@@ -1113,6 +1249,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         bulkActions={sessionBulkActions}
         onAddEvals={handleAddEvals}
         onAddCustomColumn={() => setOpenCustomColumn(true)}
+        onInstantEval={observeId ? openAsk : undefined}
+        onInsights={observeId ? openInsights : undefined}
       />
 
       <Suspense fallback={null}>
@@ -1142,93 +1280,103 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         />
       </Suspense>
 
-      {/* Filter chips. Inject `display_name` so chips render the column's
-          human-readable label instead of the raw snake_case / UUID id. */}
-      <FilterChips
-        extraFilters={extraFilters.map((f) => ({
-          ...f,
-          display_name:
-            f.display_name ||
-            sessionFilterFields.find((c) => c.id === f.column_id)?.name,
-        }))}
-        fieldLabelMap={filterChipLabelMap}
-        onRemoveFilter={(idx) => {
-          // Chips are keyed by array index, so any removal re-mounts the
-          // later chips and invalidates a chip-anchored popover ref.
-          setExternalFilterAnchor(null);
-          setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
-        }}
-        onClearAll={() => {
-          setExternalFilterAnchor(null);
-          setExtraFilters([]);
-        }}
-        onAddFilter={(anchorEl) => {
-          setExternalFilterAnchor(anchorEl || null);
-          setIsFilterOpen(true);
-        }}
-        onChipClick={(_idx, anchorEl) => {
-          setExternalFilterAnchor(anchorEl || null);
-          setIsFilterOpen(true);
-        }}
-      />
-
-      {/* Graph — hidden in user mode (no project context) */}
-      {!isUserMode && (
-        <Box sx={{ px: 2 }}>
-          <Suspense fallback={null}>
-            <PrimaryGraph
-              filters={finalFilters}
-              dateFilter={dateFilter}
-              graphEndpoint={endpoints.project.getSessionGraphData()}
-              defaultMetric="latency"
-              graphLabel="Session Metrics"
-              trafficLabel="sessions"
-            />
-          </Suspense>
-        </Box>
-      )}
-
-      <SelectAllBanner
-        visible={selectAll && !sessionFilterSelectionMode}
-        visibleCount={
-          getLiveSessionGridApi(sessionGridApiRef)?.getDisplayedRowCount?.() ||
-          0
-        }
-        totalMatching={
-          totalRowCountIsLowerBound
-            ? totalRowCountLowerBound || 0
-            : totalRowCount || 0
-        }
-        totalMatchingIsLowerBound={totalRowCountIsLowerBound}
-        noun="session"
-        onSelectAll={() => setSessionFilterSelectionMode(true)}
-      />
-
-      {/* Content */}
-      <Box
-        display="flex"
-        flexDirection="column"
-        sx={{ flex: 1, height: "100%" }}
-      >
-        <SessionGrid
-          columns={sessionColumns}
-          setColumns={setSessionColumns}
-          onUserReorder={() => {
-            sessionUserReorderedRef.current = true;
+      {/* Chips, graph and grid share the tab's height: the grid takes what
+          the chips and graph leave, so its pagination footer stays on screen
+          (as on the Trace tab). A grid sized to the whole tab sat below the
+          graph and pushed the footer under the fold. */}
+      <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
+        {/* Filter chips. Inject `display_name` so chips render the column's
+            human-readable label instead of the raw snake_case / UUID id. */}
+        <FilterChips
+          extraFilters={extraFilters.map((f) => ({
+            ...f,
+            display_name:
+              f.display_name ||
+              sessionFilterFields.find((c) => c.id === f.column_id)?.name,
+          }))}
+          fieldLabelMap={filterChipLabelMap}
+          onRemoveFilter={(idx) => {
+            // Chips are keyed by array index, so any removal re-mounts the
+            // later chips and invalidates a chip-anchored popover ref.
+            setExternalFilterAnchor(null);
+            setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
           }}
-          ref={sessionGridApiRef}
-          updateObj={updateObj}
-          filters={finalFilters}
-          projectId={observeId}
-          cellHeight={cellHeight}
-          onSelectionChanged={onSelectionChanged}
-          className={shouldDisable ? "ag-grid-disabled" : ""}
-          onGridReady={onGridReady}
-          pendingCustomColumnsRef={pendingCustomColumnsRef}
-          canonicalOrderRef={canonicalOrderRef}
-          isOnSavedView={Boolean(activeViewConfig)}
-          userIdForUserMode={userIdForUserMode}
+          onClearAll={() => {
+            setExternalFilterAnchor(null);
+            setExtraFilters([]);
+          }}
+          onAddFilter={(anchorEl) => {
+            setExternalFilterAnchor(anchorEl || null);
+            setIsFilterOpen(true);
+          }}
+          onChipClick={(_idx, anchorEl) => {
+            setExternalFilterAnchor(anchorEl || null);
+            setIsFilterOpen(true);
+          }}
         />
+
+        {/* Graph — hidden in user mode (no project context) */}
+        {!isUserMode && (
+          <Box sx={{ px: 2, flexShrink: 0 }}>
+            <Suspense fallback={null}>
+              <PrimaryGraph
+                filters={finalFilters}
+                dateFilter={dateFilter}
+                graphEndpoint={endpoints.project.getSessionGraphData()}
+                defaultMetric="latency"
+                graphLabel="Session Metrics"
+                trafficLabel="sessions"
+              />
+            </Suspense>
+          </Box>
+        )}
+
+        <SelectAllBanner
+          visible={selectAll && !sessionFilterSelectionMode}
+          visibleCount={
+            getLiveSessionGridApi(
+              sessionGridApiRef,
+            )?.getDisplayedRowCount?.() || 0
+          }
+          totalMatching={
+            totalRowCountIsLowerBound
+              ? totalRowCountLowerBound || 0
+              : totalRowCount || 0
+          }
+          totalMatchingIsLowerBound={totalRowCountIsLowerBound}
+          noun="session"
+          onSelectAll={() => setSessionFilterSelectionMode(true)}
+        />
+
+        {/* Content */}
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            flex: 1,
+            minHeight: 0,
+          }}
+        >
+          <SessionGrid
+            columns={sessionColumns}
+            setColumns={setSessionColumns}
+            onUserReorder={() => {
+              sessionUserReorderedRef.current = true;
+            }}
+            ref={sessionGridApiRef}
+            updateObj={updateObj}
+            filters={finalFilters}
+            projectId={observeId}
+            cellHeight={cellHeight}
+            onSelectionChanged={onSelectionChanged}
+            className={shouldDisable ? "ag-grid-disabled" : ""}
+            onGridReady={onGridReady}
+            pendingCustomColumnsRef={pendingCustomColumnsRef}
+            canonicalOrderRef={canonicalOrderRef}
+            isOnSavedView={Boolean(activeViewConfig)}
+            userIdForUserMode={userIdForUserMode}
+          />
+        </Box>
       </Box>
 
       {/* Column configure dropdown */}

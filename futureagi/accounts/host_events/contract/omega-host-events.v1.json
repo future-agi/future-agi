@@ -1,0 +1,104 @@
+{
+  "schemaVersion": "omega-host-events-contract/v1",
+  "description": "Test vectors for the FA -> Omega EE revocation channel (READINESS lane 1.2a). The same file is checked by futureagi/accounts/tests/test_host_events_contract.py and packages/server/src/managed-auth/events/host-events-contract.test.ts. Test-only secrets.",
+  "signatureHeader": "X-Omega-Host-Signature",
+  "toleranceSeconds": 300,
+  "issuer": "https://futureagi.test",
+  "keys": [
+    {
+      "keyId": "fa-1",
+      "secret": "contract-test-secret-not-for-production-0001"
+    }
+  ],
+  "vectors": [
+    {
+      "name": "membership.removed",
+      "body": "{\"events\":[{\"id\":\"6f0b6f5e-5c1d-4a3e-9d55-0c8a7a2f0001\",\"occurredAtMs\":1759999998500,\"organizationId\":\"org-a\",\"role\":null,\"subject\":\"u-1\",\"type\":\"membership.removed\",\"workspaceId\":null}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+      "header": "t=1760000000,kid=fa-1,v1=bdac8862e6506de8d9382545a9e9fb29467ef2e2c8cf4e540cbb547db6c39e33",
+      "nowMs": 1760000002000,
+      "expect": "ok",
+      "events": 1
+    },
+    {
+      "name": "membership.removed.workspace",
+      "body": "{\"events\":[{\"id\":\"6f0b6f5e-5c1d-4a3e-9d55-0c8a7a2f0002\",\"occurredAtMs\":1759999999100,\"organizationId\":\"org-a\",\"role\":null,\"subject\":\"u-1\",\"type\":\"membership.removed\",\"workspaceId\":\"ws-a-side\"}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+      "header": "t=1760000000,kid=fa-1,v1=495809e5cd5f80acef0123114292564c65da097a5f776ee1dfd697421520a528",
+      "nowMs": 1760000002000,
+      "expect": "ok",
+      "events": 1
+    },
+    {
+      "name": "role.changed",
+      "body": "{\"events\":[{\"id\":\"6f0b6f5e-5c1d-4a3e-9d55-0c8a7a2f0003\",\"occurredAtMs\":1759999999300,\"organizationId\":\"org-a\",\"role\":\"member\",\"subject\":\"u-2\",\"type\":\"role.changed\",\"workspaceId\":null}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+      "header": "t=1760000000,kid=fa-1,v1=7b902a8c29d227cc629060ee09ff4ff05caee36e03912cf28fc5e2bbf125b538",
+      "nowMs": 1760000002000,
+      "expect": "ok",
+      "events": 1
+    },
+    {
+      "name": "user.deactivated",
+      "body": "{\"events\":[{\"id\":\"6f0b6f5e-5c1d-4a3e-9d55-0c8a7a2f0004\",\"occurredAtMs\":1759999999700,\"organizationId\":null,\"organizations\":[\"org-a\",\"org-b\"],\"role\":null,\"subject\":\"u-3\",\"type\":\"user.deactivated\",\"workspaceId\":null}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+      "header": "t=1760000000,kid=fa-1,v1=88e2875fdbc87602bba60977ed5238f78d517e426e4a7464d8af0c2e661b01d7",
+      "nowMs": 1760000002000,
+      "expect": "ok",
+      "events": 1
+    },
+    {
+      "name": "unsigned",
+      "body": "{\"events\":[{\"id\":\"6f0b6f5e-5c1d-4a3e-9d55-0c8a7a2f0001\",\"occurredAtMs\":1759999998500,\"organizationId\":\"org-a\",\"role\":null,\"subject\":\"u-1\",\"type\":\"membership.removed\",\"workspaceId\":null}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+      "header": null,
+      "nowMs": 1760000000000,
+      "expect": "signature_missing"
+    },
+    {
+      "name": "wrong-secret",
+      "body": "{\"events\":[{\"id\":\"6f0b6f5e-5c1d-4a3e-9d55-0c8a7a2f0001\",\"occurredAtMs\":1759999998500,\"organizationId\":\"org-a\",\"role\":null,\"subject\":\"u-1\",\"type\":\"membership.removed\",\"workspaceId\":null}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+      "header": "t=1760000000,kid=fa-1,v1=6057b47eac6f9ea2be7be16f7d476de7c29a26cd026268b6e7d32a0680a50713",
+      "nowMs": 1760000000000,
+      "expect": "signature_invalid"
+    },
+    {
+      "name": "unknown-key-id",
+      "body": "{\"events\":[{\"id\":\"6f0b6f5e-5c1d-4a3e-9d55-0c8a7a2f0001\",\"occurredAtMs\":1759999998500,\"organizationId\":\"org-a\",\"role\":null,\"subject\":\"u-1\",\"type\":\"membership.removed\",\"workspaceId\":null}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+      "header": "t=1760000000,kid=fa-9,v1=bdac8862e6506de8d9382545a9e9fb29467ef2e2c8cf4e540cbb547db6c39e33",
+      "nowMs": 1760000000000,
+      "expect": "signature_invalid"
+    },
+    {
+      "name": "tampered-body",
+      "body": "{\"events\":[{\"id\":\"6f0b6f5e-5c1d-4a3e-9d55-0c8a7a2f0001\",\"occurredAtMs\":1759999998500,\"organizationId\":\"org-a\",\"role\":null,\"subject\":\"u-9\",\"type\":\"membership.removed\",\"workspaceId\":null}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+      "header": "t=1760000000,kid=fa-1,v1=bdac8862e6506de8d9382545a9e9fb29467ef2e2c8cf4e540cbb547db6c39e33",
+      "nowMs": 1760000000000,
+      "expect": "signature_invalid"
+    },
+    {
+      "name": "stale-timestamp",
+      "body": "{\"events\":[{\"id\":\"6f0b6f5e-5c1d-4a3e-9d55-0c8a7a2f0001\",\"occurredAtMs\":1759999998500,\"organizationId\":\"org-a\",\"role\":null,\"subject\":\"u-1\",\"type\":\"membership.removed\",\"workspaceId\":null}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+      "header": "t=1759999699,kid=fa-1,v1=8ed7276068981de647920d0a4d21e71f3b52ac657f705250fe1d8fbf1f8c35cb",
+      "nowMs": 1760000000000,
+      "expect": "signature_expired"
+    },
+    {
+      "name": "future-timestamp",
+      "body": "{\"events\":[{\"id\":\"6f0b6f5e-5c1d-4a3e-9d55-0c8a7a2f0001\",\"occurredAtMs\":1759999998500,\"organizationId\":\"org-a\",\"role\":null,\"subject\":\"u-1\",\"type\":\"membership.removed\",\"workspaceId\":null}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+      "header": "t=1760000301,kid=fa-1,v1=11e7a371c8973c9e44fbe5bc0dda78641cf2fbf75905328925924f5a89aa5cd6",
+      "nowMs": 1760000000000,
+      "expect": "signature_expired"
+    },
+    {
+      "name": "edge-of-window",
+      "body": "{\"events\":[{\"id\":\"6f0b6f5e-5c1d-4a3e-9d55-0c8a7a2f0001\",\"occurredAtMs\":1759999998500,\"organizationId\":\"org-a\",\"role\":null,\"subject\":\"u-1\",\"type\":\"membership.removed\",\"workspaceId\":null}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+      "header": "t=1759999700,kid=fa-1,v1=d9a7e8b5803ec68ba202cb8bf8043997200f0aa8c28e6bf719e1b29977dd0a47",
+      "nowMs": 1760000000000,
+      "expect": "ok",
+      "events": 1
+    },
+    {
+      "name": "malformed-header",
+      "body": "{\"events\":[{\"id\":\"6f0b6f5e-5c1d-4a3e-9d55-0c8a7a2f0001\",\"occurredAtMs\":1759999998500,\"organizationId\":\"org-a\",\"role\":null,\"subject\":\"u-1\",\"type\":\"membership.removed\",\"workspaceId\":null}],\"issuer\":\"https://futureagi.test\",\"schemaVersion\":\"omega-host-events/v1\"}",
+      "header": "v1=bdac8862e6506de8d9382545a9e9fb29467ef2e2c8cf4e540cbb547db6c39e33",
+      "nowMs": 1760000000000,
+      "expect": "signature_invalid"
+    }
+  ]
+}

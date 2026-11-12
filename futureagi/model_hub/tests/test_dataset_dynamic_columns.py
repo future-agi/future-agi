@@ -969,7 +969,7 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
     @patch("model_hub.views.dynamic_columns.classify_column_async.delay")
     def test_rerun_uses_stored_metadata_when_config_is_omitted(self, mock_task):
         """Test rerun uses stored operation config when no override is sent."""
-        dataset, columns, _ = self.create_test_dataset()
+        dataset, columns, rows = self.create_test_dataset()
         column = columns[0]
         labels = ["positive", "negative"]
         column.metadata = {
@@ -983,9 +983,11 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
 
         url = reverse("rerun-operation", kwargs={"column_id": str(column.id)})
 
-        response = self.client.post(
-            url, data={"operation_type": "classify"}, format="json"
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                url, data={"operation_type": "classify"}, format="json"
+            )
+            mock_task.assert_not_called()
 
         assert response.status_code == status.HTTP_200_OK
         mock_task.assert_called_once_with(
@@ -996,12 +998,13 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
             dataset.id,
             str(column.id),
             True,
+            row_ids=[str(row.id) for row in rows],
         )
 
     @patch("model_hub.views.dynamic_columns.add_api_column_async.delay")
     def test_rerun_api_call_uses_flat_stored_metadata(self, mock_task):
         """Test API-call rerun accepts metadata shape created by add-api-column."""
-        dataset, columns, _ = self.create_test_dataset()
+        dataset, columns, rows = self.create_test_dataset()
         column = columns[0]
         column.metadata = {
             "url": "https://example.com/data",
@@ -1016,9 +1019,11 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
 
         url = reverse("rerun-operation", kwargs={"column_id": str(column.id)})
 
-        response = self.client.post(
-            url, data={"operation_type": "api_call"}, format="json"
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                url, data={"operation_type": "api_call"}, format="json"
+            )
+            mock_task.assert_not_called()
 
         assert response.status_code == status.HTTP_200_OK
         mock_task.assert_called_once_with(
@@ -1034,6 +1039,7 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
             3,
             str(column.id),
             True,
+            row_ids=[str(row.id) for row in rows],
         )
 
     @patch("model_hub.views.dynamic_columns.classify_column_async.delay")
@@ -1055,22 +1061,33 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
 
         url = reverse("rerun-operation", kwargs={"column_id": str(column.id)})
 
-        response = self.client.post(
-            url,
-            data={
-                "operation_type": "classify",
-                "config": {
-                    "labels": ["positive", "negative"],
-                    "language_model_id": "gpt-4o",
-                    "column_id": str(columns[1].id),
-                    "concurrency": 5,
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                url,
+                data={
+                    "operation_type": "classify",
+                    "config": {
+                        "labels": ["positive", "negative"],
+                        "language_model_id": "gpt-4o",
+                        "column_id": str(columns[1].id),
+                        "concurrency": 5,
+                    },
                 },
-            },
-            format="json",
-        )
+                format="json",
+            )
+            mock_task.assert_not_called()
 
         assert response.status_code == status.HTTP_200_OK
-        mock_task.assert_called_once()
+        mock_task.assert_called_once_with(
+            str(columns[1].id),
+            ["positive", "negative"],
+            "gpt-4o",
+            5,
+            dataset.id,
+            str(column.id),
+            True,
+            row_ids=[str(row.id) for row in rows],
+        )
 
 
 # =============================================================================

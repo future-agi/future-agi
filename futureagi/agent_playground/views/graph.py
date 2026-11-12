@@ -11,6 +11,7 @@ from django.db.models import (
 from django.utils.decorators import method_decorator
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
@@ -48,6 +49,7 @@ from agent_playground.utils.graph import (
 )
 from agent_playground.utils.graph_validation import would_create_graph_reference_cycle
 from agent_playground.utils.version_content import update_version_content
+from common.utils.page_limits import enforce_page_size
 from common.utils.pagination import paginate_queryset
 from model_hub.models.choices import DatasetSourceChoices
 from model_hub.models.develop_dataset import Dataset
@@ -83,22 +85,35 @@ class GraphViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    # Actions that only read; templates can be read, never changed, here.
+    TEMPLATE_READ_ACTIONS = frozenset(
+        {
+            "list",
+            "retrieve",
+            "list_versions",
+            "retrieve_version",
+            "referenceable_graphs",
+        }
+    )
+
+    def _template_query_requested(self):
+        is_template = self.request.query_params.get("is_template")
+        # only strings can be passed via query params
+        return bool(is_template and is_template.lower() == "true")
+
     def get_queryset(self):
         """
         Get graphs filtered by organization and workspace, or templates.
 
-        If is_template=true query param is passed, returns system-wide templates
-        (no org/workspace filter). Otherwise returns user's graphs filtered by
-        org/workspace.
+        If is_template=true query param is passed, read actions get system-wide
+        templates (no org/workspace filter) and write actions get no graphs.
+        Otherwise returns user's graphs filtered by org/workspace.
         """
-        is_template = self.request.query_params.get("is_template")
-        is_template_bool = (
-            is_template and is_template.lower() == "true"
-        )  # only strings can be passed via query params
-
         # Templates are system-wide, no org/workspace filter
-        if is_template_bool:
-            return Graph.no_workspace_objects.filter(is_template=True)
+        if self._template_query_requested():
+            if self.action in self.TEMPLATE_READ_ACTIONS:
+                return Graph.no_workspace_objects.filter(is_template=True)
+            return Graph.no_workspace_objects.none()
 
         organization = self.request.organization
         workspace = self.request.workspace
@@ -141,6 +156,7 @@ class GraphViewSet(ModelViewSet):
         List all graphs for the user's org/workspace.
         """
         try:
+            enforce_page_size(request.query_params.get("page_size"))
             queryset = self.get_queryset()
             search = request.query_params.get("search")
             if search:
@@ -168,6 +184,8 @@ class GraphViewSet(ModelViewSet):
             return self._gm.success_response(
                 {"graphs": serializer.data, "metadata": metadata}
             )
+        except APIException:
+            raise
         except Exception as e:
             logger.exception("Error listing graphs", error=str(e))
             return self._gm.internal_server_error_response(
@@ -260,7 +278,17 @@ class GraphViewSet(ModelViewSet):
         if blocking_nodes.exists():
             node = blocking_nodes.first()
             deleted_name = node.ref_graph_version.graph.name
-            referencing_name = node.graph_version.graph.name
+            referencing_graph = node.graph_version.graph
+            organization_id = getattr(
+                getattr(self.request, "organization", None), "id", None
+            )
+            # Name the referencing graph only when it is the caller's own.
+            referencing_name = (
+                referencing_graph.name
+                if organization_id is not None
+                and referencing_graph.organization_id == organization_id
+                else "another graph"
+            )
             return f"Unable to delete {deleted_name}: referenced by {referencing_name}"
 
         return None
@@ -339,6 +367,8 @@ class GraphViewSet(ModelViewSet):
         If all referencing graphs are also being deleted, it's allowed; otherwise blocked.
         """
         try:
+            if self._template_query_requested():
+                return self._gm.not_found(get_error_message("GRAPH_NOT_FOUND"))
             serializer = BulkDeleteSerializer(data=request.data)
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
@@ -388,6 +418,7 @@ class GraphViewSet(ModelViewSet):
         Returns lightweight: id, version_number, status, commit_message, created_at.
         """
         try:
+            enforce_page_size(request.query_params.get("page_size"))
             graph = self.get_object()
             versions = GraphVersion.no_workspace_objects.filter(graph=graph).order_by(
                 "-version_number"
@@ -413,6 +444,8 @@ class GraphViewSet(ModelViewSet):
             )
         except Graph.DoesNotExist:
             return self._gm.not_found(get_error_message("GRAPH_NOT_FOUND"))
+        except APIException:
+            raise
         except Exception as e:
             logger.exception("Error listing versions", error=str(e))
             return self._gm.internal_server_error_response(
@@ -428,7 +461,7 @@ class GraphViewSet(ModelViewSet):
             requested_status = request.data.get("status", GraphVersionStatus.DRAFT)
             serializer = VersionCreateSerializer(
                 data=request.data,
-                context={"version_status": requested_status},
+                context={"version_status": requested_status, "graph": graph},
             )
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)

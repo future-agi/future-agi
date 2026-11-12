@@ -7,6 +7,10 @@ on:
         description: 'Branch to deploy'
         required: false
         default: 'main'
+      runtime_config_only:
+        description: 'Update public runtime config only (no rebuild or asset upload)'
+        type: boolean
+        default: false
 
 jobs:
   deploy:
@@ -17,7 +21,7 @@ jobs:
 
     steps:
       - name: Checkout selected branch
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch }}
 
@@ -27,9 +31,11 @@ jobs:
           node-version: '22.18'
 
       - name: Install dependencies
-        run: yarn
+        if: inputs.runtime_config_only != true
+        run: yarn --frozen-lockfile
 
       - name: Create .env file from secrets
+        if: inputs.runtime_config_only != true
         run: |
           cat <<EOF > .env
           VITE_ENVIRONMENT=production
@@ -63,7 +69,13 @@ jobs:
           EOF
 
       - name: Build project
+        if: inputs.runtime_config_only != true
         run: yarn build
+
+      - name: Write public runtime configuration from repository variables
+        env:
+          RUNTIME_CONFIG_VARIABLES_JSON: ${{ toJSON(vars) }}
+        run: node scripts/write-runtime-config.mjs --prefix PROD_ --output dist/config.js
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -76,6 +88,7 @@ jobs:
       # safe to cache forever. The --delete flag here cleans up old hashes
       # left behind by previous deploys.
       - name: Upload hashed assets with long-lived immutable cache
+        if: inputs.runtime_config_only != true
         run: |
           aws s3 sync dist/assets/ s3://${{ secrets.PROD_S3_BUCKET_NAME }}/assets/ \
             --delete \
@@ -86,13 +99,26 @@ jobs:
       # deploy is picked up immediately. --exclude "assets/*" prevents
       # this step from re-uploading or deleting hashed assets.
       - name: Upload root files with no-cache
+        if: inputs.runtime_config_only != true
         run: |
           aws s3 sync dist/ s3://${{ secrets.PROD_S3_BUCKET_NAME }}/ \
             --delete \
-            --exclude "assets/*" \
+            --exclude "assets/*" --exclude "config.js" \
             --cache-control "no-cache, must-revalidate"
 
+      - name: Upload runtime configuration with no-cache
+        run: |
+          aws s3 cp dist/config.js s3://${{ secrets.PROD_S3_BUCKET_NAME }}/config.js \
+            --content-type "application/javascript" --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Invalidate runtime configuration
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.PROD_CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/config.js"
+
       - name: Invalidate CloudFront cache
+        if: inputs.runtime_config_only != true
         run: |
           aws cloudfront create-invalidation \
             --distribution-id ${{ secrets.PROD_CLOUDFRONT_DISTRIBUTION_ID }} \

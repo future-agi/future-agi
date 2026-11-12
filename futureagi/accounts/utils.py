@@ -24,8 +24,10 @@ from accounts.disposable_domains import DISPOSABLE_EMAIL_DOMAINS
 from accounts.models.organization import Organization
 from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
-from accounts.models.user import OrgApiKey, User
+from accounts.models.user import User
 from accounts.serializers.user import UserSignupSerializer
+from accounts.services.hard_erase_issuance_entry import issuance_entry
+from accounts.services.identity_issuance import issue_membership
 from analytics.mixpanel_util import mixpanel_tracker
 from analytics.utils import (
     MixpanelEvents,
@@ -42,21 +44,6 @@ from tfc.utils.email import email_helper
 from tfc.utils.parse_errors import parse_serialized_errors
 
 logger = structlog.get_logger(__name__)
-
-
-def _record_signup_api_key_event(key_id, organization_id):
-    try:
-        from tfc.deployment_telemetry.events import record_event
-
-        record_event(
-            "api_key_created",
-            actor_type="api_key",
-            actor_id=key_id,
-            source="system",
-            organization_id=organization_id,
-        )
-    except Exception:
-        logger.debug("deployment_telemetry_signup_api_key_event_failed", exc_info=True)
 
 
 def _fire_deployment_telemetry_registration(user_id=None, source="system"):
@@ -100,19 +87,20 @@ def resolve_org_role(user, organization):
     """Return the user's role in the given organization via membership lookup.
 
     Falls back to user.organization_role only for truly legacy accounts
-    (users with no membership records at all for this org).
+    (users with no membership history, including removed rows).
     """
-    mem = OrganizationMembership.no_workspace_objects.filter(
-        user=user, organization=organization, is_active=True
+    if organization is None:
+        return None
+    mem = OrganizationMembership._base_manager.filter(
+        user=user, organization=organization, is_active=True, deleted=False
     ).first()
     if mem:
-        return mem.role
+        return Level.to_org_string(mem.level) if mem.level is not None else mem.role
 
-    # Fallback: legacy field (only for truly legacy accounts)
-    # Users with deactivated memberships should NOT get this fallback.
+    # A tombstone must never resurrect the legacy role on the shared identity.
     if user.organization_id and user.organization_id == organization.id:
-        has_any_membership = OrganizationMembership.no_workspace_objects.filter(
-            user=user, organization=organization
+        has_any_membership = OrganizationMembership._base_manager.filter(
+            user=user
         ).exists()
         if not has_any_membership:
             return user.organization_role
@@ -291,7 +279,8 @@ def is_work_email(email):
     return not is_disposable_email_domain(domain)
 
 
-def first_signup(data, mode=None, telemetry_source="web"):
+@transaction.atomic
+def first_signup(data, mode=None, telemetry_source="web", *, seed_demo_data=True):
     if not data.get("email"):
         raise Exception("Email not provided")
 
@@ -328,28 +317,53 @@ def first_signup(data, mode=None, telemetry_source="web"):
 
     serializer = UserSignupSerializer(data=data)
     if serializer.is_valid():
-        user = serializer.save()
-        organization = Organization.objects.create(
-            name=data["company_name"], region=settings.REGION
-        )
-        user.organization = organization
-        user.organization_role = "Owner"
-        user.is_active = True
-        user.save()
-
-        # Create OrganizationMembership for RBAC (1-user-1-org invariant)
         from accounts.models.organization_membership import OrganizationMembership
+        from accounts.services.default_workspace import provision_default_workspace
         from tfc.constants.levels import Level
 
-        OrganizationMembership.objects.get_or_create(
-            user=user,
-            organization=organization,
-            defaults={
-                "role": "Owner",
-                "level": Level.OWNER,
-                "is_active": True,
-            },
-        )
+        # One transaction: an account never exists without its organization,
+        # its membership and the organization's default workspace. Landing
+        # only reads, so nothing creates that workspace later.
+        organization = Organization(name=data["company_name"], region=settings.REGION)
+        with issuance_entry(
+            new_organizations=[organization.pk], emails=[data["email"]]
+        ):
+            user = serializer.save()
+            organization.save(force_insert=True)
+            user.organization = organization
+            user.organization_role = "Owner"
+            user.is_active = True
+            user.save()
+
+            # Create OrganizationMembership for RBAC (1-user-1-org invariant)
+            org_membership, _ = issue_membership(
+                OrganizationMembership.objects,
+                "get_or_create",
+                user=user,
+                organization=organization,
+                defaults={
+                    "role": "Owner",
+                    "level": Level.OWNER,
+                    "is_active": True,
+                },
+            )
+            provision_default_workspace(
+                organization, user, organization_membership=org_membership
+            )
+            # The intent and account commit together. Only the E2E image's
+            # explicit clean-actor endpoint opts out; public signup always uses
+            # the default. Inside the issuance entry: the hard-erase lifecycle
+            # lock covers this row and the write-capable dispatch callback.
+            if seed_demo_data:
+                from accounts.models.demo_seed import DemoSeedRequest
+
+                DemoSeedRequest.objects.create(user=user, organization=organization)
+                transaction.on_commit(
+                    lambda user_id=user.id, password=generated_password: (
+                        process_post_registration(user_id, password)
+                    ),
+                    robust=True,
+                )
 
         # Create billing subscription (Free plan default).
         # Skip when ee is absent — no subscription model.
@@ -369,9 +383,6 @@ def first_signup(data, mode=None, telemetry_source="web"):
 
     if email:
         user = User.objects.get(email=email)
-        apiKeys = OrgApiKey.no_workspace_objects.filter(
-            organization=organization, type="system", enabled=True
-        )
         properties = get_mixpanel_properties(user=user, mode=mode)
         if mode:
             event_name = MixpanelEvents.SSO_SIGNUP.value
@@ -380,21 +391,9 @@ def first_signup(data, mode=None, telemetry_source="web"):
         mixpanel_tracker.set_details(user)
         track_mixpanel_event(event_name, properties)
 
-        if len(apiKeys) == 0:
-            system_key = OrgApiKey.no_workspace_objects.create(
-                organization=organization, type="system"
-            )
-            transaction.on_commit(
-                lambda key_id=system_key.id, org_id=organization.id: _record_signup_api_key_event(
-                    key_id, org_id
-                )
-            )
-        if generated_password:
-            process_post_registration(user.id, generated_password)
-
         transaction.on_commit(
-            lambda user_id=user.id, source=telemetry_source: _fire_deployment_telemetry_registration(
-                user_id, source
+            lambda user_id=user.id, source=telemetry_source: (
+                _fire_deployment_telemetry_registration(user_id, source)
             )
         )
         return user
@@ -450,9 +449,9 @@ def persist_pending_org_invite(
     """
     org_level = Level.from_string(org_role) if org_role else Level.VIEWER
     ws_level = Level.from_string(Level.normalize_ws_role(workspace_role))
-    OrganizationInvite.objects.update_or_create(
+    invite, _ = OrganizationInvite.objects.update_or_create(
         organization=organization,
-        target_email=target_email,
+        target_email=target_email.lower(),
         status=InviteStatus.PENDING,
         defaults={
             "level": org_level,
@@ -463,6 +462,7 @@ def persist_pending_org_invite(
         },
     )
 
+    return invite
 
 def refresh_pending_invite_expiration(organization, email):
     """Reset the expiry of the matching PENDING OrganizationInvite for this
@@ -483,36 +483,38 @@ def refresh_pending_invite_expiration(organization, email):
         invite.refresh_expiration()
 
 
-def build_invite_accept_link(user):
-    """Build the accept-invite link for an inactive invited user.
+def build_invite_accept_link(user, *, organization=None, invite=None, delivery="email"):
+    """Build a capability for one explicit invitation, never the user's first org."""
+    from accounts.services.invitation_links import invitation_link, pending_invitation
 
-    Same URL that goes out in invite_user.html — OSS deployments surface it in
-    the API so an admin can share it manually when SMTP isn't configured.
-    """
-    uid = urlsafe_base64_encode(force_bytes(user.pk))
-    token = default_token_generator.make_token(user)
-    return f"{settings.APP_BASE_URL}/auth/jwt/invitation/accept/{uid}/{token}"
+    if invite is None:
+        invite = pending_invitation(user, organization)
+    return invitation_link(user, invite, delivery=delivery)
 
 
-def build_invite_links(emails):
-    """Map lowercased email -> accept-invite link, OSS only.
-
-    Shared by invite creation and both member lists so they cannot disagree
-    about who gets a link.
-    """
+def build_invite_links(emails, *, organization=None):
+    """OSS manual links are tenant-scoped and never shared-identity credentials."""
     from tfc.ee_gating import is_oss
 
-    if not emails or not is_oss():
+    if not emails or organization is None or not is_oss():
         return {}
-
     lowered = {email.lower() for email in emails}
-    return {
-        user.email.lower(): build_invite_accept_link(user)
+    users = {
+        user.email.lower(): user
         for user in User.objects.annotate(email_lower=Lower("email")).filter(
             email_lower__in=lowered,
-            is_active=False,
         )
     }
+    result = {}
+    for invite in OrganizationInvite.objects.filter(
+        organization=organization, status=InviteStatus.PENDING,
+    ):
+        user = users.get(invite.target_email.lower())
+        if user is not None and not invite.is_expired and (user.is_active or user.organization_id == organization.id):
+            result[invite.target_email.lower()] = build_invite_accept_link(
+                user, invite=invite, delivery="share",
+            )
+    return result
 
 
 def build_password_reset_link(uidb64, token):
@@ -526,37 +528,37 @@ def build_password_reset_link(uidb64, token):
 
 
 def send_invite_email(email, organization, inviter):
-    """Send invite email to the target user."""
+    """Return an explicit delivery result, without exposing mail exception data."""
     try:
         org_name = organization.display_name or organization.name
-
         existing = User.objects.filter(email__iexact=email).first()
-        if existing and existing.is_active:
+        invite = OrganizationInvite.objects.filter(
+            organization=organization, target_email__iexact=email,
+            status=InviteStatus.PENDING,
+        ).first()
+        if existing is None:
+            return False
+        if invite is not None:
+            template = "invite_user.html"
+            extra_context = {"invite_link": build_invite_accept_link(existing, invite=invite)}
+        elif existing.is_active:
             template = "existing_user_invite.html"
             extra_context = {}
-        elif existing:
-            # Inactive user — send invite with activation token
-            template = "invite_user.html"
-            extra_context = {"invite_link": build_invite_accept_link(existing)}
         else:
-            # No user record yet; email will be sent once the user signs up.
-            logger.info("invite_email_skipped_no_user", email=email)
-            return
-
+            return False
         email_helper(
             f"You are invited to join {org_name} - Future AGI",
             template,
             {
-                "org_name": org_name,
-                "invited_by": inviter.name,
-                "app_url": settings.APP_URL,
-                "ssl": ssl,
-                **extra_context,
+                "org_name": org_name, "invited_by": inviter.name,
+                "app_url": settings.APP_URL, "ssl": ssl, **extra_context,
             },
             [email],
         )
+        return True
     except Exception:
-        logger.exception("invite_email_failed", email=email)
+        logger.warning("invite_email_failed", organization_id=str(organization.id))
+        return False
 
 
 def send_signup_email(generated_password, user_email, user_name):
@@ -805,11 +807,42 @@ def record_hubspot_login(user):
         return None
 
 
-def _run_post_registration(user_id, generated_password):
+def _dispatch_demo_seeding(organization_id):
+    """Hand seeding to its own activity so seeder retries never re-run the
+    notifications in ``_run_post_registration``. The seeder raises on
+    transient failures by design and the post-registration activity retries;
+    sharing that retry boundary would resend the welcome email, HubSpot
+    request and Slack notification on every seeding failure. A failed
+    dispatch stays safe to swallow here: the DemoSeedRequest row committed by
+    the caller is re-dispatched by the recover-demo-seeding schedule."""
+    from temporalio.common import WorkflowIDConflictPolicy
+
+    import tfc.temporal.background_tasks.activities  # noqa: F401
+    from tfc.temporal.drop_in import start_activity
+
+    try:
+        start_activity(
+            "seed_demo_data_activity",
+            args=(str(organization_id),),
+            queue="default",
+            task_id=f"seed-demo-data-{organization_id}",
+            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+            dispatch_timeout_seconds=2,
+        )
+    except Exception:
+        logger.warning(
+            "demo_seed_dispatch_deferred_to_recovery",
+            organization_id=str(organization_id),
+            exc_info=True,
+        )
+
+
+def _run_post_registration(user_id, generated_password, organization_id=None):
     """Process post-registration steps in a separate thread"""
     user = User.objects.get(id=user_id)
     if user:
-        send_signup_email(generated_password, user.email, user.name)
+        if generated_password:
+            send_signup_email(generated_password, user.email, user.name)
 
         # Each of these returns without a network call unless its key is set
         # (HUBSPOT_API_TOKEN, SLACK_WEBHOOK_CHANNEL), so a self-hosted install
@@ -818,15 +851,17 @@ def _run_post_registration(user_id, generated_password):
             updated, err = send_hubspot_notification(user)
             send_slack_notification(user, updated=updated, err=err)
 
-        org = get_user_organization(user)
-        if org:
-            from accounts.user_onboard import (
-                create_demo_traces_and_spans,
-                upload_demo_dataset,
-            )
+        org = get_user_organization(user) if organization_id is None else None
+        org_id = organization_id or (org.id if org else None)
+        if org_id is None:
+            return
+        from accounts.models.demo_seed import DemoSeedRequest
 
-            upload_demo_dataset(org.id, str(user.id))
-            create_demo_traces_and_spans(str(org.id))
+        # Also accept workflows dispatched by older app versions.
+        DemoSeedRequest.objects.get_or_create(
+            organization_id=org_id, defaults={"user": user}
+        )
+        _dispatch_demo_seeding(org_id)
 
 
 def existing_member_access_will_change(
@@ -865,14 +900,29 @@ def existing_member_access_will_change(
 
 
 # TODO: use async views to replace this code. its wrong
-def process_post_registration(user_id, generated_password):
-    """Process post-registration steps using Temporal"""
+def process_post_registration(user_id, generated_password, organization_id=None):
+    """Best-effort fast path; the persisted seed request is recovered on a schedule."""
+    from temporalio.common import WorkflowIDConflictPolicy
+
     # Import the activity to register it
     import tfc.temporal.background_tasks.activities  # noqa: F401
+    from accounts.models.demo_seed import DemoSeedRequest
     from tfc.temporal.drop_in import start_activity
 
+    if organization_id is None:
+        organization = get_user_organization(User.objects.get(id=user_id))
+        organization_id = organization.id if organization else None
+    # Marketplace / additional-org onboarding also needs a durable intent.
+    if organization_id is not None:
+        DemoSeedRequest.objects.get_or_create(
+            organization_id=organization_id, defaults={"user_id": user_id}
+        )
     start_activity(
         "run_post_registration_activity",
         args=(user_id, generated_password),
+        kwargs={"organization_id": str(organization_id)} if organization_id else {},
         queue="default",
+        task_id=f"post-registration-{organization_id or user_id}",
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+        dispatch_timeout_seconds=2,
     )

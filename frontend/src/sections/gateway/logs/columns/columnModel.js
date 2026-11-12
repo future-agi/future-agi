@@ -6,6 +6,13 @@
 // collide with the built-in Model column.
 
 import { REQUEST_TAG } from "../../constants/requestTags";
+import {
+  GATEWAY_BY_ID,
+  GATEWAY_COLUMNS,
+  MANAGED_ONLY_COLUMN_IDS,
+  RETIRED_COLUMN_IDS,
+  isGatewayColumnId,
+} from "./gatewayColumns";
 
 export const CONFIG_VERSION = 1;
 export const COLUMN_VIEW_ID = "requests";
@@ -38,7 +45,7 @@ export const BUILTIN_COLUMNS = [
   { key: "service", label: "Service", width: 130, sortable: false },
   { key: "statusCode", label: "Status", width: 80, sortable: true },
   { key: "latencyMs", label: "Latency", width: 100, sortable: true },
-  { key: "cost", label: "Cost", width: 100, sortable: true },
+  { key: "cost", label: "Cost", width: 120, sortable: true },
   { key: "totalTokens", label: "Tokens", width: 120, sortable: true },
   { key: "sessionId", label: "Session ID", width: 130, sortable: false },
 ].map((col) => ({
@@ -52,10 +59,28 @@ const BUILTIN_BY_ID = new Map(BUILTIN_COLUMNS.map((col) => [col.id, col]));
 
 export const LOCKED_COLUMN_ID = BUILTIN_COLUMNS[0].id;
 
+// The default view shows the columns that carry data on most requests, with
+// Status next to Timestamp. Application, Service and Session ID are empty on
+// most rows, so they start hidden at the end: still in Columns, one click
+// from showing. A saved config is the user's own and is never rewritten.
+const DEFAULT_ORDER = [
+  "startedAt",
+  "statusCode",
+  "model",
+  "provider",
+  "latencyMs",
+  "cost",
+  "totalTokens",
+  "application",
+  "service",
+  "sessionId",
+];
+const DEFAULT_HIDDEN = ["application", "service", "sessionId"];
+
 export const DEFAULT_CONFIG = Object.freeze({
   v: CONFIG_VERSION,
-  columns: BUILTIN_COLUMNS.map((col) => ({ id: col.id })),
-  hidden: [],
+  columns: DEFAULT_ORDER.map((key) => ({ id: `${BUILTIN_PREFIX}${key}` })),
+  hidden: DEFAULT_HIDDEN.map((key) => `${BUILTIN_PREFIX}${key}`),
 });
 
 // Application and Service are already built-in columns.
@@ -82,15 +107,19 @@ function isPlainObject(value) {
 
 function isKnownId(id) {
   if (typeof id !== "string") return false;
-  if (BUILTIN_BY_ID.has(id)) return true;
+  if (BUILTIN_BY_ID.has(id) || GATEWAY_BY_ID.has(id)) return true;
   const name = customNameFromId(id);
   return name !== null && METADATA_NAME_RE.test(name);
 }
 
+const isRetired = (id) => RETIRED_COLUMN_IDS.has(id);
+
 /**
  * Validate a parsed storage record. Any defect rejects the whole record and
  * the caller falls back to DEFAULT_CONFIG. Returns a normalized
- * config that holds ids only or null.
+ * config that holds ids only or null. A retired column id (one the console
+ * no longer has) is not a defect: it is dropped, from the columns and from
+ * hidden, and the rest of the layout is kept.
  */
 export function validateConfig(raw) {
   if (!isPlainObject(raw)) return null;
@@ -103,16 +132,18 @@ export function validateConfig(raw) {
   const seen = new Set();
   const columns = [];
   for (const entry of raw.columns) {
+    if (isPlainObject(entry) && isRetired(entry.id)) continue;
     if (!isPlainObject(entry) || !isKnownId(entry.id)) return null;
     if (seen.has(entry.id)) return null;
     seen.add(entry.id);
     columns.push({ id: entry.id });
   }
 
-  if (columns[0].id !== LOCKED_COLUMN_ID) return null;
+  if (!columns.length || columns[0].id !== LOCKED_COLUMN_ID) return null;
 
   const hidden = [];
   for (const id of raw.hidden) {
+    if (isRetired(id)) continue;
     if (typeof id !== "string" || !seen.has(id)) return null;
     if (id === LOCKED_COLUMN_ID) return null;
     if (hidden.includes(id)) return null;
@@ -120,7 +151,7 @@ export function validateConfig(raw) {
   }
 
   // Forward compatibility: a built-in added later appears visible at the end,
-  // keeping the default relative order.
+  // keeping the default relative order. Gateway columns are opt-in, so never.
   for (const col of BUILTIN_COLUMNS) {
     if (!seen.has(col.id)) columns.push({ id: col.id });
   }
@@ -143,6 +174,21 @@ function declaredNames(declarations) {
     }
   }
   return names;
+}
+
+// Picker entries list the config's ids first, so a move button is live only
+// between neighbours that are both in the config.
+function withMoves(entries) {
+  return entries.map((entry, index) => {
+    const movable = entry.inConfig && !entry.locked;
+    const prev = entries[index - 1];
+    const next = entries[index + 1];
+    return {
+      ...entry,
+      canMoveUp: movable && Boolean(prev) && !prev.locked && prev.inConfig,
+      canMoveDown: movable && Boolean(next) && next.inConfig,
+    };
+  });
 }
 
 function customColumn(name) {
@@ -226,18 +272,6 @@ export function resolveColumns({ config, declarations, status }) {
     });
   });
 
-  const withMoves = (entries) =>
-    entries.map((entry, index) => {
-      const movable = entry.inConfig && !entry.locked;
-      const prev = entries[index - 1];
-      const next = entries[index + 1];
-      return {
-        ...entry,
-        canMoveUp: movable && Boolean(prev) && !prev.locked && prev.inConfig,
-        canMoveDown: movable && Boolean(next) && next.inConfig,
-      };
-    });
-
   const entries = {
     builtin: withMoves(builtinEntries),
     custom: withMoves(customEntries),
@@ -264,11 +298,64 @@ export function resolveColumns({ config, declarations, status }) {
   };
 }
 
-function sameKind(a, b) {
-  return isCustomColumnId(a) === isCustomColumnId(b);
+function kindOf(id) {
+  if (isCustomColumnId(id)) return "metadata";
+  if (isGatewayColumnId(id)) return "gateway";
+  return "builtin";
 }
 
-/** Show/hide a column. Hidden columns keep their slot; unknown custom ids are appended. */
+function sameKind(a, b) {
+  return kindOf(a) === kindOf(b);
+}
+
+/**
+ * Resolve the Agent & billing group from a config: the visible columns in
+ * config order, and picker entries with the config's ids first (in config
+ * order) and the rest after, unchecked, in their default order.
+ *
+ * `managed` false: no managed call can be listed, so the managed-only
+ * column (Credential type) is neither shown nor offered; a layout that saved
+ * it keeps it in the config.
+ */
+export function resolveGatewayColumns(config, { managed = true } = {}) {
+  const safeConfig = config || DEFAULT_CONFIG;
+  const hidden = new Set(safeConfig.hidden);
+  const offered = (col) => managed || !MANAGED_ONLY_COLUMN_IDS.has(col.id);
+  const saved = safeConfig.columns
+    .map((entry) => GATEWAY_BY_ID.get(entry.id))
+    .filter(Boolean)
+    .filter(offered);
+  const savedIds = new Set(saved.map((col) => col.id));
+  const toEntry = (col, inConfig) => ({
+    id: col.id,
+    kind: "gateway",
+    label: col.label,
+    locked: false,
+    checked: inConfig && !hidden.has(col.id),
+    inConfig,
+  });
+  const entries = withMoves([
+    ...saved.map((col) => toEntry(col, true)),
+    ...GATEWAY_COLUMNS.filter(
+      (col) => !savedIds.has(col.id) && offered(col),
+    ).map((col) => toEntry(col, false)),
+  ]);
+  return {
+    columns: saved.filter((col) => !hidden.has(col.id)),
+    entries,
+    movableIds: savedIds,
+    visibleCount: entries.filter((e) => e.checked).length,
+    totalCount: entries.length,
+  };
+}
+
+/** Put resolved columns of every group back into the config's order. */
+export function orderColumns(config, columns) {
+  const byId = new Map(columns.map((col) => [col.id, col]));
+  return config.columns.map((entry) => byId.get(entry.id)).filter(Boolean);
+}
+
+/** Show/hide a column. Hidden columns keep their slot; ids not yet in the config are appended. */
 export function toggleColumn(config, id) {
   if (id === LOCKED_COLUMN_ID || !isKnownId(id)) return config;
   const present = config.columns.some((c) => c.id === id);

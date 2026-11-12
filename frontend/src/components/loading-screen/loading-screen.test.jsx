@@ -1,11 +1,19 @@
+import React from "react";
 import { describe, it, expect } from "vitest";
 import { render, screen } from "../../utils/test-utils";
 import LoadingScreen from "./loading-screen";
+import SplashScreen from "./splash-screen";
+import LoadingTemplate from "../../sections/workbench/LoadingTemplate";
+
+// \s also matches a non-breaking space, so "Mission&nbsp;Control" is caught.
+const JOKES =
+  /liftoff|oxygen|mission\s+control|warp|thrusters|hamsters|uplink|Systems\s+online|Calibrating/i;
 
 describe("LoadingScreen", () => {
   it("renders without crashing", () => {
     render(<LoadingScreen />);
-    expect(screen.getByText("Preparing for liftoff")).toBeInTheDocument();
+    expect(screen.getByText("Loading\u2026")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveAttribute("aria-label", "Loading");
   });
 
   it("exposes role=status for assistive technology", () => {
@@ -16,7 +24,12 @@ describe("LoadingScreen", () => {
   });
 
   it("applies custom sx props correctly", () => {
-    render(<LoadingScreen data-testid="loading-wrapper" sx={{ backgroundColor: "red" }} />);
+    render(
+      <LoadingScreen
+        data-testid="loading-wrapper"
+        sx={{ backgroundColor: "red" }}
+      />,
+    );
     expect(screen.getByTestId("loading-wrapper")).toBeInTheDocument();
   });
 
@@ -26,20 +39,39 @@ describe("LoadingScreen", () => {
     expect(container).toBeInTheDocument();
   });
 
-  it("renders the rocket variant by default", () => {
-    render(<LoadingScreen />);
-    expect(screen.getByText("Preparing for liftoff")).toBeInTheDocument();
+  it("renders the rocket variant by default, with Loading and no joke line", () => {
+    const { container } = render(<LoadingScreen />);
+    expect(screen.getByRole("status")).toHaveTextContent(/^Loading\u2026$/);
+    expect(screen.getByRole("status")).toHaveAttribute("aria-label", "Loading");
+    expect(container.textContent).not.toMatch(JOKES);
   });
 
-  it("renders the orbit variant with standby text", () => {
-    render(<LoadingScreen variant="orbit" />);
-    expect(screen.getByText("Standing by")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toBeInTheDocument();
+  it("renders the orbit variant with Loading and no joke line", () => {
+    const { container } = render(<LoadingScreen variant="orbit" />);
+    expect(screen.getByRole("status")).toHaveTextContent(/^Loading\u2026$/);
+    expect(screen.getByRole("status")).toHaveAttribute("aria-label", "Loading");
+    expect(container.textContent).not.toMatch(JOKES);
+  });
+
+  it("says Loading on every render, not a random line", () => {
+    for (let i = 0; i < 20; i += 1) {
+      const { unmount } = render(<LoadingScreen />);
+      expect(screen.getByRole("status")).toHaveTextContent(/^Loading\u2026$/);
+      expect(screen.getByRole("status")).toHaveAttribute(
+        "aria-label",
+        "Loading",
+      );
+      unmount();
+    }
   });
 
   it("renders a custom message override", () => {
     render(<LoadingScreen message="Custom message" />);
     expect(screen.getByText("Custom message")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveAttribute(
+      "aria-label",
+      "Custom message",
+    );
   });
 
   describe("accessibility", () => {
@@ -56,5 +88,33 @@ describe("LoadingScreen", () => {
       expect(el).toHaveAttribute("aria-live", "polite");
       expect(el).toHaveAttribute("aria-busy", "true");
     });
+  });
+
+  it("the splash screen shows a Loading status line, no invented boot stages", async () => {
+    const { container } = render(<SplashScreen />);
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Loading\u2026",
+    );
+    expect(container.textContent).not.toMatch(
+      /uplink|Authenticating mission|Calibrating evaluators|Systems online/,
+    );
+  });
+
+  it("the splash screen says only the product name and Loading, with no themed subtitle", async () => {
+    const { container } = render(<SplashScreen />);
+    expect(container.textContent).not.toMatch(JOKES);
+    await screen.findByRole("status");
+    expect(container.textContent).not.toMatch(JOKES);
+    // Simple wordmark and factual status, after the dev delay.
+    expect(container.textContent.replace(/\s+/g, " ")).toBe(
+      "Future AGILoading…",
+    );
+  });
+
+  it("the template loader says Loading with no joke line", () => {
+    const { container } = render(<LoadingTemplate />);
+    expect(screen.getByText("Loading\u2026")).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(JOKES);
   });
 });

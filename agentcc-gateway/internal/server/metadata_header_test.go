@@ -34,9 +34,17 @@ func TestParseMetadataHeader(t *testing.T) {
 			wantCustom: []string{"tenant"},
 		},
 		{
-			name:       "malformed json is flagged, not recorded",
+			// The budget plugin reads rbac_team as the key's team when the key
+			// has none, and nothing overwrites it where RBAC is off.
+			name:       "rbac keys are rejected, not recorded",
+			header:     `{"rbac_team":"engineering","RBAC_ROLE":"admin","tenant":"ok"}`,
+			wantMeta:   map[string]string{"tenant": "ok"},
+			wantCustom: []string{"tenant"},
+		},
+		{
+			name:       "malformed json is ignored",
 			header:     `not json`,
-			wantMeta:   map[string]string{metadataErrorKey: "x-agentcc-metadata is not a JSON object"},
+			wantMeta:   map[string]string{},
 			wantCustom: nil,
 		},
 		{
@@ -48,22 +56,10 @@ func TestParseMetadataHeader(t *testing.T) {
 			wantCustom: []string{"beta", "depth", "tenant"},
 		},
 		{
-			name:       "a non-object body is flagged, not recorded",
+			name:       "a non-object body is ignored",
 			header:     `["a","b"]`,
-			wantMeta:   map[string]string{metadataErrorKey: "x-agentcc-metadata is not a JSON object"},
+			wantMeta:   map[string]string{},
 			wantCustom: nil,
-		},
-		{
-			name:       "null is flagged, not recorded",
-			header:     `null`,
-			wantMeta:   map[string]string{metadataErrorKey: "x-agentcc-metadata is not a JSON object"},
-			wantCustom: nil,
-		},
-		{
-			name:       "a caller cannot set the flag itself",
-			header:     `{"metadata_error":"forged","tenant":"ok"}`,
-			wantMeta:   map[string]string{"tenant": "ok"},
-			wantCustom: []string{"tenant"},
 		},
 	}
 
@@ -274,6 +270,7 @@ func TestIsBlockedMetadataKeyCostFamily(t *testing.T) {
 		"cost", "cost_source", "cost_SOURCE",
 		"credits_used", "credits_remaining", "credit_balance",
 		"budget_remaining", "ratelimit_limit", "org_id", "authorization",
+		"rbac_team", "rbac_role",
 	}
 	for _, k := range blocked {
 		if !isBlockedMetadataKey(k) {
@@ -387,67 +384,82 @@ func TestIsCredentialShapedKey(t *testing.T) {
 // The dialect endpoints capture caller extras from their own raw body bytes,
 // since they never build a canonical request the OTel plugin could read them
 // from. That capture only reaches a span if it happens before the pipeline
-// runs — TH-7619 wired h.engine.Process onto these two handlers, so the calls
+// runs — a later change wired h.engine.Process onto these two handlers, so the calls
 // that were inert when they were written are now live.
 //
 // Asserted against the source for the same reason TestBillableHandlersRunThePipeline
 // is: the failure mode is an omission or a reordering, not a wrong value.
 func TestDialectHandlersCaptureCallerExtrasBeforeThePipeline(t *testing.T) {
-	for _, file := range []string{"handlers_anthropic.go", "handlers_genai.go"} {
-		src, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatalf("read %s: %v", file, err)
-		}
-		text := string(src)
+	// The Anthropic capture moved into a shared resolver. Check that helper
+	// and each entry point separately: concatenating files could hide a
+	// missing call (or a late call) in Messages or count_tokens.
+	for _, tc := range []struct {
+		file, function, capture string
+		dispatch                []string
+	}{
+		{"anthropic_route.go", "resolveAnthropicRoute", "applyCallerExtrasFromBody(", []string{"h.resolveRoute("}},
+		{"handlers_anthropic.go", "AnthropicMessages", "h.resolveAnthropicRoute(", []string{
+			"h.handleAnthropicStream(", "h.handleAnthropicNonStream(",
+			"h.handleAnthropicStreamViaCanonical(", "h.handleAnthropicNonStreamViaCanonical(", "h.engine.Process(",
+		}},
+		{"handlers_anthropic.go", "AnthropicCountTokens", "h.resolveAnthropicRoute(", []string{"h.engine.Process("}},
+		{"handlers_genai.go", "GenAIHandler", "applyCallerExtrasFromBody(", []string{
+			"h.handleGenAINativeOnly(", "h.handleGenAINonStream(", "h.handleGenAIStream(",
+			"h.handleGenAINonStreamViaCanonical(", "h.handleGenAIStreamViaCanonical(", "h.engine.Process(",
+		}},
+	} {
+		t.Run(tc.function, func(t *testing.T) {
+			src, err := os.ReadFile(tc.file)
+			if err != nil {
+				t.Fatalf("read %s: %v", tc.file, err)
+			}
+			text := string(src)
+			start := strings.Index(text, "func (h *Handlers) "+tc.function+"(")
+			if start < 0 {
+				t.Fatalf("%s has no %s handler", tc.file, tc.function)
+			}
+			text = text[start:]
+			if end := strings.Index(text, "\nfunc "); end >= 0 {
+				text = text[:end]
+			}
+			capture := strings.Index(text, tc.capture)
+			if capture < 0 {
+				t.Fatalf("%s never calls %s; caller body fields reach no span", tc.function, tc.capture)
+			}
+			foundDispatch := false
+			for _, call := range tc.dispatch {
+				if process := strings.Index(text, call); process >= 0 {
+					foundDispatch = true
+					if capture > process {
+						t.Errorf("%s captures caller extras after %s; the pipeline would read empty extras", tc.function, call)
+					}
+				}
+			}
+			if !foundDispatch {
+				t.Fatalf("%s has no routing or pipeline dispatch", tc.function)
+			}
+		})
+	}
+}
 
-		capture := strings.Index(text, "applyCallerExtrasFromBody(")
-		if capture < 0 {
-			t.Errorf("%s never calls applyCallerExtrasFromBody — caller body fields "+
-				"reach no span, and this path builds no canonical request to recover them from", file)
-			continue
-		}
-		process := strings.Index(text, "h.engine.Process(")
-		if process < 0 {
-			t.Errorf("%s never calls h.engine.Process", file)
-			continue
-		}
-		if capture > process {
-			t.Errorf("%s captures caller extras after the pipeline runs; the OTel "+
-				"plugin reads rc.CallerExtras inside it, so they would be exported empty", file)
+// ocr_pages is the page count the cost plugin
+// prices OCR by; a caller cannot plant it on any endpoint.
+func TestOCRPagesMetadataKeyReserved(t *testing.T) {
+	for _, k := range []string{models.OCRPagesMetadataKey, "OCR_PAGES"} {
+		if !isBlockedMetadataKey(k) {
+			t.Errorf("%q is writable by callers but the cost plugin owns it", k)
 		}
 	}
 }
 
-// A request with a malformed header still goes through, so a caller sending
-// one today does not start to fail, but the response says why its dimensions
-// are missing.
-func TestMalformedMetadataHeaderIsReportedToTheCaller(t *testing.T) {
-	mock := startMockOpenAI(t)
-	defer mock.Close()
-	srv := createTestServer(t, mock.URL)
-
-	for _, tc := range []struct {
-		name, header, want string
-	}{
-		{"not json", `{application: "billing"`, "x-agentcc-metadata is not a JSON object"},
-		{"valid", `{"application":"billing"}`, ""},
-		{"absent", "", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			body := `{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}]}`
-			req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
-			if tc.header != "" {
-				req.Header.Set("x-agentcc-metadata", tc.header)
-			}
-			w := httptest.NewRecorder()
-			srv.httpServer.Handler.ServeHTTP(w, req)
-
-			if w.Code != http.StatusOK {
-				t.Fatalf("status = %d, want 200. Body: %s", w.Code, w.Body.String())
-			}
-			if got := w.Header().Get("x-agentcc-metadata-error"); got != tc.want {
-				t.Errorf("x-agentcc-metadata-error = %q, want %q", got, tc.want)
-			}
-		})
+// The rerank handler records the upstream's
+// billed search units under this key, so no caller may set it on any
+// endpoint (it would be logged as gateway evidence, and a content_mode none
+// flush strips caller keys).
+func TestRerankSearchUnitsMetadataKeyReserved(t *testing.T) {
+	for _, k := range []string{models.RerankSearchUnitsMetadataKey, "Search_Units"} {
+		if !isBlockedMetadataKey(k) {
+			t.Errorf("%q is writable by callers but the rerank handler owns it", k)
+		}
 	}
 }

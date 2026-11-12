@@ -3,7 +3,7 @@ Type definitions and dataclasses for model_hub
 """
 
 from dataclasses import dataclass
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -14,10 +14,10 @@ class ConversionResult:
 
     cell_id: str
     success: bool
-    new_value: Optional[str]
+    new_value: str | None
     status: str
     value_infos: dict
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
 
 # =============================================================================
@@ -57,10 +57,13 @@ class ThirtyDayDataPoint(BaseModel):
 class EvalListItem(BaseModel):
     """Single item in the eval template list response."""
 
+    jev_mapping: dict | None = None
+    model: str | None = None
+
     id: str
     name: str
     template_type: Literal["single", "composite"]
-    eval_type: Literal["llm", "code", "agent"]
+    eval_type: Literal["llm", "code", "agent", "dag"]
     output_type: Literal["pass_fail", "percentage", "deterministic"]
     owner: Literal["system", "user"]
     created_by_name: str
@@ -105,6 +108,10 @@ class EvalCreateRequest(BaseModel):
     class Config:
         extra = "forbid"
 
+    jev_mapping: dict | None = None
+    multi_choice: bool = False
+    input_data_types: dict | None = None
+
     name: str = Field(min_length=0, max_length=255, default="")
     is_draft: bool = False
     eval_type: Literal["llm", "code", "agent"] = "llm"
@@ -133,9 +140,7 @@ class EvalCreateRequest(BaseModel):
     data_injection: dict | None = (
         None  # {variables_only, dataset_row, trace_context, ...}
     )
-    summary: dict | None = (
-        None  # {type: short|long|concise|custom, custom: str}
-    )
+    summary: dict | None = None  # {type: short|long|concise|custom, custom: str}
     # Error Localization — mirrors EvalUpdateRequest. Without this here the
     # FE's create payload (which always includes the toggle value) is
     # rejected by `extra="forbid"`.
@@ -160,11 +165,13 @@ class EvalCreateResponse(BaseModel):
 class EvalDetailResponse(BaseModel):
     """Response schema for GET /model-hub/eval-templates/{id}/detail/"""
 
+    jev_mapping: dict | None = None
+
     id: str
     name: str
     description: str | None = None
     template_type: Literal["single", "composite"] = "single"
-    eval_type: Literal["llm", "code", "agent"] = "llm"
+    eval_type: Literal["llm", "code", "agent", "dag"] = "llm"
     instructions: str | None = None
     model: str | None = None
     output_type: Literal["pass_fail", "percentage", "deterministic"] = "percentage"
@@ -198,6 +205,9 @@ class EvalUpdateRequest(BaseModel):
 
     class Config:
         extra = "forbid"
+
+    jev_mapping: dict | None = None
+    input_data_types: dict | None = None
 
     name: str | None = None
     eval_type: Literal["llm", "code", "agent"] | None = None
@@ -255,13 +265,13 @@ class PlaygroundEvalResponse(BaseModel):
     `ground_truth_examples` is omitted when GT is not configured on the template."""
 
     output: str | float | list | dict | None = None
-    reason: Optional[str] = None
-    model: Optional[str] = None
+    reason: str | None = None
+    model: str | None = None
     metadata: Any = None
-    output_type: Optional[str] = None
-    log_id: Optional[str] = None
-    ground_truth_examples: Optional[list] = None
-    warnings: Optional[list] = None
+    output_type: str | None = None
+    log_id: str | None = None
+    ground_truth_examples: list | None = None
+    warnings: list | None = None
 
 
 # =============================================================================
@@ -271,6 +281,8 @@ class PlaygroundEvalResponse(BaseModel):
 
 class EvalVersionItem(BaseModel):
     """Single version in the version list."""
+
+    jev_mapping: dict | None = None
 
     id: str
     version_number: int
@@ -304,6 +316,8 @@ class EvalVersionListResponse(BaseModel):
 
 class CreateVersionRequest(BaseModel):
     """Request for POST /model-hub/eval-templates/{id}/versions/create/"""
+
+    jev_mapping: dict | None = None
 
     criteria: str | None = None
     model: str | None = None

@@ -1,4 +1,3 @@
-import math
 from collections import deque
 from contextlib import contextmanager, nullcontext
 from datetime import datetime as dt_datetime
@@ -11,8 +10,6 @@ from django.db import DatabaseError, connection, transaction
 from django.utils import timezone
 
 from tracer.models.monitor import (
-    ComparisonOperatorChoices,
-    MonitorMetricTypeChoices,
     ThresholdCalculationMethodChoices,
     UserAlertMonitor,
 )
@@ -24,8 +21,13 @@ from tracer.services.clickhouse.read_budget import (
 )
 from tracer.utils.monitor import (
     MONITOR_CH_SETTINGS,
+    PER_PERIOD_TOTAL_METRICS,
+    TOKEN_METRICS,
     build_monitor_ch_builder,
-    get_interval_kind,
+    get_period_seconds,
+    get_previous_period_baseline,
+    percentage_change_breach,
+    uses_earlier_rule,
 )
 
 logger = structlog.get_logger(__name__)
@@ -131,17 +133,6 @@ def _format_ch_time_series(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
-def _get_frequency_seconds(monitor: UserAlertMonitor) -> int:
-    """Returns the frequency in seconds for a given monitor."""
-    if monitor.metric_type == MonitorMetricTypeChoices.DAILY_TOKENS_SPENT:
-        frequency_seconds = 24 * 60 * 60  # 1 day
-    elif monitor.metric_type == MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT:
-        frequency_seconds = 30 * 24 * 60 * 60  # 30 days
-    else:
-        frequency_seconds = monitor.alert_frequency * 60
-    return frequency_seconds
-
-
 def get_graph_data(
     monitor: UserAlertMonitor,
     time_window_start: dt_datetime | None = None,
@@ -160,6 +151,16 @@ def get_graph_data(
 
     if monitor.threshold_type == ThresholdCalculationMethodChoices.STATIC:
         return get_static_metric_graph_data(
+            monitor,
+            time_window_start,
+            time_window_end,
+            deadline=deadline,
+        )
+    elif uses_earlier_rule(monitor):
+        # Imported here: the earlier rule builds on this module.
+        from tracer.utils.monitor_earlier_rule import get_percentage_band_graph_data
+
+        return get_percentage_band_graph_data(
             monitor,
             time_window_start,
             time_window_end,
@@ -185,7 +186,7 @@ def get_static_metric_graph_data(
 ) -> list[dict[str, Any]]:
     """Bucketed time-series for a static-threshold monitor. Raises on CH errors."""
     deadline = deadline or start_monitor_graph_deadline()
-    frequency_seconds = _get_frequency_seconds(monitor)
+    frequency_seconds = get_period_seconds(monitor)
     if not frequency_seconds:
         return []
     analytics = AnalyticsQueryService()
@@ -228,41 +229,67 @@ def get_static_metric_graph_data(
         raise
 
 
-def _calculate_std_dev(data: list[float]) -> float:
-    """Sample standard deviation (parity with the alert-bar contract)."""
-    n = len(data)
-    if n < 2:
-        return 0.0
-    mean = sum(data) / n
-    variance = sum((x - mean) ** 2 for x in data) / (n - 1)
-    return math.sqrt(variance)
-
-
 def _bucket_status(
-    monitor: UserAlertMonitor,
-    current_value: float,
-    historical_mean: float,
-    historical_stddev: float,
-    sign: int,
+    monitor: UserAlertMonitor, current_value: float, baseline: float | None
 ) -> str:
-    """critical/warning/healthy for a bucket against a mean/stddev band."""
-    warning_percent = monitor.warning_threshold_value or 0
-    critical_percent = monitor.critical_threshold_value or 0
-    critical_threshold = historical_mean + sign * historical_stddev * (
-        1 + critical_percent / 100.0
-    )
-    warning_threshold = historical_mean + sign * historical_stddev * (
-        1 + warning_percent / 100.0
-    )
-    if monitor.critical_threshold_value is not None and _compare(
-        current_value, monitor.threshold_operator, critical_threshold
-    ):
-        return "critical"
-    if monitor.warning_threshold_value is not None and _compare(
-        current_value, monitor.threshold_operator, warning_threshold
-    ):
-        return "warning"
-    return "healthy"
+    """critical/warning/healthy for a bucket, judged by the alert worker's own
+    rule (tracer.utils.monitor.percentage_change_breach); insufficient_data
+    when there is no previous-period baseline."""
+    if baseline is None:
+        return "insufficient_data"
+    breach = percentage_change_breach(monitor, current_value, baseline)
+    return str(breach[0]) if breach else "healthy"
+
+
+class _PreviousPeriods:
+    """Rolling previous-period baseline over the graph's own buckets.
+
+    The series form of ``get_previous_period_baseline``: for a bucket at ``t``
+    it reads the buckets in ``[t - history, t)``. Count and token metrics: their
+    total over the whole buckets that window holds (empty buckets count as 0;
+    a 15-minute history on a 10-minute interval holds one). Rate, latency and
+    eval metrics: the mean of the buckets that have a value. No data in the
+    window (for tokens, no tokens) is no baseline.
+
+    A history shorter than one bucket holds no whole bucket, so earlier bars
+    have no baseline and read insufficient_data: the series cannot scale part
+    of a bucket exactly. The bar holding now still takes the worker's own
+    baseline, scaled up to one period.
+    """
+
+    def __init__(
+        self, monitor: UserAlertMonitor, history: timedelta, frequency: timedelta
+    ) -> None:
+        self.history = history
+        # For a bucket at t, earlier buckets sit at t - k * frequency (k >= 1);
+        # when history < frequency every one is before t - history, so the
+        # window is always empty and the floor at 1 only guards the division.
+        self.periods = max(1, history // frequency)
+        self.per_period_total = monitor.metric_type in PER_PERIOD_TOTAL_METRICS
+        self.tokens = monitor.metric_type in TOKEN_METRICS
+        self.window: deque[tuple[dt_datetime, float]] = deque()
+        self.total: float = 0
+        self.nonzero = 0
+
+    def baseline_before(self, timestamp: dt_datetime) -> float | None:
+        while self.window and self.window[0][0] < timestamp - self.history:
+            _, value = self.window.popleft()
+            self.total -= value
+            self.nonzero -= value != 0
+        if not self.window:
+            self.total = 0  # no float drift across an empty window
+            return None
+        if self.tokens and not self.nonzero:
+            return None
+        if self.per_period_total:
+            return self.total / self.periods
+        return self.total / len(self.window)
+
+    def add(self, timestamp: dt_datetime, value: float | None) -> None:
+        if value is not None:
+            self.window.append((timestamp, value))
+            self.total += value
+            self.nonzero += value != 0
 
 
 def _process_percentage_change_buckets(
@@ -270,59 +297,35 @@ def _process_percentage_change_buckets(
     monitor: UserAlertMonitor,
     time_window_start: dt_datetime | None,
     frequency_delta: timedelta,
-    auto_threshold_time_window: timedelta,
-    eval_band: tuple[float, float] | None = None,
+    history: timedelta,
+    series_start: dt_datetime,
+    live_bucket: tuple[dt_datetime, float | None] | None = None,
 ) -> dict[str, Any]:
-    """Processes aggregated buckets to generate graph and alert data.
+    """Graph and alert-bar data, each bucket judged against its own previous
+    period.
 
-    When ``eval_band`` (the evaluator's own mean/stddev from
-    ``build_historical_stats_query``) is supplied, the alert bars use it so the
-    preview matches what the evaluator would actually fire. Otherwise it falls
-    back to a rolling per-bucket band (used only when the evaluator stats are
-    unavailable, e.g. no history).
+    ``live_bucket`` is ``(timestamp, baseline)`` for the bucket holding now:
+    that baseline is the worker's own (``get_previous_period_baseline`` over the
+    window the worker judges against), so its bar matches what fires. Every
+    other bucket uses the series form of the same rule. A bucket whose history
+    starts before ``series_start`` (data the graph did not read) has no
+    baseline.
     """
     graph_data = []
     alert_bar_data = []
-    historical_window: deque[dict[str, Any]] = deque()
-
-    op = monitor.threshold_operator
-    sign = 1 if op == ComparisonOperatorChoices.GREATER_THAN else -1
-
+    previous = _PreviousPeriods(monitor, history, frequency_delta)
     comparison_time_window_start = _ensure_timezone_aware(time_window_start)
 
     for bucket in all_buckets:
-        current_timestamp = bucket["timestamp"]
+        current_timestamp = _ensure_timezone_aware(bucket["timestamp"])
         current_value = bucket["value"] if bucket["value"] is not None else 0
 
-        current_timestamp = _ensure_timezone_aware(current_timestamp)
+        baseline = previous.baseline_before(current_timestamp)
+        if live_bucket is not None and current_timestamp == live_bucket[0]:
+            baseline = live_bucket[1]
+        elif current_timestamp - history < series_start:
+            baseline = None
 
-        if eval_band is not None:
-            status = _bucket_status(
-                monitor, current_value, eval_band[0], eval_band[1], sign
-            )
-        else:
-            while (
-                historical_window
-                and current_timestamp - historical_window[0]["timestamp"]
-                >= auto_threshold_time_window
-            ):
-                historical_window.popleft()
-
-            historical_values = [
-                b["value"] for b in historical_window if b["value"] is not None
-            ]
-
-            status = "insufficient_data"
-            if len(historical_values) > 1:
-                status = _bucket_status(
-                    monitor,
-                    current_value,
-                    sum(historical_values) / len(historical_values),
-                    _calculate_std_dev(historical_values),
-                    sign,
-                )
-
-        # Add to results only if inside the requested time window
         if (
             comparison_time_window_start is None
             or current_timestamp >= comparison_time_window_start
@@ -335,12 +338,11 @@ def _process_percentage_change_buckets(
                 {
                     "start_timestamp": current_timestamp.isoformat(),
                     "end_timestamp": end_timestamp.isoformat(),
-                    "status": status,
+                    "status": _bucket_status(monitor, current_value, baseline),
                 }
             )
 
-        # Add current bucket to historical window for the next iteration
-        historical_window.append(bucket)
+        previous.add(current_timestamp, bucket["value"])
 
     return {"graph_data": graph_data, "alert_bar_data": alert_bar_data}
 
@@ -354,17 +356,17 @@ def get_percentage_change_metric_graph_data(
 ) -> dict[str, Any]:
     """Graph + alert-bar data for a percentage-change monitor. Raises on CH errors."""
     deadline = deadline or start_monitor_graph_deadline()
-    frequency_seconds = _get_frequency_seconds(monitor)
+    frequency_seconds = get_period_seconds(monitor)
     if not frequency_seconds:
         return {"graph_data": [], "alert_bar_data": []}
     analytics = AnalyticsQueryService()
 
-    auto_threshold_time_window = timedelta(minutes=monitor.auto_threshold_time_window)
+    history = timedelta(minutes=monitor.auto_threshold_time_window)
 
     effective_end = time_window_end or timezone.now()
     extended_start = None
     if time_window_start:
-        extended_start = time_window_start - auto_threshold_time_window
+        extended_start = time_window_start - history
 
     try:
         builder = _build_monitor_graph_ch_builder(monitor, deadline)
@@ -404,22 +406,47 @@ def get_percentage_change_metric_graph_data(
             return {"graph_data": [], "alert_bar_data": []}
 
         frequency_delta = timedelta(seconds=frequency_seconds)
-        # Use the evaluator's own band so preview and firing remain identical.
-        eval_band = _evaluator_percentage_band(
-            monitor,
-            builder,
-            analytics,
-            hist_end=effective_end - frequency_delta,
-            auto_threshold_time_window=auto_threshold_time_window,
-            deadline=deadline,
+        # The bucket holding now (or the page end, if earlier) takes the
+        # worker's own baseline, so its bar matches what fires. The worker
+        # judges against the window before now; a page that ends in the
+        # future (end of today) must not put that baseline in time that has
+        # not happened yet.
+        baseline_end = min(_ensure_timezone_aware(effective_end), timezone.now())
+        live_bucket = None
+        live_timestamp = next(
+            (
+                bucket["timestamp"]
+                for bucket in all_buckets
+                if bucket["timestamp"]
+                < baseline_end
+                <= bucket["timestamp"] + frequency_delta
+            ),
+            None,
         )
+        if live_timestamp is not None:
+            hist_end = baseline_end - frequency_delta
+            live_bucket = (
+                live_timestamp,
+                get_previous_period_baseline(
+                    monitor,
+                    hist_end - history,
+                    hist_end,
+                    builder,
+                    analytics=analytics,
+                    timeout_ms=deadline.remaining_ms(
+                        MONITOR_GRAPH_CH_TIMEOUT_CAP_MS, floor_ms=1
+                    ),
+                ),
+            )
+            deadline.remaining_ms(floor_ms=1)
         graph_data = _process_percentage_change_buckets(
             all_buckets,
             monitor,
             time_window_start,
             frequency_delta,
-            auto_threshold_time_window,
-            eval_band=eval_band,
+            history,
+            series_start=_ensure_timezone_aware(ts_start),
+            live_bucket=live_bucket,
         )
         deadline.remaining_ms(floor_ms=1)
         return graph_data
@@ -437,57 +464,6 @@ def get_percentage_change_metric_graph_data(
                 "Monitor graph request deadline was exhausted"
             ) from deadline_exc
         raise
-
-
-def _evaluator_percentage_band(
-    monitor: UserAlertMonitor,
-    builder: Any,
-    analytics: AnalyticsQueryService,
-    hist_end: dt_datetime,
-    auto_threshold_time_window: timedelta,
-    deadline: ReadDeadline,
-) -> tuple[float, float] | None:
-    """The (mean, stddev) the evaluator uses for its threshold, for the
-    historical window ending at ``hist_end``. Returns None when unavailable
-    (no history / non-finite), so the caller falls back to the rolling band.
-    """
-    hist_start = hist_end - auto_threshold_time_window
-    query, params = builder.build_historical_stats_query(
-        monitor.metric_type,
-        hist_start,
-        hist_end,
-        interval_kind=get_interval_kind(monitor),
-    )
-    result = analytics.execute_ch_query(
-        query,
-        params,
-        timeout_ms=deadline.remaining_ms(
-            MONITOR_GRAPH_CH_TIMEOUT_CAP_MS, floor_ms=1
-        ),
-        settings=MONITOR_CH_SETTINGS,
-    )
-    deadline.remaining_ms(floor_ms=1)
-    if not result.data:
-        return None
-    mean = result.data[0].get("mean")
-    stddev = result.data[0].get("stddev")
-    if (
-        mean is None
-        or stddev is None
-        or not math.isfinite(mean)
-        or not math.isfinite(stddev)
-    ):
-        return None
-    return mean, stddev
-
-
-def _compare(value: float, op: str, threshold: float) -> bool:
-    """Helper to perform comparison based on operator."""
-    if op == ComparisonOperatorChoices.GREATER_THAN:
-        return value > threshold
-    if op == ComparisonOperatorChoices.LESS_THAN:
-        return value < threshold
-    return False
 
 
 def _ensure_timezone_aware(dt: dt_datetime | None) -> dt_datetime | None:

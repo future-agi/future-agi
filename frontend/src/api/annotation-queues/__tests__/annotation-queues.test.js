@@ -889,6 +889,58 @@ describe("Annotation Queues API", () => {
   });
 
   describe("useRestoreAnnotationQueue", () => {
+    it.each(["normalized", "axios"])(
+      "shows the actionable restore-name conflict for %s errors",
+      async (shape) => {
+        const message =
+          "An active queue already uses this name in the same scope. Rename the active queue using Edit, then return to Archived and restore this queue.";
+        const payload = {
+          code: "queue_name_conflict",
+          message,
+          result: message,
+        };
+        axios.post.mockRejectedValueOnce(
+          shape === "axios"
+            ? { response: { status: 409, data: payload } }
+            : { ...payload, statusCode: 409 },
+        );
+        const queryClient = createTestQueryClient();
+        const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
+        const { result } = renderHook(() => useRestoreAnnotationQueue(), {
+          wrapper: createQueryWrapper(queryClient),
+        });
+
+        result.current.mutate("archived-review");
+
+        await waitFor(() => expect(result.current.isError).toBe(true));
+        expect(enqueueSnackbar).toHaveBeenCalledWith(message, {
+          variant: "error",
+        });
+        expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+        expect(invalidateQueries).not.toHaveBeenCalled();
+        expect(
+          queryClient.getMutationCache().getAll().at(-1)?.options.meta,
+        ).toEqual({ errorHandled: true });
+      },
+    );
+
+    it("keeps unexpected restore errors generic", async () => {
+      axios.post.mockRejectedValueOnce({
+        statusCode: 500,
+        result: "private database diagnostic",
+      });
+      const { result } = renderHook(() => useRestoreAnnotationQueue(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate("archived-review");
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(enqueueSnackbar).toHaveBeenCalledWith("Failed to restore queue", {
+        variant: "error",
+      });
+    });
+
     it("posts an explicit empty body so the backend accepts the restore", async () => {
       axios.post.mockResolvedValueOnce({ data: { status: true } });
 
@@ -1372,6 +1424,7 @@ describe("Annotation Queues API", () => {
               },
             ]),
           },
+          timeout: 15000,
         },
       );
     });
@@ -1409,6 +1462,7 @@ describe("Annotation Queues API", () => {
             ]),
             project_id: "project-1",
           },
+          timeout: 15000,
         },
       );
     });

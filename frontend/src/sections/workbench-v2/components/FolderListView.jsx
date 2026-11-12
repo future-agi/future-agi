@@ -1,13 +1,6 @@
-import {
-  Box,
-  Button,
-  Divider,
-  MenuItem,
-  Pagination,
-  Select,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Button, Stack } from "@mui/material";
+import { QUICKSTART_PROMPT } from "src/components/empty-state/quickstarts";
+import DataTablePagination from "src/components/data-table/DataTablePagination";
 import React, { useEffect, useMemo, useState } from "react";
 import PromptItem from "./PromptItem";
 import {
@@ -21,9 +14,11 @@ import { useDebounce } from "../../../hooks/use-debounce";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "../../../utils/axios";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
+import ErrorState from "src/components/error-state";
 import { EMPTY_MESSAGE } from "../common";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { getInlineLoadErrorMessage } from "src/utils/errorUtils";
 
 export default function FolderListView({ sortConfig }) {
   const { folder } = useParams();
@@ -34,7 +29,15 @@ export default function FolderListView({ sortConfig }) {
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
 
   //search is always in prompt folders
-  const { data, isLoading } = useQuery({
+  const {
+    data,
+    isLoading,
+    isFetching,
+    isError,
+    isPaused,
+    error: promptsError,
+    refetch: refetchPrompts,
+  } = useQuery({
     queryKey: [
       "folder-items",
       folder,
@@ -75,7 +78,15 @@ export default function FolderListView({ sortConfig }) {
     enabled: folder !== "my-templates",
   });
 
-  const { data: promptTemplates, isLoading: loadingTemplates } = useQuery({
+  const {
+    data: promptTemplates,
+    isLoading: loadingTemplates,
+    isFetching: fetchingTemplates,
+    isError: templatesIsError,
+    isPaused: templatesIsPaused,
+    error: templatesError,
+    refetch: refetchTemplates,
+  } = useQuery({
     queryKey: [
       "prompt-templates",
       debouncedSearchQuery,
@@ -105,23 +116,65 @@ export default function FolderListView({ sortConfig }) {
     enabled: folder === "my-templates",
   });
 
+  // Until a response arrives the list has no rows to show: a failed or offline
+  // (paused) load is reported as such, never as an empty workspace, and a
+  // Retry after it shows the loading rows.
   const combinedData = useMemo(() => {
     if (folder === "my-templates") {
+      const hasResponse = promptTemplates !== undefined;
       return {
         data: promptTemplates?.result ?? [],
         totalCount: promptTemplates?.totalCount ?? 0,
         totalPages: promptTemplates?.totalPages ?? 1,
-        isLoading: loadingTemplates,
+        isLoading: loadingTemplates || (fetchingTemplates && !hasResponse),
+        hasResponse,
+        loadFailed:
+          !hasResponse &&
+          !fetchingTemplates &&
+          (templatesIsError || templatesIsPaused),
+        error: templatesError,
+        refetch: refetchTemplates,
       };
     }
 
+    const hasResponse = data !== undefined;
     return {
       data: data?.prompts ?? [],
       totalCount: data?.totalCount ?? 0,
       totalPages: data?.totalPages ?? 1,
-      isLoading,
+      isLoading: isLoading || (isFetching && !hasResponse),
+      hasResponse,
+      loadFailed: !hasResponse && !isFetching && (isError || isPaused),
+      error: promptsError,
+      refetch: refetchPrompts,
     };
-  }, [folder, data, isLoading, promptTemplates, loadingTemplates]);
+  }, [
+    folder,
+    data,
+    isLoading,
+    isFetching,
+    isError,
+    isPaused,
+    promptsError,
+    refetchPrompts,
+    promptTemplates,
+    loadingTemplates,
+    fetchingTemplates,
+    templatesIsError,
+    templatesIsPaused,
+    templatesError,
+    refetchTemplates,
+  ]);
+
+  // The count renders beside the list heading (ActionBar), not on its own row.
+  const setTotalCount = usePromptStore((s) => s.setTotalCount);
+  const listTotalCount = combinedData.totalCount;
+  const listIsEmpty = !combinedData.isLoading && !combinedData.data?.length;
+  useEffect(() => {
+    setTotalCount(
+      combinedData.isLoading || listIsEmpty ? null : listTotalCount,
+    );
+  }, [setTotalCount, combinedData.isLoading, listIsEmpty, listTotalCount]);
 
   const [selectedPromptTemplate, setSelectedPromptTemplate] = useState({
     id: "",
@@ -132,6 +185,7 @@ export default function FolderListView({ sortConfig }) {
 
   const isEmpty =
     !combinedData.isLoading &&
+    combinedData.hasResponse &&
     !debouncedSearchQuery &&
     page === 1 &&
     (!combinedData?.data || combinedData?.data?.length === 0);
@@ -142,26 +196,50 @@ export default function FolderListView({ sortConfig }) {
     };
   }, []);
 
+  if (combinedData.loadFailed) {
+    return (
+      <ErrorState
+        role="alert"
+        title={
+          folder === "my-templates"
+            ? "Couldn't load your templates"
+            : "Couldn't load your prompts"
+        }
+        detail={getInlineLoadErrorMessage(
+          combinedData.error,
+          "Check your connection and try again.",
+        )}
+        onRetry={() => combinedData.refetch()}
+        sx={{ height: "auto", flexGrow: 0 }}
+      />
+    );
+  }
+
   if (isEmpty) {
+    const canCreate = RolePermission.PROMPTS[PERMISSIONS.CREATE][role];
     return (
       <EmptyLayout
         {...(folder === "my-templates"
           ? EMPTY_MESSAGE.template
           : EMPTY_MESSAGE.prompt)}
-        linkText={"Check docs"}
+        linkText="Read the docs"
         link="https://docs.futureagi.com/docs/prompt"
-        sx={{
-          height: "80%",
-        }}
+        quickstart={folder === "my-templates" ? undefined : QUICKSTART_PROMPT}
         action={
           <Button
             onClick={() => setNewPromptModal(true)}
             variant="contained"
             color="primary"
-            disabled={!RolePermission.PROMPTS[PERMISSIONS.CREATE][role]}
+            size="small"
+            disabled={!canCreate}
           >
             Create prompt
           </Button>
+        }
+        actionDisabledReason={
+          canCreate
+            ? undefined
+            : "Viewers can't create prompts. Ask a workspace admin for Member access."
         }
       />
     );
@@ -169,28 +247,6 @@ export default function FolderListView({ sortConfig }) {
 
   return (
     <>
-      {!isEmpty && !debouncedSearchQuery && (
-        <>
-          <Box
-            sx={{
-              padding: 2,
-            }}
-          >
-            <Typography
-              typography={"s3"}
-              fontWeight={"fontWeightRegular"}
-              color={"text.primary"}
-            >
-              No.of prompts: {combinedData?.totalCount}
-            </Typography>
-          </Box>
-          <Divider
-            sx={{
-              borderColor: "divider",
-            }}
-          />
-        </>
-      )}
       <Stack
         direction="column"
         sx={{
@@ -213,7 +269,7 @@ export default function FolderListView({ sortConfig }) {
                   isLoading={true}
                   sx={{
                     borderBottom: "1px solid",
-                    borderColor: "divider",
+                    borderColor: "border.subtle",
                   }}
                 />
               ))
@@ -229,7 +285,7 @@ export default function FolderListView({ sortConfig }) {
                   id={prompt.id}
                   sx={{
                     borderBottom: "1px solid",
-                    borderColor: "divider",
+                    borderColor: "border.subtle",
                   }}
                   setSelectedPromptTemplate={setSelectedPromptTemplate}
                   isSearching={!!debouncedSearchQuery}
@@ -238,60 +294,26 @@ export default function FolderListView({ sortConfig }) {
         </Stack>
 
         {/* Fixed Pagination Section */}
-        <Stack
+        <Box
           sx={{
-            borderTop: "1px solid",
-            borderColor: "divider",
-            padding: 2,
-            display: "flex",
-            justifyContent: "space-between",
             width: "100%",
             backgroundColor: "background.paper",
             position: "absolute",
             bottom: 0,
           }}
-          direction="row"
-          justifyContent="space-between"
-          alignItems="center"
         >
-          <Stack gap={1} direction="row" alignItems="center">
-            <Typography
-              typography="s2"
-              color="text.primary"
-              fontWeight="fontWeightRegular"
-            >
-              Result per page
-            </Typography>
-            <Select
-              size="small"
-              id="page-size-select"
-              value={pageLimit}
-              onChange={(e) => {
-                setPage(1);
-                setPageLimit(e.target.value);
-              }}
-              sx={{
-                height: 36,
-              }}
-            >
-              <MenuItem value={10}>10</MenuItem>
-              <MenuItem value={20}>20</MenuItem>
-              <MenuItem value={30}>30</MenuItem>
-              <MenuItem value={40}>40</MenuItem>
-              <MenuItem value={50}>50</MenuItem>
-            </Select>
-          </Stack>
-          <Pagination
-            count={combinedData.totalPages}
-            variant="outlined"
-            shape="rounded"
-            page={page}
-            color="primary"
-            onChange={(e, value) => {
-              setPage(value);
+          <DataTablePagination
+            page={page - 1}
+            pageSize={pageLimit}
+            pageCount={combinedData.totalPages}
+            pageSizeOptions={[10, 20, 30, 40, 50]}
+            onPageChange={(p) => setPage(p + 1)}
+            onPageSizeChange={(size) => {
+              setPage(1);
+              setPageLimit(size);
             }}
           />
-        </Stack>
+        </Box>
       </Stack>
       <SelectedPromptTemplateDrawer
         open={Boolean(selectedPromptTemplate?.id)}

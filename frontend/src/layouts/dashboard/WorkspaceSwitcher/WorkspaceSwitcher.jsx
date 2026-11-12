@@ -3,15 +3,17 @@ import {
   Popover,
   Typography,
   Button,
+  ButtonBase,
   Avatar,
   Divider,
+  Tooltip,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import SVGColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import SelectWorkspace from "./SelectWorkspace";
 import SelectOrganization from "./SelectOrganization";
+import { ORG_CREATE_SSO_REASON, canInviteMembers } from "./orgCreateReason";
 import CreateOrganizationModal from "./CreateOrganizationModal";
 import ThemeSelector from "./ThemeSelector";
 import {
@@ -20,6 +22,7 @@ import {
   useCreateOrganizationModal,
 } from "../states";
 import { useAuthContext } from "src/auth/hooks";
+import { signOutToSignIn } from "src/auth/sign-out";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import PropTypes from "prop-types";
@@ -27,10 +30,13 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { useLocation, useNavigate } from "react-router";
 import AllActionForm from "src/pages/dashboard/settings/UserManagementV2/AllActionForm";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
+import { isPrototypeMode } from "src/utils/prototype";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useOrganizationSettingsLanding } from "src/pages/dashboard/settings/organization-settings-landing";
 
 // --- Section header with optional + button -----------------------------------
 
-const SectionHeader = ({ label, onAdd }) => (
+const SectionHeader = ({ label, onAdd, disabledReason }) => (
   <Box
     sx={{
       display: "flex",
@@ -41,37 +47,56 @@ const SectionHeader = ({ label, onAdd }) => (
       pb: 0.5,
     }}
   >
+    {/* Sentence-case section label, like the sidebar's group labels. */}
     <Typography
-      variant="overline"
       sx={{
-        fontSize: "11px",
-        fontWeight: 600,
-        letterSpacing: "0.08em",
-        color: "text.disabled",
+        fontSize: 12,
+        lineHeight: "16px",
+        fontWeight: 500,
+        textTransform: "none",
+        letterSpacing: 0,
+        color: "text.tertiary",
       }}
     >
       {label}
     </Typography>
     {onAdd && (
-      <Box
-        onClick={(e) => {
-          e.stopPropagation();
-          onAdd();
-        }}
-        sx={{
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          borderRadius: 0.5,
-          p: 0.25,
-          "&:hover": { backgroundColor: "action.hover" },
-        }}
+      // Never removed (owner rule): when creation is not allowed the + stays,
+      // disabled, and says why.
+      <Tooltip
+        title={disabledReason || ""}
+        disableHoverListener={!disabledReason}
       >
-        <Iconify
-          icon="eva:plus-fill"
-          sx={{ width: 16, height: 16, color: "text.disabled" }}
-        />
-      </Box>
+        <Box
+          component={ButtonBase}
+          aria-label={
+            disabledReason
+              ? `Create ${label.toLowerCase()}. ${disabledReason}`
+              : `Create ${label.toLowerCase()}`
+          }
+          aria-disabled={disabledReason ? "true" : undefined}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!disabledReason) onAdd();
+          }}
+          sx={{
+            cursor: disabledReason ? "default" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            borderRadius: "4px",
+            p: 0.25,
+            opacity: disabledReason ? 0.5 : 1,
+            "&:hover": {
+              backgroundColor: disabledReason ? "transparent" : "action.hover",
+            },
+          }}
+        >
+          <Iconify
+            icon="solar:add-linear"
+            sx={{ width: 16, height: 16, color: "text.disabled" }}
+          />
+        </Box>
+      </Tooltip>
     )}
   </Box>
 );
@@ -79,6 +104,7 @@ const SectionHeader = ({ label, onAdd }) => (
 SectionHeader.propTypes = {
   label: PropTypes.string.isRequired,
   onAdd: PropTypes.func,
+  disabledReason: PropTypes.string,
 };
 
 // --- Clickable menu row -------------------------------------------------------
@@ -93,7 +119,15 @@ const MenuRow = ({
   active,
 }) => (
   <Box
+    component={ButtonBase}
+    aria-expanded={hasSubmenu ? active : undefined}
     onClick={onClick}
+    onKeyDown={(event) => {
+      if (hasSubmenu && event.key === "ArrowRight") {
+        event.preventDefault();
+        onClick?.(event);
+      }
+    }}
     onMouseEnter={onMouseEnter}
     onMouseLeave={onMouseLeave}
     sx={{
@@ -101,17 +135,20 @@ const MenuRow = ({
       alignItems: "center",
       gap: 1,
       px: 1.5,
-      py: 0.75,
+      py: 0.5,
       cursor: "pointer",
       borderRadius: "6px",
       mx: 0.5,
+      width: "calc(100% - 8px)",
+      textAlign: "left",
+      "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main" },
       backgroundColor: active ? "action.selected" : "transparent",
       "&:hover": { backgroundColor: "action.hover" },
     }}
   >
     {icon}
     <Typography
-      fontWeight={500}
+      fontWeight={400}
       color="text.primary"
       typography="s2_1"
       sx={{ flex: 1 }}
@@ -120,8 +157,8 @@ const MenuRow = ({
     </Typography>
     {hasSubmenu && (
       <Iconify
-        icon="eva:chevron-right-fill"
-        sx={{ width: 18, height: 18, color: "text.secondary" }}
+        icon="solar:alt-arrow-right-linear"
+        sx={{ width: 16, height: 16, color: "text.secondary" }}
       />
     )}
   </Box>
@@ -137,11 +174,84 @@ MenuRow.propTypes = {
   active: PropTypes.bool,
 };
 
+// --- Listed row that opens nothing for this person ---------------------------
+
+// Stays in the menu and in the tab order, named by its title, and says why it
+// opens nothing; a click or a key press does nothing.
+const UnavailableMenuRow = ({ icon, title, reason }) => {
+  const titleId = useId();
+  const reasonId = useId();
+  return (
+    <Box
+      component={ButtonBase}
+      disableRipple
+      aria-disabled="true"
+      aria-labelledby={titleId}
+      aria-describedby={reasonId}
+      sx={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 1,
+        px: 1.5,
+        py: 0.5,
+        cursor: "default",
+        borderRadius: "6px",
+        mx: 0.5,
+        width: "calc(100% - 8px)",
+        textAlign: "left",
+        "&:focus-visible": {
+          outline: "2px solid",
+          outlineColor: "primary.main",
+        },
+      }}
+    >
+      {icon}
+      <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
+        <Typography
+          id={titleId}
+          component="span"
+          display="block"
+          fontWeight={400}
+          color="text.disabled"
+          typography="s2_1"
+        >
+          {title}
+        </Typography>
+        <Typography
+          id={reasonId}
+          component="span"
+          display="block"
+          variant="caption"
+          color="text.secondary"
+        >
+          {reason}
+        </Typography>
+      </Box>
+    </Box>
+  );
+};
+
+UnavailableMenuRow.propTypes = {
+  icon: PropTypes.node,
+  title: PropTypes.string.isRequired,
+  reason: PropTypes.string.isRequired,
+};
+
 // --- Avatar row (workspace / org current) ------------------------------------
 
 const AvatarRow = React.forwardRef(
-  ({ letter, label, onMouseEnter, onMouseLeave, onClick, color }, _ref) => (
+  ({ letter, label, onMouseEnter, onMouseLeave, onClick, active }, ref) => (
     <Box
+      component={ButtonBase}
+      ref={ref}
+      aria-label={label}
+      aria-expanded={active}
+      onKeyDown={(event) => {
+        if (event.key === "ArrowRight") {
+          event.preventDefault();
+          onClick?.(event);
+        }
+      }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       onClick={onClick}
@@ -150,28 +260,33 @@ const AvatarRow = React.forwardRef(
         alignItems: "center",
         gap: 1,
         px: 1.5,
-        py: 0.75,
+        py: 0.5,
         cursor: "pointer",
         borderRadius: "6px",
         mx: 0.5,
+        width: "calc(100% - 8px)",
+        textAlign: "left",
+        "&:focus-visible": {
+          outline: "2px solid",
+          outlineColor: "primary.main",
+        },
         "&:hover": { backgroundColor: "action.hover" },
       }}
     >
       <Avatar
         variant="rounded"
-        sx={(theme) => ({
-          width: 28,
-          height: 28,
-          fontSize: "13px",
+        sx={{
+          width: 20,
+          height: 20,
+          borderRadius: "4px",
+          fontSize: "12px",
           fontWeight: 600,
-          backgroundColor: alpha(color || theme.palette.primary.main, 0.2),
-          color: color || theme.palette.primary.main,
-        })}
+        }}
       >
         {letter}
       </Avatar>
       <Typography
-        fontWeight={500}
+        fontWeight={400}
         color="text.primary"
         typography="s2_1"
         sx={{
@@ -184,8 +299,8 @@ const AvatarRow = React.forwardRef(
         {label}
       </Typography>
       <Iconify
-        icon="eva:chevron-right-fill"
-        sx={{ width: 18, height: 18, color: "text.secondary" }}
+        icon="solar:alt-arrow-right-linear"
+        sx={{ width: 16, height: 16, color: "text.secondary" }}
       />
     </Box>
   ),
@@ -193,6 +308,7 @@ const AvatarRow = React.forwardRef(
 
 AvatarRow.displayName = "AvatarRow";
 AvatarRow.propTypes = {
+  active: PropTypes.bool,
   letter: PropTypes.string,
   label: PropTypes.string,
   onMouseEnter: PropTypes.func,
@@ -205,6 +321,7 @@ AvatarRow.propTypes = {
 
 const WorkspaceSwitcher = ({ collapsed }) => {
   const [open, setOpen] = useState(false);
+  const [focusSubmenu, setFocusSubmenu] = useState(null);
   const [wsPopperOpen, setWsPopperOpen] = useState(false);
   const [wsPopperAnchorEl, setWsPopperAnchorEl] = useState(null);
   const [orgPopperOpen, setOrgPopperOpen] = useState(false);
@@ -231,6 +348,18 @@ const WorkspaceSwitcher = ({ collapsed }) => {
     currentOrganizationName,
     currentOrganizationRole,
   } = useOrganization();
+  // "Organization settings" opens where it leads somewhere this person may
+  // open: on cloud (Usage Summary, open to every role), and off cloud only
+  // when an organization settings page admits their role. Until the
+  // deployment mode is known, it stays offered as before. Everyone else still
+  // sees the row, disabled, with the reason.
+  const { isCloud, isSuccess: deploymentModeKnown } = useDeploymentMode();
+  const organizationSettingsPage = useOrganizationSettingsLanding();
+  const offerOrganizationSettings =
+    isPrototypeMode() ||
+    !deploymentModeKnown ||
+    isCloud ||
+    organizationSettingsPage !== null;
 
   const orgDisplayLabel =
     currentOrganizationDisplayName || currentOrganizationName || "Organization";
@@ -240,20 +369,43 @@ const WorkspaceSwitcher = ({ collapsed }) => {
     user?.default_workspace_display_name ||
     "Workspace";
 
-  const allowedToInvite = ["Owner", "Admin", "workspace_admin"];
-  const canInvite =
-    allowedToInvite.includes(
-      currentWorkspaceRole || user?.default_workspace_role,
-    ) || allowedToInvite.includes(currentOrganizationRole);
+  const canCreateOrganization = user?.can_create_organization === true;
+  const canInvite = canInviteMembers({
+    currentWorkspaceRole,
+    user,
+    currentOrganizationRole,
+  });
 
   const onLogoutClick = () => {
-    logout();
     trackEvent(Events.logoutConfirmed, { [PropertyName.click]: "click" });
-    navigate("/", { replace: true });
+    signOutToSignIn(logout, navigate);
+  };
+
+  const clearPopperTimeouts = () => {
+    [wsPopperTimeoutRef, orgPopperTimeoutRef, themePopperTimeoutRef].forEach(
+      (ref) => {
+        clearTimeout(ref.current);
+        ref.current = null;
+      },
+    );
+  };
+
+  // Explicit activation focuses choices; hover keeps the existing preview.
+  const openSubmenu = (name, target, focus = false) => {
+    clearPopperTimeouts();
+    setFocusSubmenu(focus ? name : null);
+    setWsPopperOpen(name === "workspace");
+    setOrgPopperOpen(name === "organization");
+    setThemePopperOpen(name === "theme");
+    if (name === "workspace") setWsPopperAnchorEl(target);
+    if (name === "organization") setOrgPopperAnchorEl(target);
+    if (name === "theme") setThemePopperAnchorEl(target);
   };
 
   // Close all sub-poppers
   const closeAllPoppers = () => {
+    clearPopperTimeouts();
+    setFocusSubmenu(null);
     setWsPopperOpen(false);
     setOrgPopperOpen(false);
     setThemePopperOpen(false);
@@ -274,22 +426,40 @@ const WorkspaceSwitcher = ({ collapsed }) => {
     <Box sx={{ px: 0.5, width: collapsed ? "48px" : "auto" }}>
       {/* ---- Trigger button ---- */}
       <Box
+        // A keyboard user reaches and opens the switcher like a button.
+        role="button"
+        tabIndex={0}
+        aria-label="Switch workspace"
+        aria-haspopup="dialog"
+        aria-expanded={open}
         sx={{
           cursor: "pointer",
           borderRadius: "6px",
           width: "100%",
+          outline: "none",
           "&:hover": { backgroundColor: "action.hover" },
+          "&:focus-visible": {
+            outline: (theme) => `2px solid ${theme.palette.primary.main}`,
+            outlineOffset: "-2px",
+          },
         }}
         onClick={() => setOpen(!open)}
+        data-testid="workspace-switcher"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen(!open);
+          }
+        }}
       >
         <Box
           sx={{
             display: "flex",
             alignItems: "center",
-            gap: 0.75,
-            borderRadius: 0.5,
+            gap: 1,
+            borderRadius: "6px",
             px: 0.75,
-            py: 0.5,
+            height: 32,
             width: "100%",
             justifyContent: collapsed ? "center" : "space-between",
           }}
@@ -297,24 +467,21 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         >
           <Avatar
             variant="rounded"
-            sx={(theme) => ({
-              width: theme.spacing(3),
-              height: theme.spacing(3),
-              backgroundColor: alpha(theme.palette.primary.main, 0.2),
-            })}
+            sx={{
+              width: 20,
+              height: 20,
+              borderRadius: "4px",
+            }}
           >
-            <Typography
-              typography="s1"
-              fontWeight="fontWeightMedium"
-              color="text.primary"
-            >
+            <Typography fontSize={11} fontWeight={600} color="text.primary">
               {wsDisplayLabel?.slice(0, 1)}
             </Typography>
           </Avatar>
 
           {!collapsed && (
             <Typography
-              typography="s1"
+              fontSize={12}
+              lineHeight="20px"
               color="text.primary"
               sx={{
                 overflow: "hidden",
@@ -348,13 +515,15 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{
           paper: {
+            role: "dialog",
+            "aria-label": "Workspace and account",
             sx: {
+              overflow: "visible",
               borderRadius: "8px",
               border: "1px solid",
               borderColor: "divider",
-              boxShadow: "0 4px 12px 0 rgba(0,0,0,0.08)",
               mt: 0.5,
-              width: 260,
+              width: 240,
               py: 0.5,
             },
           },
@@ -362,8 +531,12 @@ const WorkspaceSwitcher = ({ collapsed }) => {
       >
         {/* ============ WORKSPACE section ============ */}
         <SectionHeader
-          label="WORKSPACE"
+          label="Workspace"
+          // L7b absent-sweep (switcher:org-workspace-actions): creating a
+          // workspace or an organization and inviting members are not
+          // mocked, so prototype builds leave them out.
           onAdd={
+            !isPrototypeMode() &&
             user?.ws_enabled &&
             (user?.organization_role === "Owner" ||
               user?.organization_role === "Admin")
@@ -383,16 +556,9 @@ const WorkspaceSwitcher = ({ collapsed }) => {
           <AvatarRow
             letter={wsDisplayLabel?.slice(0, 1)}
             label={wsDisplayLabel}
-            onMouseEnter={(e) => {
-              if (wsPopperTimeoutRef.current) {
-                clearTimeout(wsPopperTimeoutRef.current);
-                wsPopperTimeoutRef.current = null;
-              }
-              setWsPopperAnchorEl(e.currentTarget);
-              setWsPopperOpen(true);
-              setOrgPopperOpen(false);
-              setThemePopperOpen(false);
-            }}
+            active={wsPopperOpen}
+            onClick={(e) => openSubmenu("workspace", e.currentTarget, true)}
+            onMouseEnter={(e) => openSubmenu("workspace", e.currentTarget)}
             onMouseLeave={() => {
               wsPopperTimeoutRef.current = setTimeout(
                 () => setWsPopperOpen(false),
@@ -403,12 +569,12 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         )}
 
         {/* Invite members */}
-        {canInvite && (
+        {canInvite && !isPrototypeMode() && (
           <MenuRow
             icon={
               <Iconify
-                icon="eva:plus-outline"
-                sx={{ width: 20, height: 20, color: "text.secondary" }}
+                icon="solar:add-linear"
+                sx={{ width: 16, height: 16, color: "text.secondary" }}
               />
             }
             title="Invite members"
@@ -427,7 +593,7 @@ const WorkspaceSwitcher = ({ collapsed }) => {
           icon={
             <Iconify
               icon="solar:settings-linear"
-              sx={{ width: 20, height: 20, color: "text.secondary" }}
+              sx={{ width: 16, height: 16, color: "text.secondary" }}
             />
           }
           title="Workspace settings"
@@ -454,28 +620,29 @@ const WorkspaceSwitcher = ({ collapsed }) => {
 
         {/* ============ ORGANIZATION section ============ */}
         <SectionHeader
-          label="ORGANIZATION"
-          onAdd={() => {
-            setOpen(false);
-            useCreateOrganizationModal.getState().setOpen(true);
-          }}
+          label="Organization"
+          onAdd={
+            isPrototypeMode()
+              ? undefined
+              : () => {
+                  setOpen(false);
+                  useCreateOrganizationModal.getState().setOpen(true);
+                }
+          }
+          disabledReason={
+            canCreateOrganization ? undefined : ORG_CREATE_SSO_REASON
+          }
         />
 
         {/* Current organization with sub-menu */}
         <AvatarRow
           letter={orgDisplayLabel?.slice(0, 1)}
           label={orgDisplayLabel}
+          // eslint-disable-next-line no-restricted-syntax -- ds: avatar (organisation)
           color="#b8a068"
-          onMouseEnter={(e) => {
-            if (orgPopperTimeoutRef.current) {
-              clearTimeout(orgPopperTimeoutRef.current);
-              orgPopperTimeoutRef.current = null;
-            }
-            setOrgPopperAnchorEl(e.currentTarget);
-            setOrgPopperOpen(true);
-            setWsPopperOpen(false);
-            setThemePopperOpen(false);
-          }}
+          active={orgPopperOpen}
+          onClick={(e) => openSubmenu("organization", e.currentTarget, true)}
+          onMouseEnter={(e) => openSubmenu("organization", e.currentTarget)}
           onMouseLeave={() => {
             orgPopperTimeoutRef.current = setTimeout(
               () => setOrgPopperOpen(false),
@@ -485,32 +652,59 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         />
 
         {/* Organization settings */}
-        <MenuRow
-          icon={
-            <Iconify
-              icon="solar:settings-linear"
-              sx={{ width: 20, height: 20, color: "text.secondary" }}
-            />
-          }
-          title="Organization settings"
-          onClick={() => {
-            localStorage.setItem(
-              "redirect-url-from-settings",
-              location.pathname,
-            );
-            navigate("/dashboard/settings/usage-summary");
-            setOpen(false);
-            closeAllPoppers(); // Close sub-poppers to prevent hover triggering during navigation
-          }}
-        />
+        {offerOrganizationSettings ? (
+          <MenuRow
+            icon={
+              <Iconify
+                icon="solar:settings-linear"
+                sx={{ width: 16, height: 16, color: "text.secondary" }}
+              />
+            }
+            title="Organization settings"
+            onClick={() => {
+              localStorage.setItem(
+                "redirect-url-from-settings",
+                location.pathname,
+              );
+              // L7b absent-sweep: a prototype build has no usage summary (not
+              // mocked); its Organization settings open the Workspaces page.
+              // Elsewhere an organization Owner or Admin opens Org Settings:
+              // the settings menu lists it for them and its route admits them.
+              // Everyone else opens the usage summary route, which lands on
+              // the organization page their role opens where it is not offered.
+              const orgRole = user?.organization_role;
+              let destination = "/dashboard/settings/usage-summary";
+              if (isPrototypeMode()) {
+                destination = "/dashboard/settings/workspace";
+              } else if (orgRole === "Owner" || orgRole === "Admin") {
+                destination = "/dashboard/settings/org-settings";
+              }
+              navigate(destination);
+              setOpen(false);
+              closeAllPoppers(); // Close sub-poppers to prevent hover triggering during navigation
+            }}
+          />
+        ) : (
+          <UnavailableMenuRow
+            icon={
+              <Iconify
+                icon="solar:settings-linear"
+                sx={{ width: 16, height: 16, color: "text.disabled" }}
+              />
+            }
+            title="Organization settings"
+            reason="No organization settings page is open to your role."
+          />
+        )}
 
         <Divider sx={{ my: 0.5 }} />
 
         {/* ============ ACCOUNT section ============ */}
-        <SectionHeader label="ACCOUNT" />
+        <SectionHeader label="Account" />
 
         {/* User info */}
         <Box
+          component={ButtonBase}
           onMouseEnter={() => {
             closeAllPoppers();
           }}
@@ -524,22 +718,26 @@ const WorkspaceSwitcher = ({ collapsed }) => {
             alignItems: "center",
             gap: 1,
             px: 1.5,
-            py: 0.75,
+            py: 0.5,
             mx: 0.5,
+            width: "calc(100% - 8px)",
+            textAlign: "left",
+            "&:focus-visible": {
+              outline: "2px solid",
+              outlineColor: "primary.main",
+            },
             cursor: "pointer",
             borderRadius: "6px",
             "&:hover": { backgroundColor: "action.hover" },
           }}
         >
           <Avatar
-            sx={(theme) => ({
-              width: 28,
-              height: 28,
-              fontSize: "13px",
+            sx={{
+              width: 24,
+              height: 24,
+              fontSize: "12px",
               fontWeight: 600,
-              backgroundColor: alpha(theme.palette.success.main, 0.2),
-              color: theme.palette.success.main,
-            })}
+            }}
           >
             {(user?.name || user?.email || "U")?.slice(0, 1).toUpperCase()}
           </Avatar>
@@ -576,21 +774,14 @@ const WorkspaceSwitcher = ({ collapsed }) => {
           icon={
             <Iconify
               icon="solar:monitor-linear"
-              sx={{ width: 20, height: 20, color: "text.secondary" }}
+              sx={{ width: 16, height: 16, color: "text.secondary" }}
             />
           }
           title="Theme"
           hasSubmenu
-          onMouseEnter={(e) => {
-            if (themePopperTimeoutRef.current) {
-              clearTimeout(themePopperTimeoutRef.current);
-              themePopperTimeoutRef.current = null;
-            }
-            setThemePopperAnchorEl(e.currentTarget);
-            setThemePopperOpen(true);
-            setWsPopperOpen(false);
-            setOrgPopperOpen(false);
-          }}
+          active={themePopperOpen}
+          onClick={(e) => openSubmenu("theme", e.currentTarget, true)}
+          onMouseEnter={(e) => openSubmenu("theme", e.currentTarget)}
           onMouseLeave={() => {
             themePopperTimeoutRef.current = setTimeout(
               () => setThemePopperOpen(false),
@@ -603,8 +794,8 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         <MenuRow
           icon={
             <Iconify
-              icon="mynaui:logout"
-              sx={{ width: 20, height: 20, color: "text.secondary" }}
+              icon="solar:logout-linear"
+              sx={{ width: 16, height: 16, color: "text.secondary" }}
             />
           }
           title="Log out"
@@ -616,27 +807,30 @@ const WorkspaceSwitcher = ({ collapsed }) => {
             setOpen(false);
           }}
         />
+        {/* Inside the popover so keyboard focus remains in its focus trap. */}
+        <SelectWorkspace
+          open={open && wsPopperOpen}
+          anchorEl={wsPopperAnchorEl}
+          setOpen={setWsPopperOpen}
+          autoFocus={focusSubmenu === "workspace"}
+          ref={wsPopperTimeoutRef}
+        />
+        <SelectOrganization
+          open={open && orgPopperOpen}
+          anchorEl={orgPopperAnchorEl}
+          setOpen={setOrgPopperOpen}
+          canCreateOrganization={canCreateOrganization}
+          autoFocus={focusSubmenu === "organization"}
+          ref={orgPopperTimeoutRef}
+        />
+        <ThemeSelector
+          open={open && themePopperOpen}
+          anchorEl={themePopperAnchorEl}
+          setOpen={setThemePopperOpen}
+          autoFocus={focusSubmenu === "theme"}
+          ref={themePopperTimeoutRef}
+        />
       </Popover>
-
-      {/* ---- Sub-poppers ---- */}
-      <SelectWorkspace
-        open={wsPopperOpen}
-        anchorEl={wsPopperAnchorEl}
-        setOpen={setWsPopperOpen}
-        ref={wsPopperTimeoutRef}
-      />
-      <SelectOrganization
-        open={orgPopperOpen}
-        anchorEl={orgPopperAnchorEl}
-        setOpen={setOrgPopperOpen}
-        ref={orgPopperTimeoutRef}
-      />
-      <ThemeSelector
-        open={themePopperOpen}
-        anchorEl={themePopperAnchorEl}
-        setOpen={setThemePopperOpen}
-        ref={themePopperTimeoutRef}
-      />
 
       {/* ---- Modals ---- */}
       <ConfirmDialog
@@ -659,13 +853,17 @@ const WorkspaceSwitcher = ({ collapsed }) => {
           </Button>
         }
       />
-      <AllActionForm
-        openActionForm={inviteUser ? { action: "invite-user" } : null}
-        onClose={() => setInviteUser(false)}
-        requiredKeys={{ email: true, role: true }}
-        showInviteLinks
-      />
-      <CreateOrganizationModal />
+      {!isPrototypeMode() && (
+        <>
+          <AllActionForm
+            openActionForm={inviteUser ? { action: "invite-user" } : null}
+            onClose={() => setInviteUser(false)}
+            requiredKeys={{ email: true, role: true }}
+            showInviteLinks
+          />
+          {canCreateOrganization && <CreateOrganizationModal />}
+        </>
+      )}
     </Box>
   );
 };

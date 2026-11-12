@@ -1,6 +1,6 @@
-import { Box, Typography } from "@mui/material";
+import { Box, Typography, Tab } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import React, { useState } from "react";
-import { CustomTab, CustomTabs, TabWrapper } from "../SummaryStyle";
 import { ShowComponent } from "../../../../components/show";
 import ChartTableData from "./ChartTableData";
 import PropTypes from "prop-types";
@@ -42,38 +42,30 @@ const ColumnBarChartWrapper = ({
           <Typography
             typography={"s1"}
             fontWeight={"fontWeightMedium"}
-            color="green.500"
+            color="status.success.fg"
           >
             {headerData?.average}
           </Typography>
           {data?.length === 1 && (
-            <TotalRowCount value={data?.[0]?.totalCells || 0} />
+            <TotalRowCount value={data?.[0]?.total_cells || 0} />
           )}
         </Box>
         <Box>
-          <TabWrapper sx={{ marginBottom: "0px" }}>
-            <CustomTabs
-              textColor="primary"
+          <Box sx={{ mb: 2 }}>
+            <SegmentedTabs
               value={currentTab}
               onChange={(e, value) => setCurrentTab(value)}
-              TabIndicatorProps={{
-                style: {
-                  opacity: 0,
-                  height: "100%",
-                  borderRadius: "8px",
-                },
-              }}
             >
               {tabOptions.map((tab) => (
-                <CustomTab
+                <Tab
                   key={tab.value}
                   label={tab.label}
                   value={tab.value}
                   disabled={tab.disabled}
                 />
               ))}
-            </CustomTabs>
-          </TabWrapper>
+            </SegmentedTabs>
+          </Box>
         </Box>
       </Box>
       <ShowComponent condition={currentTab === "graph"}>

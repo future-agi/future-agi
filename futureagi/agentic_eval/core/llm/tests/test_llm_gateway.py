@@ -4,6 +4,8 @@ import sys
 import types
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestLLMOrgId:
     def test_org_id_defaults_to_none(self):
@@ -24,6 +26,15 @@ class TestLLMOrgId:
 
 
 class TestLLMGatewayFirstRouting:
+    @pytest.fixture(autouse=True)
+    def licensed(self, settings):
+        # A retained gateway client exists only with a license key or the
+        # cloud internal key. The test settings set a key; state it here so
+        # these routing tests do not depend on that. Keyless retained clients
+        # are denied before any send: see
+        # ee/licensing/tests/test_retained_gateway_egress.py.
+        settings.EE_LICENSE_KEY = "fixture-license"
+
     def _make_llm(self, org_id=None, gateway_client=None):
         with patch("agentic_eval.core.llm.llm.LLM._init_client"):
             from agentic_eval.core.llm.llm import LLM
@@ -158,7 +169,9 @@ class TestLLMGatewayFirstRouting:
             assert result == "litellm only"
 
     @patch("agentic_eval.core.llm.llm.log_to_clickhouse")
-    def test_futureagi_managed_model_uses_managed_ai_service(self, mock_ch, monkeypatch):
+    def test_futureagi_managed_model_uses_managed_ai_service(
+        self, mock_ch, monkeypatch
+    ):
         managed = types.ModuleType("ee.licensing.managed_ai")
 
         def is_managed_model(model):
@@ -170,7 +183,11 @@ class TestLLMGatewayFirstRouting:
             calls.append(payload)
             return {
                 "choices": [{"message": {"content": "managed ai response"}}],
-                "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+                "usage": {
+                    "prompt_tokens": 2,
+                    "completion_tokens": 3,
+                    "total_tokens": 5,
+                },
             }
 
         managed.is_managed_model = is_managed_model

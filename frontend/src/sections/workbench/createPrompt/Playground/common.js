@@ -227,3 +227,10 @@ export const PROMPT_RESULT_TYPE_OPTIONS = [
   { label: "Raw", value: PROMPT_RESULT_TYPES.RAW },
   { label: "Markdown", value: PROMPT_RESULT_TYPES.MARKDOWN },
 ];
+
+// The Output view select is as wide as its longest label plus two characters
+// of room, whichever view is picked. Sized to the picked label's letter
+// count, it cut the last letter of "Markdown": wide letters ("M", "w") take
+// more room than an average character.
+export const PROMPT_RESULT_TYPE_INPUT_CH =
+  Math.max(...PROMPT_RESULT_TYPE_OPTIONS.map((o) => o.label.length)) + 2;

@@ -1,0 +1,82 @@
+# Notion MCP with OAuth from its own authorization server, which registers
+# clients dynamically or by a client ID metadata document. Notion's client
+# guide requests no scope and rotates the refresh token on every refresh.
+# EE reads a pre-registered client id and secret from its environment and
+# cannot register a client, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: notion
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: beta
+  source: https://mcp.notion.com/.well-known/oauth-protected-resource/mcp
+transport:
+  kind: http
+  url: https://mcp.notion.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://mcp.notion.com/authorize
+    tokenUrl: https://mcp.notion.com/token
+    scopes: []
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    extraAuthorizeParams: { prompt: consent }
+    refresh: { supported: true, rotates: true }
+    revocation:
+      url: https://mcp.notion.com/token
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [cimd, dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.notion.com/guides/mcp/get-started-with-mcp
+    fetchedAt: 2026-10-20
+  - fact: transport.variant
+    url: https://developers.notion.com/guides/mcp/get-started-with-mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://developers.notion.com/guides/mcp/overview
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp.notion.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.tokenUrl
+    url: https://mcp.notion.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.scopes
+    url: https://developers.notion.com/guides/mcp/build-mcp-client
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.pkce
+    url: https://developers.notion.com/guides/mcp/build-mcp-client
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.extraAuthorizeParams
+    url: https://developers.notion.com/guides/mcp/build-mcp-client
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.refresh
+    url: https://developers.notion.com/guides/mcp/build-mcp-client
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.revocation.url
+    url: https://mcp.notion.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.registration
+    url: https://mcp.notion.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.registration
+    url: https://developers.notion.com/guides/mcp/build-mcp-client
+    fetchedAt: 2026-10-20
+x-omega: { ossId: notion, ee: exclude }

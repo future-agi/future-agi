@@ -1,0 +1,406 @@
+{
+  "schema": "connector-manifest/v1#tools-generated",
+  "spec": {
+    "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/8c562525694550601a232cb54014e48c6c7f6da0/openapi/v1.0/openapi.yaml",
+    "sha256": "533f6d86985584327109ba2c52c0e51454ce1ba2153c11f4d841e898b88c5b1b"
+  },
+  "tools": [
+    {
+      "name": "get_file",
+      "title": "Get file",
+      "description": "Read file metadata by drive-id and driveItem-id; this does not extract document text.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Files.Read"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["drive-id", "driveItem-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "list_children",
+      "title": "List children",
+      "description": "List files under a folder driveItem-id; pass top=10 to bound a page.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Files.Read"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}/children"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "skip": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Skip the first n items",
+            "x-wireName": "$skip"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["drive-id", "driveItem-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "list_versions",
+      "title": "List versions",
+      "description": "List historical file versions. The contents are not downloaded.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Files.Read"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}/versions"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "skip": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Skip the first n items",
+            "x-wireName": "$skip"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["drive-id", "driveItem-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "get_version",
+      "title": "Get version",
+      "description": "Read metadata for one version, for example driveItemVersion-id=\"1.0\".",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Files.Read"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}/versions/{driveItemVersion-id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          },
+          "driveItemVersion-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItemVersion"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["drive-id", "driveItem-id", "driveItemVersion-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "list_permissions",
+      "title": "List permissions",
+      "description": "List permissions on a file; results depend on the caller's access.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Files.Read"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}/permissions"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "skip": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Skip the first n items",
+            "x-wireName": "$skip"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["drive-id", "driveItem-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "copy_template",
+      "title": "Copy template",
+      "description": "Request an asynchronous copy of a template file into parentReference.id. Accepted is not completion; verify the destination separately.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["Files.ReadWrite"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}/copy"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "parentReference": {
+                "type": "object",
+                "properties": {
+                  "driveId": {
+                    "type": "string",
+                    "description": "Unique identifier of the drive instance that contains the driveItem. Only returned if the item is located in a drive. Read-only."
+                  },
+                  "id": {
+                    "type": "string",
+                    "description": "Unique identifier of the driveItem in the drive or a listItem in a list. Read-only."
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false,
+            "description": "Request an asynchronous copy of a template file into parentReference.id. Accepted is not completion; verify the destination separately."
+          }
+        },
+        "required": ["drive-id", "driveItem-id", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "rename_file",
+      "title": "Rename file",
+      "description": "Rename a file to body.name, for example \"Quarterly-report.docx\".",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["Files.ReadWrite"],
+      "operation": {
+        "method": "PATCH",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The name of the item. Read-write."
+              }
+            },
+            "additionalProperties": false,
+            "description": "Rename a file to body.name, for example \"Quarterly-report.docx\"."
+          }
+        },
+        "required": ["drive-id", "driveItem-id", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "delete_file",
+      "title": "Delete file",
+      "description": "Delete a file by drive-id and driveItem-id. The default tool posture is deny.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "deny",
+      "scopes": ["Files.ReadWrite"],
+      "operation": {
+        "method": "DELETE",
+        "path": "/v1.0/drives/{drive-id}/items/{driveItem-id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "drive-id": {
+            "type": "string",
+            "description": "The unique identifier of drive"
+          },
+          "driveItem-id": {
+            "type": "string",
+            "description": "The unique identifier of driveItem"
+          }
+        },
+        "required": ["drive-id", "driveItem-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    }
+  ]
+}

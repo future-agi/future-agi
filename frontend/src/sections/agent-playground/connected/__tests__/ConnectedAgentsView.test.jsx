@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import axios from "src/utils/axios";
@@ -80,9 +86,48 @@ describe("ConnectedAgentsView", () => {
     );
     expect(screen.getByText("7 environments")).toBeInTheDocument();
     expect(screen.getByText("ride-voice-agent")).toBeInTheDocument();
+    // One-line rows: the description isn't a second line.
     expect(
-      screen.getByText("Inbound phone support for an online storefront"),
-    ).toBeInTheDocument();
+      screen.queryByText("Inbound phone support for an online storefront"),
+    ).toBeNull();
+  });
+
+  // Repair round: at 1024 px the name column is about 142 px, so a long
+  // name ends in an ellipsis; its full text must be readable from the
+  // keyboard (the grid's arrow keys move focus from cell to cell), not only
+  // on hover. jsdom lays nothing out, so the name reports itself wider than
+  // its box, as a browser does for a cut name.
+  it("shows a cut agent name whole, with its description, when its cell takes keyboard focus", async () => {
+    const NAME = "Customer support line";
+    const proto = HTMLElement.prototype;
+    const report = (prop, value) =>
+      Object.defineProperty(proto, prop, {
+        configurable: true,
+        get() {
+          return this.childElementCount === 0 && this.textContent === NAME
+            ? value
+            : 0;
+        },
+      });
+    report("scrollWidth", 214);
+    report("clientWidth", 122);
+    try {
+      renderView();
+      const name = await screen.findByText(NAME);
+      const cell = name.closest(".MuiDataGrid-cell");
+      expect(cell).not.toBeNull();
+      act(() => cell.focus());
+      const tooltip = await screen.findByRole("tooltip");
+      expect(tooltip).toHaveTextContent(NAME);
+      expect(tooltip).toHaveTextContent(
+        "Inbound phone support for an online storefront",
+      );
+      act(() => cell.blur());
+      await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+    } finally {
+      delete proto.scrollWidth;
+      delete proto.clientWidth;
+    }
   });
 
   it("puts the old page's modality icon next to voice and chat", async () => {
@@ -108,7 +153,7 @@ describe("ConnectedAgentsView", () => {
     renderView();
     expect(
       await screen.findByText(
-        "Connect your agent from a hosted platform, an endpoint, a repository or an upload. Simulations run against a copy of it.",
+        "Connect your agent from a hosted platform, a repository or an upload.",
       ),
     ).toBeInTheDocument();
   });

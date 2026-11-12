@@ -1,0 +1,10 @@
+[
+  {
+    "kind": "searchKeyOwner",
+    "key": "split",
+    "from": "dataset.splits",
+    "to": "exp.new.splitScope",
+    "lane": "T-GRIDB",
+    "feature": "F50"
+  }
+]

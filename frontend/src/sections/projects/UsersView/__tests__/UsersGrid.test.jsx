@@ -526,7 +526,7 @@ describe("UsersGrid deterministic pagination", () => {
     );
     expect(resumedPage.success).toHaveBeenCalledWith({
       rowData: Array.from({ length: 25 }, (_, index) => row(index)),
-      rowCount: 26,
+      rowCount: undefined,
     });
 
     const secondPage = makeGridParams({ startRow: 25, endRow: 50 });
@@ -820,16 +820,19 @@ describe("UsersGrid deterministic pagination", () => {
       let finishCurrent;
       getMock
         .mockImplementationOnce(
-          () => new Promise((resolve, reject) => {
-            finishOld = () => outcome === "success"
-              ? resolve(usersResponse({ rows: [row(1)] }))
-              : reject(new Error("obsolete transport failure"));
-          }),
+          () =>
+            new Promise((resolve, reject) => {
+              finishOld = () =>
+                outcome === "success"
+                  ? resolve(usersResponse({ rows: [row(1)] }))
+                  : reject(new Error("obsolete transport failure"));
+            }),
         )
         .mockImplementationOnce(
-          () => new Promise((resolve) => {
-            finishCurrent = () => resolve(usersResponse({ rows: [row(99)] }));
-          }),
+          () =>
+            new Promise((resolve) => {
+              finishCurrent = () => resolve(usersResponse({ rows: [row(99)] }));
+            }),
         );
       const mixedFilter = (values, types) => [
         ...validated,
@@ -873,7 +876,9 @@ describe("UsersGrid deterministic pagination", () => {
             maxConcurrentDatasourceRequests: 1,
             serverSideInitialRowCount: 5,
             suppressServerSideFullWidthLoadingRow: true,
-            serverSideDatasource: trackDatasource(gridState.props.serverSideDatasource),
+            serverSideDatasource: trackDatasource(
+              gridState.props.serverSideDatasource,
+            ),
           });
           gridState.api = api;
         });
@@ -909,7 +914,9 @@ describe("UsersGrid deterministic pagination", () => {
         expect(storeState.clearSelection).not.toHaveBeenCalled();
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
         expect(api.getDisplayedRowAtIndex(0)?.data).toBeUndefined();
-        expect(host.querySelector('[aria-label="Row failed to load"]')).toBeNull();
+        expect(
+          host.querySelector('[aria-label="Row failed to load"]'),
+        ).toBeNull();
         expect(reads[1].success).not.toHaveBeenCalled();
         expect(reads[1].fail).not.toHaveBeenCalled();
 
@@ -967,19 +974,35 @@ describe("UsersGrid deterministic pagination", () => {
     async (outcome) => {
       let finish;
       // Exercise the generation guard independently of transport cancellation.
-      const loadPage = vi.spyOn(listCursorPagination, "loadExactListPage")
-        .mockImplementationOnce(() => new Promise((resolve, reject) => {
-          finish = () => outcome === "success"
-            ? resolve({ response: usersResponse(), rows: [], isLastPage: true })
-            : reject(new Error("obsolete page failure"));
-        }));
+      const loadPage = vi
+        .spyOn(listCursorPagination, "loadExactListPage")
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve, reject) => {
+              finish = () =>
+                outcome === "success"
+                  ? resolve({
+                      response: usersResponse(),
+                      rows: [],
+                      isLastPage: true,
+                    })
+                  : reject(new Error("obsolete page failure"));
+            }),
+        );
       try {
         const props = renderGrid();
         const params = makeGridParams();
         let read;
-        act(() => { read = gridState.props.serverSideDatasource.getRows(params); });
-        act(() => { storeState.setFilters([...validated]); });
-        await act(async () => { finish(); await read; });
+        act(() => {
+          read = gridState.props.serverSideDatasource.getRows(params);
+        });
+        act(() => {
+          storeState.setFilters([...validated]);
+        });
+        await act(async () => {
+          finish();
+          await read;
+        });
 
         expect(params.fail).toHaveBeenCalledTimes(1);
         expect(params.success).not.toHaveBeenCalled();
@@ -999,15 +1022,21 @@ describe("UsersGrid deterministic pagination", () => {
   it.each(["current", "superseded", "destroyed"])(
     "completes a pending continuation exactly once when its grid is %s",
     async (state) => {
-      const loadPage = vi.spyOn(listCursorPagination, "loadExactListPage")
+      const loadPage = vi
+        .spyOn(listCursorPagination, "loadExactListPage")
         .mockResolvedValueOnce({ pending: true });
       const originalResume = listCursorPagination.resumePendingListPage;
       let queuedResume;
-      const resumePage = vi.spyOn(listCursorPagination, "resumePendingListPage")
-        .mockImplementationOnce((options) => originalResume({
-          ...options,
-          schedule: (resume) => { queuedResume = resume; },
-        }));
+      const resumePage = vi
+        .spyOn(listCursorPagination, "resumePendingListPage")
+        .mockImplementationOnce((options) =>
+          originalResume({
+            ...options,
+            schedule: (resume) => {
+              queuedResume = resume;
+            },
+          }),
+        );
       try {
         const props = renderGrid();
         const params = makeGridParams();
@@ -1016,11 +1045,15 @@ describe("UsersGrid deterministic pagination", () => {
         expect(params.fail).not.toHaveBeenCalled();
         expect(params.success).not.toHaveBeenCalled();
         if (state === "superseded") {
-          act(() => { storeState.setFilters([...validated]); });
+          act(() => {
+            storeState.setFilters([...validated]);
+          });
         } else if (state === "destroyed") {
           params.api.isDestroyed = () => true;
         }
-        act(() => { queuedResume(); });
+        act(() => {
+          queuedResume();
+        });
 
         expect(params.fail).toHaveBeenCalledTimes(1);
         expect(params.success).not.toHaveBeenCalled();
@@ -1047,11 +1080,15 @@ describe("UsersGrid deterministic pagination", () => {
       const { AllEnterpriseModule } = await import("ag-grid-enterprise");
       ModuleRegistry.registerModules([AllEnterpriseModule]);
       let finish;
-      getMock.mockImplementationOnce(() => new Promise((resolve, reject) => {
-        finish = () => outcome === "success"
-          ? resolve(usersResponse({ rows: [row(1)] }))
-          : reject(new Error("destroyed request failure"));
-      }));
+      getMock.mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            finish = () =>
+              outcome === "success"
+                ? resolve(usersResponse({ rows: [row(1)] }))
+                : reject(new Error("destroyed request failure"));
+          }),
+      );
       const props = renderGrid();
       const datasource = gridState.props.serverSideDatasource;
       const host = document.createElement("div");
@@ -1081,8 +1118,13 @@ describe("UsersGrid deterministic pagination", () => {
           });
         });
         await waitFor(() => expect(finish).toBeTypeOf("function"));
-        act(() => { api.destroy(); });
-        await act(async () => { finish(); await read; });
+        act(() => {
+          api.destroy();
+        });
+        await act(async () => {
+          finish();
+          await read;
+        });
         expect(params.fail).toHaveBeenCalledTimes(1);
         expect(params.success).not.toHaveBeenCalled();
         expect(props.setHasData).not.toHaveBeenCalled();
@@ -1090,8 +1132,14 @@ describe("UsersGrid deterministic pagination", () => {
         // Drain the loader check scheduled by the real late fail callback.
         await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
       } finally {
-        if (api && !api.isDestroyed()) act(() => { api.destroy(); });
-        await act(async () => { finish?.(); await read; });
+        if (api && !api.isDestroyed())
+          act(() => {
+            api.destroy();
+          });
+        await act(async () => {
+          finish?.();
+          await read;
+        });
         host.remove();
       }
     },

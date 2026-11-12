@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import { Box, Typography, useTheme } from "@mui/material";
 import React from "react";
 import PropTypes from "prop-types";
@@ -5,8 +6,10 @@ import { format } from "date-fns";
 import { palette } from "src/theme/palette";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { throttle } from "src/utils/utils";
+import { isValidEvalQualityPoint } from "src/utils/evalQualityMetrics";
 
 import ChartsTheme from "./ChartsTheme";
+import { isIncompleteCost, monetaryCostLabel } from "../LLMTracing/GraphSection/common";
 import { generateAllColors } from "./common";
 
 const ChartsGenerator = ({
@@ -22,6 +25,9 @@ const ChartsGenerator = ({
   groupName,
 }) => {
   const theme = useTheme();
+  const incompleteCost = unit === "$" && (series || []).some((item) =>
+    (item.data || []).some((point) => isIncompleteCost(point?.cost_coverage)),
+  );
   const seriesTotal = React.useMemo(
     () =>
       (series || []).reduce(
@@ -93,7 +99,7 @@ const ChartsGenerator = ({
                 : value;
 
           return isCost
-            ? `$${formattedValue}`
+            ? formatExactMoney(value)
             : `${formattedValue}${unit ? ` ${unit}` : ""}`;
         },
       },
@@ -118,14 +124,8 @@ const ChartsGenerator = ({
       custom: function ({ series, seriesIndex, dataPointIndex, w }) {
         const xValue = w.globals.seriesX[seriesIndex][dataPointIndex];
         const formattedDate = format(new Date(xValue), "dd/MM/yyyy, HH:mm:ss");
-        const gradientColor =
-          theme.palette.mode === "light"
-            ? "linear-gradient(180deg, var(--primary-main) 0%, #CF6BE8 100%)"
-            : "linear-gradient(180deg, #FFFFFF 0%, #E6E6E7 100%)";
-
         let tooltipContent = `
       <div style="display: flex; min-width: 200px; background: var(--bg-paper); border-radius: 8px; overflow: hidden; font-size: 14px;">
-        <div style="width: 4px; background: ${gradientColor}; border-radius: 8px 0 0 8px;"></div>
         <div style="padding: 8px; color: var(--text-primary);">
           <div style="margin-bottom: 6px; color: var(--text-primary); font-weight: 500; font-size: 11px;">${formattedDate}</div>`;
 
@@ -134,11 +134,34 @@ const ChartsGenerator = ({
           const isSeriesVisible =
             w.globals.collapsedSeriesIndices.indexOf(index) === -1;
 
+          // Preserve the reviewed NK20 exact-source tooltip contract.
+          // prettier-ignore
           if (isSeriesVisible) {
             const yValue = w.globals.series[index][dataPointIndex];
             const label = w.config.series[index]?.name || `Series ${index + 1}`;
+            const point = w.config.series[index]?.data?.[dataPointIndex];
+            const validEvalCounts =
+              !isEvaluationChart || isValidEvalQualityPoint(point);
+            const missingEvalValue =
+              !validEvalCounts
+                ? "-"
+                : point?.count === 0
+                  ? "No data"
+                  : point?.count > 0 && point?.scored_count === 0
+                    ? "Unscored"
+                    : "-";
             const formattedYValue =
-              unit === "$" ? `${unit}${yValue}` : `${yValue} ${unit}`;
+              !validEvalCounts
+                ? "-"
+                : unit === "$" && isIncompleteCost(point?.cost_coverage)
+                  ? monetaryCostLabel(yValue, point?.cost_coverage)
+                  : yValue == null
+                    ? isEvaluationChart
+                      ? missingEvalValue
+                      : "-"
+                    : unit === "$"
+                      ? `${unit}${yValue}`
+                      : `${yValue} ${unit}`;
 
             tooltipContent += `
           <div style="font-weight: normal; color: var(--text-secondary); font-size: 11px;">${label}: ${formattedYValue}</div>`;
@@ -160,7 +183,7 @@ const ChartsGenerator = ({
       show: true,
       position: "top",
       horizontalAlign: "left",
-      fontSize: "14px",
+      fontSize: "13px",
       labels: {
         colors: "var(--text-primary)",
       },
@@ -175,13 +198,14 @@ const ChartsGenerator = ({
   return (
     <Box
       data-chart-label={label}
-      data-chart-total={seriesTotal}
+      data-chart-total={incompleteCost ? undefined : seriesTotal}
+      data-cost-coverage={incompleteCost ? "incomplete" : undefined}
       sx={{
         border: "1px solid",
         borderColor: "divider",
         paddingTop: theme.spacing(1.5),
         borderRadius: theme.spacing(0.5),
-        boxShadow: "0px",
+        boxShadow: "none",
       }}
     >
       {headerComponent ? (
@@ -194,6 +218,11 @@ const ChartsGenerator = ({
           sx={{ paddingLeft: theme.spacing(2) }}
         >
           {label}
+        </Typography>
+      )}
+      {incompleteCost && (
+        <Typography variant="caption" sx={{ px: 2 }}>
+          Cost coverage incomplete · Unknown or partial prices are not plotted.
         </Typography>
       )}
       <ChartsTheme

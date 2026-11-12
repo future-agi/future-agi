@@ -18,7 +18,7 @@ const SearchModal = ({ peopleAssigned, onItemClick, isCheckable }) => {
     <WrapperBox>
       <StyledBox>
         <IconButton size="small">
-          <Iconify icon="eva:search-fill" color="divider" />
+          <Iconify icon="solar:magnifier-linear" color="divider" />
         </IconButton>
         <Input
           placeholder="Search annotators"
@@ -50,7 +50,7 @@ const SearchModal = ({ peopleAssigned, onItemClick, isCheckable }) => {
               position: "relative",
               "&:hover": {
                 backgroundColor: "action.hover",
-                borderRadius: "10px",
+                borderRadius: "8px",
               },
             }}
             key={index}
@@ -59,7 +59,7 @@ const SearchModal = ({ peopleAssigned, onItemClick, isCheckable }) => {
             <Box display="flex" alignItems="center" gap={1}>
               {isCheckable && <Checkbox />}
               <img
-                src={"https://cdn-icons-png.flaticon.com/512/149/149071.png"}
+                src={"/assets/icons/navbar/ic_user.svg"}
                 alt={i.name}
                 onClick={onItemClick}
                 style={{

@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+// v2.1 g8 (rows:copy-from-dataset): the value a source field takes when the
+// user picks "Skip" for it. Skipped fields are not copied, so they are left out
+// of the required and duplicate-name checks (many fields can be skipped).
+export const SKIP_FIELD = "__skip__";
+
 export const UploadFileValidationSchema = z.object({
   file: z.any().refine((val) => val !== null, {
     message: "File is required",
@@ -63,6 +68,7 @@ export const existingDatasetValidationSchema = (datasetId, checkboxHandle) =>
 
           for (const key of checkedKeys) {
             const trimmed = allTrimmedValues[key];
+            if (trimmed === SKIP_FIELD) continue;
 
             // Check empty value
             if (!trimmed) {

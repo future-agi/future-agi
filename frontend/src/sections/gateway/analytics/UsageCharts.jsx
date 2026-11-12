@@ -1,19 +1,20 @@
 import React, { useState, useMemo } from "react";
 import PropTypes from "prop-types";
-import {
-  Box,
-  Card,
-  Grid,
-  Typography,
-  Skeleton,
-  Stack,
-  ToggleButton,
-  ToggleButtonGroup,
-} from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
 import { useAnalyticsUsage } from "./hooks/useAnalyticsUsage";
 import { REQUEST_DIMENSION_OPTIONS } from "../constants/requestTags";
+import ChartPanel, { AnalyticsQueryState } from "./ChartPanel";
+import { countAxisLabel } from "./axisLabels";
+import GroupByToggle from "./GroupByToggle";
+import {
+  UTC_DAYS_NOTE,
+  bucketTime,
+  localTimeAxis,
+  localTimeTooltip,
+} from "../utils/timeZone";
+import { groupedColors, groupedSeries, topGroups } from "./seriesColors";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -24,33 +25,11 @@ const GROUP_BY_OPTIONS = [
   ...REQUEST_DIMENSION_OPTIONS,
 ];
 
-function computeGranularity(start, end) {
-  if (!start || !end) return "1h";
-  const diffMs = new Date(end).getTime() - new Date(start).getTime();
-  const diffHours = diffMs / (1000 * 60 * 60);
-  if (diffHours <= 6) return "5m";
-  if (diffHours <= 24) return "15m";
-  if (diffHours <= 168) return "1h"; // 7 days
-  if (diffHours <= 720) return "6h"; // 30 days
-  return "1d";
-}
-
 // ---------------------------------------------------------------------------
 // Chart option builders
 // ---------------------------------------------------------------------------
 
-function groupPalette(theme) {
-  return [
-    theme.palette.primary.main,
-    theme.palette.secondary.main,
-    theme.palette.warning.main,
-    theme.palette.info.main,
-    theme.palette.success.main,
-    theme.palette.error.main,
-  ];
-}
-
-function buildRequestChartOptions(theme, _series) {
+function buildRequestChartOptions(theme, time, colors) {
   return {
     chart: {
       type: "area",
@@ -58,7 +37,7 @@ function buildRequestChartOptions(theme, _series) {
       zoom: { enabled: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: groupPalette(theme),
+    colors,
     dataLabels: { enabled: false },
     stroke: { curve: "smooth", width: 2 },
     fill: {
@@ -70,25 +49,20 @@ function buildRequestChartOptions(theme, _series) {
         stops: [0, 100],
       },
     },
-    xaxis: {
-      type: "datetime",
-      labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
-      },
-    },
+    xaxis: localTimeAxis({
+      color: theme.palette.text.secondary,
+      fontSize: "12px",
+      utc: time.utc,
+    }),
     yaxis: {
       labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
-        formatter: (val) => {
-          if (val >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}M`;
-          if (val >= 1_000) return `${(val / 1_000).toFixed(1)}K`;
-          return val != null ? Number(val).toFixed(0) : "0";
-        },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
+        formatter: (val) => countAxisLabel(val),
       },
     },
     tooltip: {
       theme: theme.palette.mode,
-      x: { format: "MMM dd, HH:mm" },
+      x: localTimeTooltip(time),
       y: { formatter: (val) => (val != null ? val.toLocaleString() : "0") },
     },
     grid: {
@@ -109,7 +83,7 @@ function buildRequestChartOptions(theme, _series) {
   };
 }
 
-function buildTokenChartOptions(theme, isGrouped) {
+function buildTokenChartOptions(theme, time, groupColors) {
   return {
     chart: {
       type: "area",
@@ -118,9 +92,12 @@ function buildTokenChartOptions(theme, isGrouped) {
       zoom: { enabled: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: isGrouped
-      ? groupPalette(theme)
-      : [theme.palette.info.main, theme.palette.warning.main],
+    // Grouped: the series colours. Else input and output tokens, never
+    // warning.main (under 3:1 on white, too faint for a series).
+    colors: groupColors || [
+      theme.palette.info.main,
+      theme.palette.primary.main,
+    ],
     dataLabels: { enabled: false },
     stroke: { curve: "smooth", width: 2 },
     fill: {
@@ -132,25 +109,20 @@ function buildTokenChartOptions(theme, isGrouped) {
         stops: [0, 100],
       },
     },
-    xaxis: {
-      type: "datetime",
-      labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
-      },
-    },
+    xaxis: localTimeAxis({
+      color: theme.palette.text.secondary,
+      fontSize: "12px",
+      utc: time.utc,
+    }),
     yaxis: {
       labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
-        formatter: (val) => {
-          if (val >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}M`;
-          if (val >= 1_000) return `${(val / 1_000).toFixed(1)}K`;
-          return val != null ? Number(val).toFixed(0) : "0";
-        },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
+        formatter: (val) => countAxisLabel(val),
       },
     },
     tooltip: {
       theme: theme.palette.mode,
-      x: { format: "MMM dd, HH:mm" },
+      x: localTimeTooltip(time),
       y: { formatter: (val) => (val != null ? val.toLocaleString() : "0") },
     },
     grid: {
@@ -188,29 +160,18 @@ function buildUngroupedRequestSeries(series) {
   ];
 }
 
-function buildGroupedRequestSeries(groups) {
-  if (!groups) return [];
-  return Object.entries(groups).map(([groupName, points]) => ({
-    name: groupName,
-    data: (points || []).map((point) => ({
-      x: new Date(point.bucket).getTime(),
-      y: point.request_count ?? 0,
-    })),
-  }));
-}
-
 function buildUngroupedTokenSeries(series) {
   if (!series?.length) return [];
   return [
     {
-      name: "Input Tokens",
+      name: "Input tokens",
       data: series.map((point) => ({
         x: new Date(point.bucket).getTime(),
         y: point.input_tokens ?? point.total_tokens ?? 0,
       })),
     },
     {
-      name: "Output Tokens",
+      name: "Output tokens",
       data: series.map((point) => ({
         x: new Date(point.bucket).getTime(),
         y: point.output_tokens ?? 0,
@@ -219,63 +180,79 @@ function buildUngroupedTokenSeries(series) {
   ];
 }
 
-function buildGroupedTokenSeries(groups) {
-  if (!groups) return [];
-  // For grouped mode, show total tokens per group
-  return Object.entries(groups).map(([groupName, points]) => ({
-    name: groupName,
-    data: (points || []).map((point) => ({
-      x: new Date(point.bucket).getTime(),
-      y: point.total_tokens ?? 0,
-    })),
-  }));
-}
-
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
-const UsageCharts = ({ start, end, gatewayId }) => {
+const UsageCharts = ({
+  start,
+  end,
+  granularity,
+  gatewayId,
+  groupBy: controlledGroupBy,
+  onGroupByChange,
+}) => {
   const theme = useTheme();
-  const [groupBy, setGroupBy] = useState("");
+  const [localGroupBy, setLocalGroupBy] = useState("");
+  const groupBy = controlledGroupBy ?? localGroupBy;
+  const setGroupBy = onGroupByChange || setLocalGroupBy;
 
-  const granularity = useMemo(
-    () => computeGranularity(start, end),
-    [start, end],
-  );
-
-  const { data, isLoading } = useAnalyticsUsage({
-    start,
-    end,
-    granularity,
-    groupBy: groupBy || undefined,
-    gatewayId,
-  });
+  const { data, isLoading, error, refetch, isFetching, isPlaceholderData } =
+    useAnalyticsUsage({
+      start,
+      end,
+      granularity,
+      groupBy: groupBy || undefined,
+      gatewayId,
+    });
 
   const isGrouped = Boolean(groupBy) && Boolean(data?.groups);
 
+  // Both charts draw the same groups (the top 8 by requests, then Other), so
+  // a group keeps one colour across them.
+  const groups = useMemo(
+    () =>
+      isGrouped ? topGroups(data.groups, (point) => point.request_count) : null,
+    [data, isGrouped],
+  );
+  const groupColors = useMemo(
+    () => (groups ? groupedColors(theme, groups) : null),
+    [theme, groups],
+  );
+
   const requestSeries = useMemo(() => {
     if (!data) return [];
-    return isGrouped
-      ? buildGroupedRequestSeries(data.groups)
+    return groups
+      ? groupedSeries(data.groups, groups, (point) => point.request_count)
       : buildUngroupedRequestSeries(data.series);
-  }, [data, isGrouped]);
+  }, [data, groups]);
 
   const tokenSeries = useMemo(() => {
     if (!data) return [];
-    return isGrouped
-      ? buildGroupedTokenSeries(data.groups)
+    // A group's total tokens; ungrouped, input and output.
+    return groups
+      ? groupedSeries(data.groups, groups, (point) => point.total_tokens)
       : buildUngroupedTokenSeries(data.series);
-  }, [data, isGrouped]);
+  }, [data, groups]);
+
+  // Day buckets read in the zone the API cut them in.
+  const { day, utc } = bucketTime(granularity, data);
+  const time = useMemo(() => ({ day, utc }), [day, utc]);
+  const caption = utc ? UTC_DAYS_NOTE : undefined;
 
   const requestChartOptions = useMemo(
-    () => buildRequestChartOptions(theme, requestSeries),
-    [theme, requestSeries],
+    () =>
+      buildRequestChartOptions(
+        theme,
+        time,
+        groupColors || [theme.palette.primary.main],
+      ),
+    [theme, time, groupColors],
   );
 
   const tokenChartOptions = useMemo(
-    () => buildTokenChartOptions(theme, isGrouped),
-    [theme, isGrouped],
+    () => buildTokenChartOptions(theme, time, groupColors),
+    [theme, time, groupColors],
   );
 
   const handleGroupByChange = (_event, newValue) => {
@@ -285,109 +262,65 @@ const UsageCharts = ({ start, end, gatewayId }) => {
   };
 
   return (
-    <Box>
-      {/* Group-by toggle */}
-      <Stack direction="row" alignItems="center" spacing={2} mb={2}>
-        <Typography variant="body2" color="text.secondary" fontWeight={500}>
-          Group by:
+    <AnalyticsQueryState
+      title="Usage"
+      error={error}
+      hasData={data != null && !isPlaceholderData}
+      isFetching={isFetching}
+      onRetry={() => refetch()}
+    >
+      {(isFetching || isPlaceholderData) && (
+        <Typography role="status" typography="s2" color="text.secondary">
+          Updating Usage…
         </Typography>
-        <ToggleButtonGroup
-          value={groupBy}
-          exclusive
-          onChange={handleGroupByChange}
-          size="small"
+      )}
+      <GroupByToggle
+        value={groupBy}
+        options={GROUP_BY_OPTIONS}
+        onChange={(next) => handleGroupByChange(null, next)}
+      />
+      <Box
+        sx={{
+          display: "grid",
+          gap: 1.5,
+          gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+        }}
+      >
+        <ChartPanel
+          title="Requests over time"
+          caption={caption}
+          loading={isLoading || isPlaceholderData}
+          empty={requestSeries.length === 0}
         >
-          {GROUP_BY_OPTIONS.map((opt) => (
-            <ToggleButton
-              key={opt.value}
-              value={opt.value}
-              sx={{
-                px: 1.5,
-                py: 0.25,
-                textTransform: "none",
-                fontSize: "0.8125rem",
-              }}
-            >
-              {opt.label}
-            </ToggleButton>
-          ))}
-        </ToggleButtonGroup>
-      </Stack>
-
-      <Grid container spacing={3}>
-        {/* Requests over time */}
-        <Grid item xs={12} md={6}>
-          <Card sx={{ p: 3 }}>
-            <Typography variant="subtitle1" fontWeight={600} mb={2}>
-              Requests Over Time
-            </Typography>
-            {isLoading ? (
-              <Skeleton
-                variant="rectangular"
-                height={320}
-                sx={{ borderRadius: 1 }}
-              />
-            ) : requestSeries.length > 0 ? (
-              <Chart
-                type="area"
-                height={320}
-                options={requestChartOptions}
-                series={requestSeries}
-              />
-            ) : (
-              <Box
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                height={320}
-              >
-                <Typography variant="body2" color="text.secondary">
-                  No usage data available for this time range.
-                </Typography>
-              </Box>
-            )}
-          </Card>
-        </Grid>
-
-        {/* Tokens over time */}
-        <Grid item xs={12} md={6}>
-          <Card sx={{ p: 3 }}>
-            <Typography variant="subtitle1" fontWeight={600} mb={2}>
-              Tokens Over Time
-            </Typography>
-            {isLoading ? (
-              <Skeleton
-                variant="rectangular"
-                height={320}
-                sx={{ borderRadius: 1 }}
-              />
-            ) : tokenSeries.length > 0 ? (
-              <Chart
-                type="area"
-                height={320}
-                options={tokenChartOptions}
-                series={tokenSeries}
-              />
-            ) : (
-              <Box
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                height={320}
-              >
-                <Typography variant="body2" color="text.secondary">
-                  No token data available for this time range.
-                </Typography>
-              </Box>
-            )}
-          </Card>
-        </Grid>
-      </Grid>
-    </Box>
+          <Chart
+            type="area"
+            height={280}
+            options={requestChartOptions}
+            series={requestSeries}
+          />
+        </ChartPanel>
+        <ChartPanel
+          title="Tokens over time"
+          caption={caption}
+          loading={isLoading || isPlaceholderData}
+          empty={tokenSeries.length === 0}
+        >
+          <Chart
+            type="area"
+            height={280}
+            options={tokenChartOptions}
+            series={tokenSeries}
+          />
+        </ChartPanel>
+      </Box>
+    </AnalyticsQueryState>
   );
 };
 
 UsageCharts.propTypes = {
+  groupBy: PropTypes.string,
+  onGroupByChange: PropTypes.func,
+  granularity: PropTypes.oneOf(["minute", "hour", "day"]),
   start: PropTypes.string,
   end: PropTypes.string,
   gatewayId: PropTypes.string,

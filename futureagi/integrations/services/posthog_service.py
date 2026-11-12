@@ -1,9 +1,10 @@
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
 from integrations.services.base import BaseIntegrationService, register_service
+from integrations.services.export_failures import validation_failure
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class PostHogService(BaseIntegrationService):
         self,
         host_url: str,
         credentials: dict,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict:
         try:
             api_key = credentials.get("api_key", "")
@@ -74,18 +75,17 @@ class PostHogService(BaseIntegrationService):
                 "error": "Connection to PostHog timed out. Please try again.",
             }
         except Exception as e:
-            logger.exception("Unexpected error validating PostHog credentials")
-            return {"valid": False, "error": f"Validation failed: {str(e)}"}
+            return validation_failure("posthog", e, logger)
 
     def fetch_traces(
         self,
         host_url: str,
         credentials: dict,
-        from_timestamp: Optional[str] = None,
-        to_timestamp: Optional[str] = None,
+        from_timestamp: str | None = None,
+        to_timestamp: str | None = None,
         page: int = 1,
         limit: int = 100,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict:
         """Not used — PostHog is an export target, not a trace source."""
         return {"traces": [], "has_more": False, "next_page": 1, "total_items": 0}
@@ -95,7 +95,7 @@ class PostHogService(BaseIntegrationService):
         host_url: str,
         credentials: dict,
         trace_id: str,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict[str, Any]:
         """Not used — PostHog is an export target, not a trace source."""
         return {}

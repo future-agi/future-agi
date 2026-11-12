@@ -12,6 +12,7 @@ import {
 import React from "react";
 import { useNavigate } from "react-router";
 import { useAuthContext } from "src/auth/hooks";
+import { signOutToSignIn } from "src/auth/sign-out";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
 import { trackEvent, Events } from "src/utils/Mixpanel";
@@ -25,10 +26,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
 
   const navigate = useNavigate();
 
-  const onLogoutClick = () => {
-    logout();
-    navigate("/", { replace: true });
-  };
+  const onLogoutClick = () => signOutToSignIn(logout, navigate);
 
   // const ShieldIcon = ({ ...props }) => {
   //   return (
@@ -72,7 +70,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
               <Typography
                 variant="subtitle2"
                 sx={{
-                  fontSize: "14px",
+                  fontSize: "12px",
                   fontWeight: 500,
                   color: "text.primary",
                   letterSpacing: "-0.2px",
@@ -92,7 +90,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
               <Typography
                 variant="subtitle2"
                 sx={{
-                  fontSize: "13px",
+                  fontSize: "12px",
                   fontWeight: 400,
                   color: "text.secondary",
                   letterSpacing: "-0.2px",
@@ -123,7 +121,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
               <ListItemText
                 primary="Administration"
                 primaryTypographyProps={{
-                  fontSize: "13px",
+                  fontSize: "12px",
                   fontWeight: 400,
                   paddingLeft: 0.4,
                   color: "text.primary",
@@ -155,7 +153,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
             <ListItemText
               primary="Profile"
               primaryTypographyProps={{
-                fontSize: "13px",
+                fontSize: "12px",
                 fontWeight: 400,
                 paddingLeft: 0.4,
                 color: "text.primary",
@@ -169,13 +167,13 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
                 sx={{ padding: 1 }}
                 onClick={() => {
                   onClose();
-                  navigate("/dashboard/settings/api_keys");
+                  navigate("/dashboard/keys");
                   trackEvent(Events.apiKeysButtonClicked);
                 }}
               >
                 <ListItemIcon sx={{ marginRight: 0.5 }}>
                   <APIKeyIcon
-                    width={18}
+                    width={16}
                     height={18}
                     fill="grey"
                     stroke="currentColor"
@@ -185,7 +183,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
                 <ListItemText
                   primary="API Keys"
                   primaryTypographyProps={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     fontWeight: 500,
                     paddingLeft: 0.4,
                     color: "grey",
@@ -203,7 +201,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
               >
                 <ListItemIcon sx={{ marginRight: 0.5 }}>
                   <Iconify
-                    icon="proicons:dollar"
+                    icon="solar:dollar-minimalistic-linear"
                     sx={{
                       color: "text.primary",
                       width: 20,
@@ -214,7 +212,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
                 <ListItemText
                   primary="Manage Plans"
                   primaryTypographyProps={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     fontWeight: 400,
                     paddingLeft: 0.4,
                     color: "text.primary",
@@ -234,20 +232,20 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
           >
             <ListItemIcon sx={{ marginRight: 0.5, marginLeft: 2 }}>
               <Iconify
-                icon="mynaui:logout"
+                icon="solar:logout-linear"
                 sx={{
                   width: 20,
                   height: 20,
-                  color: "red.500",
+                  color: "status.danger.fg",
                 }}
               />
             </ListItemIcon>
             <ListItemText
               primary="Logout"
               primaryTypographyProps={{
-                fontSize: "14px",
+                fontSize: "12px",
                 fontWeight: 400,
-                color: "red.500",
+                color: "status.danger.fg",
               }}
             />
           </ListItemButton>

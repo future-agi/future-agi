@@ -34,7 +34,7 @@ def backfill_eval_type(apps, schema_editor):
     }
     AGENT_TAGS = {"agent", "agentic", "agent_eval"}
 
-    for template in EvalTemplate.objects.all().iterator(chunk_size=500):
+    for template in EvalTemplate.objects.using(schema_editor.connection.alias).all().iterator(chunk_size=500):
         eval_type_id = (template.config or {}).get("eval_type_id", "")
         tags = {t.lower() for t in (template.eval_tags or [])}
 
@@ -45,7 +45,7 @@ def backfill_eval_type(apps, schema_editor):
         else:
             template.eval_type = "llm"
 
-        template.save(update_fields=["eval_type"])
+        template.save(using=schema_editor.connection.alias, update_fields=["eval_type"])
 
 
 class Migration(migrations.Migration):

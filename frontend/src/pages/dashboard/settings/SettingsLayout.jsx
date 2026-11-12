@@ -62,14 +62,14 @@ const SettingsLayout = React.memo(() => {
               ? [
                   {
                     path: "/dashboard/settings/usage-summary",
-                    title: "Usage Summary",
+                    title: "Usage summary",
                     icon: ICONS.Summary,
                   },
                 ]
               : []),
             {
               path: "/dashboard/settings/user-management",
-              title: "User Management",
+              title: "User management",
               icon: ICONS.Management,
             },
             {
@@ -121,7 +121,7 @@ const SettingsLayout = React.memo(() => {
             },
             {
               path: "/dashboard/settings/mcp-server",
-              title: "MCP Server",
+              title: "MCP server",
               icon: ICONS.MCPServer,
             },
           ]
@@ -131,7 +131,7 @@ const SettingsLayout = React.memo(() => {
         ? [
             {
               path: "/dashboard/settings/org-settings",
-              title: "Org Settings",
+              title: "Org settings",
               icon: ICONS.Security,
             },
           ]

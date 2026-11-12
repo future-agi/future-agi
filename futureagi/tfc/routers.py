@@ -24,6 +24,8 @@ from contextvars import ContextVar
 
 from django.conf import settings
 
+from tfc.migration_database import delegated_database_alias
+
 
 # Why ContextVar, not threading.local: async/ASGI workers (Temporal activities,
 # Django async views) share threads across coroutines. A threading.local would
@@ -203,9 +205,10 @@ class ReadReplicaRouter:
       - we are not inside a `force_primary()` block
       - the read does not carry a `for_update` hint
 
-    Writes always go to `default`. Migrations only on `default` and
-    `default_direct` (the PgBouncer-bypass alias used by `manage.py migrate`
-    when `lock_timeout` needs to be set at connection time).
+    Ordinary writes go to `default`. An explicit delegated-migration context
+    pins reads and writes (including validation and related managers) to that
+    migration's alias. Migrations only run on `default` and `default_direct`
+    (the PgBouncer-bypass alias used when `lock_timeout` is set at connection time).
 
     Feature keys with a `feature:` prefix in `READ_REPLICA_OPT_IN` are
     ignored by this router; they are consulted by hot-path code that
@@ -225,6 +228,10 @@ class ReadReplicaRouter:
         return _opt_in_keys()
 
     def db_for_read(self, model, **hints):
+        # Data-migration delegates include serializer/model validation and M2M
+        # writes; these must share the selected migration transaction.
+        if alias := delegated_database_alias():
+            return alias
         if not _replica_configured():
             return "default"
         if _is_force_primary():
@@ -239,7 +246,7 @@ class ReadReplicaRouter:
         return "default"
 
     def db_for_write(self, model, **hints):
-        return "default"
+        return delegated_database_alias() or "default"
 
     def allow_relation(self, obj1, obj2, **hints):
         return True

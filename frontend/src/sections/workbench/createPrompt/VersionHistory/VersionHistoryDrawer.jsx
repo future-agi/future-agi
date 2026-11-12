@@ -24,9 +24,10 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import CustomAgentTabs from "src/sections/agents/CustomAgentTabs";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const LIMIT_CHECKBOX_MESSAGE =
-  "Compare limit is upto 3 version only, Deselect other options to select this one";
+  "You can compare up to 3 versions. Deselect one to select this version.";
 
 const usePromptVersions = (id, activeTab) => {
   const sendCommit = activeTab === "commit_history";
@@ -77,11 +78,22 @@ const VersionHistoryChild = ({ onClose }) => {
     fetchNextPage();
   }, [fetchNextPage, isFetchingNextPage, isPending]);
 
-  const { selectedVersions, applyCompare } = usePromptWorkbenchContext();
+  const { selectedVersions, applyCompare, isEmptyPrompt } =
+    usePromptWorkbenchContext();
 
   const [isCompareActive, setIsCompareActive] = useState(false);
 
   const [compareSelectedVersions, setCompareSelectedVersions] = useState([]);
+
+  // The open version is the first pane of a comparison (ticked and locked
+  // here), unless it is an empty draft: then it never joins on its own, and
+  // up to 3 versions are picked here, at least 2 to compare.
+  const openIsEmptyDraft = Boolean(
+    selectedVersions?.[0]?.isDraft && isEmptyPrompt?.includes(0),
+  );
+  const openVersion = openIsEmptyDraft ? null : selectedVersions?.[0]?.version;
+  const maxPicks = openIsEmptyDraft ? 3 : 2;
+  const minPicks = openIsEmptyDraft ? 2 : 1;
 
   const { role: userRole } = useAuthContext();
 
@@ -95,7 +107,9 @@ const VersionHistoryChild = ({ onClose }) => {
         height: "100%",
       }}
     >
-      <Box sx={{ paddingX: 2, paddingTop: 2 }}>
+      {/* Room on the right for the close button, so the description never
+          runs under it on a narrow screen. */}
+      <Box sx={{ paddingLeft: 2, paddingRight: 7, paddingTop: 2 }}>
         <Typography variant="m3" fontWeight={"fontWeightSemiBold"}>
           History
         </Typography>
@@ -109,19 +123,26 @@ const VersionHistoryChild = ({ onClose }) => {
         </Typography>
         <IconButton
           onClick={onClose}
+          aria-label="Close history"
           sx={{ position: "absolute", top: "10px", right: "12px" }}
         >
-          <Iconify icon="mingcute:close-line" color="text.primary" />
+          <Iconify icon="solar:close-linear" color="text.primary" />
         </IconButton>
       </Box>
 
       <Divider sx={{ borderColor: "divider" }} />
+      {/* When the tabs and Select to compare do not fit on
+          one row (a phone), the button moves under the tabs instead of
+          running past the right edge. */}
       <Box
         sx={{
           paddingX: 2,
           display: "flex",
           flexDirection: "row",
+          flexWrap: "wrap",
+          alignItems: "center",
           justifyContent: "space-between",
+          rowGap: 1,
         }}
       >
         <CustomAgentTabs
@@ -145,7 +166,6 @@ const VersionHistoryChild = ({ onClose }) => {
                 setIsCompareActive(!isCompareActive);
                 setCompareSelectedVersions([]);
               }}
-              sx={{ height: "30px" }}
             >
               {isCompareActive ? "Cancel select" : "Select to compare"}
             </Button>
@@ -185,15 +205,17 @@ const VersionHistoryChild = ({ onClose }) => {
           ref={scrollContainer}
         >
           {versions?.map((version, _) => {
+            const isOpen =
+              openVersion != null && openVersion === version.template_version;
             const isChecked =
-              selectedVersions?.[0]?.version === version.template_version ||
+              isOpen ||
               compareSelectedVersions.find(
                 (v) => v.template_version === version.template_version,
               );
 
             const isDisabled =
-              selectedVersions?.[0]?.version === version.template_version ||
-              (compareSelectedVersions.length === 2 && !isChecked);
+              isOpen ||
+              (compareSelectedVersions.length >= maxPicks && !isChecked);
 
             const checkboxMessage = !isChecked ? LIMIT_CHECKBOX_MESSAGE : "";
 
@@ -227,7 +249,9 @@ const VersionHistoryChild = ({ onClose }) => {
         </Box>
       </ShowComponent>
       <ShowComponent
-        condition={compareSelectedVersions.length > 0 && isCompareActive}
+        condition={
+          compareSelectedVersions.length >= minPicks && isCompareActive
+        }
       >
         <Box sx={{ display: "flex", justifyContent: "flex-end", padding: 2 }}>
           <Button
@@ -261,18 +285,23 @@ const VersionHistoryDrawer = () => {
 
   const onClose = () => setVersionHistoryOpen(false);
 
+  const covered = useDrawerCovered(versionHistoryOpen);
   return (
     <Drawer
       anchor="right"
       open={versionHistoryOpen}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          width: "1028px",
-          borderRadius: "10px",
+          width: "960px",
+          // Never wider than the screen (it was 960 px on
+          // any screen, so below 960 px its left side was cut off).
+          maxWidth: "100vw",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

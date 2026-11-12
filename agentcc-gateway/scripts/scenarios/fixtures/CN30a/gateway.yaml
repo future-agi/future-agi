@@ -1,0 +1,54 @@
+# 97a_cn_release_proof_static.sh's gateway config. The script fills in the
+# @@CN30A_*@@ values first; lib_mcp.sh's scn_mcp_gateway_template then adds the
+# test state key under mcp: and fills @@MCP_OPS_URL@@, and lib.sh's scn_up fills
+# base.yaml's placeholders and appends redis:. The control plane is Django's dev
+# server: the gateway syncs keys and org configs from it every 2 s and sends
+# its request and tool_call logs to its webhook (X-Webhook-Secret). The
+# connector catalog is the script's scratch directory (the cn30a-docs app).
+# The operator YAML server "ops" serves only mcp.static.org_id, which neither
+# org is. The kill-switch step restarts the gateway with the marked
+# mcp.enabled line set to false. Every key and token is a fake value.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+providers:
+  operator-openai:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-operator-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["gpt-4o"]
+logging:
+  level: "info"
+  request_logging:
+    enabled: true
+control_plane:
+  url: "@@CN30A_DJANGO_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  webhook_secret: "@@CN30A_WEBHOOK_SECRET@@"
+  sync_on_startup: true
+  sync_interval: 2s
+connectors:
+  catalog_dir: "@@CN30A_CATALOG_DIR@@"
+mcp:
+  enabled: true # cn30a-kill-switch
+  static:
+    org_id: "org-cn30a-static"
+  egress:
+    # The org servers' mocks by their loopback ports, and the TLS pipe of the
+    # catalogue app by the DNS name it is dialled with (the egress guard: a host-name entry
+    # matches the name, never the address it resolves to). Nothing else
+    # private or loopback is listed: the HTTP mock and Django are not.
+    private_allow:
+      - "127.0.0.1:@@CN30A_A_PORT@@"
+      - "127.0.0.1:@@CN30A_B_PORT@@"
+      - "127.0.0.1:@@CN30A_OPS_PORT@@"
+      - "@@CN30A_UPSTREAM_HOST@@:@@CN30A_TLS_PORT@@"
+  servers:
+    ops:
+      url: "@@MCP_OPS_URL@@/mcp"
+      transport: "http"

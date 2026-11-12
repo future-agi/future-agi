@@ -25,11 +25,20 @@ func (a *Authenticator) HTTPMiddleware(next http.Handler) http.Handler {
 		if err != nil {
 			if errors.Is(err, ErrUnauthenticated) {
 				a.log.Warn("http auth failed", "err", err)
+				if a.retiredPair(r.Context(), apiKey, secretKey) {
+					writeAPIKeyRetired(w)
+					return
+				}
 				http.Error(w, `{"error":"authentication failed"}`, http.StatusUnauthorized)
 				return
 			}
 			a.log.Error("http auth infrastructure error", "err", err)
 			http.Error(w, `{"error":"service temporarily unavailable"}`, http.StatusServiceUnavailable)
+			return
+		}
+		expected, err := ParseExpectedHTTPHeaders(r.Header)
+		if err != nil || expected.CheckScope(result) != nil {
+			http.Error(w, ErrExpectedTargetMismatch.Error(), http.StatusForbidden)
 			return
 		}
 
@@ -43,8 +52,12 @@ func (a *Authenticator) HTTPMiddleware(next http.Handler) http.Handler {
 //   - X-Api-Key / X-Secret-Key headers (native)
 //   - Authorization: Basic base64(api_key:secret_key) (Langfuse SDK compat)
 func extractCredentials(r *http.Request) (apiKey, secretKey string) {
-	apiKey = r.Header.Get("X-Api-Key")
-	secretKey = r.Header.Get("X-Secret-Key")
+	var apiOK, secretOK bool
+	apiKey, apiOK = uniqueCredentialHeader(r.Header, "X-Api-Key")
+	secretKey, secretOK = uniqueCredentialHeader(r.Header, "X-Secret-Key")
+	if !apiOK || !secretOK {
+		return "", "" // Ambiguous native credentials must not fall back to Basic.
+	}
 	if apiKey != "" && secretKey != "" {
 		return
 	}
@@ -63,4 +76,29 @@ func extractCredentials(r *http.Request) (apiKey, secretKey string) {
 		return "", ""
 	}
 	return parts[0], parts[1]
+}
+
+// uniqueCredentialHeader accepts identical repetitions whether a proxy kept
+// separate field lines or coalesced them with commas. Issued native credentials
+// contain no commas. Never select between different credentials or skip empty
+// list members; the resulting single pair still needs normal authentication.
+func uniqueCredentialHeader(headers http.Header, name string) (string, bool) {
+	values := headers.Values(name)
+	if len(values) == 0 {
+		return "", true
+	}
+	if len(values) == 1 && !strings.Contains(values[0], ",") {
+		return values[0], true // Preserve single values and missing-pair fallback.
+	}
+	var credential string
+	for _, value := range values {
+		for _, candidate := range strings.Split(value, ",") {
+			candidate = strings.Trim(candidate, " \t") // HTTP optional whitespace only.
+			if candidate == "" || (credential != "" && candidate != credential) {
+				return "", false
+			}
+			credential = candidate
+		}
+	}
+	return credential, true
 }

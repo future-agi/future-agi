@@ -1,0 +1,19 @@
+{
+  "http": {
+    "method": "POST",
+    "url": "https://api.example.com/agentcc/mcp/service/virtual-servers/ensure/",
+    "headers": {
+      "content-type": "application/json",
+      "x-api-key": "{{EE_SERVICE_API_KEY}}",
+      "x-secret-key": "{{EE_SERVICE_SECRET_KEY}}",
+      "authorization": "Bearer {{GATEWAY_ADMIN_TOKEN}}"
+    }
+  },
+  "body": {
+    "workspace": "3f6c1e2a-8b4d-4c6e-9a1f-2b7d5e8c0a14",
+    "connection_id": "int_4f2a9c1e7b3d",
+    "servers": ["github"],
+    "mode": "agent",
+    "agent_key_id": "key_3c9f1a7e5b2d8c4f6a0e1b9d"
+  }
+}

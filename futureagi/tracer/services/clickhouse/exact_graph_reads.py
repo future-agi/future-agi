@@ -62,6 +62,7 @@ from tracer.services.clickhouse.query_builders.session_filters import (
     SESSION_ID_FILTER_COLS,
     build_session_id_filter_clause,
 )
+from tracer.services.clickhouse.query_builders.time_series import graph_cost_flags_sql
 from tracer.services.clickhouse.query_builders.user_list import (
     MembershipTerm,
     UserListQueryBuilder,
@@ -333,6 +334,12 @@ class ExactGraphReadError(RuntimeError):
     """A complete exact graph refresh could not be produced."""
 
 
+class EvalLifecycleUnavailable(ExactGraphReadError):
+    """The selected eval logger cannot establish a valid scored population."""
+
+    error_code = "eval_lifecycle_unavailable"
+
+
 def output_bucket_partitions(
     start_date: datetime,
     end_date: datetime,
@@ -529,6 +536,11 @@ def _system_metric_payload(
                 "timestamp": point.get("timestamp"),
                 "value": point.get("value", point.get(metric_key, 0)),
                 "primary_traffic": traffic.get(point.get("timestamp"), 0),
+                **(
+                    {"cost_coverage": point["cost_coverage"]}
+                    if "cost_coverage" in point
+                    else {}
+                ),
             }
             for point in points
         ],
@@ -1643,6 +1655,22 @@ def _merge_exact_trace_contribution_rows(
     cache publication.
     """
 
+    coverage_fields = (
+        "cost_known_subtotal",
+        "known_cost_fact_count",
+        "unknown_cost_fact_count",
+    )
+    has_coverage = bool(batches) and all(
+        all(field in columns for field in coverage_fields)
+        or (
+            bool(rows)
+            and all(
+                isinstance(row, dict) and all(field in row for field in coverage_fields)
+                for row in rows
+            )
+        )
+        for rows, columns in batches
+    )
     merged: dict[Any, dict[str, Any]] = {}
     for rows, columns in batches:
         for row in rows:
@@ -1657,6 +1685,9 @@ def _merge_exact_trace_contribution_rows(
                     "latency_sum": 0,
                     "total_tokens": 0,
                     "cost_sum": Decimal(0),
+                    "cost_known_subtotal": Decimal(0),
+                    "known_cost_fact_count": 0,
+                    "unknown_cost_fact_count": 0,
                     "traffic_count": 0,
                     "prompt_tokens": 0,
                     "completion_tokens": 0,
@@ -1670,6 +1701,11 @@ def _merge_exact_trace_contribution_rows(
             state["cost_sum"] += Decimal(
                 str(_row_value(row, columns, "cost_sum", 0) or 0)
             )
+            state["cost_known_subtotal"] += Decimal(
+                str(_row_value(row, columns, "cost_known_subtotal", 0) or 0)
+            )
+            for field in ("known_cost_fact_count", "unknown_cost_fact_count"):
+                state[field] += int(_row_value(row, columns, field, 0) or 0)
             state["traffic_count"] += int(
                 _row_value(row, columns, "traffic_count", 0) or 0
             )
@@ -1697,6 +1733,15 @@ def _merge_exact_trace_contribution_rows(
                 "avg_latency": state["latency_sum"] / denominator,
                 "total_tokens": state["total_tokens"],
                 "avg_cost": float(state["cost_sum"] / denominator),
+                **(
+                    {
+                        "cost_known_subtotal": float(state["cost_known_subtotal"]),
+                        "known_cost_fact_count": state["known_cost_fact_count"],
+                        "unknown_cost_fact_count": state["unknown_cost_fact_count"],
+                    }
+                    if has_coverage
+                    else {}
+                ),
                 "traffic_count": count,
                 "prompt_tokens": state["prompt_tokens"],
                 "completion_tokens": state["completion_tokens"],
@@ -1722,6 +1767,8 @@ def _merge_exact_trace_contribution_rows(
         "completion_tokens",
         "error_rate",
     ]
+    if has_coverage:
+        columns.extend(coverage_fields)
     return rows, columns
 
 
@@ -2310,7 +2357,12 @@ def read_exact_eval_graph(
     )
     if not output_type:
         output_type = config.eval_template.config.get("output", "SCORE")
-    choices = list(req_data_config.get("choices") or config.eval_template.choices or [])
+    # Request/display choices must never narrow scalar-result validity. Prefer
+    # the configured vocabulary even when the request supplies only one series.
+    valid_choices = list(
+        config.eval_template.choices or req_data_config.get("choices") or []
+    )
+    choices = list(req_data_config.get("choices") or valid_choices)
     if not all_series and str(output_type).upper() in {"CHOICE", "CHOICES"}:
         selected = req_data_config.get("value")
         choices = [str(selected)] if selected not in (None, "") else choices[:1]
@@ -2352,6 +2404,7 @@ def read_exact_eval_graph(
         eval_output_type=output_type,
         eval_name=config.name,
         choices=choices,
+        valid_choices=valid_choices,
         # Session filters are compiled exactly once by the shared per-session
         # selector. Passing them to the generic trace builder as well would
         # reinterpret aggregate/message fields as raw span attributes.
@@ -2367,6 +2420,10 @@ def read_exact_eval_graph(
             else ()
         ),
     )
+    # Validate source capability even for an empty window: unsupported lifecycle
+    # must be unavailable, not a successful empty quality series. Building the
+    # statement does not execute a ClickHouse read.
+    query, params = builder.build()
     if empty:
         formatted = builder.format_result([], [])
         series = formatted if isinstance(formatted, list) else [formatted]
@@ -2376,7 +2433,6 @@ def read_exact_eval_graph(
             rows_returned=0,
         )
     else:
-        query, params = builder.build()
         result = _execute_direct_exact_graph_query(
             analytics=analytics,
             query=query,
@@ -3843,6 +3899,22 @@ def _is_user_date_filter(item: dict[str, Any]) -> bool:
     )
 
 
+def _user_filters_need_trace_latency(filters: list[dict[str, Any]]) -> bool:
+    """Whether a post-aggregate filter reads the user's average trace latency.
+
+    Mirrors the output-filter routing of ``_user_filter_clauses``, including
+    every list alias of ``avg_trace_latency``.
+    """
+
+    for item in filters:
+        if _is_user_date_filter(item) or _is_raw_attribute_filter(item):
+            continue
+        column_id = item.get("column_id") or item.get("columnId")
+        if _USER_OUTPUT_FILTER_MAP.get(column_id) == "avg_trace_latency":
+            return True
+    return False
+
+
 def _user_filter_clauses(
     filters: list[dict[str, Any]],
     *,
@@ -4271,6 +4343,45 @@ def _user_aggregate_source_sql(
             "            toFloat64(0) AS avg_output_float"
         )
 
+    # Users list parity (user_list._user_trace_latency_ctes): reduce each
+    # canonical user/trace to one measured time envelope before averaging, so
+    # contained child spans never dilute a trace's latency. Like the eval
+    # columns, only a latency filter pays for the extra reduction.
+    latency_cte = ""
+    latency_join = ""
+    latency_column = "toFloat64(0) AS avg_trace_latency"
+    if _user_filters_need_trace_latency(filters):
+        latency_cte = """,
+        user_trace_durations AS (
+            SELECT
+                end_user_id,
+                trace_id,
+                if(
+                    countIf(isNotNull(latency_ms)) = 0,
+                    NULL,
+                    (
+                        max(toUnixTimestamp64Micro(start_time) + latency_ms * 1000)
+                        - minIf(
+                            toUnixTimestamp64Micro(start_time),
+                            isNotNull(latency_ms)
+                        )
+                    ) / 1000.0
+                ) AS duration_ms
+            FROM resolved_spans
+            GROUP BY end_user_id, trace_id
+        ),
+        user_trace_latency AS (
+            SELECT end_user_id, avg(duration_ms) AS avg_trace_latency
+            FROM user_trace_durations
+            GROUP BY end_user_id
+        )"""
+        latency_join = (
+            "LEFT JOIN user_trace_latency AS utl ON utl.end_user_id = usm.end_user_id"
+        )
+        latency_column = (
+            "coalesce(round(utl.avg_trace_latency, 2), 0) AS avg_trace_latency"
+        )
+
     # user_trace_ids is required internally when an eval field determines
     # membership, even if the caller itself only needs canonical user IDs.
     internal_trace_ids_select = (
@@ -4419,7 +4530,8 @@ def _user_aggregate_source_sql(
             toString(rs.trace_id) AS trace_id,
             rs.start_time AS start_time,
             rs.end_time AS end_time,
-            rs.cost AS cost,
+            if(rs.attrs_string['fi.usage.contribution'] = 'none', 0, rs.cost) AS cost,
+            {graph_cost_flags_sql(prefix="rs.")} AS graph_cost_flags,
             rs.total_tokens AS total_tokens,
             rs.prompt_tokens AS prompt_tokens,
             rs.completion_tokens AS completion_tokens,
@@ -4477,7 +4589,8 @@ def _user_aggregate_source_sql(
     user_span_metrics AS (
         SELECT
             end_user_id,
-            sum(ifNull(cost, 0)) AS total_cost,
+            if(countIf(graph_cost_flags.2) > 0, CAST(NULL, 'Nullable(Float64)'),
+               sum(ifNull(cost, 0))) AS total_cost,
             sum(toInt64(ifNull(total_tokens, 0))) AS total_tokens,
             sum(toInt64(ifNull(prompt_tokens, 0))) AS input_tokens,
             sum(toInt64(ifNull(completion_tokens, 0))) AS output_tokens,
@@ -4488,8 +4601,6 @@ def _user_aggregate_source_sql(
                 AND trace_session_id !=
                     toUUID('00000000-0000-0000-0000-000000000000')
             ) AS num_sessions,
-            coalesce(round(avgIf(latency_ms, isNotNull(latency_ms)), 2), 0)
-                AS avg_trace_latency,
             countIf(observation_type = 'llm') AS num_llm_calls,
             uniqExactIf(trace_id, observation_type = 'guardrail')
                 AS num_guardrails_triggered,
@@ -4504,7 +4615,7 @@ def _user_aggregate_source_sql(
         GROUP BY end_user_id
         HAVING {user_membership}
     )
-    {eval_cte},
+    {eval_cte}{latency_cte},
     user_rows AS (
         SELECT
             ud.user_id AS user_id,
@@ -4514,7 +4625,7 @@ def _user_aggregate_source_sql(
             usm.output_tokens AS output_tokens,
             usm.num_traces AS num_traces,
             usm.num_sessions AS num_sessions,
-            usm.avg_trace_latency AS avg_trace_latency,
+            {latency_column},
             usm.num_llm_calls AS num_llm_calls,
             usm.num_guardrails_triggered AS num_guardrails_triggered,
             usm.num_active_days AS num_active_days,
@@ -4531,6 +4642,7 @@ def _user_aggregate_source_sql(
         INNER JOIN user_dimensions AS ud
           ON ud.end_user_id = usm.end_user_id
         {eval_join}
+        {latency_join}
         {valid_user_predicate}
     )
     SELECT *
@@ -4809,6 +4921,11 @@ def read_exact_user_system_graph(
                     "timestamp": point.get("timestamp"),
                     "value": point.get("value", 0),
                     "primary_traffic": traffic.get(point.get("timestamp"), 0),
+                    **(
+                        {"cost_coverage": point["cost_coverage"]}
+                        if "cost_coverage" in point
+                        else {}
+                    ),
                 }
                 for point in formatted.get(metric_key, [])
             ],

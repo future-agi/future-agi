@@ -15,7 +15,7 @@ import {
 const UploadScriptOption = ({ control }) => {
   const fieldName = "config.scriptUrl";
   const { enqueueSnackbar } = useSnackbar();
-  const { field } = useController({
+  const { field, fieldState } = useController({
     name: fieldName,
     control,
   });
@@ -83,7 +83,7 @@ const UploadScriptOption = ({ control }) => {
         <RHFUpload
           control={control}
           showDropRejection={false}
-          name="fieldName"
+          name={fieldName}
           hidePreview={true}
           uploadIcon={
             <SvgColor
@@ -94,7 +94,15 @@ const UploadScriptOption = ({ control }) => {
           heading="Upload Script"
           description="Upload AI agent scripts for testing scenarios (TEXT/PDF)"
           actionButton={
-            <Button size="small" variant="outlined" color="primary">
+            // field.ref lets a failed Create focus and scroll to this button
+            // when the script file is missing.
+            <Button
+              ref={field.ref}
+              aria-invalid={fieldState.invalid || undefined}
+              size="small"
+              variant="outlined"
+              color="primary"
+            >
               Browse Files
             </Button>
           }

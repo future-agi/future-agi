@@ -24,7 +24,7 @@ spec:
 ---
 {{ include "futureagi.hpa" (dict "root" . "component" "agentcc-gateway" "name" (include "futureagi.component" $ctx) "autoscaling" $g.autoscaling) }}
 {{- end }}
-{{- if $g.pdb.enabled }}
+{{- if and $g.pdb.enabled (not (and .Values.hosted.enabled .Values.hosted.singleReplica)) }}
 ---
 {{ include "futureagi.pdb" (dict "root" . "component" "agentcc-gateway" "name" (include "futureagi.component" $ctx) "pdb" $g.pdb) }}
 {{- end }}

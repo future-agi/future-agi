@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: calendly
+version: 1.0.0
+name: Calendly
+description: "Event types, availability, scheduled events and bookings in Calendly."
+vendor:
+  name: Calendly
+  domains: [calendly.com]
+eeCategory: productivity
+group: other
+categories: [productivity, scheduling]
+tags: [meetings, bookings, availability]
+docsUrl: https://developer.calendly.com/docs/mcp/calendly-mcp-server
+archetype: calendar
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developer.calendly.com/docs/mcp/calendly-mcp-server
+    fetchedAt: 2026-10-21

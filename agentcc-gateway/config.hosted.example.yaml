@@ -1,0 +1,52 @@
+# Default-OFF preparation; set AGENTCC_DEPLOYMENT_PROFILE=hosted in the
+# operator's environment. This file cannot select or weaken that profile.
+# AGENTCC_HOSTED_ONEKEY_ACTIVATION=false (unset also means OFF). Only an
+# operator may set true after the final money pair, strict walks, 707.2 ops
+# prerequisites and owner go. Helm: hosted.onekeyActivation (default false).
+# Activation permits managed:true only with api_format: openai and type unset
+# or openrouter, credential-free HTTPS, trusted CA/hostname, no skip_tls/local,
+# no private/loopback/development URLs and no fallback/failover/retry profile.
+# Startup verifies TLS before discovery; -check-config stays network-free.
+# The converged release must also carry the mixed-hop guard for request/org/auto
+# chains; refusing this file's global profile is not runtime hop qualification.
+# Ops: non-evicting Redis; coordinated gateway+Django images/migrations; explicit
+# max_concurrent/conn_pool_size per provider; account rate limits sized for load.
+# Nothing here provisions or funds a provider, opts an org in, or enables MCP.
+# All ${...} settings are required, injected from deployment secret references.
+# Do not put credential values in this file. No providers are funded here.
+server:
+  host: 0.0.0.0
+  port: 8080
+  default_request_timeout: 60s
+  max_request_timeout: 300s
+  shutdown_timeout: 30s
+  # Exact proxy address/CIDR, not trusted_hops or a wildcard.
+  trusted_proxies:
+    - ${AGENTCC_TRUSTED_PROXY_CIDR}
+auth:
+  enabled: true
+admin:
+  token: ${AGENTCC_ADMIN_TOKEN}
+control_plane:
+  url: ${AGENTCC_CONTROL_PLANE_URL}
+  admin_token: ${AGENTCC_ADMIN_TOKEN}
+  webhook_secret: ${AGENTCC_WEBHOOK_SECRET}
+  sync_on_startup: true
+  sync_interval: 60s
+guardrails:
+  enabled: true
+redis:
+  enabled: true
+  address: ${AGENTCC_REDIS_ADDRESS}
+  password: ${AGENTCC_REDIS_PASSWORD}
+  timeout: 1s
+  db: 4
+providers: {}
+tools:
+  enabled: false
+mcp:
+  enabled: false
+  dev_insecure_state: false
+  allow_anonymous_dev: false
+org_providers:
+  allow_private_urls: false

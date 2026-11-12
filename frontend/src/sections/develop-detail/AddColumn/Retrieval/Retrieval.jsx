@@ -1,9 +1,12 @@
 import { Box, Drawer, IconButton, Typography } from "@mui/material";
-import React, { useEffect } from "react";
+import _ from "lodash";
+import React, { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import Iconify from "src/components/iconify";
 
 import PropTypes from "prop-types";
+import RerunScopeField from "../RerunScopeField";
+import { withRerunScope } from "../rerunScope";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useParams } from "react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -22,6 +25,8 @@ import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "src/components/show";
+import { rerunResultToast } from "../rerunResult";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const getDefaultValue = () => {
   return {
@@ -29,6 +34,29 @@ const getDefaultValue = () => {
     subType: "",
   };
 };
+
+// The form's fields are camelCase; POST add_vector_db_column/ (which refuses
+// unknown fields) and the vector_db rerun config take snake_case keys
+// (api_key, index_name, top_k, query_key, vector_length, embedding_config,
+// ...). Spreading the camelCase keys made every UI create a 400 and every
+// edit keep its stored embedding_config. Top-level keys only: the
+// embedding_config value keeps its own `type`/`model` keys.
+export const retrievalFormToApi = (formValues) => {
+  const { newColumnName, subType: st, columnId, kbId, ...rest } = formValues;
+  return {
+    ..._.mapKeys(rest, (_value, key) => _.snakeCase(key)),
+    new_column_name: newColumnName,
+    sub_type: st,
+    ...(columnId && { column_id: columnId }),
+    ...(kbId && { kb_id: kbId }),
+  };
+};
+
+// Saved column metadata (GET operation config) is snake_case; load it into
+// the form's camelCase fields. camelCase input (a conditional column's
+// retrieval branch) comes back unchanged.
+export const retrievalApiToForm = (data) =>
+  data && _.mapKeys(data, (_value, key) => _.camelCase(key));
 
 export const RetrievalChild = ({
   initialData,
@@ -54,7 +82,7 @@ export const RetrievalChild = ({
 
   useEffect(() => {
     if (initialData) {
-      reset(initialData);
+      reset(retrievalApiToForm(initialData));
     } else if (!editId) {
       // Reset to default values when opening for new column (no editId)
       reset(getDefaultValue());
@@ -62,6 +90,7 @@ export const RetrievalChild = ({
   }, [initialData, reset, editId]);
 
   const { mutate: addColumn, isPending: isSubmitting } = useMutation({
+    /** @param {ReturnType<typeof retrievalFormToApi>} data */
     mutationFn: (data) =>
       axios.post(endpoints.develop.addColumns.addVectorDBColumn(dataset), data),
     onSuccess: () => {
@@ -93,6 +122,7 @@ export const RetrievalChild = ({
     mutate: preview,
     isPending: isPreviewPending,
   } = useMutation({
+    /** @param {ReturnType<typeof retrievalFormToApi>} data */
     mutationFn: (data) =>
       axios.post(
         endpoints.develop.addColumns.preview(dataset, "vector_db"),
@@ -116,44 +146,38 @@ export const RetrievalChild = ({
         endpoints.develop.addColumns.updateDynamicColumn(editId),
         data,
       ),
-    onSuccess: () => {
-      enqueueSnackbar("API Call column updated successfully", {
-        variant: "success",
-      });
+    onSuccess: (res) => {
+      const toast = rerunResultToast("Retrieval", res);
+      enqueueSnackbar(toast.text, { variant: toast.variant });
       refreshGrid();
       onClose();
     },
   });
 
-  const transformFormToApi = (formValues) => {
-    const { newColumnName, subType: st, columnId, kbId, ...rest } = formValues;
-    return {
-      ...rest,
-      new_column_name: newColumnName,
-      sub_type: st,
-      ...(columnId && { column_id: columnId }),
-      ...(kbId && { kb_id: kbId }),
-    };
-  };
-
+  const [rerunScope, setRerunScope] = useState("all");
   const onSubmit = (formValues) => {
     if (editId) {
-      updateColumn({
-        config: { ...transformFormToApi(formValues) },
-        operation_type: "vector_db",
-      });
+      updateColumn(
+        withRerunScope(
+          {
+            config: { ...retrievalFormToApi(formValues) },
+            operation_type: "vector_db",
+          },
+          rerunScope,
+        ),
+      );
       return;
     }
     if (onFormSubmit) {
       onFormSubmit({ ...formValues, type: "retrieval" });
     } else {
-      addColumn(transformFormToApi(formValues));
+      addColumn(retrievalFormToApi(formValues));
     }
   };
 
   const handlePreview = handleSubmit((formValues) => {
     if (!onFormSubmit) {
-      preview(transformFormToApi(formValues));
+      preview(retrievalFormToApi(formValues));
     }
   });
 
@@ -182,17 +206,18 @@ export const RetrievalChild = ({
             mb: 2,
           }}
         >
-          <Typography fontWeight={700} color="text.secondary">
+          <Typography fontWeight={600} color="text.secondary">
             {editId ? "Edit Retrieval" : "Retrieval"}
           </Typography>
           <IconButton
+            aria-label="Close retrieval"
             onClick={() => {
               reset();
               onClose();
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Box
@@ -228,6 +253,9 @@ export const RetrievalChild = ({
           />
           {renderForm()}
         </Box>
+        {editId && (
+          <RerunScopeField value={rerunScope} onChange={setRerunScope} />
+        )}
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
           {!onFormSubmit && (
             <LoadingButton
@@ -286,19 +314,23 @@ const Retrieval = ({ initialData, onFormSubmit }) => {
     select: (data) => data?.data?.result?.metadata,
   });
 
+  const covered = useDrawerCovered(Boolean(openRetrieval));
   return (
     <Drawer
       anchor="right"
       open={Boolean(openRetrieval)}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
-      variant="persistent"
+      variant="temporary"
       PaperProps={{
+        role: "dialog",
+        "aria-modal": true,
+        "aria-label": "Retrieval",
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

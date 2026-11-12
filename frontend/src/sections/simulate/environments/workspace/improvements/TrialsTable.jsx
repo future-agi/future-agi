@@ -7,7 +7,7 @@ import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
 import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 
-import { runColor } from "../runs/runs.constants";
+import { runColor, runColorValue } from "../runs/runs.constants";
 
 import { outcomeLabel, pct, pts } from "./fixRunView";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
@@ -48,12 +48,13 @@ function PassCell({ rate }) {
 PassCell.propTypes = { rate: PropTypes.arrayOf(PropTypes.number) };
 
 // The design's trials table, contract columns only: what each trial tried,
-// how it ended, and its pass rate on the target scenarios.
+// how it ended, its pass rate on the target scenarios, and its check run.
 export default function TrialsTable({ fix }) {
   const location = useLocation();
   const trials = [...(fix.candidates || [])].sort(
     (a, b) => a.attempt - b.attempt,
   );
+  const fixLive = FIX_LIVE_STATES.has(fix.state);
   return (
     <Box
       sx={{
@@ -75,11 +76,23 @@ export default function TrialsTable({ fix }) {
         <Typography sx={head}>Trial</Typography>
         <Typography sx={head}>Status</Typography>
         <Typography sx={head}>Pass</Typography>
+        {!fixLive && <Typography sx={head}>Run</Typography>}
       </Box>
       {trials.map((c) => {
-        const fixLive = FIX_LIVE_STATES.has(fix.state);
         const live =
           c.outcome === "pending" && fixLive ? c.check_runs?.[0] : null;
+        // Once the fix ends, a trial that ran opens its check run, as the
+        // Per scenario tab's rows do.
+        const done =
+          !fixLive && c.outcome !== "pending" ? c.check_runs?.[0] : null;
+        const doneHref =
+          done?.run_id && done?.test_execution_id
+            ? paths.dashboard.simulate.environments.execution(
+                fix.environment_id,
+                done.run_id,
+                done.test_execution_id,
+              )
+            : null;
         return (
           <Box
             key={c.id}
@@ -105,11 +118,11 @@ export default function TrialsTable({ fix }) {
                   px: 0.75,
                   borderRadius: 0.75,
                   typography: "s3",
-                  fontWeight: 700,
+                  fontWeight: 600,
                   color: runColor(c.attempt),
                   bgcolor: (t) =>
                     alpha(
-                      runColor(c.attempt),
+                      runColorValue(t, c.attempt),
                       t.palette.mode === "dark" ? 0.22 : 0.14,
                     ),
                   flexShrink: 0,
@@ -148,6 +161,17 @@ export default function TrialsTable({ fix }) {
               </Typography>
             )}
             <PassCell rate={c.verdict?.target_pass_rate} />
+            {doneHref && (
+              <Link
+                component={RouterLink}
+                href={doneHref}
+                state={{ backTo: location.pathname }}
+                aria-label={`Open run for Trial ${c.attempt}`}
+                sx={{ typography: "s2", justifySelf: "start" }}
+              >
+                Open run
+              </Link>
+            )}
           </Box>
         );
       })}

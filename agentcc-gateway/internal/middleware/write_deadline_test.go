@@ -13,16 +13,20 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
-// productionChain wraps a handler the way the server does, so the deadline is
-// set through the same wrappers a real request passes — recovery's sentinel and
-// the license auth usage meter among them. Without each of those unwrapping,
+// productionChain wraps a handler the way the server does (server.go's
+// middleware order), so the deadline is set through the same wrappers a real
+// request passes — recovery's sentinel, the request-ID latency stamp and the
+// license auth usage meter among them. Without each of those unwrapping,
 // http.ResponseController cannot reach the connection and the deadline is
-// silently not set.
+// silently not set. The server package proves the same on the real server
+// (TestWriteDeadlineThroughTheServerChain).
 func productionChain(next http.Handler) http.Handler {
-	handler := Timeout(200 * time.Millisecond)(next)
-	handler = KeyAuth(nil, false)(handler)
+	handler := TimeoutSkipping(200*time.Millisecond, nil, []string{"/mcp"})(next)
+	handler = KeyAuth(nil, false, nil, GenAIRoot, "/mcp")(handler)
+	handler = TrustedClientIP(nil)(handler)
 	handler = LicenseAuth(config.LicenseAuthConfig{}, nil)(handler)
 	handler = RequestID(handler)
+	handler = CORS(config.CORSConfig{Enabled: true, AllowedOrigins: []string{"*"}})(handler)
 	return Recovery(handler)
 }
 

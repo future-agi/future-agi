@@ -103,11 +103,13 @@ class TestMemberRemoval:
         """Removing a member soft-deactivates their memberships (not hard delete)."""
         _remove_member(auth_client, member_user)
 
-        # Org membership still exists but is_active=False
-        org_mem = OrganizationMembership.objects.get(
+        # Org membership is retained as a soft-deleted, inactive row
+        org_mem = OrganizationMembership.all_objects.get(
             user=member_user, organization=organization
         )
         assert org_mem.is_active is False
+        assert org_mem.deleted is True
+        assert org_mem.deleted_at is not None
 
         # Workspace memberships deactivated
         ws_mems = WorkspaceMembership.objects.filter(
@@ -124,16 +126,27 @@ class TestMemberRemoval:
 
     def test_remove_member_preserves_data(self, auth_client, member_user, organization):
         """Soft-delete preserves the membership row for audit/re-invite."""
+        original_membership = OrganizationMembership.objects.get(
+            user=member_user, organization=organization
+        )
+        original_identity = (member_user.email, member_user.name)
         _remove_member(auth_client, member_user)
 
-        # Row still exists (not deleted from DB)
-        assert OrganizationMembership.objects.filter(
-            user=member_user, organization=organization
-        ).exists()
+        # The original row still exists with its identity and history intact
+        org_mem = OrganizationMembership.all_objects.get(pk=original_membership.pk)
+        assert org_mem.user_id == member_user.pk
+        assert org_mem.organization_id == organization.pk
+        assert org_mem.role == original_membership.role
+        assert org_mem.level == original_membership.level
+        assert org_mem.joined_at == original_membership.joined_at
+        assert org_mem.is_active is False
+        assert org_mem.deleted is True
+        assert org_mem.deleted_at is not None
 
         # User account still exists and is active
         member_user.refresh_from_db()
         assert member_user.is_active is True  # Account alive, just no org
+        assert (member_user.email, member_user.name) == original_identity
 
     def test_cannot_remove_last_owner(self, auth_client, user):
         """Cannot remove the only owner of the organization."""
@@ -404,13 +417,16 @@ class TestReInviteDeactivatedMember:
         self, auth_client, member_user, organization, workspace
     ):
         """Re-inviting a deactivated member restores their memberships."""
-        _remove_member(auth_client, member_user)
-
-        # Verify deactivated
         org_mem = OrganizationMembership.objects.get(
             user=member_user, organization=organization
         )
+        _remove_member(auth_client, member_user)
+
+        # Verify the original membership is retained but deactivated
+        org_mem = OrganizationMembership.all_objects.get(pk=org_mem.pk)
         assert org_mem.is_active is False
+        assert org_mem.deleted is True
+        assert org_mem.deleted_at is not None
 
         # Re-invite
         response = auth_client.post(
@@ -429,9 +445,13 @@ class TestReInviteDeactivatedMember:
         )
         assert response.status_code == status.HTTP_200_OK, response.json()
 
-        # Verify membership restored
-        org_mem.refresh_from_db()
+        # Verify the same membership is restored, not replaced
+        org_mem = OrganizationMembership.all_objects.get(pk=org_mem.pk)
         assert org_mem.is_active is True
+        assert org_mem.deleted is False
+        assert org_mem.deleted_at is None
+        assert org_mem.user_id == member_user.pk
+        assert org_mem.organization_id == organization.pk
 
         # Verify user's primary org restored
         member_user.refresh_from_db()

@@ -16,7 +16,7 @@ def backfill_credentials(apps, schema_editor):
     AgentDefinition = apps.get_model("simulate", "AgentDefinition")
     ProviderCredentials = apps.get_model("simulate", "ProviderCredentials")
 
-    for agent_def in AgentDefinition.objects.all():
+    for agent_def in AgentDefinition.objects.using(schema_editor.connection.alias).all():
         api_key = getattr(agent_def, "api_key", "") or ""
         assistant_id = getattr(agent_def, "assistant_id", "") or ""
 
@@ -26,7 +26,7 @@ def backfill_credentials(apps, schema_editor):
         provider = agent_def.provider or "vapi"
         provider_type = "retell" if provider == "retell" else "vapi"
 
-        ProviderCredentials.objects.create(
+        ProviderCredentials.objects.using(schema_editor.connection.alias).create(
             agent_definition=agent_def,
             provider_type=provider_type,
             api_key=encrypt_token(api_key) if api_key else "",

@@ -1,0 +1,22 @@
+# Jira and Confluence are one record, as in EE (its id atlassian): both are
+# reached through the Atlassian Rovo MCP Server.
+schema: "connector-manifest/v1#app"
+id: atlassian
+version: 1.0.0
+name: Jira and Confluence
+description: "Jira issues and Confluence pages."
+vendor:
+  name: Atlassian
+  domains: [atlassian.com]
+eeCategory: developer
+group: other
+categories: [developer, issue-tracking, knowledge-base]
+tags: [jira, confluence]
+docsUrl: https://developer.atlassian.com/cloud/rovo-mcp/
+archetype: issue-tracker
+defaultProvider: service-account-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developer.atlassian.com/cloud/rovo-mcp/
+    fetchedAt: 2026-10-20

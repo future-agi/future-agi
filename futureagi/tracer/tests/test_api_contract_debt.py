@@ -22,6 +22,22 @@ def _debt_report():
         return json.load(f)
 
 
+def _swagger():
+    with (_repo_root() / "api_contracts" / "openapi" / "swagger.json").open() as f:
+        return json.load(f)
+
+
+# The methods frontend/scripts/generate-management-api-contract-debt.mjs counts as operations.
+HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
+AGENT_CURVES_PATH = "/tracer/omega/agents/{agent_id}/curves/"
+
+
+def _group(path):
+    """The debt report's group: the path's first non-empty segment."""
+    segments = [segment for segment in path.split("/") if segment]
+    return segments[0] if segments else "root"
+
+
 def test_tracer_contract_debt_is_fully_burned_down():
     report = _debt_report()
     tracer_report = report["by_group"]["tracer"]
@@ -30,6 +46,47 @@ def test_tracer_contract_debt_is_fully_burned_down():
     assert tracer_report["operations_without_response_schema"] == 0
     assert tracer_report["operations_without_error_response_schema"] == 0
     assert tracer_report["broad_error_response_schemas"] == 0
+
+
+def test_the_debt_report_counts_the_checked_in_swagger():
+    """The debt report is generated from the checked-in swagger.json, so a regenerated
+    swagger.json with a stale report fails here, not only in the frontend contracts check."""
+    paths = _swagger()["paths"]
+    report = _debt_report()
+
+    def counts(selected):
+        operations = sum(
+            1 for path in selected for method in paths[path] if method in HTTP_METHODS
+        )
+        return len(selected), operations
+
+    tracer = [path for path in paths if _group(path) == "tracer"]
+    assert counts(tracer) == (
+        report["by_group"]["tracer"]["paths"],
+        report["by_group"]["tracer"]["operations"],
+    )
+    assert counts(list(paths)) == (
+        report["summary"]["paths"],
+        report["summary"]["operations"],
+    )
+
+
+def test_the_agent_curves_read_is_in_the_contract_with_its_schemas():
+    """GET /tracer/omega/agents/<id>/curves/ (P1-09) is documented as the generator writes it:
+    its query parameters, a response schema and the API error schema on every error status."""
+    operation = _swagger()["paths"][AGENT_CURVES_PATH]["get"]
+    responses = operation["responses"]
+
+    assert operation["operationId"] == "tracer_omega_agents_curves_read"
+    assert responses["200"]["schema"]["$ref"].startswith("#/definitions/")
+    for code in ("400", "404", "500", "503"):
+        assert responses[code]["schema"] == {"$ref": "#/definitions/ApiErrorResponse"}
+    query = {
+        parameter["name"]
+        for parameter in operation["parameters"]
+        if parameter["in"] == "query"
+    }
+    assert query == {"project_id", "start_date", "end_date"}
 
 
 def _tracer_saved_view_guard_cases():

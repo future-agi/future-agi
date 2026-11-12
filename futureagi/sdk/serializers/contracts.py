@@ -21,6 +21,19 @@ class SDKErrorResponseSerializer(serializers.Serializer):
     )
 
 
+class SDKAdmissionErrorResponseSerializer(SDKErrorResponseSerializer):
+    code = serializers.CharField()
+    error_code = serializers.CharField()
+    detail = serializers.CharField()
+    retryable = serializers.BooleanField()
+    dimension = serializers.CharField(required=False, allow_blank=True)
+    current_usage = serializers.FloatField(required=False)
+    limit = serializers.FloatField(required=False)
+    upgrade_cta = serializers.DictField(
+        child=serializers.CharField(), required=False,
+    )
+
+
 class ConfigureEvaluationsRequestSerializer(serializers.Serializer):
     eval_config = ConfigureEvaluationsSerializer()
     platform = serializers.CharField()

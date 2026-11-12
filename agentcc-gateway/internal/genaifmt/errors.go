@@ -13,35 +13,21 @@ import (
 // Redacted like the OpenAI-shaped writer: a dialect response is the same
 // boundary, and an upstream message can carry a credential in a URL.
 func WriteError(w http.ResponseWriter, code int, status string, message string) {
+	message = models.RedactCredentials(message)
+	resp := struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Status  string `json:"status"`
+		} `json:"error"`
+	}{}
+	resp.Error.Code = code
+	resp.Error.Message = message
+	resp.Error.Status = status
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(newErrorBody(code, status, message))
-}
-
-// errorBody is a Google error, as a response body and as a stream chunk.
-type errorBody struct {
-	Error struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Status  string `json:"status"`
-	} `json:"error"`
-}
-
-func newErrorBody(code int, status, message string) errorBody {
-	var body errorBody
-	body.Error.Code = code
-	body.Error.Message = models.RedactCredentials(message)
-	body.Error.Status = status
-	return body
-}
-
-// StreamErrorEvent is an error as a GenAI stream chunk. Once a stream has
-// sent its 200 the status can no longer change, so this chunk is the only way
-// left to tell the client the stream failed; the Google GenAI SDK raises on a
-// chunk that is an error object.
-func StreamErrorEvent(apiErr *models.APIError) []byte {
-	data, _ := json.Marshal(newErrorBody(apiErr.Status, MapStatusToGoogleStatus(apiErr.Status), apiErr.Message))
-	return fmt.Appendf(nil, "data: %s\n\n", data)
+	json.NewEncoder(w).Encode(resp)
 }
 
 // MapStatusToGoogleStatus maps HTTP status codes to Google error status strings.
@@ -66,8 +52,67 @@ func MapStatusToGoogleStatus(statusCode int) string {
 	}
 }
 
-// WriteAPIError converts a gateway APIError to Google error format.
+// WriteAPIError converts a gateway APIError to Google error format. Its
+// Retry-After is sent as models.WriteError sends it.
 func WriteAPIError(w http.ResponseWriter, apiErr *models.APIError) {
+	models.SetRetryAfter(w, apiErr)
 	status := MapStatusToGoogleStatus(apiErr.Status)
+	meta, _ := apiErr.Metadata.(map[string]any)
+	if _, attributed := meta["provider"]; attributed {
+		// Preserve native RPC semantics (e.g. FAILED_PRECONDITION versus
+		// INVALID_ARGUMENT). A provider credential failure still describes a
+		// gateway-side failure, not unauthenticated access to this gateway.
+		if upstream, ok := meta["provider_type"].(string); ok && validRPCErrorStatus(upstream) && apiErr.Code != "provider_auth_failed" {
+			status = upstream
+		}
+		// Google reserves error.code for the numeric HTTP status. Its
+		// standard ErrorInfo detail carries the stable gateway reason.
+		metadata := make(map[string]string, len(meta))
+		for k, v := range meta {
+			metadata[k] = models.RedactCredentials(fmt.Sprint(v))
+		}
+		resp := map[string]any{"error": map[string]any{
+			"code": apiErr.Status, "message": models.RedactCredentials(apiErr.Message), "status": status,
+			"details": []any{map[string]any{
+				"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": apiErr.Code,
+				"domain": "agentcc-gateway", "metadata": metadata,
+			}},
+		}}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(apiErr.Status)
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
 	WriteError(w, apiErr.Status, status, apiErr.Message)
+}
+
+// validRPCErrorStatus accepts google.rpc error codes, not arbitrary provider
+// strings (nor OK, which cannot describe an error response).
+func validRPCErrorStatus(status string) bool {
+	switch status {
+	case "CANCELLED", "UNKNOWN", "INVALID_ARGUMENT", "DEADLINE_EXCEEDED",
+		"NOT_FOUND", "ALREADY_EXISTS", "PERMISSION_DENIED", "RESOURCE_EXHAUSTED",
+		"FAILED_PRECONDITION", "ABORTED", "OUT_OF_RANGE", "UNIMPLEMENTED",
+		"INTERNAL", "UNAVAILABLE", "DATA_LOSS", "UNAUTHENTICATED":
+		return true
+	default:
+		return false
+	}
+}
+
+// StreamErrorEvent is apiErr as a GenAI stream (alt=sse) event: the error
+// body a request would get, as one data frame.
+func StreamErrorEvent(apiErr *models.APIError) []byte {
+	resp := struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Status  string `json:"status"`
+		} `json:"error"`
+	}{}
+	resp.Error.Code = apiErr.Status
+	resp.Error.Message = apiErr.Message
+	resp.Error.Status = MapStatusToGoogleStatus(apiErr.Status)
+	data, _ := json.Marshal(resp)
+	return []byte("data: " + string(data) + "\n\n")
 }

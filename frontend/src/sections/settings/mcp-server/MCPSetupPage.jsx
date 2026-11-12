@@ -1,13 +1,6 @@
+import ErrorState from "src/components/error-state";
 import React from "react";
-import {
-  Alert,
-  Box,
-  Button,
-  Stack,
-  Typography,
-  useTheme,
-} from "@mui/material";
-import SvgColor from "src/components/svg-color";
+import { Box, Button, Stack, Typography, useTheme } from "@mui/material";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useMCPConfig } from "src/api/mcp";
 import ClientSetupGuide from "./ClientSetupGuide";
@@ -15,21 +8,32 @@ import ToolGroupSelector from "./ToolGroupSelector";
 
 export default function MCPSetupPage() {
   const theme = useTheme();
-  const { data: config, isLoading, isError } = useMCPConfig();
+  // A failed read is shown on the page, once (no toast repeats it).
+  const {
+    data: config,
+    isLoading,
+    isError,
+    isRefetching,
+    refetch,
+  } = useMCPConfig({ meta: { errorHandled: true } });
 
-  if (isLoading) {
-    return (
-      <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />
-    );
+  // The loading and error screens are only for a page with nothing to show
+  // yet. Once a configuration is on screen it stays there while it is read
+  // again, even if that read fails, so the editor tab someone picked is kept.
+  if (!config && isLoading) {
+    return <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />;
   }
 
-  if (isError) {
+  if (!config && isError) {
     return (
-      <Box py={4}>
-        <Alert severity="error">
-          Failed to load MCP server configuration. Please try again later.
-        </Alert>
-      </Box>
+      <ErrorState
+        role="alert"
+        title="Failed to load MCP server configuration"
+        detail="Check your connection and retry."
+        onRetry={() => refetch()}
+        retrying={isRefetching}
+        sx={{ height: "auto", flexGrow: 0, py: 4 }}
+      />
     );
   }
 
@@ -66,29 +70,15 @@ export default function MCPSetupPage() {
           </Typography>
         </Box>
         <Button
+          component="a"
+          href={`${import.meta.env.BASE_URL}docs/mcp-server.html`}
+          target="_blank"
+          rel="noopener noreferrer"
           variant="outlined"
           size="small"
-          sx={{
-            borderRadius: "4px",
-            height: "30px",
-            px: "4px",
-            width: "105px",
-            flexShrink: 0,
-          }}
-          onClick={() => {
-            window.open(
-              "https://docs.futureagi.com/docs/tracing/auto/mcp/",
-              "_blank",
-            );
-          }}
+          sx={{ flexShrink: 0 }}
         >
-          <SvgColor
-            src="/assets/icons/agent/docs.svg"
-            sx={{ height: 16, width: 16, mr: 1 }}
-          />
-          <Typography typography="s2" fontWeight="fontWeightMedium">
-            View Docs
-          </Typography>
+          View Docs
         </Button>
       </Stack>
 

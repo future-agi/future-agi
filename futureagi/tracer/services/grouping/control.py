@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from tfc.ee_gating import is_oss
 from tracer.constants.grouping_versions import (
-    GROUPING_POLICY_VERSION,
+    SAMPLED_GROUPING_POLICY_VERSION,
     SAMPLED_GROUPING_POLICY_VERSIONS,
     SIMULATION_FEATURE_POLICY_VERSION,
     SIMULATION_GROUPING_POLICY_VERSION,
@@ -343,7 +343,7 @@ def _scope_for_report(report: TraceInvestigationReport) -> TraceGroupingScope:
                 SIMULATION_GROUPING_POLICY_VERSION
                 if report.workload_type
                 == InvestigationWorkload.SIMULATION_TEST_EXECUTION
-                else GROUPING_POLICY_VERSION
+                else SAMPLED_GROUPING_POLICY_VERSION
             ),
         },
     )

@@ -107,11 +107,8 @@ func TestCredential_TravelsInAHeaderNotTheURL(t *testing.T) {
 // The reported failure: when the call cannot complete, the error reaches the
 // caller and the request log. It must carry no credential.
 func TestCredential_IsAbsentFromAFailedCallsError(t *testing.T) {
-	// A server that is closed at once, so the call fails at the network level
-	// and Go builds a *url.Error carrying the whole URL.
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	url := server.URL
-	server.Close()
+	// Refuse the connection so Go builds a *url.Error carrying the whole URL.
+	url := "http://" + refusedAddr(t)
 
 	p, err := New("g", config.ProviderConfig{BaseURL: url, APIKey: testKey})
 	if err != nil {

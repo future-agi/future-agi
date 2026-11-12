@@ -34,6 +34,9 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.tasks.annotation_automation import run_due_automation_rules
+from model_hub.tests.test_feedback_rag_consumer_scope import (
+    _django_db_helper,  # noqa: F401 - only the transactional test uses isolated flush
+)
 from model_hub.utils.annotation_queue_helpers import (
     evaluate_rule,
     is_automation_rule_due,
@@ -599,7 +602,7 @@ class TestAutomationRulesE2E:
         assert QueueItem.objects.filter(queue_id=queue_id, deleted=False).count() == 0
 
     def test_filter_mode_dry_run_propagates_truncated_flag(
-        self, auth_client, organization, workspace
+        self, auth_client, organization, workspace, user
     ):
         """Filter-mode dry-run must propagate ``truncated`` from the resolver.
 
@@ -650,14 +653,15 @@ class TestAutomationRulesE2E:
             "model_hub.services.bulk_selection.resolve_filtered_trace_ids",
             return_value=ResolveResult(ids=[t1.id], total_matching=2, truncated=True),
         ):
-            result = _h.evaluate_rule(rule, dry_run=True, cap=1)
+            # F2 + AQ-AUTOMATION-UO-1: pass the authorized API actor explicitly.
+            result = _h.evaluate_rule(rule, dry_run=True, user=user, cap=1)
 
         assert result.get("truncated") is True, (
             f"dry_run must propagate truncated from the resolver; got {result!r}"
         )
 
     def test_filter_mode_overflow_is_all_or_nothing(
-        self, auth_client, organization, workspace
+        self, auth_client, organization, workspace, user
     ):
         """A cap+1 match proof must fail before creating any queue item."""
         from model_hub.services.bulk_selection import ResolveResult
@@ -689,7 +693,8 @@ class TestAutomationRulesE2E:
                 truncated=True,
             ),
         ):
-            result = evaluate_rule(rule, cap=10_000)
+            # F2 + AQ-AUTOMATION-UO-1: pass the authorized API actor explicitly.
+            result = evaluate_rule(rule, user=user, cap=10_000)
 
         assert result == {
             "matched": 10_001,
@@ -2878,7 +2883,7 @@ class TestAutomationRulesE2E:
     # -----------------------------------------------------------------------
     @pytest.mark.django_db(transaction=True)
     def test_concurrent_evaluators_serialise(
-        self, auth_client, organization, workspace
+        self, auth_client, organization, workspace, user
     ):
         """select_for_update on the rule must serialise concurrent fires.
         Two simultaneous evaluations of the same rule are expected to add
@@ -2918,9 +2923,12 @@ class TestAutomationRulesE2E:
             # Spawned threads get fresh connections that don't inherit the
             # test's thread-local workspace context — set it so the org-scoped
             # queries inside evaluate_rule resolve.
-            set_workspace_context(workspace=workspace, organization=organization)
+            # F2 + AQ-AUTOMATION-UO-1: context never substitutes for a run actor.
+            set_workspace_context(
+                workspace=workspace, organization=organization, user=user
+            )
             try:
-                results.append(evaluate_rule(rule))
+                results.append(evaluate_rule(rule, user=user))
             except Exception as exc:  # pragma: no cover - shouldn't fire
                 errors.append(repr(exc))
             finally:
@@ -3197,7 +3205,7 @@ class TestAutomationRuleEvaluateAsyncContract:
         assert call_kwargs["task_id"] == f"automation-rule-eval-{rule_id}"
 
     def test_async_overflow_email_reports_zero_write_ceiling(
-        self, auth_client, organization, workspace
+        self, auth_client, organization, workspace, user
     ):
         from model_hub.services.bulk_selection import ResolveResult
         from model_hub.tasks.annotation_automation import evaluate_rule_manual_async
@@ -3237,7 +3245,8 @@ class TestAutomationRuleEvaluateAsyncContract:
                 "model_hub.utils.annotation_queue_helpers.send_rule_completion_email"
             ) as send_email,
         ):
-            result = activity(str(rule_id))
+            # F2 + AQ-AUTOMATION-UO-1: retain the API actor in the worker payload.
+            result = activity(str(rule_id), triggered_by_user_id=str(user.pk))
 
         assert result["added"] == 0
         assert result["error"] == AUTOMATION_RULE_MATCH_LIMIT_ERROR

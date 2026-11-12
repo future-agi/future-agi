@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 
+from accounts.authentication import allows_no_organization
 from accounts.models.user import User
 from accounts.utils import get_request_organization
 from tfc.middleware.workspace_context import (
@@ -254,6 +255,7 @@ def _check_shared_link_access(request, token):
         410: SharedLinkResolveErrorSerializer,
     },
 )
+@allows_no_organization
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def resolve_shared_link(request, token):
@@ -448,13 +450,19 @@ def _resolve_shared_issue_trace(request, link, trace_id):
     view.request = request
     view.format_kwarg = None
     view.kwargs = {"pk": trace_id}
-    return trace_detail.retrieve_trace_detail_ch(
+    detail = trace_detail.retrieve_trace_detail_ch(
         view,
         scoped_request,
         trace_id,
         V2AnalyticsQueryService(),
         project_id=str(group.project_id),
     )
+    # Same rule as a shared trace link: a public issue link carries no
+    # annotation names or values; a restricted one keeps what the builder put
+    # on each span.
+    if link.access_type != AccessType.RESTRICTED:
+        _drop_shared_trace_annotations(detail)
+    return detail
 
 
 def _resolve_resource(link):
@@ -464,9 +472,6 @@ def _resolve_resource(link):
     """
     try:
         if link.resource_type == "trace":
-            from tracer.services.clickhouse.v2 import get_reader
-            from tracer.services.clickhouse.v2.span_reader import CHSpanReader
-
             trace_id = str(uuid.UUID(str(link.resource_id)))
             project_id = _get_shared_trace_project_id(
                 trace_id,
@@ -476,35 +481,9 @@ def _resolve_resource(link):
             if not project_id:
                 return None
 
-            # Spans read from CH 25.3. The reader returns CHSpan dataclasses;
-            # `to_django_dict()` shapes them like ObservationSpanSerializer
-            # output so the tree-building below stays unchanged.
-            with get_reader() as reader:
-                ch_spans = reader.list_by_trace(trace_id, project_id=project_id)
-            spans_data = [CHSpanReader.to_django_dict(s) for s in ch_spans]
-
-            # Build tree structure (parent→children)
-            span_map = {}
-            roots = []
-            for s in spans_data:
-                entry = {"observation_span": s, "children": []}
-                span_map[s["id"]] = entry
-
-            for s in spans_data:
-                parent_id = s.get("parent_span_id")
-                entry = span_map[s["id"]]
-                if parent_id and parent_id in span_map:
-                    span_map[parent_id]["children"].append(entry)
-                else:
-                    roots.append(entry)
-
-            return {
-                "trace": _shared_trace_header(trace_id, project_id, roots),
-                "observation_spans": roots,
-                "summary": {
-                    "total_spans": len(spans_data),
-                },
-            }
+            return _in_link_workspace(
+                link, _resolve_shared_trace, link, trace_id, project_id
+            )
 
         elif link.resource_type == "dashboard":
             from tracer.serializers.dashboard import DashboardDetailSerializer
@@ -542,6 +521,293 @@ def _resolve_resource(link):
     except Exception:
         logger.exception("Failed to resolve shared resource", link_id=str(link.id))
         return None
+
+
+def _resolve_shared_trace(link, trace_id, project_id):
+    from types import SimpleNamespace
+
+    from tracer.services.clickhouse.v2.query_builders import trace_detail
+    from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
+    from tracer.services.clickhouse.v2.trace_detail_reads import (
+        TraceDetailReadUnavailable,
+    )
+    from tracer.views.trace import TraceView
+
+    # The canonical builder includes project-authorized evaluations and their
+    # unavailable states. Neither its request nor its managers may use the
+    # viewer scope when resolving a share token.
+    scoped_request = SimpleNamespace(
+        organization=link.organization,
+        workspace=link.workspace,
+        user=link.created_by,
+    )
+    view = TraceView()
+    view.request = scoped_request
+    view.format_kwarg = None
+    view.kwargs = {"pk": trace_id}
+    try:
+        detail = trace_detail.retrieve_trace_detail_ch(
+            view,
+            scoped_request,
+            trace_id,
+            V2AnalyticsQueryService(),
+            project_id=project_id,
+        )
+    except TraceDetailReadUnavailable as exc:
+        # A trace over the full read's span, eval or annotation limit still
+        # opens through its link, with its spans only. Any other incomplete
+        # read (deadline, read budget, ClickHouse error) is raised as before.
+        if exc.code not in TraceView._TRACE_TOO_LARGE_MESSAGES:
+            raise
+        logger.warning(
+            "shared_trace_detail_limited",
+            link_id=str(link.id),
+            trace_id=trace_id,
+            reason=exc.code,
+        )
+        return _shared_trace_spans_only(trace_id, project_id, exc.code)
+    # Keep the shared header contract (project_id and created_at) while leaving
+    # the canonical span entries, rollups, summary and graph intact.
+    detail["trace"] = _shared_trace_header(
+        trace_id, project_id, detail["observation_spans"]
+    )
+    # Annotations leave only through a restricted ("Only specific people")
+    # link, whose access check has passed by now. A public link carries none:
+    # no label names, no values (a free-text value is a note), no annotator
+    # names, matching the page's "This link does not include annotations".
+    # The drop runs on the built detail, so the in-app trace detail keeps
+    # them. On a restricted link a failed annotation read leaves the tab
+    # empty; the trace still opens.
+    if link.access_type != AccessType.RESTRICTED:
+        _drop_shared_trace_annotations(detail)
+        return detail
+    try:
+        _attach_shared_annotations(
+            link, trace_id, project_id, detail["observation_spans"]
+        )
+    except Exception:
+        logger.exception("shared_trace_annotations_failed", link_id=str(link.id))
+    return detail
+
+
+def _shared_trace_spans_only(trace_id, project_id, reason):
+    """A shared trace too large for the full read: its spans as a tree.
+
+    One read of every span of the trace in its project, with no row cap, built
+    into the same parent and child tree the shared page renders. It carries no
+    evaluations and no annotations, on a public or a restricted link alike.
+    ``detail_limited`` and ``detail_limited_reason`` (the full read's limit
+    code) tell the page why they are missing.
+    """
+    from tracer.services.clickhouse.v2 import get_reader
+    from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+    # Spans read from CH 25.3. The reader returns CHSpan dataclasses;
+    # `to_django_dict()` shapes them like ObservationSpanSerializer output.
+    with get_reader() as reader:
+        ch_spans = reader.list_by_trace(trace_id, project_id=project_id)
+    spans_data = [CHSpanReader.to_django_dict(s) for s in ch_spans]
+
+    # Build tree structure (parent→children)
+    span_map = {}
+    roots = []
+    for s in spans_data:
+        entry = {"observation_span": s, "children": []}
+        span_map[s["id"]] = entry
+
+    for s in spans_data:
+        parent_id = s.get("parent_span_id")
+        entry = span_map[s["id"]]
+        if parent_id and parent_id in span_map:
+            span_map[parent_id]["children"].append(entry)
+        else:
+            roots.append(entry)
+
+    return {
+        "trace": _shared_trace_header(trace_id, project_id, roots),
+        "observation_spans": roots,
+        "summary": {
+            "total_spans": len(spans_data),
+        },
+        "detail_limited": True,
+        "detail_limited_reason": reason,
+    }
+
+
+def _drop_shared_trace_annotations(detail):
+    """Remove every annotation from a trace detail a public link returns.
+
+    The trace-detail builder puts ``annotations`` (label id, name, type and
+    value) on every span entry, children included; the restricted-link read
+    may add ``shared_annotations``. Both go. Nothing else in the detail
+    carries an annotation: the summary, graph and capture coverage are built
+    from the spans alone.
+    """
+    pending = list((detail or {}).get("observation_spans") or [])
+    while pending:
+        entry = pending.pop()
+        if not isinstance(entry, dict):
+            continue
+        entry.pop("annotations", None)
+        entry.pop("shared_annotations", None)
+        pending.extend(entry.get("children") or [])
+
+
+def _shared_annotator_label(user):
+    """An annotator as a shared link shows them: a name, never an email."""
+    if user is None:
+        return None
+    name = (user.name or "").strip()
+    return name if name and "@" not in name else "Annotator"
+
+
+def _attach_shared_annotations(link, trace_id, project_id, roots):
+    """Put on each span entry the annotations its Annotations tab lists.
+
+    Restricted links only: for a public link the caller drops every
+    annotation instead (``_drop_shared_trace_annotations``). On a restricted
+    link the tab otherwise reads ``/model-hub/scores/for-source/`` with the
+    viewer's own session, so an invited teammate outside the sharer's
+    organization saw "No annotations yet". This runs only inside the shared trace read: after the link's
+    access check, in the link's workspace (``_in_link_workspace``), for the
+    spans of the one trace the link names, pinned to that trace's project as
+    the owner's pinned read is. It reads and never writes.
+
+    Each entry gets ``shared_annotations``: ``scores`` (the span's and the
+    trace's, as the tab merges them) and ``span_notes`` (the span's and the
+    trace's whole-item notes). Annotators show by name only, and no queue ids
+    leave through a link.
+    """
+    from model_hub.models.annotation_queues import QueueItemNote
+    from model_hub.models.score import Score
+    from tracer.models.span_notes import SpanNotes
+
+    entries, span_ids = [], set()
+    pending = list(roots or [])
+    while pending:
+        entry = pending.pop()
+        entries.append(entry)
+        pending.extend(entry.get("children") or [])
+        span_id = (entry.get("observation_span") or {}).get("id")
+        if span_id:
+            span_ids.add(str(span_id))
+    if not span_ids:
+        return
+    trace_id = str(trace_id)
+
+    scores = (
+        Score.objects.filter(
+            models.Q(tracer_project_id=project_id)
+            | models.Q(tracer_project_id__isnull=True),
+            models.Q(source_type="observation_span", observation_span_id__in=span_ids)
+            | models.Q(source_type="trace", trace_id=trace_id),
+            organization=link.organization,
+            deleted=False,
+        )
+        .select_related("label", "annotator")
+        .order_by("label__name", "-created_at")
+    )
+    span_scores, trace_scores = {}, []
+    for score in scores:
+        is_span = score.source_type == "observation_span"
+        row = {
+            "id": str(score.id),
+            "source_type": score.source_type,
+            "source_id": str(score.observation_span_id if is_span else trace_id),
+            "label_id": str(score.label_id),
+            "label_name": score.label.name,
+            "label_type": score.label.type,
+            "value": score.value,
+            "score_source": score.score_source,
+            "notes": score.notes,
+            "annotator_name": _shared_annotator_label(score.annotator),
+            "updated_at": score.updated_at.isoformat() if score.updated_at else None,
+        }
+        if is_span:
+            span_scores.setdefault(str(score.observation_span_id), []).append(row)
+        else:
+            trace_scores.append(row)
+
+    # Whole-item notes, one per (annotator, queue item), as the owner's tab
+    # reads them: on the span's queue items and on the trace's.
+    queue_notes = (
+        QueueItemNote.objects.filter(
+            models.Q(queue_item__project_id=project_id)
+            | models.Q(queue_item__project_id__isnull=True),
+            models.Q(queue_item__observation_span_id__in=span_ids)
+            | models.Q(queue_item__trace_id=trace_id),
+            organization=link.organization,
+            queue_item__organization=link.organization,
+            queue_item__deleted=False,
+            deleted=False,
+        )
+        .select_related("annotator", "queue_item")
+        .order_by("-updated_at", "-created_at")
+    )
+    span_notes, trace_notes = {}, []
+    span_note_authors, trace_note_authors = {}, set()
+    seen = set()
+    for note in queue_notes:
+        key = (note.annotator_id, note.queue_item_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        row = {
+            "id": str(note.id),
+            "notes": note.notes,
+            "annotator": _shared_annotator_label(note.annotator),
+            "created_at": note.created_at.isoformat(),
+        }
+        item_span_id = note.queue_item.observation_span_id
+        if item_span_id and str(item_span_id) in span_ids:
+            span_notes.setdefault(str(item_span_id), []).append(row)
+            span_note_authors.setdefault(str(item_span_id), set()).add(
+                note.annotator_id
+            )
+        else:
+            trace_notes.append(row)
+            trace_note_authors.add(note.annotator_id)
+
+    # Legacy span notes carry no organization or project, and span ids repeat
+    # across organizations, so only notes by members of the link's
+    # organization come through.
+    legacy_notes = (
+        SpanNotes.objects.filter(span_id__in=span_ids)
+        .filter(
+            models.Q(created_by_user__organization=link.organization)
+            | models.Q(
+                created_by_user__organization_memberships__organization=(
+                    link.organization
+                ),
+                created_by_user__organization_memberships__is_active=True,
+                created_by_user__organization_memberships__deleted=False,
+            )
+        )
+        .select_related("created_by_user")
+        .distinct()
+        .order_by("-created_at")
+    )
+    for note in legacy_notes:
+        span_id = str(note.span_id)
+        if note.created_by_user_id in trace_note_authors or (
+            note.created_by_user_id in span_note_authors.get(span_id, set())
+        ):
+            continue
+        span_notes.setdefault(span_id, []).append(
+            {
+                "id": str(note.id),
+                "notes": note.notes,
+                "annotator": _shared_annotator_label(note.created_by_user),
+                "created_at": note.created_at.isoformat(),
+            }
+        )
+
+    for entry in entries:
+        span_id = str((entry.get("observation_span") or {}).get("id") or "")
+        entry["shared_annotations"] = {
+            "scores": span_scores.get(span_id, []) + trace_scores,
+            "span_notes": span_notes.get(span_id, []) + trace_notes,
+        }
 
 
 def _resolve_shared_call_execution(link):
@@ -701,7 +967,9 @@ def _shared_resource_exists(resource_type, resource_id, organization, workspace)
 
 def _workspace_scope_q(workspace, lookup):
     if not workspace:
-        return models.Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
     if getattr(workspace, "is_default", False):
         return (
             models.Q(**{lookup: workspace})

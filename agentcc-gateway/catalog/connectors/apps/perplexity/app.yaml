@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: perplexity
+version: 1.0.0
+name: Perplexity
+description: "Web search, answers, deep research and reasoning from Perplexity."
+vendor:
+  name: Perplexity
+  domains: [perplexity.ai]
+eeCategory: research
+group: other
+categories: [research, web-search]
+tags: [search, answers, reasoning]
+docsUrl: https://docs.perplexity.ai/docs/getting-started/integrations/mcp-server
+defaultProvider: api-key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.perplexity.ai/docs/getting-started/integrations/mcp-server
+    fetchedAt: 2026-10-21

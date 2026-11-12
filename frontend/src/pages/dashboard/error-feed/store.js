@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { create } from "zustand";
+import { captureFalconRequest } from "src/sections/falcon-ai/store/falconRequestGuard";
 
 /**
  * UI-only state for the Error Feed.
@@ -23,6 +24,10 @@ export const useErrorFeedStore = create((set, get) => ({
   sortDir: "desc",
   page: 0,
   pageSize: 25,
+  // Counts clearFilters calls. A clear can leave the stored search as it was
+  // (already empty), so the search box also watches this count to drop
+  // a search the user typed that hasn't been sent yet.
+  filtersClearedCount: 0,
 
   // ── Detail view state ──────────────────────────────────────────────────
   activeTab: "overview", // "overview" | "traces" | "trends" | "analyze"
@@ -57,6 +62,21 @@ export const useErrorFeedStore = create((set, get) => ({
   setSelectedFixLayer: (v) => set({ selectedFixLayer: v, page: 0 }),
   setSelectedSource: (v) => set({ selectedSource: v, page: 0 }),
   setTimeRange: (v) => set({ timeRange: v, page: 0 }),
+  // Clears the search and every filter the table counts as a filter. The
+  // time range is a window, not a filter, so it stays.
+  clearFilters: () =>
+    set((s) => ({
+      searchQuery: "",
+      selectedProject: "",
+      selectedEnvironment: "",
+      selectedStatus: "",
+      selectedSeverity: "",
+      selectedErrorType: "",
+      selectedFixLayer: "",
+      selectedSource: "",
+      page: 0,
+      filtersClearedCount: s.filtersClearedCount + 1,
+    })),
   setSortBy: (col) => {
     const { sortBy, sortDir } = get();
     if (sortBy === col) {
@@ -100,7 +120,8 @@ export const useErrorFeedStore = create((set, get) => ({
     set((s) => ({
       analyzePendingStartByCluster: {
         ...s.analyzePendingStartByCluster,
-        [clusterId]: value,
+        // The passive effect must retain the scope of the scheduling click.
+        [clusterId]: value ? captureFalconRequest() : null,
       },
     })),
   // Drops the pending-start flag for one cluster (removes the key rather

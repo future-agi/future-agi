@@ -4,10 +4,9 @@ Temporal activities for Imagine dynamic analysis.
 These run on the tasks_xl worker (LLM-heavy).
 """
 
-import asyncio
-
 import structlog
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from tfc.temporal.imagine.types import (
     FetchTraceInput,
@@ -22,18 +21,35 @@ logger = structlog.get_logger(__name__)
 async def fetch_trace_data(input: FetchTraceInput) -> str:
     """Fetch trace + spans from DB and format as context string for LLM."""
     from channels.db import database_sync_to_async
+    from django.core.exceptions import ValidationError
 
+    from tracer.models.project import Project
     from tracer.models.trace import Trace
     from tracer.services.clickhouse.v2 import get_reader
 
+    # Older workflow payloads decode without a project binding. Never fall
+    # back to an organization-only lookup for those in-flight executions.
+    if not input.project_id:
+        return f"Trace {input.trace_id} not found."
+
+    def _fetch_metadata():
+        project = Project.no_workspace_objects.get(
+            id=input.project_id,
+            organization_id=input.org_id,
+            deleted=False,
+        )
+        trace = (
+            Trace.no_workspace_objects.only("id", "project_id")
+            .filter(id=input.trace_id, deleted=False)
+            .first()
+        )
+        if trace is not None and trace.project_id != project.id:
+            raise Trace.DoesNotExist
+        return project, trace
+
     try:
-        trace = await database_sync_to_async(
-            lambda: Trace.objects.select_related("project").get(
-                id=input.trace_id,
-                project__organization_id=input.org_id,
-            )
-        )()
-    except Trace.DoesNotExist:
+        project, trace = await database_sync_to_async(_fetch_metadata)()
+    except (Project.DoesNotExist, Trace.DoesNotExist, ValidationError):
         return f"Trace {input.trace_id} not found."
 
     # Spans now come from ClickHouse via CHSpanReader. The legacy ORM
@@ -46,17 +62,20 @@ async def fetch_trace_data(input: FetchTraceInput) -> str:
 
     def _fetch_spans():
         try:
-            return reader.list_by_trace(str(input.trace_id))[:20]
+            return reader.list_by_trace(
+                str(input.trace_id), project_id=str(input.project_id)
+            )[:20]
         finally:
             reader.close()
 
     chspans = await database_sync_to_async(_fetch_spans)()
 
-    project_name = trace.project.name if trace.project else "?"
+    if trace is None and not chspans:
+        return f"Trace {input.trace_id} not found."
 
     lines = [
-        f"Trace ID: {trace.id}",
-        f"Project: {project_name}",
+        f"Trace ID: {trace.id if trace else input.trace_id}",
+        f"Project: {project.name}",
         f"Spans: {len(chspans)}",
         "",
     ]
@@ -92,20 +111,27 @@ async def fetch_trace_data(input: FetchTraceInput) -> str:
 @activity.defn
 async def run_llm_analysis(input: RunAnalysisInput) -> str:
     """Run LLM analysis using Falcon's LLM client. Returns markdown."""
+    # Fetch may have completed before deployment, so guard the persisted LLM
+    # activity payload independently of the fetch activity's validation.
+    if not input.project_id:
+        raise ApplicationError(
+            "Imagine project binding missing.",
+            type="ImagineProjectBindingMissing",
+            non_retryable=True,
+        )
+
     from tfc.ee_gating import EEFeature, check_ee_feature
 
     check_ee_feature(EEFeature.FALCON_AI, org_id=input.org_id, activity=True)
 
     try:
         from ee.falcon_ai.llm_client import FalconLLMClient
-    except ImportError:
-        from temporalio.exceptions import ApplicationError
-
+    except ImportError as exc:
         raise ApplicationError(
             "Falcon AI module not available.",
             type="FeatureUnavailable",
             non_retryable=True,
-        )
+        ) from exc
 
     client = FalconLLMClient()
 
@@ -138,19 +164,57 @@ async def run_llm_analysis(input: RunAnalysisInput) -> str:
 
 @activity.defn
 async def save_analysis_result(input: SaveResultInput) -> None:
-    """Save analysis result to DB."""
+    """Persist only bound results; quarantine unbound historical saves."""
     from channels.db import database_sync_to_async
+    from django.core.exceptions import ValidationError
+    from django.utils import timezone
+
+    unbound = not input.project_id or not input.org_id
+    workflow_id = activity.info().workflow_id
 
     def _save():
         from tracer.models.imagine_analysis import ImagineAnalysis
 
         try:
-            analysis = ImagineAnalysis.objects.get(id=input.analysis_id)
-            analysis.content = input.content
-            analysis.status = input.status
-            analysis.error = input.error
-            analysis.save(update_fields=["content", "status", "error", "updated_at"])
-        except ImagineAnalysis.DoesNotExist:
-            logger.warning("imagine_analysis_not_found", id=input.analysis_id)
+            if unbound:
+                # The payload cannot authorize a content write. Only the row
+                # linked to this executing workflow may receive fixed failure
+                # fields; never fall back to an id-only cleanup or persist any
+                # content/error/status from the legacy payload.
+                if not workflow_id:
+                    return
+                updated = ImagineAnalysis.objects.filter(
+                    id=input.analysis_id,
+                    workflow_id=workflow_id,
+                ).update(
+                    content="",
+                    status="failed",
+                    error="Imagine project binding missing.",
+                    updated_at=timezone.now(),
+                )
+            else:
+                # A current project match cannot certify historical context.
+                # Only the versioned executing workflow can write its result;
+                # an old run must not overwrite a freshly dispatched analysis.
+                if not (workflow_id or "").startswith("imagine-pb1-"):
+                    return
+                # Keep authorization and mutation in the same database write.
+                updated = ImagineAnalysis.objects.filter(
+                    id=input.analysis_id,
+                    workflow_id=workflow_id,
+                    project_id=input.project_id,
+                    organization_id=input.org_id,
+                    project__organization_id=input.org_id,
+                    project__deleted=False,
+                ).update(
+                    content=input.content,
+                    status=input.status,
+                    error=input.error,
+                    updated_at=timezone.now(),
+                )
+        except ValidationError:
+            updated = 0
+        if not updated:
+            logger.warning("imagine_analysis_not_found")
 
     await database_sync_to_async(_save)()

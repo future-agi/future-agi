@@ -1,0 +1,131 @@
+# FutureAGI's own Gmail connector: the agentcc-connectors runtime serves
+# these tools over MCP and calls the Gmail API with each user's Google token.
+# The tools are generated from Google's Gmail Discovery document, pinned by
+# sha256 at a commit of Google's Go client mirror (Google's live Discovery
+# service returns its keys in a new order on each fetch), and the curated
+# overlay beside this file (providers/futureagi-rest/tools.yaml).
+#
+# The OAuth client is the google group's: the organization's own Google
+# client, else FutureAGI's platform Google client. Gmail's readonly, compose
+# and modify scopes are restricted, so an External client needs Google's
+# restricted-scope verification and a yearly security assessment before
+# people outside its own Workspace can connect.
+#
+# include_granted_scopes is left out of the authorize request: with it,
+# Google's token would also carry the scopes the same client was granted for
+# another Google app (Calendar's, say), which this server does not need.
+#
+# No revocation endpoint is declared yet: a client group names one
+# revocation endpoint or none, and google-bigquery's provider in the same
+# group names none. Google's endpoint is https://oauth2.googleapis.com/revoke,
+# and revoking a token "removes all OAuth 2.0 scopes previously granted to a
+# project": it also ends the user's Calendar connection made with a client of
+# the same Cloud project.
+#
+# Not emitted to Omega: EE would take this provider for its built-in Gmail
+# app, and the runtime is not deployed yet; OSS receives no rest provider.
+#
+# Its cassette under fixtures/ is synthetic (no Google test account yet), so
+# it is marked unverified, and the provider stays at tier listed.
+schema: "connector-manifest/v1#provider"
+app: gmail
+id: futureagi-rest
+version: 1.0.0
+kind: rest
+publisher: futureagi
+vendorStatus:
+  label: ga
+  source: https://developers.google.com/workspace/gmail/api/guides
+transport:
+  kind: http
+  url: "https://{connectorsHost}/gmail/mcp"
+  variant: streamable
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://accounts.google.com/o/oauth2/v2/auth
+    tokenUrl: https://oauth2.googleapis.com/token
+    scopes:
+      - https://www.googleapis.com/auth/gmail.readonly
+      - https://www.googleapis.com/auth/gmail.compose
+      - https://www.googleapis.com/auth/gmail.send
+      - https://www.googleapis.com/auth/gmail.modify
+      - https://www.googleapis.com/auth/gmail.labels
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    extraAuthorizeParams:
+      access_type: offline
+      prompt: consent
+    refresh: { supported: true, rotates: false }
+    revocation:
+      url: https://oauth2.googleapis.com/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [preregistered]
+    clientGroup: google
+    review:
+      program: google_restricted_scopes
+      leadTime: P6W
+      source: https://support.google.com/cloud/answer/13463817?hl=en
+  verify: { tool: get_profile }
+tools:
+  source: operations
+  defaultPosture: ask
+  generated: tools.generated.json
+retry: { "on": [429, 500, 503], honorRetryAfter: true }
+pricing: { model: free }
+upstream:
+  spec:
+    url: https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/gmail/v1/gmail-api.json
+    format: google-discovery
+    sha256: f651441dcc942f428d92768e8b20c94a28ff82bf485b79872d9eef267a894225
+    licence: BSD-3-Clause (googleapis/google-api-go-client)
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: auth.oauth2.revocation.url
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.revocation.url
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://developers.google.com/workspace/gmail/api/auth/scopes
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.extraAuthorizeParams
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.refresh
+    url: https://developers.google.com/identity/protocols/oauth2/web-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://accounts.google.com/.well-known/openid-configuration
+    fetchedAt: 2026-10-21
+  - fact: retry
+    url: https://developers.google.com/workspace/gmail/api/guides/handle-errors
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

@@ -1,0 +1,64 @@
+# Intercom's MCP server with an Intercom access token as the bearer, the
+# second method Intercom's MCP page documents next to OAuth. A bearer token
+# uses no redirect URI, so it needs no entry on Intercom's redirect-URI
+# allowlist (the OAuth provider, mcp, does). The token needs the permissions
+# the page lists: read and list users and companies, read and write
+# conversations, read and write articles. Use Fin Operator is granted through
+# OAuth only, so the Fin Operator tools never appear on this connection. The
+# workspace's hosted region decides the host: US (mcp.intercom.com) or EU
+# (mcp.eu.intercom.com). AU-hosted workspaces are not served.
+schema: "connector-manifest/v1#provider"
+app: intercom
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://{mcpHost}/mcp
+  urlVariables:
+    mcpHost:
+      description: "Your workspace's hosted region: mcp.intercom.com (US, app.intercom.com) or mcp.eu.intercom.com (EU, app.eu.intercom.com)."
+      pattern: '^mcp(\.eu)?\.intercom\.com$'
+      default: mcp.intercom.com
+      scope: org
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Access token
+      help: "An Intercom access token with read users and companies, read and write conversations, and read and write articles. Fin Operator tools need OAuth."
+      helpUrl: https://developers.intercom.com/docs/guides/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.intercom.com/docs/guides/mcp
+    fetchedAt: 2026-11-11
+  - fact: transport.urlVariables.mcpHost
+    url: https://developers.intercom.com/docs/guides/mcp
+    fetchedAt: 2026-11-11
+  - fact: transport.urlVariables.mcpHost
+    url: https://mcp.eu.intercom.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: transport.variant
+    url: https://developers.intercom.com/docs/guides/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://developers.intercom.com/docs/guides/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.credentialParts
+    url: https://developers.intercom.com/docs/guides/mcp
+    fetchedAt: 2026-11-11
+x-omega: { oss: exclude }

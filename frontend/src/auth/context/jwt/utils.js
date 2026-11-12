@@ -45,6 +45,8 @@ export const setSession = (accessToken, organizationId) => {
     // On login, the provider will overwrite this with its sessionStorage value.
     if (organizationId)
       axios.defaults.headers.common["X-Organization-Id"] = organizationId;
+    else if (organizationId === null)
+      delete axios.defaults.headers.common["X-Organization-Id"];
     // NOTE: X-Workspace-Id is now managed by WorkspaceProvider via sessionStorage.
     // Do NOT set it here — this prevents cross-tab leakage.
   } else {

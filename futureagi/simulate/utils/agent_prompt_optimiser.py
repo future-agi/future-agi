@@ -1,5 +1,3 @@
-from typing import Optional
-
 import structlog
 from django.conf import settings
 from django.db import transaction
@@ -9,11 +7,11 @@ from django.db.models.functions import Round
 from model_hub.utils.dataset_optimization import calculate_percentage_point_change
 
 logger = structlog.get_logger(__name__)
-from simulate.constants.agent_prompt_optimiser import (
+from simulate.constants.agent_prompt_optimiser import (  # noqa: E402
     AGENT_PROMPT_OPTIMISER_RUN_STEPS,
     TRIAL_TABLE_BASE_COLUMNS,
 )
-from simulate.models import (
+from simulate.models import (  # noqa: E402
     AgentOptimiserRun,
     AgentPromptOptimiserRun,
     AgentPromptOptimiserRunStep,
@@ -23,11 +21,11 @@ from simulate.models import (
     SimulateEvalConfig,
     TrialItemResult,
 )
-from simulate.serializers.agent_prompt_optimiser import (
+from simulate.serializers.agent_prompt_optimiser import (  # noqa: E402
     AgentPromptOptimiserRunStepSerializer,
 )
-from simulate.utils.agent_optimiser import get_full_test_execution_data
-from simulate.utils.llm import get_api_key_for_model
+from simulate.utils.agent_optimiser import get_full_test_execution_data  # noqa: E402
+from simulate.utils.llm import get_api_key_for_model  # noqa: E402
 
 
 def fetch_agent_level_issues_from_run(optimiser_run: AgentOptimiserRun) -> list[dict]:
@@ -288,16 +286,19 @@ def run_agent_prompt_optimiser(prompt_optimiser_run_id: str) -> None:
     """
     Runs the agent prompt optimiser and stores the results.
     """
+    from simulate.utils.prompt_optimizer_scope import load_scoped_prompt_run
+
+    prompt_optimiser_run = load_scoped_prompt_run(prompt_optimiser_run_id)
     try:
         from ee.agenthub.fix_your_agent.fix_your_agent import FixYourAgent
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.fix_your_agent.fix_your_agent", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.fix_your_agent.fix_your_agent",
+                exc_info=True,
+            )
         return
 
-    prompt_optimiser_run = AgentPromptOptimiserRun.objects.get(
-        id=prompt_optimiser_run_id
-    )
     optimiser_run = prompt_optimiser_run.agent_optimiser_run
     test_execution = prompt_optimiser_run.test_execution
 
@@ -381,12 +382,12 @@ def get_agent_prompt_optimiser_run_steps(prompt_optimiser_run_id: str) -> list[d
 
 
 def update_agent_optimiser_run_step(
-    steps: Optional[list[dict]],
+    steps: list[dict] | None,
     step_number: int,
-    status: Optional[str] = None,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    error: Optional[str] = None,
+    status: str | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    error: str | None = None,
 ) -> None:
     """
     Helper to update agent prompt optimiser run step status.

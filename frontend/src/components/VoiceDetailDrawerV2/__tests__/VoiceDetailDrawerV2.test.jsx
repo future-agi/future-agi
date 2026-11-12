@@ -1,8 +1,29 @@
 /* eslint-disable react/prop-types */
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, userEvent } from "src/utils/test-utils";
 import VoiceDetailDrawerV2 from "../VoiceDetailDrawerV2";
+
+const traceDetail = vi.hoisted(() => ({ calls: [], result: undefined }));
+
+vi.mock("src/api/project/trace-detail", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useGetTraceDetail: (traceId, options) => {
+    traceDetail.calls.push([traceId, options]);
+    return { data: traceId ? traceDetail.result : undefined };
+  },
+}));
+
+vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
+  default: ({ open, traceId, currentTags }) =>
+    open ? (
+      <div
+        data-testid="add-tags-popover"
+        data-trace-id={traceId}
+        data-current-tags={JSON.stringify(currentTags)}
+      />
+    ) : null,
+}));
 
 vi.mock("src/components/traceDetail/DrawerToolbar", () => ({
   default: () => <div data-testid="drawer-toolbar" />,
@@ -14,9 +35,14 @@ vi.mock("../VoiceLeftPanel", () => ({
 
 vi.mock("../VoiceRightPanel", () => ({
   default: ({ onAction }) => (
-    <button type="button" onClick={() => onAction("queue")}>
-      Open queue action
-    </button>
+    <>
+      <button type="button" onClick={() => onAction("queue")}>
+        Open queue action
+      </button>
+      <button type="button" onClick={() => onAction("tags")}>
+        Open tags action
+      </button>
+    </>
   ),
 }));
 
@@ -178,5 +204,71 @@ describe("VoiceDetailDrawerV2 share resource", () => {
     const dialog = screen.getByTestId("share-dialog");
     expect(dialog).toHaveAttribute("data-resource-type", "call_execution");
     expect(dialog).toHaveAttribute("data-resource-id", "call-execution-1");
+  });
+});
+
+// OBS-SW-132: Add tags saves the whole tag list, so it must start from the
+// tags the call's trace already has, or saving deletes them.
+describe("VoiceDetailDrawerV2 Add tags", () => {
+  beforeEach(() => {
+    traceDetail.calls = [];
+    traceDetail.result = undefined;
+  });
+
+  const openedTags = () =>
+    JSON.parse(
+      screen.getByTestId("add-tags-popover").getAttribute("data-current-tags"),
+    );
+
+  it("starts from an Observe call's stored trace tags", async () => {
+    traceDetail.result = { trace: { tags: ["vip", "billing"] } };
+    const user = userEvent.setup();
+
+    renderWithClient(
+      <VoiceDetailDrawerV2
+        data={{
+          module: "project",
+          id: "trace-1",
+          trace_id: "trace-1",
+          project_id: "project-1",
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open tags action" }));
+
+    expect(screen.getByTestId("add-tags-popover")).toHaveAttribute(
+      "data-trace-id",
+      "trace-1",
+    );
+    expect(openedTags()).toEqual(["vip", "billing"]);
+    // The same arguments as CallDetailsBar's tag row, so the read is shared.
+    expect(traceDetail.calls).toContainEqual([
+      "trace-1",
+      { projectId: "project-1" },
+    ]);
+  });
+
+  it("keeps a simulation call's own tags without reading a trace", async () => {
+    traceDetail.result = { trace: { tags: ["not-this-call"] } };
+    const user = userEvent.setup();
+
+    renderWithClient(
+      <VoiceDetailDrawerV2
+        data={{
+          module: "simulate",
+          id: "call-execution-1",
+          trace_id: "trace-9",
+          tags: ["sim"],
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open tags action" }));
+
+    expect(openedTags()).toEqual(["sim"]);
+    expect(traceDetail.calls.every(([traceId]) => traceId === null)).toBe(true);
   });
 });

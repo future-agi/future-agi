@@ -2,6 +2,7 @@ import { LoadingButton } from "@mui/lab";
 import {
   Box,
   Button,
+  ButtonBase,
   Dialog,
   DialogActions,
   DialogContent,
@@ -38,6 +39,16 @@ const samplingRateMarks = [
   },
 ];
 
+// Caches that list Observe projects by name: the Tracing list
+// (ObserveListView), the bulk-delete list (ProjectWrapperView) and the header
+// project switcher (useProjectList). Invalidating marks inactive entries
+// stale, so they refetch on their next mount whatever their staleTime.
+const OBSERVE_PROJECT_LIST_KEYS = [
+  ["observe-projects"],
+  ["project-observe-list"],
+  ["project-list"],
+];
+
 const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
   const theme = useTheme();
   const queryClient = useQueryClient();
@@ -62,10 +73,29 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
     mode: "onChange",
   });
   const watchSamplingRate = watch("samplingRate");
+  const newProjectName = (watch("projectName") ?? "").trim();
+  // Ingestion finds a project by name and creates one when the name is
+  // missing, so a rename splits the traces unless the SDK name changes too.
+  const renameWarning =
+    module === "observe" &&
+    projectDetail?.name &&
+    newProjectName &&
+    newProjectName !== projectDetail.name
+      ? `Traces are matched by project name. Change the project name in your register() call to "${newProjectName}" too, or new traces will create a new project named "${projectDetail.name}".`
+      : undefined;
 
   const handleClose = () => {
     reset();
     onClose();
+  };
+
+  const invalidateProjectLists = () => {
+    if (module !== "observe") {
+      return;
+    }
+    OBSERVE_PROJECT_LIST_KEYS.forEach((queryKey) =>
+      queryClient.invalidateQueries({ queryKey }),
+    );
   };
 
   const { mutate: updateProject, isPending: isUpdating } = useMutation({
@@ -82,6 +112,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
       queryClient.invalidateQueries({
         queryKey: ["project-detail", id],
       });
+      invalidateProjectLists();
       handleClose();
       refreshGrid();
     },
@@ -116,6 +147,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
   };
 
   const handleDeleteSuccess = () => {
+    invalidateProjectLists();
     navigate(
       module === "observe" ? "/dashboard/observe" : "/dashboard/prototype",
     );
@@ -130,8 +162,8 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
         aria-labelledby="configure-dialog-title"
         PaperProps={{
           sx: {
-            width: 550,
-            maxWidth: 590,
+            width: 560,
+            maxWidth: 720,
             maxHeight: 450,
             display: "flex",
             flexDirection: "column",
@@ -155,13 +187,11 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               Configure Project
             </Box>
             <IconButton
+              size="small"
               aria-label="close-configure-project"
               onClick={handleClose}
-              sx={{
-                p: 0,
-              }}
             >
-              <Iconify icon="line-md:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
         </DialogTitle>
@@ -186,7 +216,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               placeholder="Enter project name"
               margin="normal"
               fullWidth
-              helperText={errors.projectName?.message}
+              helperText={errors.projectName?.message || renameWarning}
               isSpinnerField={false}
               fieldType="text"
             />
@@ -200,7 +230,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                   padding: 1.5,
                   border: "1px solid",
                   borderColor: "divider",
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                 }}
               >
                 <Box
@@ -247,9 +277,9 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                           fontWeight={"fontWeightMedium"}
                           sx={{
                             textDecoration: "underline",
-                            textDecorationColor: "blue.500",
+                            textDecorationColor: "status.info.fg",
                           }}
-                          color={"blue.500"}
+                          color={"status.info.fg"}
                         >
                           Docs
                         </Typography>
@@ -260,7 +290,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                     sx={{
                       border: "1px solid",
                       borderColor: "divider",
-                      borderRadius: 0.25,
+                      borderRadius: "4px",
                       display: "flex",
                       flexDirection: "row",
                       gap: 0.5,
@@ -294,9 +324,6 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                     "& .MuiSlider-thumb": {
                       width: 8,
                       height: 8,
-                      "&::before": {
-                        boxShadow: "0 2px 12px 0 rgba(0,0,0,0.4)",
-                      },
                       "&:hover, &.Mui-focusVisible": {
                         boxShadow: `0px 0px 0px 8px ${"rgb(0 0 0 / 16%)"}`,
                         ...t.applyStyles("dark", {
@@ -323,22 +350,16 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                     mt: -1.5,
                   }}
                 >
-                  <Typography
-                    typography="s2"
-                    fontWeight="fontWeightMedium"
-                    onClick={() => setValue("samplingRate", 0)}
-                    sx={{ cursor: "pointer" }}
-                  >
-                    0%
-                  </Typography>
-                  <Typography
-                    typography="s2"
-                    fontWeight="fontWeightMedium"
-                    onClick={() => setValue("samplingRate", 100)}
-                    sx={{ cursor: "pointer" }}
-                  >
-                    100%
-                  </Typography>
+                  <ButtonBase onClick={() => setValue("samplingRate", 0)}>
+                    <Typography typography="s2" fontWeight="fontWeightMedium">
+                      0%
+                    </Typography>
+                  </ButtonBase>
+                  <ButtonBase onClick={() => setValue("samplingRate", 100)}>
+                    <Typography typography="s2" fontWeight="fontWeightMedium">
+                      100%
+                    </Typography>
+                  </ButtonBase>
                 </Box>
               </Box>
             </ShowComponent>
@@ -357,7 +378,6 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               onClick={handleClose}
               sx={{
                 width: "90px",
-                textTransform: "none",
               }}
             >
               Cancel
@@ -370,7 +390,6 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               onClick={handleDeleteClick}
               sx={{
                 minWidth: "90px",
-                textTransform: "none",
               }}
             >
               Delete
@@ -383,7 +402,6 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               disabled={!isValid}
               sx={{
                 minWidth: "90px",
-                textTransform: "none",
               }}
               variant="contained"
               color="primary"

@@ -3,6 +3,14 @@ import PropTypes from "prop-types";
 import { Typography } from "@mui/material";
 
 export default function NumericCell({ value, sx }) {
+  if (
+    value === undefined ||
+    value === null ||
+    (typeof value === "string" && value.trim() === "")
+  ) {
+    return null;
+  }
+
   const numValue = Number(value);
   const safeValue = isNaN(numValue)
     ? "-"
@@ -24,6 +32,6 @@ export default function NumericCell({ value, sx }) {
 }
 
 NumericCell.propTypes = {
-  value: PropTypes.number.isRequired,
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   sx: PropTypes.object,
 };

@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "omega-hub-blocklist/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "generatedAt",
+    "entries",
+    "digests"
+  ],
+  "properties": {
+    "schema": {
+      "const": "omega-hub-blocklist/v1"
+    },
+    "generatedAt": {
+      "type": "string"
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ref",
+          "versions",
+          "digests",
+          "bundleSha256",
+          "category",
+          "at"
+        ],
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "versions": {
+            "type": "array"
+          },
+          "digests": {
+            "type": "array"
+          },
+          "bundleSha256": {
+            "type": "array"
+          },
+          "category": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "digests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "digest",
+          "bundleSha256",
+          "category",
+          "at"
+        ],
+        "properties": {
+          "digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bundleSha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "category": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

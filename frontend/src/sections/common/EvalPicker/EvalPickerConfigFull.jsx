@@ -1,3 +1,4 @@
+import { classicExperimentEvalSelection } from "src/launch/experimentExecutionPin";
 import {
   Box,
   Button,
@@ -7,8 +8,6 @@ import {
   Divider,
   FormControlLabel,
   IconButton,
-  MenuItem,
-  Select,
   Slider,
   TextField,
   Typography,
@@ -18,7 +17,19 @@ import { LoadingButton } from "@mui/lab";
 import { enqueueSnackbar } from "notistack";
 import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
 import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
+import { DecisionJudgesContext } from "src/sections/common/DecisionJudges/DecisionJudgesContext";
+import DecisionQuestionEditor from "src/sections/common/DecisionJudges/DecisionQuestionEditor";
+import {
+  decisionConfigErrors,
+  decisionModelOf,
+  defaultDecisionConfig,
+  outputKindOf,
+  questionTypeOf,
+  withModel,
+  withoutInstructions,
+} from "src/sections/common/DecisionJudges/decisionModels";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -55,7 +66,13 @@ import SimulationTestMode from "src/sections/evals/components/SimulationTestMode
 import CreateSimulationPreviewMode from "src/sections/evals/components/CreateSimulationPreviewMode";
 import TestPlayground from "src/sections/evals/components/TestPlayground";
 import VersionBadge from "src/sections/evals/components/VersionBadge";
+import { RECORDED_VERSION_TOOLTIP } from "src/sections/evals/Helpers/evalVersionCopy";
 import EvalTypeBadge from "src/sections/evals/components/EvalTypeBadge";
+import {
+  isTypedEvalType,
+  typedOwnJudgeOf,
+} from "src/sections/common/EvalTypes/typedEvalTypes";
+import TypedEvalBindingConfig from "src/sections/common/EvalTypes/TypedEvalBindingConfig";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
 import CompositeChildParams from "./CompositeChildParams";
 import {
@@ -83,6 +100,25 @@ import {
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
 import RequiredMark from "src/components/RequiredMark";
+import AllowNaSwitch from "./AllowNaSwitch";
+import {
+  bindingContextOptions,
+  bindingErrorLocalizerOf,
+  bindingRunConfigOf,
+  buildBindingSavePayload,
+  buildBindingVersionConfig,
+  reconcileBindingSave,
+  storedBindingPayload,
+} from "./bindingSavePayload";
+import useJuryDatasetInputs, {
+  withJuryInputs,
+} from "src/sections/evals/jury/useJuryDatasetInputs";
+import {
+  allowNaApplies,
+  stripLaunchAllowNa,
+  versionPinOf,
+} from "./allowNaModel";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const ERROR_LOCALIZER_LOCKED_TOOLTIP =
   "Error Localization isn't enabled for this workspace.";
@@ -118,13 +154,55 @@ const SOURCE_NAME_SLUGS = {
   composite: "composite",
 };
 
+// Hosts whose drawer saves an edited binding through edit_and_run_user_eval
+// (EvaluationDrawer's edit branch). There a present pinned_version_id is a
+// pure version selection, so an edited user-eval definition must leave
+// versionId unset to keep the create-version update.
+const CREATE_VERSION_EDIT_HOSTS = new Set([
+  "dataset",
+  "run-optimization",
+  "experiment",
+]);
+
 const getEvalPromptText = (evalData, config = {}) =>
   evalData?.instructions || config?.rule_prompt || "";
+
+// The judge model a saved binding names (edit mode), in its full form: a
+// bare Turing suffix ("small") the eval list sometimes returns maps back to
+// its canonical value, so the chip and the save keep the same model.
+const savedBindingModelOf = (evalData) => {
+  const m = evalData?.model ?? evalData?.selectedModel ?? null;
+  if (!m || typeof m !== "string") return null;
+  if (FAGI_MODEL_VALUES.has(m)) return m;
+  const full = [...FAGI_MODEL_VALUES].find((v) => v.endsWith(`_${m}`));
+  return full ?? m;
+};
+
+// A saved decision question (the binding's config.decision, a template's
+// config.jev_mapping), without the instructions an earlier draft carried.
+const savedDecisionOf = (config) =>
+  withoutInstructions(config?.decision ?? config?.jev_mapping ?? null);
+
+// The pass bar a saved binding carries in its run config. A run applies it
+// before the bar of the version it runs (resolve_pass_threshold).
+const savedBindingBarOf = (evalData) => {
+  const runConfig =
+    evalData?.run_config ||
+    evalData?.runConfig ||
+    evalData?.config?.run_config ||
+    {};
+  const bar = Number(runConfig.pass_threshold ?? runConfig.passThreshold);
+  return runConfig.pass_threshold == null && runConfig.passThreshold == null
+    ? null
+    : Number.isFinite(bar)
+      ? bar
+      : null;
+};
 
 const EvalPickerConfigFull = ({
   evalData,
   onBack,
-  onSave,
+  onSave: onSaveSelection,
   isSaving,
   progress = null,
   primaryLabel = null,
@@ -135,7 +213,9 @@ const EvalPickerConfigFull = ({
   const { locked: fagiLocked, isLoading: capsLoading } = useFeatureLocked(
     CAPABILITY.TURING_MODELS,
   );
-  const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  const { locked: agentEvalLocked, isLoading: agentCapsLoading } =
+    useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  const { isLoading: deploymentLoading } = useDeploymentMode();
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
   // Confirmed denial (loaded AND not allowed) — seed the model default raw and
   // only strip it here, never off `locked` (true while loading), so entitled
@@ -156,26 +236,39 @@ const EvalPickerConfigFull = ({
     onClose,
     requireInputs,
   } = useEvalPickerContext();
+  const bindingEdit = isEditMode && CREATE_VERSION_EDIT_HOSTS.has(source);
   const normalizedEvalData = useMemo(
     () => normalizeEvalPickerEval(evalData),
     [evalData],
   );
+  const onSave = (payload) =>
+    onSaveSelection(classicExperimentEvalSelection(payload, source));
   const templateId =
     evalData?.templateId || evalData?.template_id || evalData?.id;
   // ── Data (same hooks as EvalDetailPage) ──
-  const { data: fullEval, isLoading, isError } = useEvalDetail(templateId);
+  const {
+    data: fullEval,
+    isLoading,
+    isError,
+    refetch: refetchTemplate,
+  } = useEvalDetail(templateId);
   const normalizedFullEval = useMemo(
     () => normalizeEvalPickerEval(fullEval),
     [fullEval],
   );
-  const { data: versionsData } = useEvalVersions(templateId);
+  const {
+    data: versionsData,
+    isLoading: versionsLoading,
+    isError: versionsError,
+    refetch: refetchVersions,
+  } = useEvalVersions(templateId);
   const versions = useMemo(() => versionsData?.versions || [], [versionsData]);
   const updateEval = useUpdateEval(templateId);
   const createVersion = useCreateEvalVersion(templateId);
 
   // ── Editable state (mirrors EvalDetailPage) ──
   const [selectedVersionId, setSelectedVersionId] = useState(
-    evalData?.pinned_version_id ?? null,
+    evalData?.pinned_version_id ?? evalData?.pinnedVersionId ?? null,
   );
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState("");
@@ -189,7 +282,21 @@ const EvalPickerConfigFull = ({
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
+  // W1-4: the judge may answer N/A on this eval (config.allow_na), seeded
+  // from the card's saved config (a reopened card hands it over as
+  // run_config), else the binding's, else the template's; the populate
+  // effects below re-seed it once the template's detail arrives.
+  const [allowNa, setAllowNa] = useState(
+    Boolean(
+      evalData?.run_config?.allow_na ??
+        evalData?.bindingConfig?.allow_na ??
+        evalData?.config?.allow_na ??
+        fullEval?.config?.allow_na,
+    ),
+  );
   const [choiceScores, setChoiceScores] = useState({});
+  // W1: a decision-model judge's question (model, format, labels, levels).
+  const [decision, setDecision] = useState(null);
   const [multiChoice, setMultiChoice] = useState(false);
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
   const [fewShotExamples, setFewShotExamples] = useState([]);
@@ -209,16 +316,41 @@ const EvalPickerConfigFull = ({
   // Name for the UserEvalMetric — defaults to template name, user can customise
   const [evalName, setEvalName] = useState("");
   const [dataReady, setDataReady] = useState(false);
+  const [hydratedVersionId, setHydratedVersionId] = useState(undefined);
   const [isDirty, setIsDirty] = useState(false);
+  // W1-3: a reopened card keeps its version pin ("latest" or "v3", saved
+  // as config.version_pin), selected once the template's versions load.
+  const savedPin = evalData?.run_config?.version_pin ?? null;
+  const versionSelectionChanged = useRef(false);
   useEffect(() => {
-    const pinned =
-      evalData?.pinned_version_id ?? evalData?.pinnedVersionId ?? null;
-    if (pinned && !selectedVersionId && !isDirty) {
+    const byPin =
+      savedPin === "latest"
+        ? "latest"
+        : savedPin
+          ? versions.find((v) => `v${v.version_number}` === savedPin)?.id ??
+            null
+          : null;
+    const pinned = Object.prototype.hasOwnProperty.call(
+      evalData || {},
+      "pinned_version_id",
+    )
+      ? evalData.pinned_version_id
+      : Object.prototype.hasOwnProperty.call(evalData || {}, "pinnedVersionId")
+        ? evalData.pinnedVersionId
+        : byPin;
+    if (
+      pinned &&
+      !selectedVersionId &&
+      !isDirty &&
+      !versionSelectionChanged.current
+    ) {
       setSelectedVersionId(pinned);
     }
   }, [
     evalData?.pinned_version_id,
     evalData?.pinnedVersionId,
+    savedPin,
+    versions,
     selectedVersionId,
     isDirty,
   ]);
@@ -227,8 +359,48 @@ const EvalPickerConfigFull = ({
   const [testError, setTestError] = useState(null);
   const [sourceReady, setSourceReady] = useState(false);
   const [promptMessageError, setPromptMessageError] = useState("");
-  const [sourceMapping, setSourceMapping] = useState({});
+  const [sourceMapping, setSourceMapping] = useState(
+    () => evalData?.mapping || {},
+  );
   const sourceRef = useRef(null);
+  const locallySavedVersion = useRef(null);
+  const [initialBindingDraft, setInitialBindingDraft] = useState(null);
+  const [storedVersionConfig, setStoredVersionConfig] = useState(null);
+  const [savedBindingPayload, setSavedBindingPayload] = useState(null);
+  const [savedVersionBaseline, setSavedVersionBaseline] = useState(null);
+  const [baselineCandidate, setBaselineCandidate] = useState(null);
+  const [hydrationInputs, setHydrationInputs] = useState(null);
+  const hydrationReady =
+    Boolean(fullEval) &&
+    !isLoading &&
+    !capsLoading &&
+    !agentCapsLoading &&
+    !deploymentLoading;
+  const hydrationAccess = `${fagiLocked}:${agentEvalLocked}:${errorLocalizerAvailable}`;
+  const storedPinReference = Object.hasOwn(evalData || {}, "pinned_version_id")
+    ? evalData.pinned_version_id
+    : Object.hasOwn(evalData || {}, "pinnedVersionId")
+      ? evalData.pinnedVersionId
+      : savedPin;
+  const selectedVersion =
+    selectedVersionId === locallySavedVersion.current?.id
+      ? locallySavedVersion.current
+      : selectedVersionId === "latest"
+        ? versions[0]
+        : versions.find((v) => v.id === selectedVersionId);
+  const versionReady =
+    Boolean(versionsData) &&
+    !versionsLoading &&
+    (!storedPinReference || Boolean(selectedVersionId && selectedVersion));
+  const selectedBaseConfig = useMemo(
+    () =>
+      selectedVersion
+        ? selectedVersion.config_snapshot ||
+          selectedVersion.configSnapshot ||
+          {}
+        : fullEval?.config || evalData?.config || {},
+    [selectedVersion, fullEval, evalData],
+  );
 
   const localFormFilters = useWatch({
     control: localFilterForm.control,
@@ -276,11 +448,16 @@ const EvalPickerConfigFull = ({
   // `useCompositeDetail` only when the selected template is composite so
   // single-eval picks don't pay the round-trip cost. `compositeChildWeights`
   // is the state that flows into `composite_weight_overrides` on save.
-  const { data: compositeDetail } = useCompositeDetail(templateId, isComposite);
+  const {
+    data: compositeDetail,
+    isError: compositeError,
+    refetch: refetchComposite,
+  } = useCompositeDetail(templateId, isComposite);
   const compositeUnionKeys = useCompositeChildrenUnionKeys(
     compositeDetail?.children || [],
   );
   const [compositeChildWeights, setCompositeChildWeights] = useState({});
+  const [compositeReady, setCompositeReady] = useState(false);
   const compositePopulatedRef = useRef(false);
   useEffect(() => {
     if (!isComposite) return;
@@ -302,6 +479,7 @@ const EvalPickerConfigFull = ({
       });
     }
     setCompositeChildWeights(initial);
+    setCompositeReady(true);
     compositePopulatedRef.current = true;
   }, [isComposite, compositeDetail, evalData]);
   // Configuring a per-dataset attachment (UserEvalMetric) — NOT editing the
@@ -318,6 +496,11 @@ const EvalPickerConfigFull = ({
     normalizedFullEval?.currentVersion ||
     normalizedEvalData?.currentVersion ||
     "V1";
+  const selectedVersionNumber =
+    selectedVersion?.version_number ?? selectedVersion?.versionNumber ?? null;
+  const shownVersion = selectedVersionNumber
+    ? `V${selectedVersionNumber}`
+    : currentVersion;
 
   // Extract variables for the mapping panel. Priority:
   //   1. Composite: union of each child's required_keys (backend populates
@@ -428,7 +611,8 @@ const EvalPickerConfigFull = ({
     [isComposite, fullEval, compositeDetail, compositeChildWeights],
   );
 
-  const sourceModeVariables = useMemo(
+  // shared-edit(F68): add the saved jury's structured dataset inputs.
+  const baseSourceModeVariables = useMemo(
     () =>
       getSourceModeVariables({
         isComposite,
@@ -437,17 +621,51 @@ const EvalPickerConfigFull = ({
       }),
     [isComposite, variables, compositeUnionKeys],
   );
+  // hook(F68): map steps/checks through the ordinary dataset column picker.
+  const juryInputs = useJuryDatasetInputs(
+    templateId,
+    isComposite,
+    selectedVersionId,
+    [],
+    evalData?.bindingConfig,
+    setSelectedVersionId,
+    evalData?.mapping,
+  );
+  const sourceModeVariables = withJuryInputs(
+    baseSourceModeVariables,
+    juryInputs,
+  );
+  // shared-edit(F68): the dataset mapping keeps the complete composite union
+  // (compositeDetail), so a child definition still loading never prunes a
+  // saved mapping; the jury's inputs are added only when it shows.
+  const datasetModeVariables = withJuryInputs(variables, juryInputs);
 
   const hasValidPromptMessages = useMemo(
     () => evalType !== "llm" || hasNonEmptyPromptMessage(messages),
     [evalType, messages],
   );
   useEffect(() => {
-    if (!selectedVersionId || !versions.length || isDirty) return;
-    const version = versions.find((v) => v.id === selectedVersionId);
+    if (
+      !selectedVersionId ||
+      !versions.length ||
+      isDirty ||
+      (bindingEdit && (!hydrationReady || initialBindingDraft)) ||
+      locallySavedVersion.current?.id === selectedVersionId
+    )
+      return;
+    // W1-3: Latest loads the newest version (the list is newest first).
+    const loadId =
+      selectedVersionId === "latest" ? versions[0]?.id : selectedVersionId;
+    const version = versions.find((v) => v.id === loadId);
     if (!version) return;
 
-    const config = version.config_snapshot || version.configSnapshot || {};
+    const config = {
+      ...(version.config_snapshot || version.configSnapshot || {}),
+      ...(isEditMode
+        ? evalData?.bindingConfig || evalData?.binding_config || {}
+        : {}),
+      ...(isEditMode ? bindingRunConfigOf(evalData) : {}),
+    };
     const promptText = config.rule_prompt || version.criteria || "";
     const _type =
       normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
@@ -465,9 +683,40 @@ const EvalPickerConfigFull = ({
       setMessages([{ role: "system", content: promptText }]);
     }
 
-    setModel(config.model || fullEval?.model || "turing_large");
-    if (config.output) setOutputType(config.output);
-    if (config.pass_threshold != null) setPassThreshold(config.pass_threshold);
+    setModel(
+      (isEditMode ? savedBindingModelOf(evalData) : null) ||
+        config.model ||
+        fullEval?.model ||
+        "turing_large",
+    );
+    setCodeLanguage(config.language || "python");
+    setCodeParams(
+      evalData?.params ||
+        evalData?.storedBinding?.config?.params ||
+        config.params ||
+        {},
+    );
+    // W1: a version saved with a decision question brings it back.
+    setDecision(savedDecisionOf(config));
+    // L7c g7 (editor:output-type): a version's snapshot names its output
+    // "Pass/Fail" / "score" / "choices" (as Save version writes it); the
+    // radio's values are pass_fail / percentage / deterministic.
+    if (config.output)
+      setOutputType(
+        {
+          "Pass/Fail": "pass_fail",
+          pass_fail: "pass_fail",
+          score: "percentage",
+          percentage: "percentage",
+          choices: "deterministic",
+          deterministic: "deterministic",
+        }[config.output] ?? config.output,
+      );
+    // A reopened binding shows its own saved bar, the one its runs apply.
+    const bar =
+      (isEditMode ? savedBindingBarOf(evalData) : null) ??
+      config.pass_threshold;
+    if (bar != null) setPassThreshold(bar);
     if (config.choice_scores) setChoiceScores(config.choice_scores);
     if (config.multi_choice != null) setMultiChoice(!!config.multi_choice);
     if (config.template_format) setTemplateFormat(config.template_format);
@@ -481,26 +730,39 @@ const EvalPickerConfigFull = ({
         ? config.summary?.type
         : config.summary;
     if (summaryVal) setSummaryType(summaryVal);
-    if (Array.isArray(config.tools)) setConnectorIds(config.tools);
-    else if (config.tools && typeof config.tools === "object")
-      setConnectorIds(Object.keys(config.tools));
-    if (Array.isArray(config.knowledge_bases))
-      setKnowledgeBaseIds(config.knowledge_bases);
-    if (config.data_injection && typeof config.data_injection === "object") {
-      const opts = Object.entries(config.data_injection)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-      setContextOptions(opts.length ? opts : ["variables_only"]);
-    }
-    if (config.error_localizer_enabled != null) {
-      setErrorLocalizerEnabled(!!config.error_localizer_enabled);
-    }
+    setConnectorIds(
+      Array.isArray(config.tools)
+        ? config.tools
+        : Object.keys(config.tools || {}).filter((key) => config.tools[key]),
+    );
+    setKnowledgeBaseIds(config.knowledge_bases || []);
+    setContextOptions(bindingContextOptions(config.data_injection));
+    setErrorLocalizerEnabled(
+      isEditMode
+        ? bindingErrorLocalizerOf(evalData, config.error_localizer_enabled)
+        : Boolean(config.error_localizer_enabled),
+    );
+    // W1-4: the card's own N/A switch, else the version's.
+    setAllowNa(
+      Boolean(
+        evalData?.run_config?.allow_na ??
+          evalData?.bindingConfig?.allow_na ??
+          config.allow_na ??
+          fullEval?.config?.allow_na,
+      ),
+    );
 
     if (isEditMode) setEvalName(evalData?.name || fullEval?.name || "");
     setIsDirty(false);
     setDataReady(true);
+    setHydratedVersionId(selectedVersionId);
+    setHydrationInputs({ detail: fullEval, access: hydrationAccess });
     initialLoadDone.current = true;
   }, [
+    bindingEdit,
+    hydrationReady,
+    hydrationAccess,
+    initialBindingDraft,
     selectedVersionId,
     versions,
     isDirty,
@@ -519,18 +781,14 @@ const EvalPickerConfigFull = ({
     // instructions/error_localizer_enabled) are not dropped.
     if (
       fullEval &&
+      (!bindingEdit || (hydrationReady && !initialBindingDraft)) &&
       (!initialLoadDone.current || !isDirty) &&
       !selectedVersionId
     ) {
       // Merge template config with any saved runtime overrides from the
       // user eval (run_config). Edit mode: evalData.run_config holds the
       // previously saved model, agentMode, passThreshold, etc.
-      const rawRunConfig =
-        evalData?.run_config ||
-        evalData?.runConfig ||
-        evalData?.config?.run_config ||
-        evalData?.config?.runConfig ||
-        {};
+      const rawRunConfig = bindingRunConfigOf(evalData);
       const bindingConfig =
         evalData?.bindingConfig || evalData?.binding_config || {};
 
@@ -592,8 +850,10 @@ const EvalPickerConfigFull = ({
         if (normalizedRunConfig[key] === undefined)
           delete normalizedRunConfig[key];
       });
+      // Match Save version's base when detail has no config, so hydration
+      // does not overwrite the card's saved settings with editor defaults.
       const config = {
-        ...(fullEval.config || {}),
+        ...(fullEval.config || evalData?.config || {}),
         ...bindingConfig,
         ...normalizedRunConfig,
       };
@@ -610,11 +870,20 @@ const EvalPickerConfigFull = ({
       // and editors see clean data.
       const _type =
         normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
+      // Edit mode: an LLM eval's prompt is its saved system message (the
+      // editor keeps instructions = the system message as it is edited), so
+      // a reopened binding keeps the prompt it was saved with instead of
+      // the template's (a decision judge asks that prompt).
+      const savedSystemPrompt =
+        isEditMode && _type === "llm"
+          ? (config.messages || []).find((m) => m?.role === "system")
+              ?.content || ""
+          : "";
       if (_type === "code") {
         setInstructions("");
         setCode(getEvalCode(normalizedFullEval));
       } else {
-        setInstructions(promptText);
+        setInstructions(savedSystemPrompt || promptText);
         setCode("");
       }
       setCodeLanguage(getEvalCodeLanguage(normalizedFullEval));
@@ -624,6 +893,10 @@ const EvalPickerConfigFull = ({
       // ("small") for built-in templates while detail returns the full
       // canonical value, so we intentionally prefer `fullEval.model`
       // over `evalData.model` to avoid the chip rendering "small".
+      // Edit mode: the binding's own saved model comes first. A binding's
+      // run config carries the template's config (and its config.model),
+      // so reading config.model first swapped a saved judge back to the
+      // template's model on reopen.
       // Do NOT map `model` into `normalizedRunConfig` to "restore" the
       // saved value: `config` is spread run-config-last, so an explicit
       // `evalData.model` there lands in `config.model` and wins over
@@ -631,11 +904,20 @@ const EvalPickerConfigFull = ({
       // model already arrives via `...rawRunConfig` once the backend
       // stops filtering it out of `run_config` (see `build_run_config_view`).
       setModel(
-        config?.model || fullEval?.model || evalData?.model || "turing_large",
+        (isEditMode ? savedBindingModelOf(evalData) : null) ||
+          config?.model ||
+          fullEval?.model ||
+          evalData?.model ||
+          "turing_large",
       );
+      // W1: the saved decision question comes back with its model.
+      setDecision(savedDecisionOf(config));
       setOutputType(fullEval.output_type || "pass_fail");
       // Prefer user's saved run_config overrides (edit flow) over template defaults
       setPassThreshold(config.pass_threshold ?? fullEval.pass_threshold ?? 0.5);
+      // W1-4: the card's saved N/A switch (run_config), else the binding's,
+      // else the template's (all merged into `config` above).
+      setAllowNa(Boolean(config.allow_na));
       setChoiceScores(config.choice_scores || fullEval.choice_scores || {});
       setMultiChoice(config.multi_choice ?? fullEval.multi_choice ?? false);
       // Messages: use config.messages if present, otherwise build from
@@ -705,10 +987,14 @@ const EvalPickerConfigFull = ({
         const seeded = contextOptionsForRowType(sourceRowType);
         if (seeded) setContextOptions(seeded);
       }
-      setErrorLocalizerEnabled(
+      const localizationDefault =
         config.error_localizer_enabled ??
-          fullEval.error_localizer_enabled ??
-          false,
+        fullEval.error_localizer_enabled ??
+        false;
+      setErrorLocalizerEnabled(
+        isEditMode
+          ? bindingErrorLocalizerOf(evalData, localizationDefault)
+          : localizationDefault,
       );
 
       // Edit mode: keep the saved name. Create mode: generate a unique name
@@ -740,9 +1026,15 @@ const EvalPickerConfigFull = ({
 
       initialLoadDone.current = true;
       setDataReady(true);
+      setHydratedVersionId(null);
+      setHydrationInputs({ detail: fullEval, access: hydrationAccess });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    bindingEdit,
+    hydrationReady,
+    hydrationAccess,
+    initialBindingDraft,
     fullEval,
     normalizedFullEval,
     normalizedEvalData,
@@ -750,223 +1042,139 @@ const EvalPickerConfigFull = ({
     selectedVersionId,
   ]);
 
-  // ── Version selection ──
-  const handleVersionChange = useCallback(
-    (e) => {
-      const vId = e.target.value;
-      setSelectedVersionId(vId || null);
-      if (!vId && fullEval) {
-        // Type-aware split — see initial-load effect above.
-        const _type =
-          normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
-        const promptText = getEvalPromptText(fullEval, fullEval.config || {});
-        if (_type === "code") {
-          setInstructions("");
-          setCode(getEvalCode(normalizedFullEval));
-        } else {
-          setInstructions(promptText);
-          setCode("");
-        }
-        setModel(fullEval.config?.model || fullEval.model || "turing_large");
-        if (fullEval.config?.messages?.length > 0) {
-          setMessages(fullEval.config.messages);
-        } else if (_type === "llm" && promptText) {
-          setMessages([{ role: "system", content: promptText }]);
-        }
-        setAgentMode(fullEval.config?.agent_mode || "agent");
-        setSummaryType(fullEval.config?.summary?.type || "concise");
-        if (Array.isArray(fullEval.config?.tools)) {
-          setConnectorIds(fullEval.config.tools);
-        } else if (
-          fullEval.config?.tools &&
-          typeof fullEval.config.tools === "object"
-        ) {
-          setConnectorIds(
-            Object.entries(fullEval.config.tools)
-              .filter(([, enabled]) => !!enabled)
-              .map(([name]) => name),
-          );
-        } else {
-          setConnectorIds([]);
-        }
-        setKnowledgeBaseIds(
-          Array.isArray(fullEval.config?.knowledge_bases)
-            ? fullEval.config.knowledge_bases
-            : [],
-        );
-        setContextOptions(
-          fullEval.config?.data_injection?.full_row ||
-            fullEval.config?.data_injection?.fullRow
-            ? ["full_row"]
-            : ["variables_only"],
-        );
-        setUseInternet(fullEval.config?.check_internet ?? false);
-        setErrorLocalizerEnabled(
-          fullEval.error_localizer_enabled ??
-            fullEval.config?.error_localizer_enabled ??
-            false,
-        );
-        setIsDirty(false);
-        return;
-      }
-      const version = versions.find((v) => v.id === vId);
-      if (version) {
-        const config = version.config_snapshot || version.configSnapshot || {};
-        const promptText = config.rule_prompt || version.criteria || "";
-        // Type-aware split — version snapshot's `criteria` is the code
-        // text for code evals, the prompt for agent/llm.
-        const _type =
-          normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
-        if (_type === "code") {
-          setInstructions("");
-          setCode(config.code || "");
-        } else {
-          setInstructions(promptText);
-          setCode("");
-        }
-        setModel(config.model || "turing_large");
-        if (config.messages?.length > 0) {
-          setMessages(config.messages);
-        } else if (_type === "llm" && promptText) {
-          setMessages([{ role: "system", content: promptText }]);
-        }
-        setAgentMode(config.agent_mode || "agent");
-        setSummaryType(config.summary?.type || config.summary || "concise");
-        if (Array.isArray(config.tools)) {
-          setConnectorIds(config.tools);
-        } else if (config.tools && typeof config.tools === "object") {
-          setConnectorIds(
-            Object.entries(config.tools)
-              .filter(([, enabled]) => !!enabled)
-              .map(([name]) => name),
-          );
-        } else {
-          setConnectorIds([]);
-        }
-        setKnowledgeBaseIds(
-          Array.isArray(config.knowledge_bases) ? config.knowledge_bases : [],
-        );
-        setContextOptions(
-          config.data_injection?.full_row || config.data_injection?.fullRow
-            ? ["full_row"]
-            : ["variables_only"],
-        );
-        setUseInternet(config.check_internet ?? false);
-        setIsDirty(false);
-      }
-    },
-    [versions, fullEval, normalizedFullEval, normalizedEvalData],
+  // W1: picking a decision model starts its question from the eval (its
+  // output type and choice scores, or the saved question); another
+  // decision model keeps the question and takes its format. The question's
+  // instructions are the eval's prompt itself (mapping.py build_question),
+  // so the question carries none of its own. Score levels start empty: the
+  // author writes them (JEV_SCORE_LEVELS_REQUIRED).
+  const decisionModel = decisionModelOf(model);
+  const decisionModelId = decisionModel?.id ?? null;
+  const decisionMissing = decision == null;
+  useEffect(() => {
+    if (!decisionModel) return;
+    setDecision((cur) => {
+      const saved =
+        savedDecisionOf(evalData?.config) ??
+        savedDecisionOf(evalData?.bindingConfig) ??
+        savedDecisionOf(evalData?.runConfig) ??
+        savedDecisionOf(fullEval?.config) ??
+        null;
+      const start =
+        cur ??
+        saved ??
+        defaultDecisionConfig({
+          model,
+          outputType,
+          choiceScores,
+        });
+      const kind = outputKindOf(outputType);
+      let next =
+        start.model === decisionModel.id && start.output_kind === kind
+          ? start
+          : withModel({ ...start, output_kind: kind }, model);
+      if (
+        kind === "choices" &&
+        !(next.choice?.labels ?? []).length &&
+        Object.keys(choiceScores || {}).length
+      )
+        next = {
+          ...next,
+          choice: defaultDecisionConfig({ model, outputType, choiceScores })
+            .choice,
+        };
+      if (kind === "score" && !Array.isArray(next.score?.levels))
+        next = { ...next, score: { levels: [] } };
+      const type = questionTypeOf(outputType, decisionModel.format).type;
+      return next.question_type === (type ?? null)
+        ? next
+        : { ...next, question_type: type ?? null };
+    });
+    // Starts or re-points the question when the model or output type moves
+    // (or a version without a question was picked).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [decisionModelId, outputType, decisionMissing]);
+  // The mapped variables' data types (a decision reads text and JSON only).
+  const inputDataTypes = useMemo(() => {
+    const out = {};
+    Object.entries(sourceMapping || {}).forEach(([variable, ref]) => {
+      if (!ref) return;
+      const id = String(ref).split(/[.[]/)[0];
+      const col = (datasetColumns || []).find(
+        (c) => c?.id === id || c?.name === id,
+      );
+      if (col?.data_type) out[variable] = col.data_type;
+    });
+    return out;
+  }, [sourceMapping, datasetColumns]);
+  const decisionErrors = useMemo(
+    () =>
+      decisionModelId
+        ? decisionConfigErrors(decision, {
+            multiChoice,
+            instructions: evalType === "code" ? "" : instructions,
+            evalType,
+            fewShotExamples: evalType === "llm" ? fewShotExamples : [],
+            agentMode,
+            tools: connectorIds,
+            knowledgeBases: knowledgeBaseIds,
+            internet: useInternet,
+            contextOptions,
+            inputDataTypes,
+          })
+        : [],
+    [
+      decisionModelId,
+      decision,
+      multiChoice,
+      instructions,
+      evalType,
+      fewShotExamples,
+      agentMode,
+      connectorIds,
+      knowledgeBaseIds,
+      useInternet,
+      contextOptions,
+      inputDataTypes,
+    ],
   );
-
-  // ── Save as new version (user evals only) ──
-  // Mirrors EvalDetailPage.handleSaveVersion: updates the template fields,
-  // then creates a new EvalTemplateVersion with a config snapshot. After
-  // save, the new version becomes the selected version in the tabs so
-  // the user can Apply it to the dataset with the existing
-  // "Add Evaluation" button.
-  const handleSaveVersion = useCallback(async () => {
-    if (isSystemEval) return;
-    if (agentEvalLocked && evalType === "agent") {
-      enqueueSnackbar(
-        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
-        { variant: "error" },
-      );
-      return;
-    }
-    if (fagiLocked && FAGI_MODEL_VALUES.has(model)) {
-      enqueueSnackbar(
-        "Turing models aren't enabled for this workspace. Please select your own model.",
-        { variant: "error" },
-      );
-      setOpenModelMenuSignal((n) => n + 1);
-      return;
-    }
-    if (fagiLocked && evalType !== "code" && !model) {
-      enqueueSnackbar("Please select a model.", { variant: "error" });
-      setOpenModelMenuSignal((n) => n + 1);
-      return;
-    }
-    try {
-      const payload = {
-        instructions:
-          evalType === "code" ? undefined : instructions || undefined,
-        code: evalType === "code" ? code : undefined,
-        code_language: evalType === "code" ? codeLanguage : undefined,
-        model,
-        output_type: outputType,
-        pass_threshold: passThreshold,
-        choice_scores:
-          Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
-        multi_choice: multiChoice,
-        messages: evalType === "llm" ? messages : undefined,
-        few_shot_examples:
-          evalType === "llm" && fewShotExamples.length > 0
-            ? fewShotExamples
-            : undefined,
-      };
-      await updateEval.mutateAsync(payload);
-
-      const configSnapshot = {
-        ...(fullEval?.config || evalData?.config || {}),
-        rule_prompt: evalType === "code" ? "" : instructions,
-        code: evalType === "code" ? code : undefined,
-        language: evalType === "code" ? codeLanguage : undefined,
-        model,
-        output:
-          {
-            pass_fail: "Pass/Fail",
-            percentage: "score",
-            deterministic: "choices",
-          }[outputType] || "Pass/Fail",
-        pass_threshold: passThreshold,
-        choice_scores:
-          Object.keys(choiceScores || {}).length > 0 ? choiceScores : undefined,
-        multi_choice: multiChoice,
-        messages: evalType === "llm" ? messages : undefined,
-        few_shot_examples:
-          evalType === "llm" && fewShotExamples.length > 0
-            ? fewShotExamples
-            : undefined,
-      };
-      const newVersion = await createVersion.mutateAsync({
-        config_snapshot: configSnapshot,
-        criteria: evalType === "code" ? code : instructions,
-        model,
-      });
-      enqueueSnackbar(
-        `Version V${newVersion?.version_number || newVersion?.versionNumber || ""} saved`,
-        { variant: "success" },
-      );
-      setIsDirty(false);
-      // Jump to the new version so the Apply button picks it up
-      if (newVersion?.id) {
-        setSelectedVersionId(newVersion.id);
-      }
-    } catch (err) {
-      enqueueSnackbar(
-        getSafeActionErrorMessage(err, "Failed to save version"),
-        { variant: "error" },
-      );
-    }
+  // What the editor's Test sends for a decision judge: the question and the
+  // eval's prompt as edited (its instructions), with the bar.
+  // L7c g7 (editor:pass-threshold, editor:allow-na, editor:prompt,
+  // test:editor): every other judge's Test sends the definition on screen
+  // too (the bar, the prompt as edited, the N/A switch), so Test scores
+  // what Update / Add will run, before anything is saved.
+  const naShown =
+    !isComposite &&
+    allowNaApplies({
+      evalType,
+      isSystemEval,
+      decisionModel: decisionModelId,
+      supportsNa: fullEval?.supports_na,
+    });
+  const decisionTest = useMemo(() => {
+    if (decisionModelId && decision)
+      return { decision, rule_prompt: instructions, threshold: passThreshold };
+    const def = {
+      ...(outputType !== "pass_fail" && passThreshold != null
+        ? { threshold: passThreshold }
+        : {}),
+      ...(evalType !== "code" && !isSystemEval && instructions?.trim()
+        ? { rule_prompt: instructions }
+        : {}),
+      ...(naShown ? { allow_na: Boolean(allowNa) } : {}),
+    };
+    return Object.keys(def).length ? def : null;
   }, [
-    isSystemEval,
-    agentEvalLocked,
-    fagiLocked,
-    evalType,
+    decisionModelId,
+    decision,
     instructions,
-    code,
-    codeLanguage,
-    model,
-    outputType,
     passThreshold,
-    choiceScores,
-    multiChoice,
-    messages,
-    fewShotExamples,
-    fullEval,
-    evalData,
-    updateEval,
-    createVersion,
+    outputType,
+    evalType,
+    isSystemEval,
+    naShown,
+    allowNa,
   ]);
 
   const handleTestResult = useCallback((success, result) => {
@@ -987,6 +1195,11 @@ const EvalPickerConfigFull = ({
   }, []);
 
   const handleTestEvaluation = useCallback(() => {
+    // W1: a decision question the call cannot ask is not tested.
+    if (decisionModelId && decisionErrors.length) {
+      enqueueSnackbar(decisionErrors[0], { variant: "error" });
+      return;
+    }
     if (fagiLocked && evalType !== "code" && !model && !isComposite) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
@@ -998,9 +1211,292 @@ const EvalPickerConfigFull = ({
     sourceRef.current?.runTest?.(templateId);
     // Safety timeout
     setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
-  }, [templateId, fagiLocked, evalType, model, isComposite]);
+  }, [
+    templateId,
+    fagiLocked,
+    evalType,
+    model,
+    isComposite,
+    decisionModelId,
+    decisionErrors,
+  ]);
 
-  const handleAdd = useCallback(() => {
+  // Build the prospective save once, before both the button and its handler.
+  const draftSelection = useMemo(() => {
+    const dataInjection = buildDataInjection(contextOptions);
+    const tools = build_tools_payload(connectorIds);
+
+    const templateType =
+      fullEval?.template_type ||
+      fullEval?.templateType ||
+      evalData?.template_type;
+
+    const resolvedConfig = buildEvalTemplateConfig({
+      baseConfig: {
+        ...selectedBaseConfig,
+        ...(isEditMode ? evalData?.bindingConfig || {} : {}),
+      },
+      evalType,
+      instructions,
+      code,
+      codeLanguage,
+      messages,
+      fewShotExamples,
+      outputType,
+      passThreshold,
+      choiceScores,
+      multiChoice,
+      templateFormat,
+    });
+
+    if (!selectedVersionId) delete resolvedConfig.version_pin;
+
+    // When the picker was opened in edit mode (initialEval came from a
+    // saved-evals row or the column-menu Edit Eval action), evalData
+    // carries `userEvalId` — the existing UserEvalMetric id. The host
+    // (EvaluationDrawer) reads this to route to /edit_and_run_user_eval
+    // instead of /add_user_eval, preventing duplicate bindings.
+    const userEvalId = evalData?.userEvalId;
+
+    // In edit mode: evalData.name is the saved instance name — skip
+    // fullEval.name (template name) so it never overwrites the instance name.
+    const resolvedName =
+      source === "composite"
+        ? fullEval?.name || evalData?.name || evalName
+        : isEditMode
+          ? evalName || evalData?.name
+          : evalName || fullEval?.name || evalData?.name;
+
+    if (templateType === "composite") {
+      // Composite metrics don't carry prompt/model/output-type/choice-score
+      // state — those live on each child template. Emit only the fields
+      // the host needs to create a UserEvalMetric plus the per-binding
+      // weight overrides.
+      return {
+        templateId,
+        evalTemplateId: templateId,
+        userEvalId,
+        name: resolvedName,
+        mapping: sourceMapping,
+        evalTemplate: fullEval || evalData,
+        evalType,
+        templateType,
+        config: stripLaunchAllowNa(fullEval?.config || evalData?.config),
+        // shared-edit(F68): pin the version shown by Latest, not a moving alias.
+        versionId:
+          selectedVersionId === "latest"
+            ? versions[0]?.id ?? null
+            : selectedVersionId,
+        data_injection: dataInjection,
+        error_localizer_enabled: errorLocalizerActive,
+        composite_weight_overrides: compositeChildWeights,
+      };
+    }
+
+    return {
+      templateId,
+      evalTemplateId: templateId,
+      userEvalId,
+      name: resolvedName,
+      // integration S10c: a typed eval names the judge its own questions ask
+      // (none for a tree of checks), never the picker's default model.
+      model: isTypedEvalType(evalType) ? typedOwnJudgeOf(fullEval) : model,
+      mapping: sourceMapping,
+      evalTemplate: fullEval || evalData,
+      evalType,
+      templateType,
+      outputType,
+      ...versionPinOf(selectedVersionId, versions),
+      config: {
+        ...(decisionModelId && decision
+          ? { ...resolvedConfig, decision }
+          : resolvedConfig),
+        ...(versionPinOf(selectedVersionId, versions).versionPin
+          ? {
+              version_pin: versionPinOf(selectedVersionId, versions).versionPin,
+            }
+          : {}),
+        ...(allowNaApplies({
+          evalType,
+          isSystemEval,
+          decisionModel: decisionModelId,
+          supportsNa: fullEval?.supports_na,
+        })
+          ? { allow_na: allowNa }
+          : {}),
+      },
+      versionId: selectedVersionId,
+      instructions,
+      messages,
+      pass_threshold: passThreshold,
+      choice_scores: choiceScores,
+      multi_choice: multiChoice,
+      // Code-eval static params (function_params_schema inputs, e.g.
+      // min_words / max_words). Persisted so the backend writes them onto
+      // UserEvalMetric.config.params and future runs can read them via
+      // kwargs. Empty object is fine — backend treats it the same as
+      // "no static params" (eval body then reads kwargs.get(...) → None).
+      params: evalType === "code" ? codeParams : {},
+      // Runtime overrides — these become config.run_config on the backend.
+      agent_mode: agentMode,
+      check_internet: useInternet,
+      summary:
+        summaryType === "custom"
+          ? { type: "custom", custom: "" }
+          : { type: summaryType },
+      tools,
+      knowledge_bases: knowledgeBaseIds,
+      data_injection: dataInjection,
+      error_localizer_enabled: errorLocalizerActive,
+    };
+  }, [
+    templateId,
+    fullEval,
+    selectedBaseConfig,
+    evalData,
+    evalName,
+    isEditMode,
+    model,
+    sourceMapping,
+    evalType,
+    outputType,
+    selectedVersionId,
+    instructions,
+    code,
+    codeLanguage,
+    messages,
+    fewShotExamples,
+    passThreshold,
+    choiceScores,
+    multiChoice,
+    allowNa,
+    isSystemEval,
+    versions,
+    codeParams,
+    agentMode,
+    useInternet,
+    summaryType,
+    connectorIds,
+    knowledgeBaseIds,
+    contextOptions,
+    isComposite,
+    compositeChildWeights,
+    errorLocalizerActive,
+    templateFormat,
+    source,
+    decisionModelId,
+    decision,
+  ]);
+
+  const draftBinding = useMemo(
+    () => buildBindingSavePayload(draftSelection),
+    [draftSelection],
+  );
+  useEffect(() => {
+    if (
+      bindingEdit &&
+      hydrationReady &&
+      versionReady &&
+      hydrationInputs?.detail === fullEval &&
+      hydrationInputs?.access === hydrationAccess &&
+      dataReady &&
+      hydratedVersionId === selectedVersionId &&
+      (!isComposite || compositeReady) &&
+      !initialBindingDraft
+    ) {
+      // No editor or mapping panel is mounted until this baseline exists.
+      // Capture only a hydration pass using the loaded detail and settled gates;
+      // Save version must never reset the still-unsaved binding's baseline.
+      // Let derived control effects (e.g. the decision question) settle too.
+      if (baselineCandidate !== draftBinding)
+        setBaselineCandidate(draftBinding);
+      else {
+        setInitialBindingDraft(draftBinding);
+        setStoredVersionConfig(selectedBaseConfig);
+      }
+    }
+  }, [
+    bindingEdit,
+    hydrationReady,
+    versionReady,
+    hydrationInputs,
+    fullEval,
+    hydrationAccess,
+    dataReady,
+    hydratedVersionId,
+    selectedVersionId,
+    isComposite,
+    compositeReady,
+    initialBindingDraft,
+    baselineCandidate,
+    draftBinding,
+    selectedBaseConfig,
+  ]);
+  const storedBinding = useMemo(
+    () =>
+      savedBindingPayload ||
+      (initialBindingDraft &&
+        storedBindingPayload(evalData, initialBindingDraft)),
+    [savedBindingPayload, initialBindingDraft, evalData],
+  );
+  const bindingUpdate = useMemo(() => {
+    if (!bindingEdit || !initialBindingDraft)
+      return { payload: draftBinding, changed: !bindingEdit };
+    return reconcileBindingSave(
+      storedBinding,
+      initialBindingDraft,
+      draftBinding,
+      isSystemEval,
+      selectedBaseConfig,
+      savedVersionBaseline,
+      storedVersionConfig,
+    );
+  }, [
+    bindingEdit,
+    initialBindingDraft,
+    draftBinding,
+    storedBinding,
+    isSystemEval,
+    selectedBaseConfig,
+    savedVersionBaseline,
+    storedVersionConfig,
+  ]);
+  const canUpdate = !bindingEdit || bindingUpdate.changed;
+  const hasPendingChanges = bindingEdit ? bindingUpdate.changed : isDirty;
+  const versionConfig = useMemo(
+    () =>
+      bindingEdit && initialBindingDraft
+        ? stripLaunchAllowNa(
+            buildBindingVersionConfig(
+              savedVersionBaseline
+                ? { config: { config: savedVersionBaseline.config } }
+                : storedBinding,
+              savedVersionBaseline?.draft ?? initialBindingDraft,
+              draftBinding,
+              savedVersionBaseline?.config ?? selectedBaseConfig,
+            ),
+          )
+        : {
+            ...stripLaunchAllowNa(selectedBaseConfig),
+            ...draftBinding.config.config,
+            ...draftBinding.config.run_config,
+          },
+    [
+      bindingEdit,
+      initialBindingDraft,
+      storedBinding,
+      savedVersionBaseline,
+      draftBinding,
+      selectedBaseConfig,
+    ],
+  );
+
+  const handleAdd = useCallback(async () => {
+    if (!canUpdate) return;
+    if (decisionModelId && decisionErrors.length) {
+      enqueueSnackbar(decisionErrors[0], { variant: "error" });
+      return;
+    }
     if (fagiLocked && evalType !== "code" && !model && !isComposite) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
@@ -1039,145 +1535,183 @@ const EvalPickerConfigFull = ({
       onFiltersChange(localFilterForm.getValues("filters") || []);
     }
 
-    const dataInjection = buildDataInjection(contextOptions);
-    const tools = build_tools_payload(connectorIds);
-
-    const templateType =
-      fullEval?.template_type ||
-      fullEval?.templateType ||
-      evalData?.template_type;
-
-    const resolvedConfig = buildEvalTemplateConfig({
-      baseConfig: {
-        ...(fullEval?.config || {}),
-        ...(isEditMode ? evalData?.bindingConfig || {} : {}),
-      },
-      evalType,
-      instructions,
-      code,
-      codeLanguage,
-      messages,
-      fewShotExamples,
-      outputType,
-      passThreshold,
-      choiceScores,
-      multiChoice,
-      templateFormat,
-    });
-
-    // When the picker was opened in edit mode (initialEval came from a
-    // saved-evals row or the column-menu Edit Eval action), evalData
-    // carries `userEvalId` — the existing UserEvalMetric id. The host
-    // (EvaluationDrawer) reads this to route to /edit_and_run_user_eval
-    // instead of /add_user_eval, preventing duplicate bindings.
-    const userEvalId = evalData?.userEvalId;
-
-    // In edit mode: evalData.name is the saved instance name — skip
-    // fullEval.name (template name) so it never overwrites the instance name.
-    const resolvedName =
-      source === "composite"
-        ? fullEval?.name || evalData?.name || evalName
-        : isEditMode
-          ? evalName || evalData?.name
-          : evalName || fullEval?.name || evalData?.name;
-
-    if (templateType === "composite") {
-      // Composite metrics don't carry prompt/model/output-type/choice-score
-      // state — those live on each child template. Emit only the fields
-      // the host needs to create a UserEvalMetric plus the per-binding
-      // weight overrides.
-      onSave({
-        templateId,
-        evalTemplateId: templateId,
-        userEvalId,
-        name: resolvedName,
-        mapping: sourceMapping,
-        evalTemplate: fullEval || evalData,
-        evalType,
-        templateType,
-        config: fullEval?.config || evalData?.config,
-        versionId: selectedVersionId,
-        data_injection: dataInjection,
-        error_localizer_enabled: errorLocalizerActive,
-        composite_weight_overrides: compositeChildWeights,
-      });
-      return;
+    try {
+      const saved = await onSave(
+        bindingEdit
+          ? {
+              ...draftSelection,
+              versionId: bindingUpdate.payload.pinned_version_id,
+              bindingPayload: bindingUpdate.payload,
+            }
+          : draftSelection,
+      );
+      if (bindingEdit && saved !== false) {
+        // A host may keep the drawer open. Rebase to what was submitted, not
+        // any newer in-flight edits; rejected saves keep the previous baseline.
+        setSavedBindingPayload(bindingUpdate.payload);
+        setInitialBindingDraft(draftBinding);
+        setStoredVersionConfig(
+          bindingUpdate.payload.pinned_version_id ? selectedBaseConfig : null,
+        );
+        setSavedVersionBaseline({ draft: draftBinding, config: versionConfig });
+      }
+    } catch {
+      // The host owns error reporting; leave edits available for retry.
     }
-
-    onSave({
-      templateId,
-      evalTemplateId: templateId,
-      userEvalId,
-      name: resolvedName,
-      model,
-      mapping: sourceMapping,
-      evalTemplate: fullEval || evalData,
-      evalType,
-      templateType,
-      outputType,
-      config: resolvedConfig,
-      versionId: selectedVersionId,
-      instructions,
-      messages,
-      pass_threshold: passThreshold,
-      choice_scores: choiceScores,
-      multi_choice: multiChoice,
-      // Code-eval static params (function_params_schema inputs, e.g.
-      // min_words / max_words). Persisted so the backend writes them onto
-      // UserEvalMetric.config.params and future runs can read them via
-      // kwargs. Empty object is fine — backend treats it the same as
-      // "no static params" (eval body then reads kwargs.get(...) → None).
-      params: evalType === "code" ? codeParams : {},
-      // Runtime overrides — these become config.run_config on the backend.
-      agent_mode: agentMode,
-      check_internet: useInternet,
-      summary:
-        summaryType === "custom"
-          ? { type: "custom", custom: "" }
-          : { type: summaryType },
-      tools,
-      knowledge_bases: knowledgeBaseIds,
-      data_injection: dataInjection,
-      error_localizer_enabled: errorLocalizerActive,
-    });
   }, [
-    templateId,
-    fullEval,
-    evalData,
-    evalName,
-    isEditMode,
-    fagiLocked,
-    model,
-    sourceMapping,
-    evalType,
-    outputType,
-    selectedVersionId,
-    instructions,
-    code,
-    codeLanguage,
-    messages,
-    fewShotExamples,
-    passThreshold,
-    choiceScores,
-    multiChoice,
-    codeParams,
-    agentMode,
-    useInternet,
-    summaryType,
-    connectorIds,
-    knowledgeBaseIds,
-    contextOptions,
-    isComposite,
-    compositeChildWeights,
-    errorLocalizerActive,
-    hasValidPromptMessages,
-    templateFormat,
+    draftBinding,
+    versionConfig,
+    selectedBaseConfig,
+    canUpdate,
+    bindingEdit,
+    bindingUpdate,
+    draftSelection,
     onSave,
+    decisionModelId,
+    decisionErrors,
+    fagiLocked,
+    evalType,
+    model,
+    isComposite,
     requiredColumnId,
+    sourceMapping,
     sourceColumns,
+    hasValidPromptMessages,
     source,
     onFiltersChange,
     localFilterForm,
+  ]);
+
+  // ── Save as new version (user evals only) ──
+  // Mirrors EvalDetailPage.handleSaveVersion: updates the template fields,
+  // then creates a new EvalTemplateVersion with a config snapshot. After
+  // save, the new version becomes the selected version in the tabs so
+  // the user can Apply it to the dataset with the existing
+  // "Add Evaluation" button.
+  const handleSaveVersion = useCallback(async () => {
+    if (isSystemEval || (bindingEdit && !initialBindingDraft)) return;
+    if (agentEvalLocked && evalType === "agent") {
+      enqueueSnackbar(
+        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
+        { variant: "error" },
+      );
+      return;
+    }
+    if (fagiLocked && FAGI_MODEL_VALUES.has(model)) {
+      enqueueSnackbar(
+        "Turing models aren't enabled for this workspace. Please select your own model.",
+        { variant: "error" },
+      );
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
+    if (fagiLocked && evalType !== "code" && !model) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
+    // W1: a decision judge's question is saved with the template as
+    // config.jev_mapping (jev_templates.py validate_jev_template_save), so a
+    // question the call cannot ask is not saved.
+    if (decisionModelId && decisionErrors.length) {
+      enqueueSnackbar(decisionErrors[0], { variant: "error" });
+      return;
+    }
+    const jevPayload =
+      decisionModelId && decision ? { jev_mapping: decision } : {};
+    try {
+      const payload = {
+        instructions:
+          evalType === "code" ? undefined : instructions || undefined,
+        code: evalType === "code" ? code : undefined,
+        code_language: evalType === "code" ? codeLanguage : undefined,
+        model,
+        output_type: outputType,
+        pass_threshold: passThreshold,
+        choice_scores:
+          Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
+        multi_choice: multiChoice,
+        messages: evalType === "llm" ? messages : undefined,
+        few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
+        ...jevPayload,
+      };
+      await updateEval.mutateAsync(payload);
+
+      const configSnapshot = {
+        ...versionConfig,
+        rule_prompt: evalType === "code" ? "" : instructions,
+        code: evalType === "code" ? code : undefined,
+        language: evalType === "code" ? codeLanguage : undefined,
+        model,
+        output:
+          {
+            pass_fail: "Pass/Fail",
+            percentage: "score",
+            deterministic: "choices",
+          }[outputType] || "Pass/Fail",
+        pass_threshold: passThreshold,
+        choice_scores:
+          Object.keys(choiceScores || {}).length > 0 ? choiceScores : undefined,
+        multi_choice: multiChoice,
+        messages: evalType === "llm" ? messages : undefined,
+        few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
+        ...jevPayload,
+      };
+      if (!jevPayload.jev_mapping) delete configSnapshot.jev_mapping;
+      const newVersion = await createVersion.mutateAsync({
+        config_snapshot: configSnapshot,
+        criteria: evalType === "code" ? code : instructions,
+        model,
+      });
+      enqueueSnackbar(
+        `Version V${newVersion?.version_number || newVersion?.versionNumber || ""} saved`,
+        { variant: "success" },
+      );
+      setIsDirty(false);
+      // Jump to the new version so the Apply button picks it up
+      if (newVersion?.id) {
+        // The async versions refresh must not hydrate old binding overrides
+        // over the settings just saved in this version.
+        locallySavedVersion.current = {
+          ...newVersion,
+          config_snapshot: configSnapshot,
+        };
+        setSavedVersionBaseline({
+          draft: { ...draftBinding, pinned_version_id: newVersion.id },
+          config: configSnapshot,
+        });
+        setSelectedVersionId(newVersion.id);
+      }
+    } catch (err) {
+      enqueueSnackbar(
+        getSafeActionErrorMessage(err, "Failed to save version"),
+        { variant: "error" },
+      );
+    }
+  }, [
+    bindingEdit,
+    initialBindingDraft,
+    draftBinding,
+    versionConfig,
+    isSystemEval,
+    agentEvalLocked,
+    fagiLocked,
+    evalType,
+    instructions,
+    code,
+    codeLanguage,
+    model,
+    outputType,
+    passThreshold,
+    choiceScores,
+    multiChoice,
+    messages,
+    fewShotExamples,
+    updateEval,
+    createVersion,
+    decisionModelId,
+    decision,
+    decisionErrors,
   ]);
 
   if (isLoading) {
@@ -1191,7 +1725,7 @@ const EvalPickerConfigFull = ({
           py: 8,
         }}
       >
-        <CircularProgress size={32} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -1210,22 +1744,82 @@ const EvalPickerConfigFull = ({
         }}
       >
         <Iconify
-          icon="mdi:alert-circle-outline"
+          icon="solar:danger-circle-linear"
           width={40}
           sx={{ color: "text.disabled" }}
         />
-        <Typography variant="body2" color="text.secondary">
+        <Typography role="alert" variant="body2" color="text.secondary">
           {!templateId
             ? "No template ID found for this evaluation."
             : "Failed to load evaluation details."}
         </Typography>
+        {templateId && (
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => refetchTemplate()}
+          >
+            Retry
+          </Button>
+        )}
         <Button
           size="small"
           variant="outlined"
           onClick={onBack}
           startIcon={<Iconify icon="solar:arrow-left-linear" width={16} />}
-          sx={{ textTransform: "none" }}
         >
+          Back to list
+        </Button>
+      </Box>
+    );
+  }
+
+  // Keep all mutable controls unmounted until their comparison baseline is
+  // established. A delayed version response must never absorb a user's edit.
+  if (bindingEdit && !initialBindingDraft) {
+    const versionFailed = Boolean(versionsError && !versionReady);
+    const versionUnavailable = Boolean(
+      storedPinReference && !versionsLoading && versionsData && !versionReady,
+    );
+    const compositeFailed = isComposite && compositeError && !compositeDetail;
+    const recoveryMessage = compositeFailed
+      ? "Failed to load evaluation details."
+      : versionFailed
+        ? "Failed to load evaluation versions."
+        : versionUnavailable
+          ? "Saved evaluation version is unavailable."
+          : null;
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "100%",
+          gap: 2,
+          py: 8,
+        }}
+      >
+        {recoveryMessage ? (
+          <>
+            <Typography role="alert" variant="body2" color="text.secondary">
+              {recoveryMessage}
+            </Typography>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() =>
+                compositeFailed ? refetchComposite() : refetchVersions()
+              }
+            >
+              Retry
+            </Button>
+          </>
+        ) : (
+          <CircularProgress size={32} aria-label="Loading" />
+        )}
+        <Button size="small" variant="outlined" onClick={onBack}>
           Back to list
         </Button>
       </Box>
@@ -1255,25 +1849,30 @@ const EvalPickerConfigFull = ({
           sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}
         >
           <IconButton size="small" onClick={onBack} sx={{ p: 0.5 }}>
-            <Iconify icon="solar:arrow-left-linear" width={18} />
+            <Iconify icon="solar:arrow-left-linear" width={20} />
           </IconButton>
           <Typography variant="subtitle1" fontWeight={600} noWrap>
             {fullEval?.name || evalData?.name}
           </Typography>
           <ShowComponent condition={!isSystemEval}>
-            <VersionBadge version={currentVersion} />
+            {/* L7c g7 (editor:header): the badge names the version being
+                configured (the select's), else the template's current. */}
+            <span title={RECORDED_VERSION_TOOLTIP}>
+              <VersionBadge version={`Version label: ${shownVersion}`} />
+            </span>
           </ShowComponent>
           <EvalTypeBadge type={evalType} />
-          {isDirty && (
+          {hasPendingChanges && (
             <Chip
               label="Edited"
               size="small"
               color="warning"
               variant="outlined"
-              sx={{ fontSize: "10px", height: 18 }}
             />
           )}
         </Box>
+        {/* Save version is legacy for every source; execution-pin isolation
+            belongs at the creation payload boundary, not around this action. */}
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
           {/* Host-supplied progress (multi-eval queue walk). Built-in evals
               hide the version controls, so a bar floating mid-header reads as
@@ -1284,7 +1883,9 @@ const EvalPickerConfigFull = ({
               Sits beside the existing version dropdown so the user can
               edit, save a new version, then pick it from the dropdown
               and click Add Evaluation. */}
-          {!isSystemEval && !isComposite && (
+          {/* integration S10b: a typed eval saves its versions in its own editor
+              (Edit definition); H-A2 lets a run pin one. */}
+          {!isSystemEval && !isComposite && !isTypedEvalType(evalType) && (
             <LoadingButton
               size="small"
               variant="outlined"
@@ -1293,38 +1894,13 @@ const EvalPickerConfigFull = ({
               disabled={updateEval.isPending || createVersion.isPending}
               onClick={handleSaveVersion}
               startIcon={<Iconify icon="solar:diskette-bold" width={14} />}
-              sx={{
-                textTransform: "none",
-                fontSize: "12px",
-                height: 30,
-                px: 1.25,
-              }}
             >
               Save version
             </LoadingButton>
           )}
-          {versions.length > 0 && (
-            <Select
-              size="small"
-              value={selectedVersionId || ""}
-              onChange={handleVersionChange}
-              displayEmpty
-              sx={{ fontSize: "12px", minWidth: 130, height: 30 }}
-            >
-              <MenuItem value="" sx={{ fontSize: "12px" }}>
-                Default version
-              </MenuItem>
-              {versions.map((v) => (
-                <MenuItem key={v.id} value={v.id} sx={{ fontSize: "12px" }}>
-                  V{v.version_number}
-                  {v.is_default ? " (default)" : ""}
-                </MenuItem>
-              ))}
-            </Select>
-          )}
           {showClose && (
             <IconButton onClick={onClose} size="small" sx={{ p: 0.5 }}>
-              <Iconify icon="mingcute:close-line" width={20} />
+              <Iconify icon="solar:close-linear" width={16} />
             </IconButton>
           )}
         </Box>
@@ -1359,8 +1935,8 @@ const EvalPickerConfigFull = ({
                 ? "Name can't be longer than 50 characters"
                 : `Lowercase letters, numbers, hyphens and underscores only · ${evalName.length}/50`
           }
-          FormHelperTextProps={{ sx: { fontSize: "11px", mt: 0.25, mx: 0 } }}
-          sx={{ "& .MuiInputBase-root": { fontSize: "13px", height: 34 } }}
+          FormHelperTextProps={{ sx: { fontSize: "12px", mt: 0.25, mx: 0 } }}
+          sx={{ "& .MuiInputBase-root": { fontSize: "13px", height: 32 } }}
         />
       </Box>
 
@@ -1400,10 +1976,7 @@ const EvalPickerConfigFull = ({
                       borderRadius: 1,
                       border: "1px solid",
                       borderColor: "divider",
-                      backgroundColor: (t) =>
-                        t.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.02)"
-                          : "rgba(0,0,0,0.01)",
+                      backgroundColor: "background.neutral",
                     }}
                   >
                     <Typography
@@ -1486,7 +2059,7 @@ const EvalPickerConfigFull = ({
                               <Typography
                                 variant="caption"
                                 color="text.secondary"
-                                sx={{ fontSize: "11px" }}
+                                sx={{ fontSize: "12px" }}
                               >
                                 Weight
                               </Typography>
@@ -1512,8 +2085,7 @@ const EvalPickerConfigFull = ({
                                   padding: "2px 6px",
                                   fontSize: "12px",
                                   borderRadius: 4,
-                                  border:
-                                    "1px solid var(--mui-palette-divider, #444)",
+                                  border: "1px solid var(--border-default)",
                                   background: "transparent",
                                   color: "inherit",
                                   textAlign: "center",
@@ -1546,19 +2118,28 @@ const EvalPickerConfigFull = ({
                     }}
                   >
                     <Iconify
-                      icon="eva:info-outline"
+                      icon="solar:info-circle-linear"
                       width={14}
                       sx={{ flexShrink: 0 }}
                     />
                     <Typography
                       variant="caption"
-                      sx={{ fontSize: "11px", lineHeight: 1.4 }}
+                      sx={{ fontSize: "12px", lineHeight: 1.4 }}
                     >
                       Built-in evaluation: prompt is pre-configured and shown
                       for reference only.
                     </Typography>
                   </Box>
                 )}
+
+              {/* integration S10: a typed eval is edited in Evals; its summary here */}
+              {!isComposite && isTypedEvalType(evalType) && (
+                <TypedEvalBindingConfig
+                  evalType={evalType}
+                  evalData={fullEval}
+                  templateId={templateId}
+                />
+              )}
 
               {/* Agent type — only render after data loads so Quill
                   initializes with the actual instructions content */}
@@ -1664,6 +2245,25 @@ const EvalPickerConfigFull = ({
                 </>
               )}
 
+              {/* W1: a decision-model judge's question */}
+              {!isComposite &&
+                evalType !== "code" &&
+                dataReady &&
+                decisionModel &&
+                decision && (
+                  <DecisionQuestionEditor
+                    value={decision}
+                    outputType={outputType}
+                    variables={variables}
+                    instructions={instructions}
+                    errors={decisionErrors}
+                    onChange={(next) => {
+                      setDecision(next);
+                      setIsDirty(true);
+                    }}
+                  />
+                )}
+
               {/* Code type */}
               {!isComposite && evalType === "code" && dataReady && (
                 <CodeEvalEditor
@@ -1683,7 +2283,8 @@ const EvalPickerConfigFull = ({
               )}
 
               {/* Output Type (not applicable to composites) */}
-              {isComposite ? null : evalType === "code" ? (
+              {isComposite || isTypedEvalType(evalType) ? null : evalType ===
+                "code" ? (
                 <Box>
                   <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
                     Scoring
@@ -1760,12 +2361,28 @@ const EvalPickerConfigFull = ({
                   categoryLocked={isOutputTypeCategoryLocked}
                 />
               )}
+              {!isComposite &&
+                allowNaApplies({
+                  evalType,
+                  isSystemEval,
+                  decisionModel: decisionModelId,
+                  supportsNa: fullEval?.supports_na,
+                }) && (
+                  <AllowNaSwitch
+                    checked={allowNa}
+                    onChange={(v) => {
+                      setAllowNa(v);
+                      setIsDirty(true);
+                    }}
+                  />
+                )}
 
               {/* Single-eval concern, LLM/Agent only — code evals don't produce
                   the model traces the feature introspects. */}
               {errorLocalizerAvailable &&
                 !isComposite &&
-                evalType !== "code" && (
+                evalType !== "code" &&
+                !isTypedEvalType(evalType) && (
                   <CustomTooltip
                     show={agentEvalLocked}
                     type=""
@@ -1831,15 +2448,15 @@ const EvalPickerConfigFull = ({
                 >
                   {source === "composite"
                     ? "Test Playground"
-                    : `${SOURCE_LABELS[source] || "Preview"} — Variable Mapping`}
+                    : SOURCE_LABELS[source]
+                      ? `${SOURCE_LABELS[source]} — Variable Mapping`
+                      : "Variable mapping"}
                 </Typography>
                 {source === "task" && ROW_TYPE_LABELS[sourceRowType] && (
                   <Chip
                     label={ROW_TYPE_LABELS[sourceRowType]}
                     size="small"
                     sx={{
-                      height: 18,
-                      fontSize: "10px",
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.75 },
@@ -1879,8 +2496,10 @@ const EvalPickerConfigFull = ({
                   source === "run-optimization") && (
                   <DatasetTestMode
                     ref={sourceRef}
+                    decisionTest={decisionTest}
                     templateId={templateId}
-                    variables={variables}
+                    // shared-edit(F68): include structured jury inputs in dataset mappings.
+                    variables={datasetModeVariables}
                     model={model}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
@@ -1901,6 +2520,7 @@ const EvalPickerConfigFull = ({
                 {source === "tracing" && (
                   <TracingTestMode
                     ref={sourceRef}
+                    decisionTest={decisionTest}
                     templateId={templateId}
                     model={model}
                     variables={sourceModeVariables}
@@ -1918,6 +2538,7 @@ const EvalPickerConfigFull = ({
                 {(source === "simulation" || source === "test") && (
                   <SimulationTestMode
                     ref={sourceRef}
+                    decisionTest={decisionTest}
                     templateId={templateId}
                     model={model}
                     variables={sourceModeVariables}
@@ -1947,6 +2568,7 @@ const EvalPickerConfigFull = ({
                 {source === "task" && (
                   <TracingTestMode
                     ref={sourceRef}
+                    decisionTest={decisionTest}
                     templateId={templateId}
                     model={model}
                     variables={sourceModeVariables}
@@ -1968,6 +2590,7 @@ const EvalPickerConfigFull = ({
                 {source === "custom" && (
                   <DatasetTestMode
                     ref={sourceRef}
+                    decisionTest={decisionTest}
                     templateId={templateId}
                     variables={variables}
                     model={model}
@@ -2060,6 +2683,16 @@ const EvalPickerConfigFull = ({
         />
       </Box>
 
+      {isEditMode &&
+        normalizedFullEval?.owner === "user" &&
+        (source === "dataset" ||
+          source === "experiment" ||
+          source === "run-optimization") && (
+          <Typography variant="caption" color="text.secondary">
+            Saving settings can create a new template-wide default version.
+          </Typography>
+        )}
+
       {/* ── Bottom action bar (same as EvalDetailPage) ── */}
       <Box
         sx={{
@@ -2089,7 +2722,7 @@ const EvalPickerConfigFull = ({
             sx={{ display: "flex", alignItems: "center", gap: 0.5, mr: "auto" }}
           >
             <Iconify
-              icon="mdi:check-circle"
+              icon="solar:check-circle-bold"
               width={16}
               sx={{ color: "success.main" }}
             />
@@ -2114,24 +2747,28 @@ const EvalPickerConfigFull = ({
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ mr: "auto", fontSize: "11px" }}
+              sx={{ mr: "auto", fontSize: "12px" }}
             >
               Map all variables to enable testing & adding
             </Typography>
           )}
-        {isDirty && sourceReady && !testPassed && !testError && (
-          <Typography
-            variant="caption"
-            color="warning.main"
-            sx={{ mr: "auto", fontSize: "11px" }}
-          >
-            Unsaved changes
-          </Typography>
-        )}
+        {hasPendingChanges &&
+          (bindingEdit || (sourceReady && !testPassed && !testError)) && (
+            <Typography
+              variant="caption"
+              color="warning.main"
+              sx={{ mr: "auto", fontSize: "12px" }}
+            >
+              Unsaved changes
+            </Typography>
+          )}
 
         {source !== "composite" &&
           source !== "workbench" &&
           source !== "create-simulate" &&
+          // W7 (H-S10b): a remote scorer is tested on one row in Evals
+          // (Edit in Evals); this panel's test has nothing to run for it.
+          evalType !== "remote" &&
           (() => {
             // LLM evals may keep prompt content in User / Assistant turns
             // even if the System-derived instructions field is empty.
@@ -2212,10 +2849,9 @@ const EvalPickerConfigFull = ({
                         isTesting ? (
                           <CircularProgress size={14} />
                         ) : (
-                          <Iconify icon="mdi:play-circle-outline" width={16} />
+                          <Iconify icon="solar:play-circle-linear" width={16} />
                         )
                       }
-                      sx={{ textTransform: "none" }}
                     >
                       {isTesting ? "Testing..." : "Test Evaluation"}
                     </Button>
@@ -2244,9 +2880,11 @@ const EvalPickerConfigFull = ({
           let addDisabled = false;
           let addDisabledReason = "";
 
-          if (isComposite) {
+          if (isComposite || isTypedEvalType(evalType)) {
             // Composite templates have no instructions/variables of their
             // own — they're driven by child evaluations + required_keys.
+            // W7 (H-S10b): a typed eval (a decision tree, a remote scorer)
+            // is defined on its own tab in Evals, not by instructions here.
             // Skip the content checks; sourceReady below still applies.
           } else if (evalType === "code") {
             if (!(code || "").trim()) {
@@ -2305,6 +2943,15 @@ const EvalPickerConfigFull = ({
             addDisabled = true;
             addDisabledReason = `Map all variables before ${actionLabel}.`;
           }
+          if (!addDisabled && decisionModel && decisionErrors.length) {
+            addDisabled = true;
+            addDisabledReason = decisionErrors[0];
+          }
+
+          if (!addDisabled && !canUpdate) {
+            addDisabled = true;
+            addDisabledReason = "No changes to save.";
+          }
 
           return (
             <CustomTooltip
@@ -2320,7 +2967,7 @@ const EvalPickerConfigFull = ({
                   size="small"
                   loading={isSaving}
                   onClick={handleAdd}
-                  disabled={addDisabled}
+                  disabled={addDisabled || !canUpdate}
                   sx={{ textTransform: "none" }}
                 >
                   {primaryLabel ||
@@ -2349,4 +2996,18 @@ EvalPickerConfigFull.propTypes = {
   showClose: PropTypes.bool,
 };
 
-export default EvalPickerConfigFull;
+/**
+ * W1: the evaluator picker's model menus list decision models (BYOK), and
+ * the picker saves the decision question with the eval.
+ */
+const EvalPickerConfigFullWithDecisions = (props) => (
+  <DecisionJudgesContext.Provider value>
+    <EvalPickerConfigFull
+      key={props.evalData?.userEvalId || props.evalData?.id}
+      {...props}
+    />
+  </DecisionJudgesContext.Provider>
+);
+EvalPickerConfigFullWithDecisions.propTypes = EvalPickerConfigFull.propTypes;
+
+export default EvalPickerConfigFullWithDecisions;

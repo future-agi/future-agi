@@ -1,0 +1,412 @@
+{
+  "schema": "connector-manifest/v1#tools-generated",
+  "spec": {
+    "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/8c562525694550601a232cb54014e48c6c7f6da0/openapi/v1.0/openapi.yaml",
+    "sha256": "533f6d86985584327109ba2c52c0e51454ce1ba2153c11f4d841e898b88c5b1b"
+  },
+  "tools": [
+    {
+      "name": "get_site",
+      "title": "Get site",
+      "description": "Read get site in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Sites.Read.All"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/sites/{site-id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "site-id": {
+            "type": "string",
+            "description": "The unique identifier of site"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["site-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "list_drives",
+      "title": "List drives",
+      "description": "Read list drives in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Sites.Read.All"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/sites/{site-id}/drives"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "site-id": {
+            "type": "string",
+            "description": "The unique identifier of site"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "skip": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Skip the first n items",
+            "x-wireName": "$skip"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["site-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "list_lists",
+      "title": "List lists",
+      "description": "Read list lists in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Sites.Read.All"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/sites/{site-id}/lists"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "site-id": {
+            "type": "string",
+            "description": "The unique identifier of site"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "skip": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Skip the first n items",
+            "x-wireName": "$skip"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["site-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "get_list",
+      "title": "Get list",
+      "description": "Read get list in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Sites.Read.All"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/sites/{site-id}/lists/{list-id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "site-id": {
+            "type": "string",
+            "description": "The unique identifier of site"
+          },
+          "list-id": {
+            "type": "string",
+            "description": "The unique identifier of list"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["site-id", "list-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "list_items",
+      "title": "List items",
+      "description": "Read list items in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Sites.Read.All"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/sites/{site-id}/lists/{list-id}/items"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "site-id": {
+            "type": "string",
+            "description": "The unique identifier of site"
+          },
+          "list-id": {
+            "type": "string",
+            "description": "The unique identifier of list"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "skip": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Skip the first n items",
+            "x-wireName": "$skip"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["site-id", "list-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "get_item",
+      "title": "Get item",
+      "description": "Read get item in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Sites.Read.All"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/sites/{site-id}/lists/{list-id}/items/{listItem-id}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "site-id": {
+            "type": "string",
+            "description": "The unique identifier of site"
+          },
+          "list-id": {
+            "type": "string",
+            "description": "The unique identifier of list"
+          },
+          "listItem-id": {
+            "type": "string",
+            "description": "The unique identifier of listItem"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["site-id", "list-id", "listItem-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "list_columns",
+      "title": "List columns",
+      "description": "Read list columns in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Sites.Read.All"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/sites/{site-id}/columns"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "site-id": {
+            "type": "string",
+            "description": "The unique identifier of site"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "skip": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Skip the first n items",
+            "x-wireName": "$skip"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["site-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    },
+    {
+      "name": "list_content_types",
+      "title": "List content types",
+      "description": "Read list content types in the tenant-authorized SharePoint site. Use site-id from the site URL or discovery.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["Sites.Read.All"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1.0/sites/{site-id}/contentTypes"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "site-id": {
+            "type": "string",
+            "description": "The unique identifier of site"
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 0,
+            "examples": [50],
+            "description": "Show only the first n items",
+            "x-wireName": "$top"
+          },
+          "skip": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Skip the first n items",
+            "x-wireName": "$skip"
+          },
+          "filter": {
+            "type": "string",
+            "description": "Filter items by property values",
+            "x-wireName": "$filter"
+          },
+          "orderby": {
+            "type": "string",
+            "description": "Order items by property values. Comma-separated values.",
+            "x-wireName": "$orderby"
+          },
+          "select": {
+            "type": "string",
+            "description": "Select properties to be returned. Comma-separated values.",
+            "x-wireName": "$select"
+          }
+        },
+        "required": ["site-id"],
+        "additionalProperties": false,
+        "x-origin": "https://graph.microsoft.com"
+      }
+    }
+  ]
+}

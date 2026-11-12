@@ -22,8 +22,11 @@ import {
   useReplaySessionsStoreShallow,
   useSessionsGridStoreShallow,
 } from "./store";
-import { useCreateAgentDefinitionVersion } from "src/api/agent-definition/agent-definition-version";
-import { useCreateAgentDefinition } from "../../../../api/agent-definition/agent-definition-version";
+import {
+  getAgentDefinitionCreationErrorMessage,
+  useCreateAgentDefinition,
+  useCreateAgentDefinitionVersion,
+} from "src/api/agent-definition/agent-definition-version";
 
 export const StyledBox = styled(Box)(({ theme }) => ({
   padding: theme.spacing(2),
@@ -58,8 +61,6 @@ const getExpandActions = (onSaveClick, isLoading = false) => [
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        padding: "5px",
-        borderRadius: "4px",
         position: "relative",
         bgcolor: "background.paper",
         "&:hover": {
@@ -211,7 +212,13 @@ const AgentDefinitionDetails = () => {
     });
 
   const { mutate: createAgentDefinition, isPending: isCreating } =
-    useCreateAgentDefinition();
+    useCreateAgentDefinition({
+      onError: (err) => {
+        enqueueSnackbar(getAgentDefinitionCreationErrorMessage(err), {
+          variant: "error",
+        });
+      },
+    });
 
   const handleSaveAgentDefinition = () => {
     // Get the current form values
@@ -271,7 +278,6 @@ const AgentDefinitionDetails = () => {
             onClick={() => setCollapsed(!collapsed)}
             sx={{
               color: "text.primary",
-              p: 0,
             }}
             size="small"
           >
@@ -280,7 +286,7 @@ const AgentDefinitionDetails = () => {
                 height: "24px",
                 width: "24px",
                 transform: `${!collapsed ? "rotate(180deg)" : "rotate(0deg)"}`,
-                transition: "transform 0.3s ease",
+                transition: "transform 200ms ease",
                 transformOrigin: "center",
               }}
               src="/assets/icons/custom/lucide--chevron-down.svg"
@@ -401,7 +407,6 @@ const ScenarioDetails = () => {
             onClick={() => setCollapsed(!collapsed)}
             sx={{
               color: "text.primary",
-              p: 0,
             }}
             size="small"
           >
@@ -410,7 +415,7 @@ const ScenarioDetails = () => {
                 height: "24px",
                 width: "24px",
                 transform: `${!collapsed ? "rotate(180deg)" : "rotate(0deg)"}`,
-                transition: "transform 0.3s ease",
+                transition: "transform 200ms ease",
                 transformOrigin: "center",
               }}
               src="/assets/icons/custom/lucide--chevron-down.svg"
@@ -460,7 +465,7 @@ const ScenarioDetails = () => {
                     fontWeight={"fontWeightMedium"}
                     component={"span"}
                     typography={"s1"}
-                    color={"green.500"}
+                    color={"text.primary"}
                   >
                     {selectAll
                       ? totalRowCount - toggledNodes?.length
@@ -504,7 +509,6 @@ const AdditionalDetails = () => {
           onClick={() => setCollapsed(!collapsed)}
           sx={{
             color: "text.primary",
-            p: 0,
           }}
           size="small"
         >
@@ -513,7 +517,7 @@ const AdditionalDetails = () => {
               height: "24px",
               width: "24px",
               transform: `${!collapsed ? "rotate(180deg)" : "rotate(0deg)"}`,
-              transition: "transform 0.3s ease",
+              transition: "transform 200ms ease",
               transformOrigin: "center",
             }}
             src="/assets/icons/custom/lucide--chevron-down.svg"

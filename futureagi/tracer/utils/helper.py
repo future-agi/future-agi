@@ -68,6 +68,26 @@ def _attach_system_property_identity(
     return config
 
 
+def unvalidated_relation_keys(model, row, validated):
+    """The keys of ``row`` that would set a relation of ``model`` the caller
+    did not validate.
+
+    ``validated`` names the relations the caller resolved itself (and put in
+    ``row`` as model instances). Any other relation, and every raw ``*_id``
+    column of a relation, would be stored as sent, so a bulk row naming one is
+    refused.
+    """
+    keys = set()
+    for field in model._meta.concrete_fields:
+        if not field.is_relation:
+            continue
+        if field.attname in row and field.attname != field.name:
+            keys.add(field.attname)
+        if field.name in row and field.name not in validated:
+            keys.add(field.name)
+    return sorted(keys)
+
+
 def get_sort_query(sort_by, sort_order="desc"):
     """
     Returns sort query based on sort_by parameter and sort order

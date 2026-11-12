@@ -27,14 +27,22 @@ import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { useConditionalNodeStoreShallow } from "../../states";
 import { enqueueSnackbar } from "src/components/snackbar";
+import { isPrototypeMode } from "src/utils/prototype";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
+import { EXECUTE_CODE_COLUMN_OFFERED } from "../common";
+import RerunScopeField from "../RerunScopeField";
+import { withRerunScope } from "../rerunScope";
+import { rerunResultToast } from "../rerunResult";
 
 const COLUMN_TYPE_OPTIONS = [
+  { label: "Static value", value: "static_value" },
   { label: "Run Prompt", value: "run_prompt" },
   { label: "Retrieval", value: "retrieval" },
   { label: "Extract Entities", value: "extract_entities" },
   { label: "Extract JSON Key", value: "extract_json" },
-  { label: "Execute Custom Code", value: "extract_code" },
+  ...(EXECUTE_CODE_COLUMN_OFFERED
+    ? [{ label: "Execute Custom Code", value: "extract_code" }]
+    : []),
   { label: "Classification", value: "classification" },
   { label: "API Calls", value: "api_call" },
 ];
@@ -63,11 +71,17 @@ const ConditionalNodeBranch = ({ index, setOpenForm, handleDeleteBranch }) => {
       setValue(`config.${index}.branchNodeConfig.config`, null);
     }
     if (!e.target.value) return;
+    // A static value is typed in place (no sub-form).
+    if (e.target.value === "static_value") {
+      setValue(`config.${index}.branchNodeConfig.config`, { value: "" });
+      return;
+    }
 
     setOpenForm({ index, formType: e.target.value });
   };
 
   const handleEdit = () => {
+    if (existingBranchType === "static_value") return;
     setOpenForm({ index, formType: existingBranchType });
   };
 
@@ -91,7 +105,7 @@ const ConditionalNodeBranch = ({ index, setOpenForm, handleDeleteBranch }) => {
         }}
       >
         {index === 0 ? (
-          <Typography fontSize="14px" fontWeight={600}>
+          <Typography fontSize="13px" fontWeight={600}>
             If
           </Typography>
         ) : (
@@ -120,7 +134,9 @@ const ConditionalNodeBranch = ({ index, setOpenForm, handleDeleteBranch }) => {
             size="small"
             onClick={() => handleEdit()}
             color="default"
-            disabled={!existingBranchType}
+            disabled={
+              !existingBranchType || existingBranchType === "static_value"
+            }
           >
             <Iconify icon="solar:pen-bold" />
           </IconButton>
@@ -150,6 +166,21 @@ const ConditionalNodeBranch = ({ index, setOpenForm, handleDeleteBranch }) => {
           onChange={(event) => handleColumnTypeChange(event, index)}
         />
       </Box>
+      {existingBranchType === "static_value" && (
+        <Box sx={{ mt: 2 }}>
+          <FormTextFieldV2
+            label="Value"
+            size="small"
+            control={control}
+            fieldName={`config.${index}.branchNodeConfig.config.value`}
+            // L2: dev keeps a static value as typed (no {{column}} fill).
+            placeholder={
+              isPrototypeMode() ? "e.g. n/a, or {{column}}" : "e.g. n/a"
+            }
+            fullWidth
+          />
+        </Box>
+      )}
       <ShowComponent
         condition={errors?.config?.[index]?.branchNodeConfig?.config}
       >
@@ -207,10 +238,9 @@ const ConditionalNodeMainForm = ({
         endpoints.develop.addColumns.updateDynamicColumn(editId),
         data,
       ),
-    onSuccess: () => {
-      enqueueSnackbar("API Call column updated successfully", {
-        variant: "success",
-      });
+    onSuccess: (res) => {
+      const toast = rerunResultToast("Conditional Node", res);
+      enqueueSnackbar(toast.text, { variant: toast.variant });
       refreshGrid();
       onClose();
     },
@@ -231,12 +261,18 @@ const ConditionalNodeMainForm = ({
     };
   };
 
+  const [rerunScope, setRerunScope] = React.useState("all");
   const onSubmit = (formValues) => {
     if (editId) {
-      updateColumn({
-        config: { ...transformFormToApi(formValues) },
-        operation_type: "conditional",
-      });
+      updateColumn(
+        withRerunScope(
+          {
+            config: { ...transformFormToApi(formValues) },
+            operation_type: "conditional",
+          },
+          rerunScope,
+        ),
+      );
       return;
     }
 
@@ -244,11 +280,23 @@ const ConditionalNodeMainForm = ({
   };
 
   const handleAddBranch = () => {
-    append({
-      branchType: "elif",
-      condition: "",
-      branchNodeConfig: { type: "", config: null },
-    });
+    // L7b G6: the new branch is added without focusing its first field, so
+    // its Select Column Type list does not open by itself.
+    append(
+      {
+        branchType: "elif",
+        condition: "",
+        branchNodeConfig: { type: "", config: null },
+      },
+      { shouldFocus: false },
+    );
+  };
+
+  // L7b G6: typing in the form (a condition with "c", a value) stays in the
+  // form: the Data grid's single-key shortcuts never see it. Escape still
+  // reaches the drawer so it closes.
+  const keepKeysInForm = (e) => {
+    if (e.key !== "Escape") e.stopPropagation();
   };
 
   const handleDeleteBranch = (index) => {
@@ -271,6 +319,7 @@ const ConditionalNodeMainForm = ({
         width: "550px",
       }}
       component="form"
+      onKeyDown={keepKeysInForm}
     >
       <Box
         sx={{
@@ -279,11 +328,11 @@ const ConditionalNodeMainForm = ({
           alignItems: "center",
         }}
       >
-        <Typography fontWeight={700} color="text.secondary">
+        <Typography fontWeight={600} color="text.secondary">
           {editId ? "Edit Conditional Node" : "Conditional Node"}
         </Typography>
         <IconButton onClick={onCloseClick} size="small">
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
       <Box
@@ -320,6 +369,9 @@ const ConditionalNodeMainForm = ({
         <Button fullWidth variant="outlined" onClick={handleAddBranch}>
           Add Branch
         </Button>
+        {editId && (
+          <RerunScopeField value={rerunScope} onChange={setRerunScope} />
+        )}
       </Box>
 
       <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>

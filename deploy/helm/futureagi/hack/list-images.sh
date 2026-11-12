@@ -109,7 +109,14 @@ PY
   done
 fi
 
-"$helm" template futureagi "$chart" --namespace futureagi "${helm_args[@]}" >"$work/rendered.yaml" ||
+# This disposable render is ONLY an image inventory, never an install manifest:
+# the file stays private to this script and is deleted on exit. Use a synthetic
+# Secret reference instead of generating application keys. Set it last so an
+# explicitly empty caller value cannot re-enable generation; image fields do not
+# depend on the application Secret's name. existingSecret also works with older
+# packaged charts whose schemas do not know the test-only generation opt-out.
+"$helm" template futureagi "$chart" --namespace futureagi "${helm_args[@]}" \
+  --set secrets.existingSecret=futureagi-image-inventory >"$work/rendered.yaml" ||
   fail "helm template failed"
 
 # `image:` fields of every container, init container and hook; quotes dropped.

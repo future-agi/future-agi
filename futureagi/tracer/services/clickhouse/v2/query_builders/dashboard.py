@@ -406,7 +406,8 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
         root_witness = (
             "\n                  AND (dashboard_candidate_source.parent_span_id IS NULL "
             "OR dashboard_candidate_source.parent_span_id = '')"
-            if root_only else ""
+            if root_only
+            else ""
         )
         source_alias = "spans" if alias == "spans" else alias
         # Two legs, one Map read. The candidate leg already decompresses
@@ -722,10 +723,13 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
         if not isinstance(values, list) or len(values) != 2:
             return False
         try:
-            return tuple(
-                datetime.fromisoformat(value) if isinstance(value, str) else value
-                for value in values
-            ) == self.parse_time_range()
+            return (
+                tuple(
+                    datetime.fromisoformat(value) if isinstance(value, str) else value
+                    for value in values
+                )
+                == self.parse_time_range()
+            )
         except (TypeError, ValueError):
             return False
 
@@ -768,7 +772,8 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
             else None
         )
         scalar_filters = [
-            item for item in self.global_filters + per_metric_filters
+            item
+            for item in self.global_filters + per_metric_filters
             if not self._is_redundant_time_filter(item)
         ]
         local_scalar_filters = all(
@@ -787,7 +792,10 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
             previous = getattr(self, "_exact_metric_presence", None)
             attribute_map = attribute_maps.get(metric.get("attribute_type", "number"))
             self._exact_metric_presence = (
-                (attribute_map, _validate_attribute_key(metric.get("attribute_key", "")))
+                (
+                    attribute_map,
+                    _validate_attribute_key(metric.get("attribute_key", "")),
+                )
                 if attribute_map is not None
                 else None
             )
@@ -832,11 +840,13 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
         breakdown_state = ""
         breakdown_select = ""
         breakdown_live_predicate = ""
-        dimensions = [f"{bucket_fn}(start_time) AS time_bucket"]
+        dimensions = [self._time_bucket_select(bucket_fn, "start_time")]
         group_columns = ["time_bucket"]
         live_columns = ["start_time", "metric_value"]
         if breakdown_map is not None:
-            params["_custom_bd_key_0"] = _validate_attribute_key(scalar_breakdown["name"])
+            params["_custom_bd_key_0"] = _validate_attribute_key(
+                scalar_breakdown["name"]
+            )
             breakdown_state = f""",
                             mapContains(custom_metric_source.{breakdown_map}, %(_custom_bd_key_0)s),
                             custom_metric_source.{breakdown_map}[%(_custom_bd_key_0)s]"""
@@ -904,8 +914,8 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
             + "\nFROM ("
             + scalar_source
             + ") AS custom_metric_rows"
-            + "\nGROUP BY "
-            + ", ".join(group_columns)
+            + "\n"
+            + self._group_by(group_columns)
             + "\nORDER BY "
             + ", ".join(group_columns)
             + "\nSETTINGS optimize_move_to_prewhere=0, optimize_move_to_prewhere_if_final=0"
@@ -967,7 +977,10 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
             aliases.append(alias_match.group("alias"))
         if not aliases or aliases[0] != "time_bucket":
             return None
-        if aliases[1:] not in ([], ["breakdown_value"]):
+        ordinary_aliases = [
+            alias for alias in aliases if alias != "is_period_aggregate"
+        ]
+        if ordinary_aliases[1:] not in ([], ["breakdown_value"]):
             return None
         return (
             dimensions,
@@ -1082,7 +1095,8 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
         for index, (metric, sql, params) in enumerate(prepared):
             parsed = (
                 self._parse_simple_metric_query(sql)
-                if not annotation and metric.get("type", "system_metric")
+                if not annotation
+                and metric.get("type", "system_metric")
                 in {"system_metric", "custom_attribute"}
                 else None
             )
@@ -1105,17 +1119,24 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
             if len(indices) > 1:
                 dimensions, tail, query_settings, params = key
                 sql, columns = self._render_metric_group_sql(
-                    dimensions=dimensions, value_expressions=tuple(values),
-                    tail=tail, query_settings=query_settings,
+                    dimensions=dimensions,
+                    value_expressions=tuple(values),
+                    tail=tail,
+                    query_settings=query_settings,
                 )
                 plan = DashboardMetricGroupQuery(
-                    sql=sql, params=dict(params),
+                    sql=sql,
+                    params=dict(params),
                     metrics=tuple(prepared[index][0] for index in indices),
-                    value_columns=columns, has_breakdown=len(dimensions) == 2,
+                    value_columns=columns,
+                    has_breakdown=any(
+                        _SELECT_ALIAS_RE.search(expression).group("alias")
+                        == "breakdown_value"
+                        for expression in dimensions
+                    ),
                 )
             plans.append((tuple(indices), plan))
         return plans
-
 
     def build_compatible_metric_group_query(
         self,
@@ -1124,13 +1145,23 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
     ) -> DashboardMetricGroupQuery | None:
         """Preserve the all-or-none group API for existing callers."""
         metrics = tuple(self.metrics)
-        if len(metrics) < 2 or any(
-            metric.get("type", "system_metric") not in {"system_metric", "custom_attribute"}
-            for metric in metrics
-        ) or any(bd.get("type") == "annotation" for bd in self.breakdowns):
+        if (
+            len(metrics) < 2
+            or any(
+                metric.get("type", "system_metric")
+                not in {"system_metric", "custom_attribute"}
+                for metric in metrics
+            )
+            or any(bd.get("type") == "annotation" for bd in self.breakdowns)
+        ):
             return None
         prepared = tuple(
-            (metric, *self._build_metric_query_for_snapshot_mode(metric, latest_state=latest_state))
+            (
+                metric,
+                *self._build_metric_query_for_snapshot_mode(
+                    metric, latest_state=latest_state
+                ),
+            )
             for metric in metrics
         )
         groups = self.group_prepared_metric_queries(prepared)
@@ -1208,6 +1239,8 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
                     "time_bucket": row["time_bucket"],
                     "value": row[value_column],
                 }
+                if "is_period_aggregate" in row:
+                    metric_row["is_period_aggregate"] = row["is_period_aggregate"]
                 if plan.has_breakdown:
                     metric_row["breakdown_value"] = row.get("breakdown_value")
                 metric_rows.append(metric_row)
@@ -1226,7 +1259,10 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
         # keeps the v2 default.
         sql = _append_v2_settings(
             rewrite_v1_sql_to_v2(sql),
-            aggregation_in_order=_EXACT_REPLAY_CANDIDATE_CTE not in sql,
+            aggregation_in_order=(
+                not self.include_period_aggregate
+                and _EXACT_REPLAY_CANDIDATE_CTE not in sql
+            ),
         )
         sql = _restore_usage_cdc_columns(sql)
         # Mixed-table query: rewrite already fixed spans refs, now restore

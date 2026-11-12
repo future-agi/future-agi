@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 import prettier from "prettier";
 
@@ -111,6 +112,14 @@ Object.keys(swagger.paths || {})
     });
     endpoints[pathName] = methods;
   });
+
+// Compatibility definitions remain part of the runtime client contract even
+// when no current endpoint references them. Traverse their dependencies too.
+Object.entries(swagger.definitions || {}).forEach(([name, definition]) => {
+  if (definition?.["x-client-retained"] === true) {
+    neededDefinitionNames.add(name);
+  }
+});
 
 const definitions = {};
 const pending = [...neededDefinitionNames].sort();

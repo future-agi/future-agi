@@ -793,8 +793,17 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
 
         # Get scenario column order
         scenario_ids = call_execution.test_execution.scenario_ids
+        # This activity runs with no workspace bound, so the manager adds no
+        # tenant filter. Every scenario, column and dataset read here is limited
+        # to the execution's own organization. An id of another organization's
+        # scenario, stored before execute checked scenario_ids (T6 #7e), then
+        # adds none of its columns to the cell-read gate below and no name to
+        # the mismatch message.
+        organization_id = call_execution.test_execution.run_test.organization_id
         scenario_column_order_qs = (
-            Scenarios.objects.filter(id__in=scenario_ids, deleted=False)
+            Scenarios.objects.filter(
+                id__in=scenario_ids, organization_id=organization_id, deleted=False
+            )
             .select_related("dataset")
             .values_list("dataset__column_order", flat=True)
         )
@@ -864,7 +873,9 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         columns_by_id = {}
         if mismatch_column_ids:
             for col in Column.objects.select_related("dataset").filter(
-                id__in=mismatch_column_ids, deleted=False
+                id__in=mismatch_column_ids,
+                dataset__organization_id=organization_id,
+                deleted=False,
             ):
                 columns_by_id[str(col.id)] = col
 
@@ -874,14 +885,16 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         ]
         scenario_by_dataset = {}
         if dataset_ids:
-            for scn in Scenarios.objects.filter(dataset_id__in=dataset_ids):
+            for scn in Scenarios.objects.filter(
+                dataset_id__in=dataset_ids, organization_id=organization_id
+            ):
                 scenario_by_dataset[scn.dataset_id] = scn
 
         # Pre-fetch test scenario names (used in mismatch error messages)
         test_scenarios = list(
-            Scenarios.objects.filter(id__in=scenario_ids, deleted=False).values_list(
-                "name", flat=True
-            )
+            Scenarios.objects.filter(
+                id__in=scenario_ids, organization_id=organization_id, deleted=False
+            ).values_list("name", flat=True)
         )
         test_scenarios_str = (
             ", ".join(test_scenarios) if test_scenarios else "unknown scenarios"
@@ -1035,7 +1048,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             template=eval_template,
             org=organization,
             model=eval_config.model,
-            kb_id=eval_config.kb_id,
+            kb_id=eval_config.kb_id_id,
             error_localizer=eval_config.error_localizer,
             workspace=call_execution.test_execution.run_test.workspace,
             source=eval_source(call_execution.test_execution_id),

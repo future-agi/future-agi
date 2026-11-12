@@ -35,6 +35,33 @@ class LicenseDetailsSerializer(serializers.Serializer):
     )
 
 
+class ExperimentRunSourceCapabilitySerializer(serializers.Serializer):
+    available = serializers.BooleanField()
+    reason = serializers.CharField(allow_null=True)
+
+    def validate(self, attrs):
+        if attrs["available"] != (attrs["reason"] is None):
+            raise serializers.ValidationError(
+                "Unavailable sources must include a reason; available sources must not."
+            )
+        return attrs
+
+
+class ExperimentRunSourceKindsSerializer(serializers.Serializer):
+    prompt = ExperimentRunSourceCapabilitySerializer()
+    agent = ExperimentRunSourceCapabilitySerializer(
+        help_text="Agent Playground graph versions, not Console-agent targets."
+    )
+    http = ExperimentRunSourceCapabilitySerializer()
+    a2a = ExperimentRunSourceCapabilitySerializer()
+    mcp_tool = ExperimentRunSourceCapabilitySerializer()
+
+
+class ExperimentRunSourcesSerializer(serializers.Serializer):
+    workspace_id = serializers.UUIDField(allow_null=True)
+    sources = ExperimentRunSourceKindsSerializer()
+
+
 class CapabilitiesResponseSerializer(serializers.Serializer):
     deployment_flavor = serializers.ChoiceField(
         choices=[flavor.value for flavor in DeploymentFlavor],
@@ -46,5 +73,6 @@ class CapabilitiesResponseSerializer(serializers.Serializer):
         choices=[state.value for state in LicenseState],
     )
     features = serializers.DictField(child=CapabilityFeatureSerializer())
+    experiment_run_sources = ExperimentRunSourcesSerializer()
     license = LicenseDetailsSerializer(required=False, allow_null=True)
     instance_id = serializers.UUIDField(required=False, allow_null=True)

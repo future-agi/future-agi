@@ -8,7 +8,6 @@ import {
   TextField,
   Typography,
   useTheme,
-  CircularProgress,
 } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -16,6 +15,7 @@ import { enqueueSnackbar } from "notistack";
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import SvgColor from "src/components/svg-color";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const ORG_2FA_GRACE_PERIOD_MAX_DAYS = 30;
 
@@ -113,7 +113,7 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
           justifyContent: "center",
         }}
       >
-        <CircularProgress size={24} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -131,6 +131,7 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
     >
       <Typography
         variant="s1"
+        component="div"
         sx={{
           fontWeight: "fontWeightSemiBold",
           color: "text.primary",
@@ -140,6 +141,7 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
       </Typography>
       <Typography
         variant="s2"
+        component="div"
         sx={{
           color: "text.secondary",
           fontWeight: "fontWeightRegular",
@@ -162,6 +164,7 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
         <Box>
           <Typography
             variant="s1"
+            component="div"
             sx={{
               color: "text.primary",
               fontWeight: "fontWeightMedium",
@@ -171,10 +174,11 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
           </Typography>
           <Typography
             variant="s2"
+            component="div"
             sx={{
               color: "text.secondary",
               fontWeight: "fontWeightRegular",
-              marginTop: theme.spacing(0.25),
+              marginTop: theme.spacing(0.5),
             }}
           >
             When enabled, all organization members must set up two-factor
@@ -197,20 +201,15 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
           width={"max-content"}
           gap={1.5}
           sx={{
+            maxWidth: "100%",
             pl: 1.25,
             pr: 1.5,
             py: 1,
             mt: 2,
-            backgroundColor:
-              theme.palette.mode === "dark"
-                ? "rgba(255, 193, 7, 0.08)"
-                : "warning.lighter",
+            backgroundColor: "status.warning.bg",
             borderRadius: 1,
             border: "1px solid",
-            borderColor:
-              theme.palette.mode === "dark"
-                ? "rgba(255, 193, 7, 0.3)"
-                : "warning.light",
+            borderColor: "status.warning.border",
           }}
         >
           <SvgColor
@@ -218,15 +217,13 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
             sx={{
               width: "20px",
               height: "20px",
-              color:
-                theme.palette.mode === "dark" ? "warning.light" : "#7D5E2F",
+              color: "status.warning.fg",
             }}
           />
           <Typography
             variant="s2"
             sx={{
-              color:
-                theme.palette.mode === "dark" ? "warning.light" : "#7D5E2F",
+              color: "status.warning.fg",
               fontWeight: "fontWeightMedium",
               lineHeight: 1.5,
             }}

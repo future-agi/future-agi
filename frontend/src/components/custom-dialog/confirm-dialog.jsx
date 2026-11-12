@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useId, useLayoutEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 
 import Button from "@mui/material/Button";
@@ -11,6 +11,79 @@ import Iconify from "../iconify";
 
 // ----------------------------------------------------------------------
 
+// Elements a person can type into, pick, follow or press.
+const CONTROL_ROLES = [
+  "button",
+  "checkbox",
+  "combobox",
+  "link",
+  "listbox",
+  "menuitem",
+  "radio",
+  "searchbox",
+  "slider",
+  "spinbutton",
+  "switch",
+  "tab",
+  "textbox",
+];
+
+const CONTROL_SELECTOR = [
+  "a[href]",
+  "area[href]",
+  "button",
+  "input:not([type='hidden'])",
+  "select",
+  "textarea",
+  "iframe",
+  "audio[controls]",
+  "video[controls]",
+  "[contenteditable]:not([contenteditable='false'])",
+  "[tabindex]:not([tabindex='-1'])",
+  ...CONTROL_ROLES.map((role) => `[role='${role}']`),
+].join(", ");
+
+const CONTROL_ATTRIBUTES = [
+  "contenteditable",
+  "controls",
+  "href",
+  "role",
+  "tabindex",
+  "type",
+];
+
+// Whether the rendered content holds a control, kept current while the
+// content changes on its own (a field that appears after a choice).
+function useHoldsControl(node) {
+  const [holdsControl, setHoldsControl] = useState(false);
+  const lastRef = useRef(false);
+
+  useLayoutEffect(() => {
+    const update = (next) => {
+      if (next === lastRef.current) return;
+      lastRef.current = next;
+      setHoldsControl(next);
+    };
+    if (!node) {
+      update(false);
+      return undefined;
+    }
+    const check = () => update(Boolean(node.querySelector(CONTROL_SELECTOR)));
+    check();
+    if (typeof MutationObserver === "undefined") return undefined;
+    const observer = new MutationObserver(check);
+    observer.observe(node, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: CONTROL_ATTRIBUTES,
+    });
+    return () => observer.disconnect();
+  }, [node]);
+
+  return holdsControl;
+}
+
 export default function ConfirmDialog({
   title,
   content,
@@ -18,41 +91,58 @@ export default function ConfirmDialog({
   open,
   onClose,
   closeDisabled = false,
+  cancelLabel = "Cancel",
   ...other
 }) {
   const theme = useTheme();
+  const contentId = useId();
+  const [contentNode, setContentNode] = useState(null);
+  // A description is read out as one flat string after the dialog's name,
+  // so content that holds a form or another control does not describe the
+  // dialog: its fields are reached and read one by one instead.
+  const holdsControl = useHoldsControl(contentNode);
   return (
-    <Dialog fullWidth maxWidth="xs" open={open} onClose={onClose} {...other}>
+    <Dialog
+      fullWidth
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 400 } }}
+      open={open}
+      onClose={onClose}
+      aria-describedby={content && !holdsControl ? contentId : undefined}
+      {...other}
+    >
       <Box sx={{ padding: 2 }}>
-        <DialogTitle sx={{ padding: 0, margin: 0 }}>
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <Typography
-              color="text.primary"
-              fontWeight={"fontWeightBold"}
-              typography="m2"
-            >
+        {/* The dialog is named by the title element (aria-labelledby), so the
+            close button sits beside it, not inside it. The title may shrink
+            and wrap so the button stays in the row. */}
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <DialogTitle sx={{ padding: 0, margin: 0, flex: "0 1 auto" }}>
+            <Typography color="text.primary" fontWeight={600} typography="m2">
               {title}
             </Typography>
-            <IconButton
-              sx={{
-                color: "text.primary",
-              }}
-              onClick={onClose}
-              disabled={closeDisabled}
-            >
-              <Iconify icon="mdi:close" />
-            </IconButton>
-          </Box>
-        </DialogTitle>
+          </DialogTitle>
+          <IconButton
+            aria-label="Close dialog"
+            sx={{
+              color: "text.primary",
+            }}
+            onClick={onClose}
+            disabled={closeDisabled}
+          >
+            <Iconify icon="solar:close-linear" />
+          </IconButton>
+        </Box>
 
         {content && (
           <DialogContent
+            ref={setContentNode}
+            id={contentId}
             sx={{
               color: "text.secondary",
               marginTop: theme.spacing(1),
@@ -70,9 +160,8 @@ export default function ConfirmDialog({
             color="inherit"
             onClick={onClose}
             disabled={closeDisabled}
-            sx={{ paddingX: "24px" }}
           >
-            Cancel
+            {cancelLabel}
           </Button>
           {action}
         </DialogActions>
@@ -83,6 +172,7 @@ export default function ConfirmDialog({
 
 ConfirmDialog.propTypes = {
   action: PropTypes.node,
+  cancelLabel: PropTypes.string,
   closeDisabled: PropTypes.bool,
   content: PropTypes.node,
   onClose: PropTypes.func,

@@ -23,7 +23,9 @@ class AgentVersionCreateRequestSerializer(serializers.Serializer):
         required=False, allow_blank=True, allow_null=True
     )
     provider = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    api_key = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    api_key = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=255
+    )
     assistant_id = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )

@@ -7,7 +7,7 @@ import { LoadingButton } from "@mui/lab";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import CustomPopover, { usePopover } from "src/components/custom-popover";
-import { CONNECT_AGENT_PATH } from "../agentsTabs";
+import { CONNECT_AGENT_PATH, CONNECT_AGENT_PLACE } from "../agentsTabs";
 import { useCreateGraph } from "src/api/agent-playground/agent-playground";
 import { useAgentPlaygroundStoreShallow } from "../store";
 
@@ -24,14 +24,16 @@ const OPTIONS = [
     title: "Connect agents",
     description:
       "Connect an agent that already runs, to test it in simulations",
+    destination: `Opens ${CONNECT_AGENT_PLACE}`,
     iconSrc: "/assets/icons/settings/Integrations_new.svg",
   },
 ];
 
 /**
- * "Create Agents" — build one in the Playground, or connect one that already
+ * "Create agents" — build one in the Playground, or connect one that already
  * exists. The Playground limit only gates the Playground option; connecting
- * an agent is always available.
+ * an agent is always available. Connecting leaves Agents for
+ * Simulate > Environment, so that option names where it goes.
  */
 export default function CreateAgentsButton({ canCreatePlayground = true }) {
   const navigate = useNavigate();
@@ -72,9 +74,9 @@ export default function CreateAgentsButton({ canCreatePlayground = true }) {
             sx={{ height: 20, width: 20 }}
           />
         }
-        endIcon={<Iconify icon="eva:chevron-down-fill" width={18} />}
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={20} />}
       >
-        Create Agents
+        Create agents
       </LoadingButton>
 
       <CustomPopover
@@ -91,7 +93,7 @@ export default function CreateAgentsButton({ canCreatePlayground = true }) {
             sx={{
               alignItems: "flex-start",
               gap: 1.5,
-              p: 1.25,
+              p: 1.5,
               borderRadius: 1,
               whiteSpace: "normal",
             }}
@@ -107,12 +109,19 @@ export default function CreateAgentsButton({ canCreatePlayground = true }) {
               }}
             />
             <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+              <Typography sx={{ typography: "s1", fontWeight: 500 }}>
                 {option.title}
               </Typography>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
                 {option.description}
               </Typography>
+              {option.destination && (
+                <Typography
+                  sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+                >
+                  {option.destination}
+                </Typography>
+              )}
             </Box>
           </MenuItem>
         ))}

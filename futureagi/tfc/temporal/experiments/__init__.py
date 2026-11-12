@@ -56,6 +56,7 @@ from tfc.temporal.experiments.types import (  # V2 types; Rerun cells types; Err
 
 # Import workflows (no Django dependencies)
 from tfc.temporal.experiments.workflows import (
+    ProcessHttpSourceWorkflow,
     ProcessAgentWorkflow,
     ProcessPromptV2Workflow,
     ProcessPromptWorkflow,
@@ -70,6 +71,11 @@ def get_activities():
     Get activity functions. Import lazily to avoid Django imports at module level.
     """
     from tfc.temporal.experiments.activities import (
+        setup_http_source_activity,
+        mark_http_experiment_failed_activity,
+        process_http_row_activity,
+        settle_http_row_activity,
+        finish_http_source_activity,
         analyze_dependencies_activity,
         check_column_status_activity,
         check_experiment_dataset_status_activity,
@@ -81,6 +87,7 @@ def get_activities():
         mark_experiment_failed_activity,
         mark_experiment_running_activity,
         prepare_agent_row_activity,
+        execute_native_graph_activity,
         process_batch_template_eval_activity,
         process_prompt_activity,
         process_row_activity,
@@ -92,13 +99,25 @@ def get_activities():
         setup_prompt_v2_activity,
         stop_experiment_cleanup_activity,
     )
+    from tfc.temporal.experiments.run_control_activities import (
+        bind_experiment_run_activity,
+        persist_experiment_run_state_activity,
+    )
 
     return [
+        bind_experiment_run_activity,
+        persist_experiment_run_state_activity,
+        setup_http_source_activity,
+        mark_http_experiment_failed_activity,
+        process_http_row_activity,
+        settle_http_row_activity,
+        finish_http_source_activity,
         setup_experiment_activity,
         process_prompt_activity,
         setup_prompt_v2_activity,
         setup_agent_activity,
         prepare_agent_row_activity,
+        execute_native_graph_activity,
         process_row_activity,
         process_row_eval_activity,
         get_eval_templates_activity,
@@ -127,6 +146,7 @@ def get_workflows():
         RunExperimentV2Workflow,
         ProcessPromptV2Workflow,
         ProcessAgentWorkflow,
+        ProcessHttpSourceWorkflow,
         # Rerun cells
         RerunCellsV2Workflow,
     ]

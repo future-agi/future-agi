@@ -6,16 +6,32 @@ import Collapse from "@mui/material/Collapse";
 
 import { usePathname } from "src/routes/hooks";
 import { useActiveLink } from "src/routes/hooks/use-active-link";
+import useIsTruncated from "src/hooks/useIsTruncated";
 
 import NavItem from "./nav-item";
+import InertNavItem from "../inert-nav-item";
 import { Box } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import Label from "src/components/label";
 // ----------------------------------------------------------------------
 
+// The title text sits in its own box: a flex row hands its text to an
+// anonymous item that no ellipsis reaches, so a long name (a workspace in
+// Settings) was cut mid-letter at the sidebar's edge.
+const TITLE_TEXT_SX = {
+  display: "block",
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
 export default function NavList({ data, depth, slotProps }) {
   const theme = useTheme();
   const pathname = usePathname();
+  // A cut-off title shows whole in a tooltip on hover and keyboard focus.
+  const titleText = typeof data.title === "string" ? data.title : undefined;
+  const [titleRef, titleCut] = useIsTruncated(titleText);
 
   // activePath lets an item that links to a child route stay active for its
   // whole section (e.g. Agents → /agents/connected, active under /agents).
@@ -42,6 +58,12 @@ export default function NavList({ data, depth, slotProps }) {
     }
   }, [data.children]);
 
+  if (data.inert) {
+    return (
+      <InertNavItem title={data.title} icon={data.icon} info={data.info} />
+    );
+  }
+
   return (
     <>
       <NavItem
@@ -54,14 +76,18 @@ export default function NavList({ data, depth, slotProps }) {
               sx={{
                 display: "flex",
                 alignItems: "center",
-                fontSize: "13px",
+                minWidth: 0,
+                maxWidth: "100%",
+                fontSize: "12px",
                 color: active ? "primary.main" : "text.secondary",
                 fontWeight: active ? 600 : 500,
               }}
             >
-              {data.title}
+              <Box component="span" ref={titleRef} sx={TITLE_TEXT_SX}>
+                {data.title}
+              </Box>
               {data?.labelText && (
-                <Box>
+                <Box sx={{ flexShrink: 0 }}>
                   <Label color="primary">
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
@@ -83,6 +109,7 @@ export default function NavList({ data, depth, slotProps }) {
             </Box>
           </>
         }
+        titleTooltip={titleCut ? titleText : undefined}
         titleIcon={data.titleIcon}
         path={data.path}
         icon={data.icon}

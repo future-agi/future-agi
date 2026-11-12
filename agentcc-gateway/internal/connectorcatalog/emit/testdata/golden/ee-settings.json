@@ -1,0 +1,60 @@
+{
+  "schema": "connector-ee-settings/v1",
+  "bundle": {
+    "version": "2026.10.20.0",
+    "sha256": "df9961425af464b41490fceb4b4ddc51f987d1fc2f7cdec8e6921dd42613e7d0"
+  },
+  "apps": [
+    {
+      "id": "github",
+      "name": "GitHub",
+      "description": "Issues, pull requests and code in your repositories.",
+      "category": "developer",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://github.com/login/oauth/authorize",
+        "tokenUrl": "https://github.com/login/oauth/access_token",
+        "scopes": "repo read:org",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://api.githubcopilot.com/mcp/",
+      "envPrefix": "OMEGA_INTEGRATION_GITHUB"
+    },
+    {
+      "id": "linear",
+      "name": "Linear",
+      "description": "Issues, projects and cycles.",
+      "category": "developer",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://linear.app/oauth/authorize",
+        "tokenUrl": "https://api.linear.app/oauth/token",
+        "scopes": "read write",
+        "pkce": true,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.linear.app/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_LINEAR"
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "description": "Search, read channels and post messages.",
+      "category": "communication",
+      "group": "other",
+      "oauth": {
+        "authorizeUrl": "https://slack.com/oauth/v2_user/authorize",
+        "tokenUrl": "https://slack.com/api/oauth.v2.user.access",
+        "scopes": "search:read channels:history chat:write",
+        "pkce": false,
+        "tokenBody": "form",
+        "clientAuth": "body"
+      },
+      "mcpUrl": "https://mcp.slack.com/mcp",
+      "envPrefix": "OMEGA_INTEGRATION_SLACK"
+    }
+  ]
+}

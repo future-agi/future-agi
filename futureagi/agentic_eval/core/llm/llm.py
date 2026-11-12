@@ -8,33 +8,50 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import anthropic
 import boto3
 import litellm
 import requests
 import structlog
-from agentic_eval.core.utils.functions import download_image_to_base64
-from agentic_eval.core.utils.model_config import ModelConfigs
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from anthropic import AnthropicBedrock, AsyncAnthropic, AsyncAnthropicBedrock
-from botocore.exceptions import ClientError
 from clickhouse_driver import Client
 from google import genai
-from google.genai.types import GenerateContentConfig, HttpOptions, Part, ThinkingConfig
-from litellm import completion
+from google.genai.types import HttpOptions
 from openai import AsyncOpenAI, OpenAI
 
 from agentic_eval.core.database.ch_vector import get_clickhouse_client_kwargs
-
-logger = structlog.get_logger(__name__)
 from agentic_eval.core.llm.audio_utils import (
-    is_audio_url,
-    messages_contain_audio,
     preprocess_messages_for_provider,
 )
+from agentic_eval.core.utils.functions import download_image_to_base64
+from agentic_eval.core.utils.model_config import ModelConfigs
+from agentic_eval.core_evals.fi_utils.evals_result import BatchRunResult
+from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from model_hub.utils import call_websocket
+from model_hub.utils.model_endpoints import (
+    CustomModelConfigError,
+    calls_endpoint_url,
+    custom_endpoint_from_config,
+    endpoint_call_error_message,
+    guarded_completion,
+)
 from tfc.ee_stub import _ee_stub
+from tfc.telemetry import wrap_for_thread
+from tfc.utils.ssrf_guard import (
+    ENDPOINT_ERROR_MESSAGES,
+    EndpointBlocked,
+    GuardedRequestError,
+    endpoint_status_message,
+    guarded_post,
+)
+from tfc.utils.storage import (
+    download_audio_from_url,
+    upload_image_to_s3,
+)
+
+logger = structlog.get_logger(__name__)
 
 try:
     from ee.prompts.protect_prompts import (
@@ -49,14 +66,6 @@ try:
     from ee.prompts.eval_prompts import AUDIO_AGENT_LLM_SYSTEM_INSTRUCTION
 except ImportError:
     AUDIO_AGENT_LLM_SYSTEM_INSTRUCTION = ""
-from agentic_eval.core_evals.fi_utils.evals_result import BatchRunResult
-from model_hub.utils import call_websocket
-from tfc.telemetry import wrap_for_thread
-from tfc.utils.storage import (
-    download_audio_from_url,
-    upload_audio_to_s3,
-    upload_image_to_s3,
-)
 
 # executor = ThreadPoolExecutor(max_workers=10)
 
@@ -70,13 +79,78 @@ LITELLM_NUM_RETRIES = 3
 LITELLM_RETRY_STRATEGY = "exponential_backoff_retry"
 DEFAULT_MAX_TOKENS = 8100
 DEFAULT_TEMPERATURE = 0.7
+# As Run Prompt's custom model handler: some self-hosted models are slow.
+CUSTOM_ENDPOINT_TIMEOUT_SECONDS = 300
 
 # Type aliases
-AudioInput = Union[str, bytes]
-LogData = Dict[str, Any]
-Message = Dict[str, Any]
-Messages = List[Message]
-Payload = Dict[str, Any]
+AudioInput = str | bytes
+LogData = dict[str, Any]
+Message = dict[str, Any]
+Messages = list[Message]
+Payload = dict[str, Any]
+
+
+class CustomModelEndpointError(ValueError):
+    """A call to a Settings -> AI Providers custom model (provider ``custom``)
+    did not get an answer.
+
+    ``reason`` is fixed text (``ENDPOINT_ERROR_MESSAGES``,
+    ``endpoint_status_message`` or a ``CustomModelConfigError``), never the
+    endpoint's own words, so ``str()`` is safe to show: which model, why, and
+    where to fix it.
+    """
+
+    def __init__(self, model: str, reason: str, role: str = "model"):
+        self.model = model
+        self.reason = reason
+        super().__init__(
+            f"The {role} {model} could not be reached: {reason} "
+            "Check Settings › AI Providers."
+        )
+
+
+def find_custom_model_endpoint_error(exc: BaseException | None):
+    """The CustomModelEndpointError in ``exc``'s chain (an evaluator re-raises
+    it as the cause of its own error), or None."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, CustomModelEndpointError):
+            return exc
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return None
+
+
+def _custom_endpoint_answer(body_text: str) -> tuple[str, dict | None]:
+    """(answer, usage) of a custom endpoint's 2xx body: the assistant
+    message of an OpenAI-compatible chat completion, the text of a
+    text-generation body, else the body as it is (as Run Prompt reads it)."""
+    try:
+        body = json.loads(body_text)
+    except (TypeError, ValueError):
+        return body_text, None
+    if isinstance(body, list) and body and isinstance(body[0], dict):
+        body = body[0]
+    if not isinstance(body, dict):
+        return body_text, None
+    usage = body.get("usage") if isinstance(body.get("usage"), dict) else None
+    choices = body.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        message = choices[0].get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, list):
+                content = "".join(
+                    part.get("text", "")
+                    for part in content
+                    if isinstance(part, dict) and isinstance(part.get("text"), str)
+                )
+            return (content if isinstance(content, str) else ""), usage
+        if isinstance(choices[0].get("text"), str):
+            return choices[0]["text"], usage
+    if isinstance(body.get("generated_text"), str):
+        return body["generated_text"], usage
+    return body_text, usage
 
 
 def log_to_clickhouse(log_data: LogData) -> None:
@@ -184,16 +258,21 @@ class LLM:
         api_key (Optional[str]): API key for the provider.
     """
 
+    # How a failed custom-endpoint call names the model to the user.
+    endpoint_model_role = "model"
+
     def __init__(
         self,
         provider: str = ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.provider,
         model_name: str = ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.model_name,
         temperature: float = ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.temperature,
         max_tokens: int = ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN.max_tokens,
-        config: Optional[Dict[str, Any]] = None,
-        api_key: Optional[Union[str, Dict[str, Any]]] = None,
+        config: dict[str, Any] | None = None,
+        api_key: str | dict[str, Any] | None = None,
         optimizer: bool = False,
-        org_id: Optional[str] = None,
+        org_id: str | None = None,
+        workspace_id: str | None = None,
+        model_route: Any | None = None,
     ):
         """
         Initialize the LLM instance.
@@ -207,17 +286,31 @@ class LLM:
             api_key: API key for the provider.
             optimizer: Whether to use optimized model settings.
             org_id: Organization ID for gateway routing (X-Org-Id header).
+            workspace_id: Workspace ID of the caller (identity only).
+            model_route: From ``model_hub.services.model_route``. A
+                ``ManagedRouteBinding`` puts the instance in managed-route
+                mode: no provider key and no provider SDK or deployment
+                client; each call is admitted on its own and sent once
+                through the gateway managed client with the binding's
+                organization/workspace and a fresh request id; no fallback
+                of any kind. A BYOK ``ModelRoute`` supplies its credential
+                as ``api_key``.
         """
         self.provider = provider
         self.model_name = model_name
         self.temperature = temperature
         self.max_tokens = max_tokens
-        self.history: List[Message] = []
+        self.history: list[Message] = []
         self.config = config or {}
         self.optimizer = optimizer
         self.api_key = api_key
         self.org_id = org_id
-        self.last_finish_reason: Optional[str] = None
+        self.workspace_id = workspace_id
+        self.model_route = None
+        if model_route is not None:
+            self._bind_model_route(model_route)
+            api_key = self.api_key
+        self.last_finish_reason: str | None = None
 
         # Initialize usage tracking
         self.cost = {
@@ -230,10 +323,23 @@ class LLM:
             "prompt_tokens": 0,
             "completion_tokens": 0,
         }
+        if self._managed_route_active():
+            # One key: managed calls take their client from the gateway port
+            # per call; no provider SDK client, deployment key or retained
+            # gateway client is built (a key-less deployment can run them).
+            self._init_managed_route_clients()
+            return
         # Initialize the appropriate client
         self._init_client(api_key)
 
-    def _init_client(self, api_key: Optional[Union[str, Dict[str, Any]]]) -> None:
+    def _init_managed_route_clients(self) -> None:
+        self.provider_api_keys = {}
+        self.llm_client = None
+        self.llm_client_async = None
+        self._gateway_client = None
+        self._async_gateway_client = None
+
+    def _init_client(self, api_key: str | dict[str, Any] | None) -> None:
         """
         Initialize the appropriate LLM client based on the provider.
 
@@ -424,13 +530,142 @@ class LLM:
             return False
         return DeploymentMode.is_ee() and is_managed_model(model or self.model_name)
 
+    @staticmethod
+    def _require_retained_gateway_access() -> None:
+        """Deny before a retained gateway client sends a request.
+
+        The gateway clients are acquired once in ``_init_client`` and kept on
+        the instance, so the guarded factory is not re-entered per request.
+        Re-check on every attempt so that removing the self-hosted license key
+        stops managed-gateway egress from existing instances. Raises
+        ``ManagedServiceError("NO_ENTERPRISE_LICENSE", ...)``; cloud (internal
+        key) clients are unaffected.
+        """
+        from ee.usage.services.gateway_llm_client import require_gateway_access
+
+        require_gateway_access()
+
+    @staticmethod
+    def _is_license_denial(exc: BaseException) -> bool:
+        """Whether ``exc`` is the keyless denial, which must not be retried or
+        turned into a provider fallback."""
+        try:
+            from ee.licensing.activation_client import ManagedServiceError
+        except ImportError:
+            return False
+        return (
+            isinstance(exc, ManagedServiceError) and exc.code == "NO_ENTERPRISE_LICENSE"
+        )
+
+    # One key: managed-route mode (model_hub.services.model_route). A managed
+    # binding carries no provider key. Each call is admitted on its own and
+    # sent once through the gateway managed client with the binding's
+    # organization and workspace and its own request id
+    # (managed_chat_completion); a refusal or failure is final: no retry on
+    # litellm, on the deployment's keys or on a fallback model.
+
+    def _bind_model_route(self, route: Any) -> None:
+        mode = getattr(route, "mode", None)
+        if mode == "byok":
+            if self.api_key is None:
+                self.api_key = route.credential
+            return
+        if mode != "managed":
+            raise ValueError("Unknown model route mode")
+        from model_hub.services.model_route import is_managed_route_binding
+
+        if not is_managed_route_binding(route):
+            # An admitted route is one request; an LLM makes many calls,
+            # each admitted on its own from the binding.
+            raise ValueError("A managed model route must be a ManagedRouteBinding")
+        if self.api_key:
+            raise ValueError("A managed model route carries no provider key")
+        route_org = getattr(route, "organization_id", None)
+        if not route_org:
+            raise ValueError("A managed model route needs an organization")
+        if self.org_id and str(self.org_id) != str(route_org):
+            raise ValueError("The model route belongs to another organization")
+        route_workspace = getattr(route, "workspace_id", None)
+        if (
+            self.workspace_id
+            and route_workspace
+            and str(self.workspace_id) != str(route_workspace)
+        ):
+            raise ValueError("The model route belongs to another workspace")
+        self.org_id = str(route_org)
+        self.workspace_id = route_workspace
+        self.model_route = route
+
+    def _managed_route_active(self) -> bool:
+        return getattr(self, "model_route", None) is not None
+
+    def _managed_route_request(
+        self, payload: dict, tools: list | None = None
+    ) -> dict[str, Any]:
+        """Gateway arguments for one managed call. The adapter refuses a
+        model other than the binding's (an override or a fallback) before
+        anything is admitted, and sets the identity headers for each
+        admitted request. The full response is returned, never a stream."""
+        kwargs = self._build_gateway_request_kwargs(payload=payload, extra_headers=None)
+        for name in ("extra_headers", "stream", "stream_options"):
+            kwargs.pop(name, None)
+        if tools:
+            kwargs["tools"] = tools
+        return kwargs
+
+    def _managed_route_completion(
+        self,
+        payload: dict,
+        tools: list | None = None,
+        deadline_monotonic: float | None = None,
+    ) -> Any:
+        """One admitted gateway call (its own admission and request id), or
+        a typed refusal; never None and never another transport."""
+        from model_hub.services.model_route import managed_chat_completion
+
+        return managed_chat_completion(
+            self.model_route,
+            self._managed_route_request(payload, tools),
+            deadline_monotonic=deadline_monotonic,
+        )
+
+    async def _managed_route_completion_async(
+        self, payload: dict, tools: list | None = None
+    ) -> Any:
+        """The async one admitted gateway call; admission, access check and
+        client lookup run off the event loop."""
+        from model_hub.services.model_route import managed_chat_completion_async
+
+        return await managed_chat_completion_async(
+            self.model_route, self._managed_route_request(payload, tools)
+        )
+
+    def _managed_route_content(self, response: Any) -> str:
+        self._set_last_finish_reason_from_response(response)
+        self._update_token_usage(response)
+        self._update_cost(response)
+        content = response.choices[0].message.content
+        return content if content is not None else ""
+
+    def _refuse_fallback_on_managed_route(self) -> None:
+        """No fallback model or provider ever runs for a managed route."""
+        if self._managed_route_active():
+            from model_hub.services.model_route import ManagedRouteCallFailed
+
+            raise ManagedRouteCallFailed()
+
     def _try_gateway_completion(
         self,
         payload: dict,
-        tools: Optional[list] = None,
-        deadline_monotonic: Optional[float] = None,
-    ) -> Optional[Any]:
+        tools: list | None = None,
+        deadline_monotonic: float | None = None,
+    ) -> Any | None:
         """Attempt completion via the Agentcc gateway. Returns response or None on failure."""
+        if self._managed_route_active():
+            # Managed route: the response, or a refusal; never None.
+            return self._managed_route_completion(
+                payload, tools=tools, deadline_monotonic=deadline_monotonic
+            )
         if deadline_monotonic is not None and self._requires_managed_transport(
             payload.get("model")
         ):
@@ -460,6 +695,9 @@ class LLM:
             kwargs["tools"] = tools
 
         for attempt in range(self.GATEWAY_MAX_ATTEMPTS):
+            # Before every send and outside the retry handler, so the denial
+            # propagates instead of being logged as a failed attempt.
+            self._require_retained_gateway_access()
             try:
                 gateway_client = self._gateway_client
                 if deadline_monotonic is not None:
@@ -478,6 +716,10 @@ class LLM:
                         kwargs["timeout"] = remaining
                 return gateway_client.chat.completions.create(**kwargs)
             except Exception as gw_err:
+                # The SDK re-checks the license key before each of its own
+                # retries; a denial from inside the call is final too.
+                if self._is_license_denial(gw_err):
+                    raise
                 logger.warning(
                     "gateway_attempt_failed",
                     error=str(gw_err),
@@ -498,8 +740,8 @@ class LLM:
         return None
 
     def _try_managed_ai_completion(
-        self, payload: dict, tools: Optional[list] = None
-    ) -> Optional[Any]:
+        self, payload: dict, tools: list | None = None
+    ) -> Any | None:
         model = payload.get("model", self.model_name)
         if not self._requires_managed_transport(model):
             return None
@@ -515,7 +757,10 @@ class LLM:
     def _to_openai_like_response(self, value: Any) -> Any:
         if isinstance(value, dict):
             return SimpleNamespace(
-                **{key: self._to_openai_like_response(val) for key, val in value.items()}
+                **{
+                    key: self._to_openai_like_response(val)
+                    for key, val in value.items()
+                }
             )
         if isinstance(value, list):
             return [self._to_openai_like_response(item) for item in value]
@@ -524,15 +769,15 @@ class LLM:
     def _build_gateway_request_kwargs(
         self,
         payload: dict,
-        extra_headers: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        kwargs = dict(
-            model=payload.get("model", self.model_name),
-            messages=payload["messages"],
-            temperature=payload.get("temperature", self.temperature),
-            max_tokens=payload.get("max_tokens", self.max_tokens),
-            extra_headers=extra_headers,
-        )
+        extra_headers: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        kwargs = {
+            "model": payload.get("model", self.model_name),
+            "messages": payload["messages"],
+            "temperature": payload.get("temperature", self.temperature),
+            "max_tokens": payload.get("max_tokens", self.max_tokens),
+            "extra_headers": extra_headers,
+        }
 
         for field in ("response_format", "stream", "stream_options", "tool_choice"):
             if field in payload:
@@ -541,10 +786,14 @@ class LLM:
         return kwargs
 
     async def _try_gateway_completion_async(
-        self, payload: dict, tools: Optional[list] = None
-    ) -> Optional[Any]:
+        self, payload: dict, tools: list | None = None
+    ) -> Any | None:
         """Async version: attempt completion via Agentcc gateway."""
-        managed_response = await self._try_managed_ai_completion_async(payload, tools=tools)
+        if self._managed_route_active():
+            return await self._managed_route_completion_async(payload, tools=tools)
+        managed_response = await self._try_managed_ai_completion_async(
+            payload, tools=tools
+        )
         if managed_response is not None:
             return managed_response
 
@@ -564,9 +813,15 @@ class LLM:
             kwargs["tools"] = tools
 
         for attempt in range(self.GATEWAY_MAX_ATTEMPTS):
+            # Before every send and outside the retry handler (see sync path).
+            self._require_retained_gateway_access()
             try:
-                return await self._async_gateway_client.chat.completions.create(**kwargs)
+                return await self._async_gateway_client.chat.completions.create(
+                    **kwargs
+                )
             except Exception as gw_err:
+                if self._is_license_denial(gw_err):
+                    raise
                 logger.warning(
                     "async_gateway_attempt_failed",
                     error=str(gw_err),
@@ -579,8 +834,8 @@ class LLM:
         return None
 
     async def _try_managed_ai_completion_async(
-        self, payload: dict, tools: Optional[list] = None
-    ) -> Optional[Any]:
+        self, payload: dict, tools: list | None = None
+    ) -> Any | None:
         model = payload.get("model", self.model_name)
         if not self._requires_managed_transport(model):
             return None
@@ -657,17 +912,17 @@ class LLM:
     def _get_completion_content(
         self,
         messages: Messages,
-        model: Optional[str] = None,
-        response_format: Optional[Dict[str, Any]] = None,
-        drop_params: Optional[bool] = None,
+        model: str | None = None,
+        response_format: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
         streaming=False,
-        type: Optional[str] = None,
-        uuid: Optional[str] = None,
-        organization_id: Optional[str] = None,
-        current_activity: Optional[str] = None,
-        reasoning_effort: Optional[str] = None,
-        thinking_budget: Optional[int] = None,
-        disable_thinking: Optional[bool] = None,
+        type: str | None = None,
+        uuid: str | None = None,
+        organization_id: str | None = None,
+        current_activity: str | None = None,
+        reasoning_effort: str | None = None,
+        thinking_budget: int | None = None,
+        disable_thinking: bool | None = None,
     ) -> str:
         """
         Get completion content with retries and fallbacks.
@@ -702,6 +957,10 @@ class LLM:
 
         except Exception:
             pass
+
+        if self._managed_route_active():
+            # One key: one gateway call; a refusal or failure is final.
+            return self._managed_route_content(self._managed_route_completion(payload))
 
         for attempt in range(MAX_RETRIES):
             try:
@@ -826,7 +1085,9 @@ class LLM:
                     return content if content is not None else ""
 
             except Exception as e:
-                if self._requires_managed_transport(payload.get("model")):
+                if self._requires_managed_transport(
+                    payload.get("model")
+                ) or self._is_license_denial(e):
                     raise
                 logger.exception(
                     f"{self.provider} API error: {str(e)}",
@@ -853,10 +1114,10 @@ class LLM:
         self,
         messages: Messages,
         tools: list,
-        model: Optional[str] = None,
-        tool_choice: Optional[Any] = None,
-        drop_params: Optional[bool] = None,
-        timeout_ms: Optional[int] = None,
+        model: str | None = None,
+        tool_choice: Any | None = None,
+        drop_params: bool | None = None,
+        timeout_ms: int | None = None,
     ) -> Any:
         """
         Get completion with tool calling support. Returns the full response.
@@ -891,18 +1152,35 @@ class LLM:
         if timeout_ms is not None and timeout_ms <= 0:
             raise ValueError("timeout_ms must be positive")
         deadline_monotonic = (
-            time.monotonic() + (timeout_ms / 1000)
-            if timeout_ms is not None
-            else None
+            time.monotonic() + (timeout_ms / 1000) if timeout_ms is not None else None
         )
 
-        def remaining_timeout() -> Optional[float]:
+        def remaining_timeout() -> float | None:
             if deadline_monotonic is None:
                 return None
             remaining = deadline_monotonic - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("tool completion deadline exceeded")
             return remaining
+
+        if self._managed_route_active():
+            # One key: one gateway call under the caller's wall; a refusal or
+            # failure is final (no litellm attempt, no retry sleep).
+            for k in ("temperature", "max_tokens", "model", "provider"):
+                v = payload.get(k)
+                if isinstance(v, (list, tuple)) and len(v) == 1:
+                    payload[k] = v[0]
+            if "messages" in payload:
+                payload["messages"] = preprocess_messages_for_provider(
+                    payload["messages"], self.provider
+                )
+            response = self._managed_route_completion(
+                payload, tools=tools, deadline_monotonic=deadline_monotonic
+            )
+            self._set_last_finish_reason_from_response(response)
+            self._update_token_usage(response)
+            self._update_cost(response)
+            return response
 
         for attempt in range(MAX_RETRIES):
             try:
@@ -957,6 +1235,8 @@ class LLM:
             except Exception as e:
                 if deadline_monotonic is not None and isinstance(e, TimeoutError):
                     raise
+                if self._is_license_denial(e):
+                    raise
                 logger.exception(
                     f"{self.provider} API error (tool completion): {str(e)}",
                     attempt=attempt,
@@ -977,17 +1257,17 @@ class LLM:
     async def _get_completion_content_async(
         self,
         messages: Messages,
-        model: Optional[str] = None,
-        response_format: Optional[Dict[str, Any]] = None,
+        model: str | None = None,
+        response_format: dict[str, Any] | None = None,
         streaming: bool = False,
-        type: Optional[str] = None,
-        uuid: Optional[str] = None,
-        organization_id: Optional[str] = None,
-        current_activity: Optional[str] = None,
-        reasoning_effort: Optional[str] = None,
-        thinking_budget: Optional[int] = None,
-        disable_thinking: Optional[bool] = None,
-        ws_manager: Optional[Any] = None,
+        type: str | None = None,
+        uuid: str | None = None,
+        organization_id: str | None = None,
+        current_activity: str | None = None,
+        reasoning_effort: str | None = None,
+        thinking_budget: int | None = None,
+        disable_thinking: bool | None = None,
+        ws_manager: Any | None = None,
     ) -> str:
         """
         Async version of _get_completion_content that properly handles WebSocket streaming.
@@ -1018,6 +1298,11 @@ class LLM:
             thinking_budget,
             disable_thinking,
         )
+
+        if self._managed_route_active():
+            # One key: one gateway call; a refusal or failure is final.
+            response = await self._managed_route_completion_async(payload)
+            return self._managed_route_content(response)
 
         for attempt in range(MAX_RETRIES):
             try:
@@ -1240,7 +1525,9 @@ class LLM:
                     return content if content is not None else ""
 
             except Exception as e:
-                if self._requires_managed_transport(payload.get("model")):
+                if self._requires_managed_transport(
+                    payload.get("model")
+                ) or self._is_license_denial(e):
                     raise
                 logger.exception(
                     "API error",
@@ -1269,6 +1556,7 @@ class LLM:
         self, messages: Messages, payload: Payload
     ) -> str:
         """Async version of final fallback handling."""
+        self._refuse_fallback_on_managed_route()
         payload = dict(payload)
         payload["drop_params"] = True
         payload.pop("max_output_tokens", None)
@@ -1340,17 +1628,17 @@ class LLM:
         except Exception as openai_error:
             logger.exception(f"OpenAI fallback error: {str(openai_error)}")
             logger.error("Max retries reached for all APIs")
-            raise ValueError("FAILED_TO_PROCESS_EVALUATION")
+            raise ValueError("FAILED_TO_PROCESS_EVALUATION") from openai_error
 
     def _prepare_completion_payload(
         self,
         messages: Messages,
-        response_format: Optional[Dict[str, Any]],
-        model: Optional[str] = None,
-        reasoning_effort: Optional[str] = None,
-        thinking_budget: Optional[int] = None,
-        disable_thinking: Optional[bool] = None,
-        drop_params: Optional[bool] = None,
+        response_format: dict[str, Any] | None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+        thinking_budget: int | None = None,
+        disable_thinking: bool | None = None,
+        drop_params: bool | None = None,
     ) -> Payload:
         """Prepare the completion payload based on provider and configuration."""
         _max_tokens = self.max_tokens
@@ -1498,7 +1786,7 @@ class LLM:
             response=response or "[No response provided]",
         )
 
-    def _parse_protect_flash_output(self, output: str) -> Dict[str, str]:
+    def _parse_protect_flash_output(self, output: str) -> dict[str, str]:
         match = re.match(r".*:(.*)\n.*:(.*)\n.*:(.*)", output)
         if match is None:
             return {
@@ -1530,12 +1818,12 @@ class LLM:
         """Determine if alternate format should be tried based on error and attempt."""
         return (
             not tried_alternate
-            and not "timeout" in str(error).lower()
+            and "timeout" not in str(error).lower()
             and "image" in str(error).lower()
             and attempt == 5
         )
 
-    def _handle_protect_completion(self, payload: Payload) -> Dict[str, Any]:
+    def _handle_protect_completion(self, payload: Payload) -> dict[str, Any]:
         metric = (payload.get("model") or self.model_name or "toxicity").strip().lower()
         if metric not in ("toxicity", "bias", "privacy", "prompt_injection"):
             metric = "toxicity"
@@ -1598,7 +1886,7 @@ class LLM:
             logger.exception(
                 "protect_completion_request_failed", metric=metric, error=str(e)
             )
-            raise Exception(f"Protect call failed: {str(e)}")
+            raise Exception(f"Protect call failed: {str(e)}") from e
 
         usage = data.get("usage") or {}
 
@@ -1696,7 +1984,7 @@ class LLM:
                 f"VLLM server error: {response.status_code} - {response.text}"
             )
 
-    def _handle_protect_flash_completion(self, payload: Payload) -> Dict[str, Any]:
+    def _handle_protect_flash_completion(self, payload: Payload) -> dict[str, Any]:
         raw_output = self._handle_vllm_completion(payload)
         parsed = self._parse_protect_flash_output(raw_output)
         is_harmful = parsed.get("prompt_harmfulness") == "yes"
@@ -1719,6 +2007,7 @@ class LLM:
 
     def _handle_final_fallback(self, messages: Messages, payload: Payload) -> str:
         """Handle final fallback attempts when primary provider fails."""
+        self._refuse_fallback_on_managed_route()
         payload = dict(payload)
         payload["drop_params"] = True
         payload.pop("max_output_tokens", None)
@@ -1790,7 +2079,7 @@ class LLM:
         except Exception as openai_error:
             logger.exception(f"OpenAI fallback error: {str(openai_error)}")
             logger.error("Max retries reached for all APIs")
-            raise ValueError("FAILED_TO_PROCESS_EVALUATION")
+            raise ValueError("FAILED_TO_PROCESS_EVALUATION") from openai_error
 
     def _try_alternate_image_format(self, messages):
         new_messages = []
@@ -1922,7 +2211,7 @@ class LLM:
 
     def run_batch(
         self,
-        data: List[Dict[str, Any]],
+        data: list[dict[str, Any]],
         max_parallel_evals: int = 5,
         upload_to_fi: bool = False,
     ) -> BatchRunResult:
@@ -1945,8 +2234,8 @@ class LLM:
         return BatchRunResult(eval_results=eval_results)
 
     def _run_batch_generator_async(
-        self, data: List[Dict[str, Any]], max_parallel_evals: int
-    ) -> List[Optional[Any]]:
+        self, data: list[dict[str, Any]], max_parallel_evals: int
+    ) -> list[Any | None]:
         """
         Run batch evaluations asynchronously.
 
@@ -1981,7 +2270,7 @@ class LLM:
 
             return results
 
-    def _run_batch_generator(self, data: List[Dict[str, Any]]):
+    def _run_batch_generator(self, data: list[dict[str, Any]]):
         """
         Generator function for running batch evaluations sequentially.
 
@@ -2052,7 +2341,7 @@ class LLM:
                 except Exception as e2:
                     error_msg = f"All transcription methods failed: Groq: {str(e)}, OpenAI: {str(e2)}"
                     logger.error(error_msg)
-                    raise ValueError(error_msg)
+                    raise ValueError(error_msg) from e2
 
         except Exception as e:
             logger.error(f"Transcription failed: {str(e)}")
@@ -2081,7 +2370,7 @@ class LLM:
                 except Exception as ex:
                     raise ValueError(
                         f"Failed to decode base64 data from URI: {str(ex)}"
-                    )
+                    ) from ex
 
             abs_path = os.path.abspath(audio_input)
             if os.path.exists(abs_path):
@@ -2110,7 +2399,7 @@ class LLM:
                 except Exception as ex:
                     raise ValueError(
                         "Audio input is not a valid file path, URL, or Base64 encoded audio string"
-                    )
+                    ) from ex
 
         elif isinstance(audio_input, bytes):
             logger.info("Processing raw audio bytes")
@@ -2156,7 +2445,110 @@ class LLM:
         )
         return response.text
 
-    def call_llm(self, prompt: Messages, provider: str, response_format: dict | None = None) -> str:
+    def _post_custom_endpoint(self, url: str, headers: dict, payload: dict) -> Any:
+        """One guarded POST; CustomModelEndpointError when it fails."""
+        try:
+            return guarded_post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=CUSTOM_ENDPOINT_TIMEOUT_SECONDS,
+            )
+        except (EndpointBlocked, GuardedRequestError) as e:
+            # Value-free: the category, never the URL, address or headers.
+            logger.warning(
+                "custom_endpoint_call_failed",
+                model=self.model_name,
+                category=e.category,
+            )
+            reason = str(e)
+        except Exception as e:
+            logger.warning(
+                "custom_endpoint_call_failed",
+                model=self.model_name,
+                error_type=type(e).__name__,
+            )
+            reason = ENDPOINT_ERROR_MESSAGES["failed"]
+        raise CustomModelEndpointError(
+            self.model_name, reason, role=self.endpoint_model_role
+        )
+
+    def _custom_endpoint_completion(
+        self, prompt: Messages, response_format: dict | None = None
+    ) -> str:
+        """
+        Call a Settings -> AI Providers custom model (provider ``custom``) the
+        way Run Prompt's CustomModelHandler does: the OpenAI-compatible chat
+        body POSTed with ``guarded_post`` to the stored chat-completions URL
+        (``api_base``; ``endpoint_url`` on older rows) with the stored headers.
+        No max_tokens, as for any stored key on the litellm path below.
+
+        Returns the assistant message text (a body in another shape as it is).
+        A refused ``response_format`` (HTTP 400) is asked once more without
+        it; the prompt itself asks for JSON. Any failure is a
+        CustomModelEndpointError with fixed text.
+        """
+        role = self.endpoint_model_role
+        try:
+            url, headers = custom_endpoint_from_config(self.api_key)
+        except CustomModelConfigError as e:
+            raise CustomModelEndpointError(self.model_name, str(e), role=role) from None
+
+        payload = {
+            "model": self.model_name,
+            "messages": prompt,
+            "temperature": self.temperature,
+            "stream": False,
+        }
+        if response_format:
+            payload["response_format"] = response_format
+        logger.info(
+            "llm_call_routing",
+            route="custom_endpoint",
+            model=self.model_name,
+        )
+        response = self._post_custom_endpoint(url, headers, payload)
+        if response.status_code == 400 and "response_format" in payload:
+            payload.pop("response_format")
+            response = self._post_custom_endpoint(url, headers, payload)
+        if response.status_code >= 400:
+            logger.warning(
+                "custom_endpoint_error_status",
+                model=self.model_name,
+                status_code=response.status_code,
+            )
+            raise CustomModelEndpointError(
+                self.model_name,
+                endpoint_status_message(response.status_code),
+                role=role,
+            )
+
+        content, usage = _custom_endpoint_answer(response.text)
+        if usage:
+            counts = {
+                key: usage.get(key)
+                for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            }
+            if all(
+                isinstance(value, int) and not isinstance(value, bool)
+                for value in counts.values()
+            ):
+                self._update_token_usage(
+                    SimpleNamespace(usage=SimpleNamespace(**counts))
+                )
+        logger.info(
+            "llm_call_complete",
+            model=self.model_name,
+            route="custom_endpoint",
+            prompt_tokens=self.token_usage.get("prompt_tokens"),
+            completion_tokens=self.token_usage.get("completion_tokens"),
+            response_length=len(content),
+        )
+        return content
+
+    def call_llm(
+        self, prompt: Messages, provider: str, response_format: dict | None = None
+    ) -> str:
         """
         Call the LLM with the given prompt.
 
@@ -2180,6 +2572,32 @@ class LLM:
             max_tokens=self.max_tokens,
         )
 
+        if self._managed_route_active():
+            # One key: one admitted gateway call (its own admission and
+            # request id) with the binding's identity; a refusal or failure
+            # is final (no litellm, no provider or deployment key).
+            managed_payload = {
+                "model": self.model_name,
+                "messages": prompt,
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+            }
+            if response_format:
+                managed_payload["response_format"] = response_format
+            content = self._managed_route_content(
+                self._managed_route_completion(managed_payload)
+            )
+            logger.info(
+                "llm_call_complete",
+                model=self.model_name,
+                route="managed_gateway",
+                prompt_tokens=self.token_usage.get("prompt_tokens"),
+                completion_tokens=self.token_usage.get("completion_tokens"),
+                total_cost=self.cost.get("total_cost"),
+                response_length=len(content),
+            )
+            return content
+
         # User-supplied provider keys bypass the gateway only for non-managed
         # models. Self-hosted managed models always use the licensed transport.
         managed_transport = self._requires_managed_transport(self.model_name)
@@ -2194,7 +2612,11 @@ class LLM:
                 if gateway is None and managed_transport:
                     raise RuntimeError("Managed gateway client is unavailable")
                 if gateway is not None:
-                    logger.info("llm_call_routing", route="agentcc_gateway", model=self.model_name)
+                    logger.info(
+                        "llm_call_routing",
+                        route="agentcc_gateway",
+                        model=self.model_name,
+                    )
                     gateway_kwargs = {
                         "model": self.model_name,
                         "messages": prompt,
@@ -2221,11 +2643,23 @@ class LLM:
                 if managed_transport:
                     raise
             except Exception as e:
-                if managed_transport:
+                # A license key removed during the call ends it with
+                # NO_ENTERPRISE_LICENSE; it is not a reason to fall back.
+                if managed_transport or self._is_license_denial(e):
                     raise
                 logger.debug(f"Gateway call failed, falling back to litellm: {str(e)}")
 
+        # A Settings -> AI Providers custom model (provider "custom") is
+        # called at its own endpoint, as Run Prompt calls it; litellm is given
+        # neither its URL nor its headers.
+        if provider == "custom" and isinstance(self.api_key, dict):
+            return self._custom_endpoint_completion(prompt, response_format)
+
         # Fallback: existing litellm path
+        # Set when the payload carries a tenant base URL (an openai/azure
+        # custom model): its errors then reach the tenant, and the log, as
+        # generic categorised text.
+        endpoint_call = False
         try:
             payload = {
                 "model": self.model_name,
@@ -2268,7 +2702,11 @@ class LLM:
                             if isinstance(key_value, str):
                                 payload["api_key"] = key_value
 
-                response = litellm.completion(
+                # A tenant base URL is called through a guarded client
+                # (checked, pinned connection; no redirects; metadata headers
+                # dropped).
+                endpoint_call = calls_endpoint_url(payload)
+                response = guarded_completion(
                     **payload,
                     num_retries=LITELLM_NUM_RETRIES,
                     retry_strategy=LITELLM_RETRY_STRATEGY,
@@ -2309,14 +2747,23 @@ class LLM:
                     break
             # Strip any litellm references from user-facing message
             import re as _re
+
             root_msg = _re.sub(r"litellm\.\w+:\s*", "", root_msg)
             root_msg = _re.sub(r"litellm\.\w+", "", root_msg)
+            if endpoint_call:
+                # The provider's text can carry the endpoint's body (a
+                # redirect target's answer included) or its URL.
+                root_msg = endpoint_call_error_message(e)
             logger.error(
                 "llm_call_failed",
                 model=self.model_name,
                 provider=provider,
                 error=root_msg,
                 error_type=type(current).__name__,
-                exc_info=True,
+                exc_info=not endpoint_call,
             )
-            raise ValueError(f"LLM call failed ({self.model_name}): {root_msg}") from e
+            # An endpoint call drops the chain too: callers log the error
+            # with its traceback, which would carry the provider's text.
+            raise ValueError(f"LLM call failed ({self.model_name}): {root_msg}") from (
+                None if endpoint_call else e
+            )

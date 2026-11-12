@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -28,10 +26,7 @@ const sentinel = "SENTINEL-c7f3a1e9-DO-NOT-LEAK"
 // formats that error into its message publishes whatever the URL held.
 func deadURL(t *testing.T) string {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	url := server.URL
-	server.Close()
-	return url
+	return "http://" + refusedAddr(t)
 }
 
 // configFor is the least configuration each format needs to be built.

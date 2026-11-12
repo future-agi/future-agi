@@ -3,6 +3,7 @@ Conftest for tracer app tests.
 Provides fixtures specific to tracer models and test data.
 """
 
+import functools
 import json
 import uuid
 from datetime import timedelta
@@ -313,6 +314,45 @@ def user_alert_monitor(db, organization, workspace, observe_project):
         is_mute=False,
         slack_webhook_url="https://hooks.slack.com/test",
     )
+
+
+# The tracer migration state production's monitors were saved under. Its
+# UserAlertMonitor has no threshold_rule, so a row it inserts leaves that
+# column out and takes the database default, as every row production wrote does.
+PRODUCTION_MONITOR_STATE = ("tracer", "0131_merge_c26_dev_1109")
+
+
+@functools.cache
+def _production_monitor_model():
+    from django.db.migrations.loader import MigrationLoader
+
+    state = MigrationLoader(None, ignore_no_migrations=True).project_state(
+        PRODUCTION_MONITOR_STATE
+    )
+    return state.apps.get_model("tracer", "UserAlertMonitor")
+
+
+@pytest.fixture
+def production_alert_monitor(db, organization, workspace, observe_project):
+    """Save a monitor the way production did, through a model without
+    threshold_rule, and return it read back through today's model."""
+
+    def create(**fields):
+        values = {
+            "organization_id": organization.id,
+            "workspace_id": workspace.id,
+            "project_id": observe_project.id,
+            "name": f"Saved before the update {uuid.uuid4().hex[:8]}",
+            "metric_type": "count_of_errors",
+            "threshold_operator": "greater_than",
+            "threshold_type": "percentage_change",
+            "alert_frequency": 60,
+            **fields,
+        }
+        row = _production_monitor_model().objects.create(**values)
+        return UserAlertMonitor.no_workspace_objects.get(pk=row.pk)
+
+    return create
 
 
 @pytest.fixture

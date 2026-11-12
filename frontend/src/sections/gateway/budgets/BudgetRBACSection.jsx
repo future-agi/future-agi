@@ -1,750 +1,729 @@
-/* eslint-disable react/prop-types */
-import React, { useState, useMemo, useCallback } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import {
-  Box,
-  Typography,
-  Stack,
-  Tab,
-  Tabs,
-  Card,
-  CardContent,
-  Grid,
-  LinearProgress,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Chip,
-  Skeleton,
-  IconButton,
-} from "@mui/material";
-import Iconify from "src/components/iconify";
-import { LoadingScreen } from "src/components/loading-screen";
-import SectionHeader from "../components/SectionHeader";
-import { GATEWAY_ICONS } from "../constants/gatewayIcons";
+import React, { useMemo, useState } from "react";
+import PropTypes from "prop-types";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import IconButton from "@mui/material/IconButton";
+import LinearProgress from "@mui/material/LinearProgress";
+import Link from "@mui/material/Link";
+import Skeleton from "@mui/material/Skeleton";
+import Stack from "@mui/material/Stack";
+import Tooltip from "@mui/material/Tooltip";
+import Typography from "@mui/material/Typography";
 import { enqueueSnackbar } from "notistack";
-import { useQuery } from "@tanstack/react-query";
-import axiosInstance, { endpoints } from "src/utils/axios";
+import { useSearchParams } from "react-router-dom";
+
+import SvgColor from "src/components/svg-color";
+import { RouterLink } from "src/routes/components";
+import { paths } from "src/routes/paths";
+
+import { useAnalyticsOverview } from "../analytics/hooks/useAnalyticsOverview";
+import {
+  GatewayEmptyState,
+  GatewayGrid,
+  GatewayPageFrame,
+  GatewayStatusChip,
+} from "../components/frame";
+import ConfirmDialog from "../components/ConfirmDialog";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayContext } from "../context/useGatewayContext";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 import {
   useGatewayConfig,
   useRemoveBudget,
 } from "../providers/hooks/useGatewayConfig";
-import { useAnalyticsOverview } from "../analytics/hooks/useAnalyticsOverview";
-import { useGatewayContext } from "../context/useGatewayContext";
-
+import { Figure, SettingsPanel } from "../settings/ui";
+import CostTotal from "../components/CostTotal";
+import { formatCost, formatCostUpperBound } from "../utils/formatters";
+import { overviewCost, val } from "../utils/analyticsHelpers";
+import BudgetEnforcementCard from "./BudgetEnforcementCard";
+import {
+  PERIOD_RESET,
+  budgetRows,
+  orgBudgetPeriod,
+  orgSpendPeriods,
+  savedAtMs,
+} from "./budgetLevels";
+import { useBudgetSpend } from "./hooks/useBudgetSpend";
 import SetBudgetDialog from "./SetBudgetDialog";
-import { val } from "../utils/analyticsHelpers";
-import { formatCost } from "../utils/formatters";
+import BudgetCapDeepLink from "./BudgetCapDeepLink";
 
-const TAB_SLUGS = ["dashboard", "config", "access", "audit"];
-
-function tabSlugToIndex(slug) {
-  const idx = TAB_SLUGS.indexOf(slug);
-  return idx >= 0 ? idx : 0;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-// Config-level keys inside the budgets JSON blob — these are flags/settings, NOT budget levels
-const BUDGET_CONFIG_KEYS = new Set([
-  "enabled",
-  "default_period",
-  "defaultPeriod",
-  "org_period",
-  "orgPeriod",
-  "warn_threshold",
-  "warnThreshold",
-]);
-
-// Friendly labels for budget level keys
-const BUDGET_LEVEL_LABELS = {
-  org_limit: "Organization",
-  orgLimit: "Organization",
-  hard_limit: "Hard Limit",
-  hardLimit: "Hard Limit",
+const PERIOD_LABEL = {
+  daily: "Daily",
+  weekly: "Weekly",
+  monthly: "Monthly",
+  total: "All time",
 };
 
-function getBudgetLevelLabel(level) {
-  return BUDGET_LEVEL_LABELS[level] || level;
+// A Set budget save's time, in UTC: the date, then the time.
+const SAVED_DATE = new Intl.DateTimeFormat("en-US", {
+  timeZone: "UTC",
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+const SAVED_TIME = new Intl.DateTimeFormat("en-US", {
+  timeZone: "UTC",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+// How much of a limit the period's spend has used, whole percent down, so
+// a limit is never shown as reached before it is.
+function usedText(spend, limit) {
+  const used = (spend / limit) * 100;
+  if (spend > 0 && used < 1) return "Under 1% used";
+  return `${Math.floor(used)}% used`;
 }
 
-function getBudgetValue(budget, snakeKey, camelKey = snakeKey) {
-  return budget?.[snakeKey] ?? budget?.[camelKey];
+const levelCount = (n) => `${n} ${n === 1 ? "level" : "levels"}`;
+
+// A level that is not in force gets a taller row, so its warning wraps and
+// shows in full.
+const rowHeightOf = (row) => (row?.overriddenBy ? 76 : 56);
+
+// The organization's budget period (the period a Set budget save counts
+// over) and when it starts again.
+function orgPeriodText(period) {
+  const label = PERIOD_LABEL[period] || period;
+  const reset = PERIOD_RESET[period];
+  return reset
+    ? `Organization period: ${label}. ${reset}.`
+    : `Organization period: ${label}.`;
 }
 
-function getBudgetAction(budget) {
+// What the gateway does at a level's limit (agentcc-gateway plugins/budget):
+// block with a 429, log a warning, or past the limit allow only the set
+// number of requests a minute, counted on each gateway replica.
+function actionChip(row) {
+  if (row.action === "block") return { tone: "error", label: "Blocks" };
+  if (row.action === "throttle") return { tone: "warning", label: "Throttles" };
+  return { tone: "neutral", label: "Warns" };
+}
+
+function throttleText(row) {
+  return `${row.throttleRpm ?? 1} requests a minute per gateway replica past the limit`;
+}
+
+// Of the Organization and Hard Limit budgets, the gateway enforces the one
+// saved last (budgetLevels.orgEntryInForce); the other says so.
+function notInForceText(row) {
+  if (!row.overriddenBy) return null;
+  return row.laterSave
+    ? `Not in force: the later ${row.overriddenBy} save is enforced instead.`
+    : `Not in force: the ${row.overriddenBy} budget is enforced instead.`;
+}
+
+// AG Grid cells are block boxes; custom cells centre their content.
+const Cell = ({ children }) => (
+  <Box sx={{ display: "flex", alignItems: "center", height: 1, minWidth: 0 }}>
+    {children}
+  </Box>
+);
+Cell.propTypes = { children: PropTypes.node };
+
+function BudgetCell({ data }) {
+  const notInForce = notInForceText(data);
   return (
-    budget?.action ||
-    budget?.action_mode ||
-    budget?.on_exceed ||
-    budget?.onExceed ||
-    "warn"
+    <Box
+      data-testid={`budget-row-${data.id}`}
+      sx={{ lineHeight: 1.2, py: 0.75, minWidth: 0 }}
+    >
+      <Typography typography="s1" noWrap>
+        {data.label}
+      </Typography>
+      {notInForce ? (
+        // Grid cells do not wrap by default; this warning wraps in its
+        // taller row.
+        <Typography
+          typography="s3"
+          color="warning.main"
+          sx={{ whiteSpace: "normal" }}
+        >
+          {notInForce}
+        </Typography>
+      ) : (
+        data.entry?.description && (
+          <Typography typography="s3" color="text.secondary" noWrap>
+            {data.entry.description}
+          </Typography>
+        )
+      )}
+    </Box>
   );
 }
+BudgetCell.propTypes = { data: PropTypes.object };
 
-function extractBudgets(config) {
-  const budgets = config?.budgets || config?.budget || {};
-  if (typeof budgets !== "object") return [];
-  if (Array.isArray(budgets)) return budgets;
-
-  // Filter out config flags, only keep actual budget levels.
-  // Budget values are either numbers (the limit) or objects (full config).
-  // Strings/booleans are config flags or derived metadata, not budgets.
-  return Object.entries(budgets)
-    .filter(
-      ([key, val]) =>
-        !BUDGET_CONFIG_KEYS.has(key) &&
-        (typeof val === "number" || (typeof val === "object" && val !== null)),
-    )
-    .map(([level, cfg]) => ({
-      level,
-      ...(typeof cfg === "object" ? cfg : { limit: cfg }),
-    }));
+// The level's period and when it starts again (UTC).
+function PeriodCell({ data }) {
+  const reset = PERIOD_RESET[data.period];
+  return (
+    <Stack justifyContent="center" sx={{ height: 1, minWidth: 0 }}>
+      <Typography typography="s2" noWrap>
+        {PERIOD_LABEL[data.period] || data.period}
+      </Typography>
+      {reset && (
+        <Typography typography="s3" color="text.secondary" noWrap title={reset}>
+          {reset}
+        </Typography>
+      )}
+    </Stack>
+  );
 }
+PeriodCell.propTypes = { data: PropTypes.object };
 
-function extractRBAC(config) {
-  const rbac = config?.rbac || config?.roles || {};
-  if (Array.isArray(rbac)) return rbac;
-  if (typeof rbac === "object") {
-    return Object.entries(rbac).map(([role, cfg]) => ({
-      role,
-      ...(typeof cfg === "object" ? cfg : { description: String(cfg) }),
-    }));
+// When the Set budget dialog last saved the level (its saved_at, in UTC).
+// Levels set in Org config carry no save time.
+function SavedCell({ data }) {
+  if (data.savedAtMs == null) {
+    return (
+      <Cell>
+        <Typography typography="s2" color="text.secondary">
+          —
+        </Typography>
+      </Cell>
+    );
   }
-  return [];
-}
-
-// ---------------------------------------------------------------------------
-// Budget Dashboard Tab
-// ---------------------------------------------------------------------------
-
-const BudgetDashboardTab = ({ budgets: rawBudgets, overview, gatewayId }) => {
-  const navigate = useNavigate();
-  const totalSpend = Number(val(overview?.total_cost) ?? 0);
-  const totalRequests = Number(val(overview?.total_requests) ?? 0);
-  const removeBudget = useRemoveBudget();
-  const [removedLevels, setRemovedLevels] = useState(new Set());
-
-  const budgets = useMemo(
-    () => rawBudgets.filter((b) => !removedLevels.has(b.level || b.name)),
-    [rawBudgets, removedLevels],
+  return (
+    <Stack
+      justifyContent="center"
+      sx={{ height: 1, minWidth: 0 }}
+      title={new Date(data.savedAtMs).toISOString()}
+    >
+      <Typography typography="s2" noWrap>
+        {SAVED_DATE.format(data.savedAtMs)}
+      </Typography>
+      <Typography typography="s3" color="text.secondary" noWrap>
+        {`${SAVED_TIME.format(data.savedAtMs)} UTC`}
+      </Typography>
+    </Stack>
   );
+}
+SavedCell.propTypes = { data: PropTypes.object };
 
-  const handleRemoveBudget = (level) => {
-    // Optimistic: hide immediately
-    setRemovedLevels((prev) => new Set([...prev, level]));
+// An organization-level row: the org's spend for the level's period from
+// the request logs (GET /agentcc/spend-summary/) against its limit. A team,
+// user, key or tag level is counted by the gateway only.
+function UsedCell({ data }) {
+  const limitText =
+    data.limit > 0 ? formatCostUpperBound(data.limit) : "No limit";
+  if (data.group !== "org") {
+    return (
+      <Cell>
+        <Typography typography="s2" color="text.secondary">
+          {`Counted by the gateway · limit ${limitText}`}
+        </Typography>
+      </Cell>
+    );
+  }
+  if (data.spendLoading) {
+    return (
+      <Cell>
+        <Skeleton width={120} />
+      </Cell>
+    );
+  }
+  const known = typeof data.spend === "number";
+  const spentText = known
+    ? formatCost(data.spend)
+    : data.spendFailed
+      ? "Spend unavailable"
+      : "—";
+  const used = known && data.limit > 0 ? (data.spend / data.limit) * 100 : 0;
+  return (
+    <Stack justifyContent="center" gap={0.5} sx={{ height: 1, minWidth: 0 }}>
+      <Stack
+        direction="row"
+        justifyContent="space-between"
+        alignItems="baseline"
+        gap={1}
+        sx={{ minWidth: 0 }}
+      >
+        <Typography typography="s2" noWrap>
+          {`${spentText} / ${limitText}`}
+        </Typography>
+        {known && data.limit > 0 && (
+          <Typography
+            typography="s3"
+            color="text.secondary"
+            noWrap
+            sx={{ flexShrink: 0 }}
+          >
+            {usedText(data.spend, data.limit)}
+          </Typography>
+        )}
+      </Stack>
+      <LinearProgress
+        variant="determinate"
+        value={Math.min(used, 100)}
+        color={used >= 90 ? "error" : used >= 70 ? "warning" : "primary"}
+        sx={{ height: 6, borderRadius: 3 }}
+        aria-label={known ? `${used.toFixed(1)}% used` : "Spend not known"}
+      />
+    </Stack>
+  );
+}
+UsedCell.propTypes = { data: PropTypes.object };
+
+function ActionCell({ data }) {
+  const chip = actionChip(data);
+  return (
+    <Stack justifyContent="center" gap={0.25} sx={{ height: 1, minWidth: 0 }}>
+      <Box>
+        <GatewayStatusChip tone={chip.tone} label={chip.label} />
+      </Box>
+      {data.action === "throttle" && (
+        <Typography
+          typography="s3"
+          color="text.secondary"
+          noWrap
+          title={throttleText(data)}
+        >
+          {throttleText(data)}
+        </Typography>
+      )}
+    </Stack>
+  );
+}
+ActionCell.propTypes = { data: PropTypes.object };
+
+// Setting and removing a budget are Owner or Admin only: for anyone else
+// the controls show disabled and say why. Team, user, key and tag levels
+// are edited in Org config > Budgets.
+function RowActions({ data, context }) {
+  if (data.group !== "org") {
+    return (
+      <Cell>
+        <Link
+          component={RouterLink}
+          href={context.budgetEditorHref}
+          typography="s2"
+          underline="hover"
+          sx={{ whiteSpace: "normal", lineHeight: 1.3 }}
+        >
+          {context.canEdit ? "Edit in Org config" : "View in Org config"}
+        </Link>
+      </Cell>
+    );
+  }
+  const { canEdit } = context;
+  const control = (label, icon, onClick, show) => {
+    if (!show) return null;
+    const button = (
+      <IconButton
+        size="small"
+        aria-label={`${label} budget ${data.level}`}
+        onClick={() => onClick(data)}
+        disabled={!canEdit}
+      >
+        <SvgColor src={icon} sx={{ width: 16, height: 16 }} />
+      </IconButton>
+    );
+    return canEdit ? (
+      <Tooltip title={label}>{button}</Tooltip>
+    ) : (
+      <GatewayAdminOnly allowed={false}>{button}</GatewayAdminOnly>
+    );
+  };
+  return (
+    <Stack direction="row" gap={0.5} alignItems="center" sx={{ height: 1 }}>
+      {control(
+        "Edit",
+        "/assets/icons/ic_edit.svg",
+        context.onEdit,
+        data.level === "org_limit" || data.level === "hard_limit",
+      )}
+      {control(
+        "Remove",
+        "/assets/icons/ic_delete.svg",
+        context.onRemove,
+        data.removable,
+      )}
+    </Stack>
+  );
+}
+RowActions.propTypes = { data: PropTypes.object, context: PropTypes.object };
+
+const COLUMNS = [
+  {
+    field: "label",
+    headerName: "Budget",
+    minWidth: 160,
+    flex: 2,
+    cellRenderer: BudgetCell,
+  },
+  {
+    field: "period",
+    headerName: "Period",
+    minWidth: 185,
+    flex: 1,
+    cellRenderer: PeriodCell,
+  },
+  {
+    colId: "used",
+    headerName: "Spent / limit",
+    minWidth: 170,
+    flex: 1,
+    sortable: false,
+    cellRenderer: UsedCell,
+  },
+  {
+    field: "action",
+    headerName: "At the limit",
+    minWidth: 130,
+    flex: 0.9,
+    cellRenderer: ActionCell,
+  },
+  {
+    field: "alertThreshold",
+    headerName: "Alert at",
+    minWidth: 80,
+    flex: 0.4,
+    valueFormatter: ({ value }) => (value == null ? "—" : `${value}%`),
+  },
+  {
+    field: "savedAtMs",
+    headerName: "Last saved",
+    headerTooltip:
+      "When Set budget last saved this level, in UTC. Levels set in Org config show a dash.",
+    minWidth: 110,
+    flex: 0.7,
+    cellRenderer: SavedCell,
+  },
+  {
+    colId: "actions",
+    headerName: "",
+    // A fixed width: a pinned column with flex takes a share of the whole
+    // grid, which pushed the other columns into a sideways scroll at 1280.
+    width: 120,
+    minWidth: 120,
+    // Edit and Remove stay in view when the columns scroll sideways.
+    pinned: "right",
+    sortable: false,
+    resizable: false,
+    cellRenderer: RowActions,
+  },
+];
+
+// Budgets: every spending limit the organization set (the organization, its
+// teams, users, keys and tags), what each organization-level budget has
+// spent in its period, and what the gateway does at the limit. The budgets
+// switch, and whether this gateway enforces budgets at all, come first
+// (BudgetEnforcementCard); then the levels with their period, the notes on
+// where their spend comes from, and last the organization's spend of the
+// last 30 days.
+export default function BudgetRBACSection() {
+  const { canEdit } = useGatewayAdmin();
+  const { gatewayId } = useGatewayContext();
+  const [searchParams] = useSearchParams();
+  // Keep any org/gateway context in the URL; the existing providers remain
+  // authoritative. Opening the editor never changes the selected workspace.
+  const budgetEditorParams = new URLSearchParams(searchParams);
+  budgetEditorParams.set("tab", "org-config");
+  budgetEditorParams.set("section", "budgets");
+  const budgetEditorHref = `${paths.dashboard.gateway.settings}?${budgetEditorParams}`;
+  const {
+    data: config,
+    isLoading,
+    error,
+    refetch,
+  } = useGatewayConfig(gatewayId, { meta: { errorHandled: true } });
+  const removeBudget = useRemoveBudget();
+  const [dialog, setDialog] = useState(null);
+  // The budget a row's Remove asked to remove, until the user confirms.
+  const [removeTarget, setRemoveTarget] = useState(null);
+  const [removedLevels, setRemovedLevels] = useState(() => new Set());
+
+  const storedBudgets = config?.budgets;
+  const rows = useMemo(
+    () => budgetRows(storedBudgets).filter((r) => !removedLevels.has(r.level)),
+    [storedBudgets, removedLevels],
+  );
+  const periods = useMemo(() => orgSpendPeriods(rows), [rows]);
+  const spend = useBudgetSpend(periods);
+
+  // The last 30 days of the org's requests (start only: the overview read
+  // takes no gateway id).
+  const monthAgo = useMemo(
+    () => new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+    [],
+  );
+  const { data: month } = useAnalyticsOverview({ start: monthAgo });
+
+  const gridRows = useMemo(
+    () =>
+      rows.map((row) => {
+        const spent =
+          row.group === "org"
+            ? spend.data?.[row.period]?.total_spend
+            : undefined;
+        return {
+          ...row,
+          spend: typeof spent === "number" ? spent : null,
+          spendLoading: row.group === "org" && spend.isLoading && !spent,
+          spendFailed: row.group === "org" && spend.isError,
+          savedAtMs: savedAtMs(row.entry),
+        };
+      }),
+    [rows, spend.data, spend.isLoading, spend.isError],
+  );
+  const hasOrgLevel = rows.some((row) => row.group === "org");
+  const hasOtherLevel = rows.some((row) => row.group !== "org");
+  const orgPeriod = orgBudgetPeriod(storedBudgets);
+
+  // Optimistic: the row goes at once and comes back if the remove fails.
+  const remove = (row) => {
+    setRemovedLevels((prev) => new Set([...prev, row.level]));
     removeBudget.mutate(
-      { gatewayId, level },
+      { gatewayId, level: row.level },
       {
-        onSuccess: () => {
-          enqueueSnackbar(`Budget "${level}" removed`, { variant: "success" });
-        },
+        onSuccess: () =>
+          enqueueSnackbar(`${row.label} budget removed`, {
+            variant: "success",
+          }),
         onError: () => {
-          // Rollback: show it again
+          enqueueSnackbar("Failed to remove the budget", {
+            variant: "error",
+          });
+        },
+        // The write hook awaits its config refresh before settling. Never
+        // keep a level excluded after that mutation: it may be created again.
+        onSettled: () => {
           setRemovedLevels((prev) => {
             const next = new Set(prev);
-            next.delete(level);
+            next.delete(row.level);
             return next;
           });
-          enqueueSnackbar("Failed to remove budget", { variant: "error" });
         },
       },
     );
   };
 
-  return (
-    <Stack spacing={3}>
-      {/* Summary cards */}
-      <Grid container spacing={2}>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardContent sx={{ textAlign: "center" }}>
-              <Typography variant="caption" color="text.secondary">
-                Total Spend
-              </Typography>
-              <Typography variant="h4" color="primary.main">
-                {formatCost(totalSpend)}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardContent sx={{ textAlign: "center" }}>
-              <Typography variant="caption" color="text.secondary">
-                Budget Levels
-              </Typography>
-              <Typography variant="h4">{budgets.length}</Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardContent sx={{ textAlign: "center" }}>
-              <Typography variant="caption" color="text.secondary">
-                Requests
-              </Typography>
-              <Typography variant="h4">
-                {totalRequests.toLocaleString()}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardContent sx={{ textAlign: "center" }}>
-              <Typography variant="caption" color="text.secondary">
-                Avg Cost/Request
-              </Typography>
-              <Typography variant="h4">
-                {totalRequests > 0
-                  ? formatCost(totalSpend / totalRequests)
-                  : "$0.00"}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
+  // The dialog edits an Organization or Hard Limit budget with its stored
+  // entry, so a save keeps its threshold, action and throttle rate.
+  const edit = (row) =>
+    setDialog({
+      budget: {
+        ...(row.entry || {}),
+        level: row.level,
+        limit: row.limit,
+        on_exceed: row.action,
+      },
+    });
 
-      {/* Budget utilization */}
-      <Card>
-        <CardContent>
-          <Typography variant="h6" mb={2}>
-            Budget Utilization
-          </Typography>
-          {budgets.length > 0 ? (
-            <Stack spacing={2}>
-              {budgets.map((b, idx) => {
-                const limit = Number(
-                  getBudgetValue(b, "limit") ??
-                    getBudgetValue(b, "max") ??
-                    getBudgetValue(b, "hard_cap", "hardCap") ??
-                    0,
-                );
-                const spent = Number(getBudgetValue(b, "spent") ?? 0);
-                const pct =
-                  limit > 0 ? Math.min((spent / limit) * 100, 100) : 0;
-                return (
-                  <Box key={b.level || b.name || idx}>
-                    <Stack
-                      direction="row"
-                      justifyContent="space-between"
-                      alignItems="center"
-                      mb={0.5}
-                    >
-                      <Typography
-                        variant="body2"
-                        fontWeight={500}
-                        sx={{
-                          cursor: "pointer",
-                          "&:hover": {
-                            textDecoration: "underline",
-                            color: "primary.main",
-                          },
-                        }}
-                        onClick={() =>
-                          navigate(
-                            `/dashboard/gateway/analytics?tab=cost&budget=${encodeURIComponent(b.level || b.name || "")}`,
-                          )
-                        }
-                      >
-                        {getBudgetLevelLabel(b.level || b.name) ||
-                          `Budget ${idx + 1}`}
-                      </Typography>
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Typography variant="body2" color="text.secondary">
-                          {formatCost(spent)} /{" "}
-                          {limit > 0 ? formatCost(limit) : "No limit"}
-                        </Typography>
-                        <IconButton
-                          size="small"
-                          color="error"
-                          onClick={() => handleRemoveBudget(b.level || b.name)}
-                          title="Remove budget"
-                        >
-                          <Iconify icon="mdi:delete-outline" width={16} />
-                        </IconButton>
-                      </Stack>
-                    </Stack>
-                    <LinearProgress
-                      variant="determinate"
-                      value={pct}
-                      color={
-                        pct >= 90 ? "error" : pct >= 70 ? "warning" : "primary"
-                      }
-                      sx={{ height: 8, borderRadius: 1 }}
-                    />
-                  </Box>
-                );
-              })}
-            </Stack>
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              No budget limits configured. Click &quot;Set Budget&quot; above to
-              add spending limits.
-            </Typography>
-          )}
-        </CardContent>
-      </Card>
-    </Stack>
+  const frame = (content) => (
+    <GatewayPageFrame
+      title="Budgets"
+      description="Spending limits and what the gateway does when one is reached."
+      actions={
+        <GatewayAdminOnly allowed={canEdit}>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={() => setDialog({ budget: null })}
+            disabled={!canEdit || !gatewayId}
+          >
+            Set budget
+          </Button>
+        </GatewayAdminOnly>
+      }
+    >
+      <BudgetCapDeepLink />
+      {content}
+      <SetBudgetDialog
+        open={dialog !== null}
+        onClose={() => setDialog(null)}
+        gatewayId={gatewayId}
+        budget={dialog?.budget || null}
+        period={orgPeriod}
+        storedBudgets={storedBudgets}
+        budgetEditorHref={budgetEditorHref}
+        canEdit={canEdit}
+      />
+      <ConfirmDialog
+        open={Boolean(removeTarget)}
+        onClose={() => setRemoveTarget(null)}
+        title={
+          removeTarget
+            ? `Remove the ${removeTarget.label} budget?`
+            : "Remove budget"
+        }
+        message="The gateway no longer applies this limit to the organization's requests. Set budget adds a limit again."
+        confirmLabel="Remove budget"
+        confirmColor="error"
+        isLoading={removeBudget.isPending}
+        onConfirm={() => {
+          if (!canEdit || !removeTarget) return;
+          const target = removeTarget;
+          setRemoveTarget(null);
+          remove(target);
+        }}
+      />
+    </GatewayPageFrame>
   );
-};
-
-// ---------------------------------------------------------------------------
-// Budget Config Tab
-// ---------------------------------------------------------------------------
-
-const BudgetConfigTab = ({ config }) => {
-  const entries = extractBudgets(config);
-
-  return (
-    <Stack spacing={2}>
-      {entries.length > 0 ? (
-        entries.map((budget, idx) => {
-          const level = budget.level || budget.name || `Budget ${idx + 1}`;
-          const hardCap =
-            getBudgetValue(budget, "hard_cap", "hardCap") ??
-            getBudgetValue(budget, "max");
-          const alertThreshold = getBudgetValue(
-            budget,
-            "alert_threshold",
-            "alertThreshold",
-          );
-          const resetDay = getBudgetValue(budget, "reset_day", "resetDay");
-          return (
-            <Card key={level}>
-              <CardContent>
-                <Stack
-                  direction="row"
-                  justifyContent="space-between"
-                  alignItems="center"
-                  mb={1.5}
-                >
-                  <Typography variant="h6">
-                    {getBudgetLevelLabel(level)}
-                  </Typography>
-                  <Chip
-                    label={getBudgetAction(budget)}
-                    color={
-                      getBudgetAction(budget) === "block"
-                        ? "error"
-                        : getBudgetAction(budget) === "throttle"
-                          ? "warning"
-                          : "info"
-                    }
-                    size="small"
-                    variant="outlined"
-                  />
-                </Stack>
-                <Stack spacing={0.75}>
-                  {budget.limit != null && (
-                    <Stack direction="row" spacing={2}>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ minWidth: 140 }}
-                      >
-                        Limit
-                      </Typography>
-                      <Typography
-                        variant="body2"
-                        sx={{ fontFamily: "monospace" }}
-                      >
-                        {formatCost(budget.limit)}
-                      </Typography>
-                    </Stack>
-                  )}
-                  {hardCap != null && (
-                    <Stack direction="row" spacing={2}>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ minWidth: 140 }}
-                      >
-                        Hard Cap
-                      </Typography>
-                      <Typography
-                        variant="body2"
-                        sx={{ fontFamily: "monospace" }}
-                      >
-                        {formatCost(hardCap)}
-                      </Typography>
-                    </Stack>
-                  )}
-                  {alertThreshold != null && (
-                    <Stack direction="row" spacing={2}>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ minWidth: 140 }}
-                      >
-                        Alert Threshold
-                      </Typography>
-                      <Typography variant="body2">{alertThreshold}%</Typography>
-                    </Stack>
-                  )}
-                  {budget.period && (
-                    <Stack direction="row" spacing={2}>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ minWidth: 140 }}
-                      >
-                        Period
-                      </Typography>
-                      <Typography variant="body2">{budget.period}</Typography>
-                    </Stack>
-                  )}
-                  {resetDay != null && (
-                    <Stack direction="row" spacing={2}>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ minWidth: 140 }}
-                      >
-                        Reset Day
-                      </Typography>
-                      <Typography variant="body2">{resetDay}</Typography>
-                    </Stack>
-                  )}
-                  {budget.description && (
-                    <Stack direction="row" spacing={2}>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ minWidth: 140 }}
-                      >
-                        Description
-                      </Typography>
-                      <Typography variant="body2">
-                        {budget.description}
-                      </Typography>
-                    </Stack>
-                  )}
-                </Stack>
-              </CardContent>
-            </Card>
-          );
-        })
-      ) : (
-        <Card sx={{ p: 4 }}>
-          <Typography variant="body2" color="text.secondary" textAlign="center">
-            No budget configuration found. Set a budget from the Dashboard tab.
-          </Typography>
-        </Card>
-      )}
-    </Stack>
-  );
-};
-
-// ---------------------------------------------------------------------------
-// RBAC Tab
-// ---------------------------------------------------------------------------
-
-const RBACTab = ({ roles, config }) => {
-  const authConfig = config?.auth || {};
-
-  return (
-    <Stack spacing={2}>
-      <Card>
-        <CardContent>
-          <Typography variant="h6" mb={2}>
-            Authentication
-          </Typography>
-          <Stack spacing={1}>
-            <Stack direction="row" spacing={2}>
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{ minWidth: 120 }}
-              >
-                Auth Enabled
-              </Typography>
-              <Chip
-                label={authConfig.enabled ? "Yes" : "No"}
-                color={authConfig.enabled ? "success" : "default"}
-                size="small"
-              />
-            </Stack>
-          </Stack>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent>
-          <Typography variant="h6" mb={2}>
-            Roles & Permissions
-          </Typography>
-          {roles.length > 0 ? (
-            <TableContainer>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Role</TableCell>
-                    <TableCell>Permissions</TableCell>
-                    <TableCell>Description</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {roles.map((r, idx) => (
-                    <TableRow key={r.role || idx}>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight={500}>
-                          {r.role}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Stack direction="row" flexWrap="wrap" gap={0.5}>
-                          {(r.permissions || []).map((p) => (
-                            <Chip
-                              key={p}
-                              label={p}
-                              size="small"
-                              variant="outlined"
-                            />
-                          ))}
-                        </Stack>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" color="text.secondary">
-                          {r.description || "\u2014"}
-                        </Typography>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              No RBAC roles configured. The gateway uses API key-based
-              authentication.
-            </Typography>
-          )}
-        </CardContent>
-      </Card>
-    </Stack>
-  );
-};
-
-// ---------------------------------------------------------------------------
-// Audit Log Tab
-// ---------------------------------------------------------------------------
-
-const AuditLogTab = ({ gatewayId }) => {
-  const { data: logs, isLoading } = useQuery({
-    queryKey: ["agentcc-audit-logs", gatewayId],
-    queryFn: async () => {
-      const { data } = await axiosInstance.get(
-        `${endpoints.gateway.requestLogs}?limit=50`,
-      );
-      return data?.result?.results ?? data?.results ?? data?.result ?? [];
-    },
-    enabled: Boolean(gatewayId),
-    staleTime: 30000,
-  });
-
-  const logList = Array.isArray(logs) ? logs : logs?.results || [];
 
   if (isLoading) {
-    return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
-  }
-
-  return (
-    <Card>
-      <CardContent>
-        <Typography variant="h6" mb={2}>
-          Recent Activity
-        </Typography>
-        <TableContainer>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Time</TableCell>
-                <TableCell>Action</TableCell>
-                <TableCell>Model</TableCell>
-                <TableCell>API Key</TableCell>
-                <TableCell>Cost</TableCell>
-                <TableCell>Status</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {logList.slice(0, 25).map((log) => {
-                const isError = log.is_error ?? Number(log.status_code) >= 400;
-
-                return (
-                  <TableRow key={log.id}>
-                    <TableCell>
-                      <Typography variant="body2" fontSize="0.75rem">
-                        {log.started_at
-                          ? new Date(log.started_at).toLocaleString()
-                          : "\u2014"}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
-                        {isError ? "Error" : "Request"}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
-                        {log.model || "\u2014"}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography
-                        variant="body2"
-                        sx={{ fontFamily: "monospace", fontSize: "0.7rem" }}
-                      >
-                        {log.api_key_id?.substring(0, 12) || "\u2014"}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
-                        {formatCost(log.cost)}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Chip
-                        label={log.status_code || "\u2014"}
-                        color={isError ? "error" : "success"}
-                        size="small"
-                      />
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-              {logList.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} align="center">
-                    <Typography variant="body2" color="text.secondary" py={4}>
-                      No activity logs found
-                    </Typography>
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </CardContent>
-    </Card>
-  );
-};
-
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
-
-const BudgetRBACSection = () => {
-  const { tab: tabSlug } = useParams();
-  const navigate = useNavigate();
-  const tab = tabSlugToIndex(tabSlug);
-
-  const handleTabChange = useCallback(
-    (_, newIndex) => {
-      if (newIndex === 0) {
-        navigate("/dashboard/gateway/budgets", { replace: true });
-      } else {
-        navigate(`/dashboard/gateway/budgets/${TAB_SLUGS[newIndex]}`, {
-          replace: true,
-        });
-      }
-    },
-    [navigate],
-  );
-
-  const [budgetDialogOpen, setBudgetDialogOpen] = useState(false);
-  const { gatewayId, isLoading: gwLoading } = useGatewayContext();
-
-  const { data: config, isLoading: configLoading } =
-    useGatewayConfig(gatewayId);
-
-  const now = useMemo(() => new Date().toISOString(), []);
-  const monthAgo = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 30);
-    return d.toISOString();
-  }, []);
-
-  const { data: overview } = useAnalyticsOverview({
-    start: monthAgo,
-    end: now,
-    gatewayId,
-  });
-
-  const budgets = useMemo(() => extractBudgets(config), [config]);
-  const roles = useMemo(() => extractRBAC(config), [config]);
-
-  if (gwLoading || configLoading) {
-    return (
-      <Box p={3}>
-        <Stack direction="row" justifyContent="space-between" mb={3}>
-          <Skeleton width={200} height={40} />
-          <Skeleton width={110} height={36} variant="rounded" />
-        </Stack>
-        <Skeleton width="50%" height={40} sx={{ mb: 3 }} />
-        <Grid container spacing={2}>
-          {[...Array(4)].map((_, i) => (
-            <Grid item xs={6} sm={3} key={i}>
-              <Skeleton variant="rounded" height={90} />
-            </Grid>
-          ))}
-        </Grid>
-      </Box>
+    return frame(
+      <Stack spacing={2} data-testid="budgets-loading">
+        <Skeleton variant="rounded" height={120} />
+        <Skeleton variant="rounded" height={240} />
+      </Stack>,
     );
   }
 
-  return (
-    <Box p={3}>
-      <SectionHeader
-        icon={GATEWAY_ICONS.budgets}
-        title="Budgets"
-        subtitle="Set spending limits and track cost utilization"
-        actions={[
-          {
-            label: "Set Budget",
-            variant: "contained",
-            size: "small",
-            icon: "mdi:plus",
-            onClick: () => setBudgetDialogOpen(true),
-          },
-        ]}
-      />
+  if (error) {
+    return frame(
+      <GatewayEmptyState
+        icon="budgets"
+        title="Couldn't load your budgets"
+        description={error.message || "The config request failed."}
+        actionLabel="Retry"
+        onAction={() => refetch?.()}
+      />,
+    );
+  }
 
-      <Tabs
-        value={tab}
-        onChange={handleTabChange}
-        sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
-      >
-        <Tab label="Budget Dashboard" />
-        <Tab label="Budget Config" />
-        <Tab label="Roles & Access (Read-Only)" />
-        <Tab label="Recent Activity" />
-      </Tabs>
-
-      {tab === 0 && (
-        <BudgetDashboardTab
-          budgets={budgets}
-          overview={overview}
-          gatewayId={gatewayId}
-        />
-      )}
-      {tab === 1 && <BudgetConfigTab config={config} />}
-      {tab === 2 && <RBACTab roles={roles} config={config} />}
-      {tab === 3 && <AuditLogTab gatewayId={gatewayId} />}
-
-      <SetBudgetDialog
-        open={budgetDialogOpen}
-        onClose={() => setBudgetDialogOpen(false)}
+  return frame(
+    <>
+      <BudgetEnforcementCard
         gatewayId={gatewayId}
+        budgets={storedBudgets}
+        sectionsEnforced={config?.org_sections_enforced}
       />
-    </Box>
-  );
-};
 
-export default BudgetRBACSection;
+      <SettingsPanel
+        title="Budget levels"
+        testId="budget-levels"
+        description={
+          <>
+            <Box component="span" sx={{ display: "block" }}>
+              <Box component="span" data-testid="budget-levels-count">
+                {levelCount(rows.length)}
+              </Box>
+              {" · "}
+              <Box component="span">
+                Periods and team, user, API key and tag budgets open in Org
+                config.
+              </Box>
+            </Box>
+            <Box component="span" sx={{ display: "block" }}>
+              {orgPeriodText(orgPeriod)}
+            </Box>
+          </>
+        }
+        actions={
+          <>
+            <Button
+              component={RouterLink}
+              href={budgetEditorHref}
+              variant="outlined"
+              size="small"
+            >
+              {canEdit ? "Change period" : "View period"}
+            </Button>
+            <Button
+              component={RouterLink}
+              href={budgetEditorHref}
+              variant="outlined"
+              size="small"
+            >
+              {canEdit ? "Manage scopes" : "View scopes"}
+            </Button>
+          </>
+        }
+      >
+        <GatewayGrid
+          rowData={gridRows}
+          columnDefs={COLUMNS}
+          stateKey="gateway-budgets"
+          getRowId={(params) => params.data.id}
+          height={
+            (gridRows.reduce((sum, row) => sum + rowHeightOf(row), 0) || 56) +
+            42
+          }
+          rowHeight={56}
+          getRowHeight={(params) => rowHeightOf(params.data)}
+          scrollCue
+          context={{
+            canEdit,
+            onEdit: edit,
+            onRemove: setRemoveTarget,
+            budgetEditorHref,
+          }}
+          emptyState={{
+            // One primary action per view: Set budget stays in the page
+            // header, where it is on every state of the page, and the empty
+            // state names it rather than repeating the button.
+            icon: "budgets",
+            title: "No budgets yet",
+            description:
+              "Use Set budget above to add an organization limit. Manage scopes adds team, user, API key and tag budgets in Org config.",
+            sx: { py: { xs: 3, sm: 4 }, flex: "0 0 auto" },
+          }}
+        />
+
+        {(hasOrgLevel || hasOtherLevel) && (
+          <Stack spacing={0.75} sx={{ maxWidth: "72ch" }}>
+            {hasOrgLevel && (
+              <Typography typography="s2" color="text.secondary">
+                Organization spend for each budget&apos;s period, from the
+                request logs. The gateway checks each limit against its own
+                count of this spend, which can be lower than the bar after a
+                gateway restart or a change of the budget&apos;s period.
+              </Typography>
+            )}
+            {hasOtherLevel && (
+              <Typography typography="s2" color="text.secondary">
+                Spend for a team, user, key or tag level is counted by the
+                gateway; this page shows organization spend only. Edit those
+                levels in Org config &gt; Budgets.
+              </Typography>
+            )}
+          </Stack>
+        )}
+      </SettingsPanel>
+
+      <SettingsPanel
+        title="Last 30 days"
+        description={
+          <>
+            Every request in your organization, from the request logs.
+            Per-request costs are in{" "}
+            <Link
+              component={RouterLink}
+              href={paths.dashboard.gateway.logs}
+              underline="hover"
+            >
+              Logs
+            </Link>
+            .
+          </>
+        }
+      >
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: {
+              xs: "1fr 1fr",
+              md: "repeat(4, minmax(0, 1fr))",
+            },
+            gap: 2,
+          }}
+        >
+          <Figure
+            label="Spent"
+            value={month ? <CostTotal {...overviewCost(month)} /> : "—"}
+          />
+          <Figure
+            label="Requests"
+            value={
+              month
+                ? Number(val(month.total_requests) ?? 0).toLocaleString()
+                : "—"
+            }
+          />
+        </Box>
+      </SettingsPanel>
+    </>,
+  );
+}

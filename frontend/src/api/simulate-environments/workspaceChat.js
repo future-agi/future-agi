@@ -23,6 +23,7 @@ import {
   clearScenarioSelection,
 } from "src/sections/simulate/environments/buildEnvironment/console/scenarioSelectionBus";
 import { harnessJobQuery } from "./environment";
+import { resolveScenarioSelection } from "./scenarioSelection";
 import {
   isVersioningDisabled,
   nudgesKey,
@@ -107,7 +108,7 @@ export function useWorkspaceChat(env, { source } = {}) {
   const { mutate } = mutation;
 
   const send = useCallback(
-    (text) => {
+    async (text) => {
       const content = (text || "").trim();
       const id = jobIdRef.current;
       if (!content || !id) return;
@@ -130,13 +131,40 @@ export function useWorkspaceChat(env, { source } = {}) {
         : "user_message";
       const replyTo = open ? open.message_id : null;
 
-      // A message sent with scenario rows selected is a bulk edit against exactly
-      // those rows; snapshot and clear so the "Editing N scenarios" chip drops.
+      // Capture the command and selection before resolving any pages. Never
+      // degrade an all-matching edit into an environment-wide message.
       const selection = getScenarioSelection();
-      const scenarioIds = selection?.ids?.length ? selection.ids : undefined;
-      if (scenarioIds) clearScenarioSelection();
-
+      let scenarioIds = selection?.ids?.length ? [...selection.ids] : undefined;
+      const mode = getBuilderMode();
       const requestId = harnessIdempotencyKey();
+      if (selection?.all) {
+        setPending((prev) => [
+          ...prev,
+          { id: requestId, text: content, resolving: true },
+        ]);
+        try {
+          if (!selection.predicate || selection.jobId !== id) {
+            throw new Error("Selection scope is unavailable");
+          }
+          scenarioIds = await resolveScenarioSelection(id, {
+            ...selection.predicate,
+            mode: "all",
+            pick: (row) => row.id,
+          });
+          if (!scenarioIds.length) throw new Error("Selection no longer matches");
+        } catch {
+          setPending((prev) => prev.map((p) => p.id === requestId ? {
+            ...p,
+            resolving: false,
+            failed: true,
+            retryable: false,
+            errorMessage: "Couldn't resolve the selected scenarios. Nothing was sent. Check the selection and send your message again.",
+          } : p));
+          return;
+        }
+      }
+      // A newer selection made while pages loaded belongs to the next message.
+      if (scenarioIds && getScenarioSelection() === selection) clearScenarioSelection();
       // Snapshot the exact command so Retry replays THIS payload and id — the
       // selection has already been cleared and the blocking question may have
       // moved on, so re-deriving it on retry would change the scope and mint a
@@ -150,13 +178,13 @@ export function useWorkspaceChat(env, { source } = {}) {
           kind,
           ...(replyTo ? { reply_to: replyTo } : {}),
           payload: {
-            mode: getBuilderMode(),
+            mode,
             ...(scenarioIds ? { scenario_ids: scenarioIds } : {}),
           },
         },
       };
       setPending((prev) => [
-        ...prev,
+        ...prev.filter((p) => p.id !== requestId),
         { id: requestId, text: content, variables },
       ]);
       mutate(variables);
@@ -384,10 +412,9 @@ export function useWorkspaceChat(env, { source } = {}) {
     return [...turns, ...extra];
   }, [turns, pending, retry]);
 
-  // `running` blocks the composer only for the brief POST round-trip, so the user
-  // can still interject while the agent works autonomously (the heartbeat step is
-  // the persistent cue).
-  const running = mutation.isPending;
+  // Resolve the selection before posting; both phases hold the composer so a
+  // second send cannot race the same selection. Agent work still allows interjection.
+  const running = mutation.isPending || pending.some((p) => p.resolving);
 
   // A live job always accepts messages (they queue until its sandbox can run chat), so
   // only a finished run with no saved workspace is unavailable; its send 409s for good.

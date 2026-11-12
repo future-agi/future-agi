@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/futureagi/agentcc-gateway/internal/auth"
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/realtime"
@@ -46,7 +47,7 @@ func NewRealtimeHandler(tracker *realtime.SessionTracker, registry *providers.Re
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  cfg.ReadBufferSize,
 			WriteBufferSize: cfg.WriteBufferSize,
-			CheckOrigin: makeOriginChecker(cfg.AllowedOrigins),
+			CheckOrigin:     makeOriginChecker(cfg.AllowedOrigins),
 		},
 		logger: slog.Default(),
 	}
@@ -106,18 +107,34 @@ func (rh *RealtimeHandler) HandleRealtime(w http.ResponseWriter, r *http.Request
 
 	// Validate API key through the key store.
 	orgID := "default"
+	var apiKey *auth.APIKey
 	if rh.keyStore != nil {
 		if rawKey == "" {
 			http.Error(w, `{"error":{"message":"API key is required","type":"authentication_error"}}`, http.StatusUnauthorized)
 			return
 		}
-		apiKey := rh.keyStore.Authenticate(rawKey)
+		if rh.keyStore.ConfigKeyPending(rawKey) {
+			models.WriteError(w, &models.APIError{Status: http.StatusServiceUnavailable,
+				Type: models.ErrTypeServer, Code: "key_list_not_loaded", Message: "Waiting for the first control-plane key list"})
+			return
+		}
+		apiKey = rh.keyStore.Authenticate(rawKey)
 		if apiKey == nil {
 			http.Error(w, `{"error":{"message":"Invalid API key","type":"authentication_error"}}`, http.StatusUnauthorized)
 			return
 		}
 		if id, ok := apiKey.Metadata["org_id"]; ok && id != "" {
 			orgID = id
+		}
+		// The org-confinement guard chat applies (Handlers.orgProvidersOnly):
+		// a key limited to its org's providers never gets the gateway's own
+		// provider. A session is relayed with no budget, credits, guardrails
+		// or request log, so it is refused before any provider is resolved
+		// or a session slot taken; confinement through the org's own
+		// provider build is for the release that ships a realtime provider.
+		if apiKey.KeyType != "internal" && !middleware.IsLicenseAuthorized(r.Context()) {
+			models.WriteError(w, models.ErrForbidden(fmt.Sprintf("model %q is not available for this API key", model)))
+			return
 		}
 	}
 
@@ -132,6 +149,11 @@ func (rh *RealtimeHandler) HandleRealtime(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		rh.tracker.Release(orgID)
 		http.Error(w, fmt.Sprintf(`{"error":{"message":"No provider for model %q","type":"not_found_error"}}`, model), http.StatusNotFound)
+		return
+	}
+	if apiKey != nil && apiKey.KeyType != "internal" && !apiKey.CanAccessProvider(provider.ID()) {
+		rh.tracker.Release(orgID)
+		models.WriteError(w, errKeyProviderDenied(provider.ID()))
 		return
 	}
 

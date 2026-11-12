@@ -116,7 +116,13 @@ def _parse_array(text: str) -> list:
     return data
 
 
-def generate_eval_prompt(*, description: str, output_format: str = "prompt") -> dict:
+def generate_eval_prompt(
+    *,
+    description: str,
+    output_format: str = "prompt",
+    organization=None,
+    workspace=None,
+) -> dict:
     """Generate an eval artifact from a description via the LLM.
 
     Args:
@@ -150,11 +156,16 @@ def generate_eval_prompt(*, description: str, output_format: str = "prompt") -> 
     # Route through the in-house LLM wrapper (Agentcc usage gateway with
     # litellm fallback) so the call is metered + org-attributed and retries
     # are handled for us — same pattern as ai_filter.py, not a raw Bedrock call.
-    from agentic_eval.core.llm.llm import LLM
     from agentic_eval.core.utils.model_config import ModelConfigs
+    from model_hub.services.model_route import OP_AI_EVAL_WRITER, platform_llm
 
     haiku_cfg = ModelConfigs.HAIKU_4_5_BEDROCK_ARN
-    llm = LLM(
+    # One key: bound to the caller's organization/workspace; a managed-
+    # eligible model runs gateway-only on Future AGI credits, no fallback.
+    llm = platform_llm(
+        organization=organization,
+        workspace=workspace,
+        operation=OP_AI_EVAL_WRITER,
         provider=haiku_cfg.provider,
         model_name=haiku_cfg.model_name,
         temperature=0.3,

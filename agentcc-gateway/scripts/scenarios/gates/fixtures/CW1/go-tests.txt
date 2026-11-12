@@ -1,0 +1,121 @@
+# Connector gate part 2: every named Go test, one "<owner> <TestName>" per line, each asserted
+# --- PASS by name and never --- SKIP, nor any subtest of it. Owners: each change's plan
+# acceptance names. integrator: the merge's own tests, each red before its commit.
+CN6 TestBuildDeterministic
+CN6 TestCheckFailsWhenStale
+CN6 TestEEAppsShapeMatchesEETypes
+CN6 TestEESettingsAtMost64AndPassesEERules
+CN6 TestOSSRegistryKeepsExistingIds
+CN6 TestServerJSONDescriptionMax100
+CN6 TestOverlayNeverInBundle
+CN6 TestGatewayFragmentHasNoSecrets
+CN7 TestQueryKeyPlaced
+CN7 TestSecretURLVariableRendered
+CN7 TestTemplateNeverLogged
+CN7 TestHeaderPlacementUnchanged
+CN12 TestRepoCatalogValid
+integrator TestSourcesOnlyRunsTheEmitters
+integrator TestRepoCatalogSourcesCheck
+integrator TestGoldens
+integrator TestGoldenOrgConfigMCPCredentialParts
+integrator TestUnappliedMCPCredentialPlacement
+integrator TestAdminOrgConfigRefusesUnappliedCredentialPlacement
+integrator TestCredentialPlacementApplied
+integrator TestPlacedCredentialReachesTheUpstream
+integrator TestCatalogGoldenThroughThePool
+integrator TestPlaceCredentialWhole
+integrator TestPlaceCredentialNamesWhatNoLaneBuildsYet
+integrator TestWriteCatalogMergesTheRunsCatalogs
+integrator TestBuildSkipsWhatThisBaseCannotPlace
+integrator TestAdminOrgConfigRefusesCatalogRefWithNoCatalog
+integrator TestAdminOrgConfigChecksCatalogRefAgainstTheCatalog
+integrator TestConnectorsWiring
+integrator TestMCPTenancyWiring
+integrator TestEmbeddedCatalogLoads
+integrator TestLoadDir
+integrator TestConnectorsCatalogDir
+integrator TestEmbeddedCloseKeyReachesTheUpstreamWithItsScope
+integrator TestPlacementVectors
+integrator TestReservedHeadersCoverEveryList
+# Runtime integration: the REST runtime's acceptance, the origin re-check
+# at load, and the merge's own.
+CN10 TestBearerRequired
+CN10 TestTokenNeverLogged
+CN10 TestTokenSentOnlyToSpecHost
+CN10 TestPrivateAndMetadataRefused
+CN10 TestBothEras
+CN10 TestPaginationAndByteCap
+CN10 TestVendorErrorBecomesIsError
+CN10 TestAnnotationsFromManifest
+CN10 TestCompileNamesEveryRefusedTool
+CN10 TestCompileRefusesAPathThatLeavesTheOrigin
+CN10 TestRefusedOriginNeverLogsUserInfo
+CN10 TestUpstreamHasNoOriginFieldYet
+CN10 TestRefusesAToolOutsideVendorDomains
+CN10 TestRenamedQueryInputSentUnderWireName
+CN10 TestListedSchemaStripsOnlyAnnotations
+CN10 TestQueryInputCannotUseACredentialName
+integrator TestCompileRefusesAWriteMarkedReadOnly
+integrator TestCompileRefusesWhatItCannotServe
+# EE agent key integration: the acceptance of the EE agent key scoped to mcp + models, its per-key budget and refusal
+# reporter; oss-registry.json leaves out self-registration-only OAuth servers; and the
+# merge's own (revocation on client group google; the server-json publish rule; the
+# generic label).
+CN22c TestKeyScopeWiring
+CN22c TestParseScope
+CN22c TestScopeAllows
+CN22c TestParseBudget
+CN22c TestBudgetPeriods
+CN22c TestReporterGroupsRefusalsAndKeepsThemWhenTheControlPlaneIsDown
+CN22c TestReporterDropsABatchTheControlPlaneRefuses
+CN22c TestReporterBoundsDistinctRefusals
+CN22c TestRefusalsMatchTheOmegaEEAttachFixtures
+CN22c TestReporterSendsOnlyWhatTheControlPlaneAccepts
+CN22c TestReporterBoundsEachKeysDistinctRefusals
+CN22c TestScopedKeyTheGateDidNotAdmitIsRefused
+CN22c TestBudgetRefusesOnceThePeriodsSpendReachesIt
+CN22c TestCacheHitsAndUnpricedCallsSpendNothing
+CN22c TestUnreadableBudgetRefusesEveryCall
+CN22c TestReplicasShareTheBudget
+CN22c TestScopedKeyBudgetCountsStreamedResponses
+CN22c TestScopedKeyBudgetCountsAStreamedResponseCutBeforeItsUsage
+CN22c TestScopedKeyBudgetCountsABYOKChatStreamWithNoUsage
+CN22c TestScopedKeyModelsFollowTheOrgConfigPerRequest
+CN22c TestScopedKeyIsRefusedOnEveryRouteOutsideItsScope
+CN22c TestScopedKeyIsRefusedOnEverySpellingOfAnOutOfScopePath
+CN22c TestScopedKeyMethodMustMatchTheModelRoute
+CN22c TestMCPOnlyScopeRefusesTheModelRoutes
+CN22c TestUnreadableScopeAllowsNothing
+CN22c TestUnscopedKeysAreUntouched
+# Release-line adaptation: the connector's responsesStreamMeter repeated the release
+# line's own reader of the last event's usage, so it was dropped; its two tests are replaced by tests of the
+# budgeted-key estimate on the release settle path.
+S2-K TestResponsesStreamOutputCountsTheDeltasAcrossReads
+S2-K TestResponsesStreamOutputSkipsALineOverTheBound
+S2-K TestEstimatedResponsesStreamUsage
+S2-K TestEstimateBudgetedResponsesStreamMarksTheRun
+S2-K TestScopedKeyBudgetEstimatesAStreamedResponseWithNoReadableUsage
+S2-K TestUnbudgetedKeyStreamsWithNoUsageKeepReleasePricing
+S2-K TestScopedKeyBudgetChatStreamEstimateIsMarked
+CN22c TestPlugin_ReservedMetadataIsNeverCopiedAsALabel
+CN24pre TestOSSRegistryLeavesOutSelfRegistrationOnlyOAuth
+CN24pre TestSemverDiffRequiresMajor
+CN24pre TestBuildReportsServersLeftOutOfOSS
+CN24pre TestRepoOSSRegistryListsNoSelfRegistrationOnlyServer
+CN24pre TestRepoEEAppsHaveAPreregisteredClient
+integrator TestRepoGroupGoogleDeclaresGooglesRevocation
+integrator TestServerJSONLeavesOutWhatNoRegistryClientCanSignIn
+integrator TestBuildReportsServersLeftOutOfServerJSON
+integrator TestRepoServerJSONPublishesNoRestProviderWithoutMetadata
+integrator TestServerJSONRuleMatchesTheRuntime
+integrator TestDocsCardsLabelGenericTools
+# Public-client integration: x-omega.publicClient, and
+# oss-registry.json lists an OAuth server only with a proven public client. The five registry names above
+# are kept; TestRepoOSSRegistryListsNoSelfRegistrationOnlyServer now restates both rules.
+CN24pb TestPublicClientFact
+CN24pb TestPublicClientFactOnMCPOAuth
+CN24pb TestVendorOwnedURL
+CN24pb TestSemverDiffWithoutApps
+CN24pb TestOSSRegistryListsOnlyServersWithAPublicClient
+CN24pb TestBuildListsAServerOnlyWithAProvenPublicClient
+CN24pb TestRepoPublicClientsCiteTheVendor

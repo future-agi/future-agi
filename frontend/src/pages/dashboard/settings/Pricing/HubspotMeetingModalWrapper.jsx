@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import {
   Dialog,
   DialogContent,
@@ -10,6 +11,7 @@ import {
   useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
+import { alpha } from "@mui/material/styles";
 import React, { useState, useEffect } from "react";
 import Iconify from "src/components/iconify";
 const CustomBackdrop = styled(Backdrop)(({ theme }) => ({
@@ -20,16 +22,16 @@ const CustomBackdrop = styled(Backdrop)(({ theme }) => ({
 }));
 export const HubspotMeetingModalWrapper = ({ open, onClose }) => {
   const theme = useTheme();
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setIsLoading(true);
+      setIsLoading(false);
     }
   }, [open]);
 
   const handleClose = () => {
-    setIsLoading(true);
+    setIsLoading(false);
     onClose();
   };
 
@@ -44,13 +46,12 @@ export const HubspotMeetingModalWrapper = ({ open, onClose }) => {
       fullWidth
       PaperProps={{
         sx: {
-          width: "900px",
+          width: "960px",
           height: "700px",
           maxWidth: "none",
           maxHeight: "none",
           margin: 0,
           borderRadius: 2,
-          boxShadow: 2,
           display: "flex",
           flexDirection: "column",
         },
@@ -79,10 +80,7 @@ export const HubspotMeetingModalWrapper = ({ open, onClose }) => {
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
-              backgroundColor:
-                theme.palette.mode === "light"
-                  ? "rgba(255, 255, 255, 0.9)"
-                  : "rgba(33, 43, 54, 0.9)",
+              backgroundColor: alpha(theme.palette.background.paper, 0.9),
               backdropFilter: "blur(2px)",
               zIndex: 10,
               minHeight: "400px",
@@ -112,7 +110,8 @@ export const HubspotMeetingModalWrapper = ({ open, onClose }) => {
           </Box>
         )}
 
-        <iframe
+        <ExternalContentFrame
+          onRequestLoad={() => setIsLoading(true)}
           src={hubspotUrl}
           width="100%"
           height="100%"
@@ -140,7 +139,6 @@ export const HubspotMeetingModalWrapper = ({ open, onClose }) => {
             onClick={onClose}
             sx={{
               width: "30px",
-              height: "30px",
               position: "absolute",
               marginLeft: "8px",
               top: 0,
@@ -150,7 +148,7 @@ export const HubspotMeetingModalWrapper = ({ open, onClose }) => {
             }}
           >
             <Iconify
-              icon="line-md:close"
+              icon="solar:close-linear"
               sx={{
                 width: (theme) => theme.spacing(2),
                 height: (theme) => theme.spacing(2),

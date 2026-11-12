@@ -78,8 +78,8 @@ const CreateScenarioDefaultSchema = {
   noOfRows: z
     .number({ invalid_type_error: "Number of scenarios is required" })
     .int("Number of scenarios must be a whole number")
-    .min(10, "Minimum 10 Rows are required")
-    .max(20000, "Maximum 20000 Rows are allowed"),
+    .min(10, "Enter at least 10 scenarios")
+    .max(20000, "Enter 20,000 scenarios or fewer"),
   addPersonaAutomatically: z.boolean(),
   columns: z.array(
     z.object({
@@ -117,22 +117,34 @@ export const CreateScenarioValidationSchema = z
       ...CreateScenarioDefaultSchema,
       kind: z.literal(CreateScenarioType.SCRIPT),
       config: z.object({
-        scriptUrl: z.object({
-          file: z.instanceof(File),
-          name: z.string(),
-          size: z.number(),
-        }),
+        scriptUrl: z.object(
+          {
+            file: z.instanceof(File),
+            name: z.string(),
+            size: z.number(),
+          },
+          {
+            required_error: "Upload a script file",
+            invalid_type_error: "Upload a script file",
+          },
+        ),
       }),
     }),
     z.object({
       ...CreateScenarioDefaultSchema,
       kind: z.literal(CreateScenarioType.SOP),
       config: z.object({
-        sopUrl: z.object({
-          file: z.instanceof(File),
-          name: z.string(),
-          size: z.number(),
-        }),
+        sopUrl: z.object(
+          {
+            file: z.instanceof(File),
+            name: z.string(),
+            size: z.number(),
+          },
+          {
+            required_error: "Upload an SOP file",
+            invalid_type_error: "Upload an SOP file",
+          },
+        ),
       }),
     }),
     z.object({

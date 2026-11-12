@@ -1,0 +1,22 @@
+# The first path for Figma is a partner platform; until
+# that provider exists, the default is Figma's own server, which admits only
+# clients Figma lists.
+schema: "connector-manifest/v1#app"
+id: figma
+version: 1.0.0
+name: Figma
+description: "Design context from Figma files, and edits to the canvas."
+vendor:
+  name: Figma
+  domains: [figma.com]
+eeCategory: developer
+group: other
+categories: [developer, design]
+tags: [design, ui]
+docsUrl: https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/
+    fetchedAt: 2026-10-21

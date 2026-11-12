@@ -1,42 +1,39 @@
+import { getGatewayAuthenticationErrorMessage } from "src/utils/errorUtils";
 import React, { useState } from "react";
 import PropTypes from "prop-types";
 import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Button,
-  TextField,
-  Stack,
   Alert,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Stack,
+  TextField,
   Typography,
-  IconButton,
-  InputAdornment,
-  Chip,
-  Autocomplete,
 } from "@mui/material";
-import Iconify from "src/components/iconify";
-import { useCreateApiKey } from "./hooks/useApiKeys";
 
-const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
-  const [step, setStep] = useState("form"); // "form" | "success"
+import { useCreateApiKey } from "./hooks/useApiKeys";
+import AccessListField from "./AccessListField";
+import AllowedProvidersField from "./AllowedProvidersField";
+import { LABEL_ABOVE_STYLE } from "./labelAbove";
+import { useKeyAccessOptions } from "./useKeyAccessOptions";
+
+// Create an API key. The secret comes back once; the page shows it in the
+// one-time reveal (onCreated), never here.
+const CreateKeyDialog = ({ open, onClose, onCreated, gatewayId }) => {
   const [name, setName] = useState("");
-  const [owner, setOwner] = useState("");
   const [allowedModels, setAllowedModels] = useState([]);
   const [allowedProviders, setAllowedProviders] = useState([]);
-  const [createdKey, setCreatedKey] = useState("");
-  const [copied, setCopied] = useState(false);
 
   const createMutation = useCreateApiKey();
+  const { modelOptions } = useKeyAccessOptions(gatewayId);
 
   const resetForm = () => {
-    setStep("form");
     setName("");
-    setOwner("");
     setAllowedModels([]);
     setAllowedProviders([]);
-    setCreatedKey("");
-    setCopied(false);
+    createMutation.reset?.();
   };
 
   const handleClose = () => {
@@ -45,86 +42,60 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
   };
 
   const handleCreate = () => {
+    const keyName = name.trim();
     createMutation.mutate(
       {
         gateway_id: gatewayId,
-        name,
-        owner,
+        name: keyName,
         allowed_models: allowedModels,
         allowed_providers: allowedProviders,
       },
       {
         onSuccess: (result) => {
-          setCreatedKey(result?.key || "");
-          setStep("success");
+          onCreated({
+            name: result?.name || keyName,
+            secret: result?.key || "",
+            id: result?.id,
+            gatewayKeyId: result?.gatewayKeyId ?? result?.gateway_key_id,
+            allowedModels:
+              result?.allowedModels ?? result?.allowed_models ?? allowedModels,
+            allowedProviders:
+              result?.allowedProviders ?? result?.allowed_providers ?? allowedProviders,
+            // A legacy reply may normalize omitted lists to []. Retain the
+            // submitted restrictions too, rather than widening the example.
+            requestedModels: allowedModels,
+            requestedProviders: allowedProviders,
+          });
+          resetForm();
+          onClose();
         },
       },
     );
   };
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(createdKey);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  if (step === "success") {
-    return (
-      <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-        <DialogTitle>API Key Created</DialogTitle>
-        <DialogContent>
-          <Stack spacing={2} mt={1}>
-            <Alert severity="warning">
-              Copy this key now. It will not be shown again.
-            </Alert>
-            <TextField
-              fullWidth
-              size="small"
-              value={createdKey}
-              InputProps={{
-                readOnly: true,
-                sx: { fontFamily: "monospace", fontSize: "0.875rem" },
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IconButton onClick={handleCopy} size="small">
-                      {copied ? (
-                        <Iconify
-                          icon="mdi:check"
-                          sx={{ color: "success.main" }}
-                        />
-                      ) : (
-                        <Iconify icon="mdi:content-copy" />
-                      )}
-                    </IconButton>
-                  </InputAdornment>
-                ),
-              }}
-            />
-            <Typography variant="body2" color="text.secondary">
-              <strong>Name:</strong> {name}
-              {owner && (
-                <>
-                  {" "}
-                  &middot; <strong>Owner:</strong> {owner}
-                </>
-              )}
-            </Typography>
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button size="small" variant="contained" onClick={handleClose}>
-            Done
-          </Button>
-        </DialogActions>
-      </Dialog>
-    );
-  }
+  const errorCode =
+    createMutation.error?.response?.data?.code ?? createMutation.error?.code;
+  const errorMessage =
+    errorCode === "personal_key_workspace_required"
+      ? "Choose or join a workspace to create API keys."
+      : getGatewayAuthenticationErrorMessage(createMutation.error) ||
+        createMutation.error?.message ||
+        (typeof createMutation.error?.result === "string"
+          ? createMutation.error.result
+          : null) ||
+        "Failed to create key";
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Create API Key</DialogTitle>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
+      <DialogTitle>Create API key</DialogTitle>
       <DialogContent>
-        <Stack spacing={2.5} mt={1}>
+        <Stack spacing={2} mt={1}>
           <TextField
             label="Name"
             fullWidth
@@ -132,74 +103,28 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
             size="small"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g., production-key"
+            placeholder="e.g. checkout-service"
+            autoFocus
+            InputLabelProps={{ style: LABEL_ABOVE_STYLE }}
           />
-          <TextField
-            label="Owner"
-            fullWidth
-            size="small"
-            value={owner}
-            onChange={(e) => setOwner(e.target.value)}
-            placeholder="e.g., team-backend"
-          />
-          <Autocomplete
-            multiple
-            freeSolo
-            size="small"
-            options={[]}
+          <Typography typography="s2" color="text.secondary">
+            This personal key belongs to your signed-in account.
+          </Typography>
+          <AccessListField
+            label="Allowed models"
             value={allowedModels}
-            onChange={(_, val) => setAllowedModels(val)}
-            renderTags={(value, getTagProps) =>
-              value.map((option, index) => (
-                <Chip
-                  label={option}
-                  size="small"
-                  {...getTagProps({ index })}
-                  key={option}
-                />
-              ))
-            }
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                label="Allowed Models"
-                placeholder="Type model name + Enter (empty = all)"
-                helperText="Leave empty to allow all models"
-              />
-            )}
+            onChange={setAllowedModels}
+            options={modelOptions}
+            emptyMeaning="Leave empty to allow every model. Console examples use provider/model IDs. Bare model IDs are separate exact grants; neither grants the other."
           />
-          <Autocomplete
-            multiple
-            freeSolo
-            size="small"
-            options={[]}
+          <AllowedProvidersField
+            gatewayId={gatewayId}
+            label="Allowed providers"
             value={allowedProviders}
-            onChange={(_, val) => setAllowedProviders(val)}
-            renderTags={(value, getTagProps) =>
-              value.map((option, index) => (
-                <Chip
-                  label={option}
-                  size="small"
-                  {...getTagProps({ index })}
-                  key={option}
-                />
-              ))
-            }
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                label="Allowed Providers"
-                placeholder="Type provider name + Enter (empty = all)"
-                helperText="Leave empty to allow all providers"
-              />
-            )}
+            onChange={setAllowedProviders}
           />
           {createMutation.isError && (
-            <Alert severity="error">
-              {createMutation.error?.message ||
-                createMutation.error?.result ||
-                "Failed to create key"}
-            </Alert>
+            <Alert severity="error">{errorMessage}</Alert>
           )}
         </Stack>
       </DialogContent>
@@ -207,6 +132,7 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
         <Button onClick={handleClose}>Cancel</Button>
         <Button
           variant="contained"
+          color="primary"
           onClick={handleCreate}
           disabled={!name.trim() || createMutation.isPending}
         >
@@ -220,6 +146,7 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
 CreateKeyDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
+  onCreated: PropTypes.func.isRequired,
   gatewayId: PropTypes.string,
 };
 

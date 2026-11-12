@@ -1,4 +1,5 @@
-import { Box, Button, Stack, Typography } from "@mui/material";
+import SelectionBar from "src/components/selection-bar";
+import { Button, Stack } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
@@ -16,6 +17,12 @@ import {
   useDeleteGraphs,
 } from "../../../api/agent-playground/agent-playground";
 
+import { isPrototypeMode } from "src/utils/prototype";
+
+// L7c merge (walk sv2-run-cd d02): Create Agent posts an unmocked
+// /agent-playground/graphs/ and opens a builder with no version, so the
+// prototype build offers no Create Agent (the seeded Support Agent stays).
+
 function SelectionActions({
   selectedCount,
   onDelete,
@@ -23,82 +30,18 @@ function SelectionActions({
   isDeleting = false,
 }) {
   return (
-    <Box
-      sx={{
-        padding: "6px 16px",
-        gap: "16px",
-        borderRadius: "4px",
-        border: "1px solid",
-        borderColor: "whiteScale.500",
-        display: "flex",
-      }}
-    >
-      <Typography
-        typography="s1"
-        fontWeight={"fontWeightRegular"}
-        sx={{
-          paddingRight: "16px",
-          borderRight: "1px solid",
-          borderColor: "whiteScale.500",
-          color: (theme) =>
-            theme.palette.mode === "dark" ? "text.primary" : "purple.500",
-        }}
-      >
-        {selectedCount} Selected
-      </Typography>
-      <Typography
-        role="button"
-        typography="s1"
-        fontWeight={"fontWeightRegular"}
-        color="text.primary"
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          gap: "5px",
-          cursor: isDeleting ? "not-allowed" : "pointer",
-          opacity: isDeleting ? 0.6 : 1,
-        }}
-        onClick={() => {
-          if (!isDeleting) {
-            onDelete();
-          }
-        }}
-      >
-        <SvgColor
-          src="/assets/icons/ic_delete.svg"
-          sx={{
-            height: "20px",
-            width: "20px",
-            bgcolor: "red.500",
-          }}
-        />
-        Delete
-      </Typography>
-
-      <Typography
-        role="button"
-        typography="s1"
-        fontWeight={"fontWeightRegular"}
-        color="text.primary"
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          gap: "8px",
-          cursor: isDeleting ? "not-allowed" : "pointer",
-          opacity: isDeleting ? 0.6 : 1,
-          paddingLeft: "16px",
-          borderLeft: "1px solid",
-          borderColor: "whiteScale.500",
-        }}
-        onClick={() => {
-          if (!isDeleting) {
-            onCancel();
-          }
-        }}
-      >
-        Cancel
-      </Typography>
-    </Box>
+    <SelectionBar
+      count={selectedCount}
+      onCancel={onCancel}
+      actions={[
+        {
+          label: "Delete",
+          icon: "solar:trash-bin-trash-linear",
+          onClick: onDelete,
+          disabled: isDeleting,
+        },
+      ]}
+    />
   );
 }
 
@@ -222,15 +165,8 @@ export default function Actions({ searchQuery, setSearchQuery, gridApi }) {
           <Button
             variant="outlined"
             size="small"
-            sx={{ px: "8px" }}
             startIcon={
-              <SvgColor
-                sx={{
-                  height: "20px",
-                  width: "20px",
-                }}
-                src="/assets/icons/ic_docs_single.svg"
-              />
+              <SvgColor width="20px" src="/assets/icons/ic_docs_single.svg" />
             }
             component="a"
             href="https://docs.futureagi.com/docs/agent-playground"
@@ -239,24 +175,20 @@ export default function Actions({ searchQuery, setSearchQuery, gridApi }) {
             View Docs
           </Button>
 
-          <LoadingButton
-            variant="contained"
-            color="primary"
-            size="small"
-            loading={isCreatingAgent}
-            onClick={handleCreateAgent}
-            startIcon={
-              <SvgColor
-                src="/assets/icons/ic_add.svg"
-                sx={{
-                  height: "20px",
-                  width: "20px",
-                }}
-              />
-            }
-          >
-            Create Agent
-          </LoadingButton>
+          {isPrototypeMode() ? null : (
+            <LoadingButton
+              variant="contained"
+              color="primary"
+              size="small"
+              loading={isCreatingAgent}
+              onClick={handleCreateAgent}
+              startIcon={
+                <SvgColor src="/assets/icons/ic_add.svg" width="20px" />
+              }
+            >
+              Create Agent
+            </LoadingButton>
+          )}
         </Stack>
       )}
       <DeleteAgentsDialog

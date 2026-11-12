@@ -11,12 +11,12 @@ from rest_framework import serializers
 
 class EvalListFiltersSerializer(serializers.Serializer):
     eval_type = serializers.ListField(
-        child=serializers.ChoiceField(choices=["llm", "code", "agent"]),
+        child=serializers.ChoiceField(choices=["llm", "code", "agent", "dag"]),
         required=False,
         allow_empty=True,
     )
     eval_type_not = serializers.ListField(
-        child=serializers.ChoiceField(choices=["llm", "code", "agent"]),
+        child=serializers.ChoiceField(choices=["llm", "code", "agent", "dag"]),
         required=False,
         allow_empty=True,
     )
@@ -87,6 +87,7 @@ class EvalListRequestSerializer(serializers.Serializer):
     )
     filters = EvalListFiltersSerializer(required=False, allow_null=True, default=None)
     sort_by = serializers.ChoiceField(
-        choices=["name", "updated_at", "created_at"], default="updated_at"
+        choices=["name", "updated_at", "created_at", "created_by_name"],
+        default="updated_at",
     )
     sort_order = serializers.ChoiceField(choices=["asc", "desc"], default="desc")

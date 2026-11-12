@@ -1,0 +1,136 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "telemetry.sdk.language",
+            "value": { "stringValue": "python" }
+          },
+          {
+            "key": "telemetry.sdk.name",
+            "value": { "stringValue": "opentelemetry" }
+          },
+          {
+            "key": "telemetry.sdk.version",
+            "value": { "stringValue": "1.45.2" }
+          },
+          {
+            "key": "service.name",
+            "value": { "stringValue": "unknown_service" }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": { "name": "langfuse-sdk", "version": "5.2.0" },
+          "spans": [
+            {
+              "traceId": "6e1f0c2a9b8d4e7fa3c5b7d9e1f3a5c7",
+              "spanId": "5b6c7d8e9f0a1b2c",
+              "parentSpanId": "4a5b6c7d8e9f0a1b",
+              "name": "llm-call",
+              "kind": 1,
+              "startTimeUnixNano": "1792900000020000000",
+              "endTimeUnixNano": "1792900000880000000",
+              "attributes": [
+                { "key": "user.id", "value": { "stringValue": "parity-user" } },
+                {
+                  "key": "session.id",
+                  "value": { "stringValue": "parity-session" }
+                },
+                {
+                  "key": "langfuse.trace.tags",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        { "stringValue": "parity" },
+                        { "stringValue": "billing" }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "langfuse.observation.type",
+                  "value": { "stringValue": "generation" }
+                },
+                {
+                  "key": "langfuse.observation.input",
+                  "value": {
+                    "stringValue": "[{\"role\": \"user\", \"content\": \"PARITY-LF What is the capital of France?\"}]"
+                  }
+                },
+                {
+                  "key": "langfuse.observation.model.name",
+                  "value": { "stringValue": "gpt-4o-mini" }
+                },
+                {
+                  "key": "langfuse.observation.model.parameters",
+                  "value": { "stringValue": "{\"temperature\": 0}" }
+                },
+                {
+                  "key": "langfuse.observation.output",
+                  "value": {
+                    "stringValue": "{\"role\": \"assistant\", \"content\": \"PARITY-LF The capital of France is Paris.\"}"
+                  }
+                },
+                {
+                  "key": "langfuse.observation.usage_details",
+                  "value": { "stringValue": "{\"input\": 12, \"output\": 9}" }
+                }
+              ],
+              "status": {}
+            },
+            {
+              "traceId": "6e1f0c2a9b8d4e7fa3c5b7d9e1f3a5c7",
+              "spanId": "4a5b6c7d8e9f0a1b",
+              "name": "parity-langfuse-chat",
+              "kind": 1,
+              "startTimeUnixNano": "1792900000000000000",
+              "endTimeUnixNano": "1792900000900000000",
+              "attributes": [
+                { "key": "user.id", "value": { "stringValue": "parity-user" } },
+                {
+                  "key": "session.id",
+                  "value": { "stringValue": "parity-session" }
+                },
+                {
+                  "key": "langfuse.trace.tags",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        { "stringValue": "parity" },
+                        { "stringValue": "billing" }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "langfuse.observation.type",
+                  "value": { "stringValue": "span" }
+                },
+                {
+                  "key": "langfuse.observation.input",
+                  "value": {
+                    "stringValue": "{\"question\": \"PARITY-LF What is the capital of France?\"}"
+                  }
+                },
+                {
+                  "key": "langfuse.internal.is_app_root",
+                  "value": { "boolValue": true }
+                },
+                {
+                  "key": "langfuse.observation.output",
+                  "value": {
+                    "stringValue": "{\"answer\": \"PARITY-LF The capital of France is Paris.\"}"
+                  }
+                }
+              ],
+              "status": {}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

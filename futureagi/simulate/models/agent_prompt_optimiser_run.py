@@ -1,6 +1,6 @@
 import uuid
 
-from django.db import models
+from django.db import models, router
 
 from simulate.models.agent_optimiser import AgentOptimiser
 from simulate.models.agent_optimiser_run import AgentOptimiserRun
@@ -51,6 +51,7 @@ class AgentPromptOptimiserRun(BaseModel):
     result = models.JSONField(null=True, blank=True)
     error_message = models.TextField(null=True, blank=True)
     configuration = models.JSONField(null=True)
+    tenant_lineage = models.JSONField(null=True, editable=False)
 
     class Meta:
         db_table = "agent_prompt_optimiser_run"
@@ -61,6 +62,30 @@ class AgentPromptOptimiserRun(BaseModel):
                 name="idx_prompt_opt_run_test_status",
             ),
         ]
+
+    def save(self, *args, **kwargs):
+        from simulate.utils.prompt_optimizer_scope import (
+            PromptOptimiserScopeError,
+            creation_lineage,
+        )
+
+        using = kwargs.get("using") or router.db_for_write(type(self), instance=self)
+        if self._state.adding:
+            # Only new objects may establish provenance. Ignore supplied snapshots.
+            self.tenant_lineage = creation_lineage(self, using)
+        else:
+            original = (
+                type(self)
+                .all_objects.using(using)
+                .filter(pk=self.pk)
+                .values_list("tenant_lineage", flat=True)
+                .get()
+            )
+            if self.tenant_lineage != original:
+                raise PromptOptimiserScopeError(
+                    "Prompt optimizer creation scope is immutable."
+                )
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.agent_optimiser.name} - {self.id} - {self.status}"

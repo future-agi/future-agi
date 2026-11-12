@@ -1,0 +1,62 @@
+# Multi-replica hosted preparation example, not the single-replica launch shape
+# or a real deployment configuration. For the launch, override all three:
+# hosted.singleReplica=true, agentccGateway.replicas=1,
+# agentccGateway.autoscaling.enabled=false. See README.md, packet 12(c).
+# Rendering deliberately refuses until ops supplies exact identity, secret refs,
+# proxy peers and reviewed image digests. No generic bootstrap hook in this mode.
+# Explicit even when backend EE/cloud signals arrive through external secrets.
+billing:
+  enforcement: true
+hosted:
+  enabled: true
+  # Maps to AGENTCC_HOSTED_ONEKEY_ACTIVATION; not release approval.
+  onekeyActivation: false
+  releaseRevision: ""
+  existingConfigChecksum: ""
+  migration:
+    phase: ""
+    apply: false
+    quiesced: false
+    compatibleRuntimeRevision: ""
+    activeDeadlineSeconds: 960
+config:
+  envType: production
+secrets:
+  existingSecret: ""
+backend:
+  service:
+    annotations:
+      alb.ingress.kubernetes.io/healthcheck-path: /readyz/
+  image:
+    digest: ""
+agentccGateway:
+  replicas: 2
+  image:
+    digest: ""
+  service:
+    type: ClusterIP
+  controlPlaneSync: true
+  allowPrivateProviderURLs: false
+  redis:
+    enabled: "true"
+  config:
+    auth:
+      enabled: true
+    server:
+      trusted_proxies: []
+      trusted_hops: 0
+      max_request_timeout: 300s
+    guardrails:
+      enabled: true
+    control_plane:
+      sync_on_startup: true
+      sync_interval: 60s
+    redis:
+      timeout: 1s
+    tools:
+      enabled: false
+    mcp:
+      enabled: false
+networkPolicy:
+  enabled: true
+  ingressFrom: []

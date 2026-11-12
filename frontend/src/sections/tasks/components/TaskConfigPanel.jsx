@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -7,12 +8,11 @@ import {
   Divider,
   FormHelperText,
   IconButton,
+  Link,
   Tab,
-  Tabs,
   TextField,
   Tooltip,
   Typography,
-  useTheme,
 } from "@mui/material";
 import { useFieldArray, useFormState, useWatch } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
@@ -34,7 +34,12 @@ import { PROJECT_SOURCE } from "src/utils/constants";
 import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 import TaskFilterBar from "./TaskFilterBar";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { RouterLink } from "src/routes/components";
+import { paths } from "src/routes/paths";
 import { nextTaskRowTypeForProject } from "../taskProjectKind";
+
+const NO_OBSERVE_PROJECTS_MESSAGE =
+  "No Observe projects yet: send your first trace to create one";
 
 const ROW_TYPE_OPTIONS = [
   { value: "spans", label: "Spans", icon: "solar:layers-outline" },
@@ -99,7 +104,6 @@ const EVAL_TYPE_META = {
 
 // ── Configured Eval Card ──
 const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
-  const theme = useTheme();
   const invalid = !evalItem?.id;
   const name =
     evalItem?.name ||
@@ -137,10 +141,7 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
         borderRadius: 1,
         border: "1px solid",
         borderColor: hasError ? "error.main" : "divider",
-        bgcolor:
-          theme.palette.mode === "dark"
-            ? "rgba(255,255,255,0.02)"
-            : "rgba(0,0,0,0.01)",
+        bgcolor: "background.neutral",
         transition: "border-color 0.15s",
         "&:hover": { borderColor: hasError ? "error.main" : "primary.main" },
       }}
@@ -178,8 +179,6 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
               }
               size="small"
               sx={{
-                height: 18,
-                fontSize: "10px",
                 bgcolor: "background.neutral",
                 color: "text.secondary",
                 "& .MuiChip-label": { px: 0.5 },
@@ -191,8 +190,6 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
               label={model}
               size="small"
               sx={{
-                height: 18,
-                fontSize: "10px",
                 bgcolor: "background.neutral",
                 color: "text.secondary",
                 "& .MuiChip-label": { px: 0.5 },
@@ -205,8 +202,6 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
               size="small"
               variant="outlined"
               sx={{
-                height: 18,
-                fontSize: "10px",
                 borderColor: "divider",
                 color: "text.secondary",
                 "& .MuiChip-label": { px: 0.5 },
@@ -220,7 +215,7 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
             sx={{
               display: "block",
               mt: 0.5,
-              fontSize: "11px",
+              fontSize: "12px",
               color: "error.main",
             }}
           >
@@ -235,8 +230,6 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
                 label={mappingChipLabel(key, evalItem.mapping[key])}
                 size="small"
                 sx={{
-                  fontSize: "10px",
-                  height: 18,
                   bgcolor: "background.neutral",
                   color: "text.secondary",
                   fontFamily: "monospace",
@@ -249,8 +242,6 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
                 label={`+${mappedKeys.length - 4}`}
                 size="small"
                 sx={{
-                  fontSize: "10px",
-                  height: 18,
                   "& .MuiChip-label": { px: 0.5 },
                 }}
               />
@@ -266,7 +257,7 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
               onClick={onEdit}
               sx={{ p: 0.25, color: "text.secondary" }}
             >
-              <Iconify icon="solar:pen-2-linear" width={15} />
+              <Iconify icon="solar:pen-2-linear" width={16} />
             </IconButton>
           </Tooltip>
         )}
@@ -276,7 +267,7 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
             onClick={onRemove}
             sx={{ p: 0.25, color: "text.secondary" }}
           >
-            <Iconify icon="mingcute:close-line" width={16} />
+            <Iconify icon="solar:close-linear" width={16} />
           </IconButton>
         </Tooltip>
       </Box>
@@ -387,7 +378,7 @@ const TaskConfigPanel = ({
   const evalsDetailsErrorMessage = _.get(errors, "evalsDetails")?.message || "";
 
   // Projects list — only fetch in create mode (not locked)
-  const { data: projectsList } = useQuery({
+  const { data: projectsList, isSuccess: projectsListLoaded } = useQuery({
     queryKey: ["project-list"],
     queryFn: () =>
       axios.get(endpoints.project.listProjects(), {
@@ -396,6 +387,12 @@ const TaskConfigPanel = ({
     select: (data) => data.data?.result?.projects,
     enabled: !projectLocked,
   });
+  // Only a list that loaded and came back empty means there is nothing to
+  // pick; while loading or after an error the picker keeps its plain text.
+  const noObserveProjects =
+    projectsListLoaded &&
+    Array.isArray(projectsList) &&
+    projectsList.length === 0;
 
   const handleEvalAdded = useCallback(
     async (evalConfig) => {
@@ -578,22 +575,46 @@ const TaskConfigPanel = ({
                 helperText="Project cannot be changed after creation"
               />
             ) : (
-              <FormSearchSelectFieldControl
-                control={control}
-                fieldName="project"
-                size="small"
-                label="Project"
-                required
-                options={
-                  projectsList?.map((p) => ({
-                    label: p.name,
-                    value: p.id,
-                  })) || []
-                }
-                onChange={handleProjectFieldChange}
-                style={{ width: "100%" }}
-                noOptions="No projects available"
-              />
+              <>
+                <FormSearchSelectFieldControl
+                  control={control}
+                  fieldName="project"
+                  size="small"
+                  label="Project"
+                  required
+                  options={
+                    projectsList?.map((p) => ({
+                      label: p.name,
+                      value: p.id,
+                    })) || []
+                  }
+                  onChange={handleProjectFieldChange}
+                  style={{ width: "100%" }}
+                  noOptions={
+                    noObserveProjects
+                      ? NO_OBSERVE_PROJECTS_MESSAGE
+                      : "No projects available"
+                  }
+                />
+                {/* The dropdown's empty item is disabled and cannot hold a
+                    link, so the way forward sits under the field. */}
+                {noObserveProjects && (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontSize: "12px", display: "block" }}
+                  >
+                    {NO_OBSERVE_PROJECTS_MESSAGE}.{" "}
+                    <Link
+                      component={RouterLink}
+                      href={paths.dashboard.observe}
+                      underline="hover"
+                    >
+                      Set up Observe
+                    </Link>
+                  </Typography>
+                )}
+              </>
             )}
 
             {/* Target type tabs — hidden for voice projects */}
@@ -602,42 +623,17 @@ const TaskConfigPanel = ({
                 <Typography
                   variant="caption"
                   color="text.secondary"
-                  sx={{ fontSize: "11px", display: "block", mb: 0.75 }}
+                  sx={{ fontSize: "12px", display: "block", mb: 0.75 }}
                 >
                   Run evaluations on
                 </Typography>
-                <Tabs
+                <SegmentedTabs
                   value={rowType}
                   onChange={(_, v) => {
                     if (rowTypeLocked) return;
                     setValue("rowType", v);
                   }}
-                  variant="standard"
-                  scrollButtons={false}
-                  TabIndicatorProps={{ style: { display: "none" } }}
-                  sx={{
-                    minHeight: 28,
-                    "& .MuiTabs-scroller": { overflow: "visible !important" },
-                    "& .MuiTab-root": {
-                      minHeight: 28,
-                      px: 1.25,
-                      py: 0,
-                      mr: "0px !important",
-                      textTransform: "none",
-                      fontSize: "12px",
-                      borderRadius: "6px",
-                      minWidth: "auto",
-                    },
-                    border: "1px solid",
-                    borderColor: "divider",
-                    p: "2px",
-                    borderRadius: "8px",
-                    width: "fit-content",
-                    bgcolor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.04)"
-                        : "background.neutral",
-                  }}
+                  sx={{ width: "fit-content" }}
                 >
                   {ROW_TYPE_OPTIONS.map((t) => (
                     <Tab
@@ -652,35 +648,13 @@ const TaskConfigPanel = ({
                             gap: 0.5,
                           }}
                         >
-                          <Iconify icon={t.icon} width={13} />
+                          <Iconify icon={t.icon} width={14} />
                           {t.label}
                         </Box>
                       }
-                      sx={{
-                        bgcolor:
-                          rowType === t.value
-                            ? (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "rgba(255,255,255,0.12)"
-                                  : "background.paper"
-                            : "transparent",
-                        boxShadow:
-                          rowType === t.value
-                            ? (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "none"
-                                  : "0 1px 3px rgba(0,0,0,0.08)"
-                            : "none",
-                        borderRadius: "6px",
-                        fontWeight: rowType === t.value ? 600 : 400,
-                        color:
-                          rowType === t.value
-                            ? "text.primary"
-                            : "text.disabled",
-                      }}
                     />
                   ))}
-                </Tabs>
+                </SegmentedTabs>
               </Box>
             )}
           </Box>
@@ -703,7 +677,7 @@ const TaskConfigPanel = ({
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px", display: "block", fontStyle: "italic" }}
+              sx={{ fontSize: "12px", display: "block", fontStyle: "italic" }}
             >
               Select a project to configure filters, scheduling, and
               evaluations.
@@ -721,13 +695,7 @@ const TaskConfigPanel = ({
                   size="small"
                   disabled={!isProjectSelected}
                   onClick={handleAddEval}
-                  startIcon={<Iconify icon="mingcute:add-line" width={14} />}
-                  sx={{
-                    textTransform: "none",
-                    fontWeight: 500,
-                    fontSize: "12px",
-                    height: 28,
-                  }}
+                  startIcon={<Iconify icon="solar:add-linear" width={14} />}
                 >
                   Add Evaluation
                 </Button>

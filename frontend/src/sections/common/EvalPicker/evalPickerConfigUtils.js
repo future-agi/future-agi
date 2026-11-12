@@ -1,4 +1,5 @@
 import { buildCompositeChildConfigs } from "src/sections/evals/Helpers/compositeRuntimeConfig";
+import { stripLaunchAllowNa } from "./allowNaModel";
 
 const OUTPUT_TYPE_CONFIG_MAP = {
   pass_fail: "Pass/Fail",
@@ -66,7 +67,7 @@ export const buildEvalTemplateConfig = ({
   templateFormat,
 }) => {
   const nextConfig = {
-    ...baseConfig,
+    ...stripLaunchAllowNa(baseConfig),
     rule_prompt: evalType === "code" ? "" : instructions,
     output: OUTPUT_TYPE_CONFIG_MAP[outputType] || baseConfig?.output,
     pass_threshold: passThreshold,
@@ -81,11 +82,8 @@ export const buildEvalTemplateConfig = ({
   if (evalType === "llm") {
     nextConfig.messages = messages;
 
-    if (fewShotExamples.length > 0) {
-      nextConfig.few_shot_examples = fewShotExamples;
-    } else {
-      delete nextConfig.few_shot_examples;
-    }
+    // Omission inherits the selected version's datasets; [] explicitly clears.
+    nextConfig.few_shot_examples = fewShotExamples;
   }
 
   if (choiceScores && Object.keys(choiceScores).length > 0) {

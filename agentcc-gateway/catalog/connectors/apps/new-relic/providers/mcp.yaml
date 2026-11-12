@@ -1,0 +1,81 @@
+# New Relic's MCP server (US region) with OAuth from New Relic's
+# authorization server, which registers clients dynamically. New Relic's
+# setup page asks for OAuth for every client it does not name otherwise. The
+# scopes are the ones the server advertises; New Relic's own Kiro example
+# requests observability:read, offline and offline_access only. Accounts in
+# the EU or JP regions use mcp.eu.newrelic.com or mcp.jp.newrelic.com, which
+# this record does not cover. EE reads a pre-registered client from its
+# environment and cannot register one, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: new-relic
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.newrelic.com/mcp/
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://oauth2.service.newrelic.com/oauth2/auth
+    tokenUrl: https://oauth2.service.newrelic.com/oauth2/token
+    scopes:
+      ["observability:read", offline, offline_access, "dashboards:modify", "alerts:modify"]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://oauth2.service.newrelic.com/oauth2/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.newrelic.com/docs/agentic-ai/mcp/setup/
+    fetchedAt: 2026-11-11
+  - fact: transport.url
+    url: https://mcp.newrelic.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://docs.newrelic.com/docs/agentic-ai/mcp/setup/
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.authorizeUrl
+    url: https://docs.newrelic.com/docs/agentic-ai/mcp/setup/
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.authorizeUrl
+    url: https://oauth2.service.newrelic.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.tokenUrl
+    url: https://docs.newrelic.com/docs/agentic-ai/mcp/setup/
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.tokenUrl
+    url: https://oauth2.service.newrelic.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.scopes
+    url: https://mcp.newrelic.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.pkce
+    url: https://docs.newrelic.com/docs/agentic-ai/mcp/setup/
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.pkce
+    url: https://oauth2.service.newrelic.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.revocation.url
+    url: https://oauth2.service.newrelic.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.registration
+    url: https://oauth2.service.newrelic.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+x-omega: { ee: exclude }

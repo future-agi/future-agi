@@ -19,6 +19,12 @@ import { useSnackbar } from "src/components/snackbar";
 import { Box, Divider } from "@mui/material";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import RightSectionAuth from "./RightSectionAuth";
+import {
+  authSplitSx,
+  authFormPanelSx,
+  authAsideSx,
+  authFormGutterSx,
+} from "src/layouts/auth/responsive-styles";
 import { getSsoRedirectUrl } from "./sso-redirect";
 
 // ----------------------------------------------------------------------
@@ -72,7 +78,7 @@ export default function SSOLogin() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -83,7 +89,7 @@ export default function SSOLogin() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           lineHeight: "36px",
           color: "text.secondary",
           maxWidth: "480px",
@@ -107,11 +113,11 @@ export default function SSOLogin() {
       />
 
       <LoadingButton
+        size="large"
         fullWidth
         type="submit"
         variant="contained"
         loading={isLoading}
-        sx={{ borderRadius: 0.5 }}
         color="primary"
       >
         Sign in
@@ -145,9 +151,7 @@ export default function SSOLogin() {
   return (
     <Box
       sx={{
-        width: "100%",
-        height: "100vh",
-        display: "flex",
+        ...authSplitSx,
         position: "relative",
       }}
     >
@@ -167,14 +171,13 @@ export default function SSOLogin() {
           },
         }}
       >
-        <Iconify icon="eva:arrow-ios-back-fill" />
+        <Iconify icon="solar:alt-arrow-left-linear" />
       </IconButton> */}
 
       {/* Left Side - Form */}
       <Box
         sx={{
-          width: "50%",
-          height: "100vh",
+          ...authFormPanelSx,
           display: "flex",
           justifyContent: "center",
           paddingY: "100px",
@@ -182,7 +185,13 @@ export default function SSOLogin() {
           overflowY: "auto",
         }}
       >
-        <Box sx={{ width: "640px", px: 10, height: "fit-content" }}>
+        <Box
+          sx={{
+            width: { xs: "100%", lg: "640px" },
+            ...authFormGutterSx,
+            height: "fit-content",
+          }}
+        >
           <form onSubmit={onSubmit}>
             {renderHead}
             {renderForm}
@@ -191,13 +200,7 @@ export default function SSOLogin() {
       </Box>
 
       {/* Right Side - Image with Text Overlay */}
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
+      <Box sx={authAsideSx}>
         <RightSectionAuth />
       </Box>
     </Box>

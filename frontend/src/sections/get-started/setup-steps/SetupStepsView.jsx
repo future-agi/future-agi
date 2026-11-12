@@ -16,6 +16,9 @@ const SetupStepsView = ({
       sx={{
         width: "100%",
         minHeight: "480px",
+        // The page is a column of fixed height: without this the step box is
+        // squeezed to its minimum and a step's own button falls below it.
+        flexShrink: 0,
         // mt:'24px',
         borderRadius: "8px",
         border: "1px solid",
@@ -34,6 +37,7 @@ const SetupStepsView = ({
       <InitialSetupOptions
         currentLabel={currentLabel}
         setCurrentLabel={setCurrentLabel}
+        data={data}
       />
     </Box>
   );

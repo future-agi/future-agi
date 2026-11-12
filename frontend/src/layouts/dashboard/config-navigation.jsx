@@ -1,3 +1,5 @@
+import { useMCPStatus } from "src/sections/gateway/mcp/hooks/useMCPConfig";
+import { releaseSwitchesOff } from "src/sections/gateway/mcp/hooks/useMCPReleaseFeatures";
 /* eslint-disable react-refresh/only-export-components */
 import React from "react";
 import { useMemo } from "react";
@@ -15,20 +17,86 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAuthContext } from "src/auth/hooks";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { gatewayNavIcon } from "src/sections/gateway/shell/gateway-icons";
+import { gatewayRailGroups } from "src/sections/gateway/shell/gateway-rail";
+import { useManagedModelsStatus } from "src/sections/gateway/models/hooks/useManagedModels";
+import { isGatewayPath } from "src/sections/omega/shell/products";
+import { useCentralBilling } from "src/sections/settings/BillingV2/useCentralBilling";
+import { useHostUpdateAccess } from "src/api/hostUpdates/host-update-status";
 import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
+import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import {
   ROLES,
   showRoleSpecific,
   RoutesName,
 } from "src/utils/rolePermissionMapping";
+import { isOmegaConsoleEnabled } from "src/sections/omega/shell/flags";
+import {
+  withAgentInfrastructure,
+  withheldNavRow,
+} from "src/sections/omega/shell/agent-infrastructure-nav";
+import {
+  OMEGA_PRODUCT,
+  ROLLOUT_STALE_MS,
+} from "src/sections/omega/shell/rollout";
+import { useOmegaProducts } from "src/sections/omega/shell/useOmegaProducts";
+import {
+  hasRequestable,
+  useEarlyAccess,
+} from "src/sections/omega/shell/useEarlyAccess";
 
-const icon = (name) => (
-  <SvgColor src={`/assets/icons/navbar/${name}.svg`} />
-  // OR
-  // <Iconify icon="fluent:mail-24-filled" />
-  // https://icon-sets.iconify.design/solar/
-  // https://www.streamlinehq.com/icons
-);
+// HO S2 (prototype-off hygiene): a door whose page reads only prototype
+// paths (the DSX_PROTOTYPE entries of api/contracts/api-contract-exceptions.js)
+// exists only in a prototype build. The env check is static.
+const PROTOTYPE_BUILD =
+  import.meta.env.VITE_ENVIRONMENT === "local" &&
+  import.meta.env.VITE_PROTOTYPE_MODE === "true";
+// L7b absent-sweep (nav:other-products): products outside Datasets +
+// Experiments that the mocks do not serve are absent from a prototype
+// build's nav (their routes redirect to /dashboard/develop). Same static gate.
+const notInPrototype = (items) => (PROTOTYPE_BUILD ? [] : items);
+
+// Design system: nav icons are Solar linear, the same set as the rest of
+// the product. Names not listed fall back to the old navbar SVGs.
+const SOLAR_NAV_ICONS = {
+  ic_blog: "solar:chart-square-linear",
+  ic_analytics: "solar:database-linear",
+  ic_lock: "solar:key-minimalistic-linear",
+  ic_dash_tasks: "solar:checklist-minimalistic-linear",
+  ic_users: "solar:users-group-rounded-linear",
+  hugeicons: "solar:database-linear",
+  ic_docs: "solar:document-text-linear",
+  ic_booking: "solar:map-arrow-right-linear",
+  ic_chat: "solar:chat-round-line-linear",
+  ic_run: "solar:routing-2-linear",
+  ic_prompt: "solar:notes-linear",
+  ic_add_team: "solar:user-plus-linear",
+  ic_help: "solar:question-circle-linear",
+  ic_eval: "solar:checklist-linear",
+  ic_prototype: "solar:box-linear",
+  ic_annotate: "solar:pen-2-linear",
+  ic_knowledge_base: "solar:book-2-linear",
+  ic_alert: "solar:bell-linear",
+  ic_experiment: "solar:test-tube-linear",
+  ic_project: "solar:folder-linear",
+  ic_sessions: "solar:layers-minimalistic-linear",
+  ic_optimize: "solar:tuning-2-linear",
+  ic_evaluate: "solar:clipboard-check-linear",
+  ic_feed: "solar:bug-linear",
+  ic_persona: "solar:user-id-linear",
+  ic_agents: "solar:cpu-bolt-linear",
+  ic_chartsObserve: "solar:graph-up-linear",
+  ic_gateway: "solar:server-square-linear",
+  ic_environment: "solar:globus-linear",
+  ic_chat_nav: "solar:chat-round-line-linear",
+};
+
+const icon = (name) =>
+  SOLAR_NAV_ICONS[name] ? (
+    <Iconify icon={SOLAR_NAV_ICONS[name]} />
+  ) : (
+    <SvgColor src={`/assets/icons/navbar/${name}.svg`} />
+  );
 
 const ICONS = {
   dashboard: icon("ic_blog"),
@@ -51,32 +119,29 @@ const ICONS = {
   knowledge_base: icon("ic_knowledge_base"),
   alerts: icon("ic_alert"),
   falconAI: icon("ic_falcon_ai"),
+  chat: icon("ic_chat_nav"),
   simulate: icon("ic_experiment"),
   scenarios: icon("ic_sessions"),
   simulatorAgent: icon("ic_optimize"),
   test: icon("ic_evaluate"),
   feed: icon("ic_feed"),
   agents: icon("ic_agents"),
+  // The AI Gateway's mark, as the product switcher draws it.
+  gateway: gatewayNavIcon("gateway"),
 };
 
 // ----------------------------------------------------------------------
 
 export function useNavData() {
-  const { user } = useAuthContext();
-  const { currentWorkspaceRole } = useWorkspace();
-  const userOrgRole = user?.organization_role;
-  const userDefaultWsRole = user?.default_workspace_role;
-  const isOwner = userOrgRole === "Owner";
-  const effectiveWsRole = currentWorkspaceRole || userDefaultWsRole;
-  const isAdmin =
-    userOrgRole === "Admin" || effectiveWsRole === "workspace_admin";
+  // Admission controls working entries; hosted-withheld products get inert rows.
+  const omegaProducts = useOmegaProducts();
   // Orgs created after the cutoff see only Environments in Simulate.
   const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
   const agentsPath = agentsSidebarPath(usePathname());
   const data = useMemo(() => {
     const buildItems = [
       {
-        title: "Dataset",
+        title: "Datasets",
         path: paths.dashboard.develop,
         icon: ICONS.develop,
         eventTrigger: () => {
@@ -85,6 +150,17 @@ export function useNavData() {
           });
         },
       },
+      // W5 C-H7: leaderboards across datasets (prototype builds only; its
+      // reads are prototype paths). L7c g1: its own icon (not Dashboards').
+      ...(PROTOTYPE_BUILD
+        ? [
+            {
+              title: "Leaderboards",
+              path: `${paths.dashboard.develop}/leaderboards`,
+              icon: <Iconify icon="mdi:podium" />,
+            },
+          ]
+        : []),
       {
         title: "Prompts",
         path: paths.dashboard.workbench,
@@ -137,13 +213,27 @@ export function useNavData() {
         },
       },
     ];
-    if (isOwner || isAdmin) {
-      buildItems.push({
-        title: "Keys",
-        path: paths.dashboard.keys,
-        icon: ICONS.keys,
-      });
-    }
+    buildItems.push({
+      title: "Keys",
+      path: paths.dashboard.keys,
+      icon: ICONS.keys,
+    });
+    // The AI Gateway's model catalog, otherwise reached only through the
+    // product switcher. Named as the catalog page and the gateway rail name
+    // it, with the switcher's AI Gateway mark. Every role and edition sees
+    // it, whether or not managed models are offered (the page then lists the
+    // org's own-provider models). On a gateway page the rail, with its own
+    // Models item, replaces this nav. A prototype build serves no gateway
+    // page (prototypeAbsentRoutes.js), so it has no entry there.
+    buildItems.push(
+      ...notInPrototype([
+        {
+          title: "Models",
+          path: paths.dashboard.gateway.models,
+          icon: ICONS.gateway,
+        },
+      ]),
+    );
     const sections = [
       {
         subheader: "BUILD",
@@ -162,98 +252,97 @@ export function useNavData() {
               });
             },
           },
-          {
-            title: "Error Feed",
-            path: paths.dashboard.errorFeed.root,
-            icon: <Iconify icon="mdi:bug-outline" />,
-          },
-          {
-            title: "Tasks",
-            path: paths.dashboard.tasks,
-            icon: ICONS.tasks,
-          },
-          {
-            title: "Users",
-            path: paths.dashboard.users,
-            icon: ICONS.users,
-          },
+          ...notInPrototype([
+            {
+              title: "Error Feed",
+              path: paths.dashboard.errorFeed.root,
+              icon: <Iconify icon="solar:bug-linear" />,
+            },
+            {
+              title: "Tasks",
+              path: paths.dashboard.tasks,
+              icon: ICONS.tasks,
+            },
+            {
+              title: "Users",
+              path: paths.dashboard.users,
+              icon: ICONS.users,
+            },
+          ]),
           {
             title: "Annotations",
             path: paths.dashboard.annotations.queues,
             icon: ICONS.annotate,
           },
-          {
-            title: "Alerts",
-            path: paths.dashboard.alerts,
-            icon: ICONS.alerts,
-            eventTrigger: () => {
-              trackEvent(Events.navigationAlertTabClicked, {
-                [PropertyName.click]: true,
-              });
+          ...notInPrototype([
+            {
+              title: "Alerts",
+              path: paths.dashboard.alerts,
+              icon: ICONS.alerts,
+              eventTrigger: () => {
+                trackEvent(Events.navigationAlertTabClicked, {
+                  [PropertyName.click]: true,
+                });
+              },
             },
-          },
-          {
-            title: "Dashboards",
-            path: paths.dashboard.dashboards.root,
-            icon: ICONS.data,
-          },
+            {
+              title: "Dashboards",
+              path: paths.dashboard.dashboards.root,
+              icon: ICONS.data,
+            },
+          ]),
         ],
       },
-      {
-        subheader: "GATEWAY",
-        items: [
-          {
-            title: "Gateway",
-            path: paths.dashboard.gateway.root,
-            icon: <Iconify icon="mdi:transit-connection-variant" />,
-            hasChildren: true,
-          },
-        ],
-      },
-      {
-        subheader: "Simulate",
-        items: [
-          {
-            title: "Environment",
-            path: paths.dashboard.simulate.environments.root,
-            icon: <Iconify icon="solar:server-square-cloud-linear" />,
-          },
-          ...(restrictSimulateToEnvironments
-            ? []
-            : [
-                {
-                  title: "Scenarios",
-                  path: paths.dashboard.simulate.scenarios,
-                  icon: ICONS.scenarios,
-                  eventTrigger: () => {
-                    trackEvent(Events.navigationScenariosClicked, {
-                      [PropertyName.click]: true,
-                    });
+      // Simulate follows dev (Environment, plus Scenarios and Run Simulation for
+      // orgs not restricted to Environments; Agent Definition left the sidebar).
+      // None of it is served by the prototype mocks, so a prototype build has no
+      // Simulate section (prototypeAbsentRoutes.js redirects its pages).
+      ...notInPrototype([
+        {
+          subheader: "Simulate",
+          items: [
+            {
+              title: "Environment",
+              path: paths.dashboard.simulate.environments.root,
+              icon: <Iconify icon="solar:server-square-cloud-linear" />,
+            },
+            ...(restrictSimulateToEnvironments
+              ? []
+              : [
+                  {
+                    title: "Scenarios",
+                    path: paths.dashboard.simulate.scenarios,
+                    icon: ICONS.scenarios,
+                    eventTrigger: () => {
+                      trackEvent(Events.navigationScenariosClicked, {
+                        [PropertyName.click]: true,
+                      });
+                    },
                   },
-                },
-                // {
-                //   title: "Simulation Agent",
-                //   path: paths.dashboard.simulate.simulatorAgent,
-                //   icon: ICONS.simulatorAgent,
-                //   eventTrigger: () => {
-                //     trackEvent(Events.navigationSimulationAgentClicked, {
-                //       [PropertyName.click]: true,
-                //     });
-                //   },
-                // },
-                {
-                  title: "Run Simulation",
-                  path: paths.dashboard.simulate.test,
-                  icon: ICONS.test,
-                  eventTrigger: () => {
-                    trackEvent(Events.navigationRunTestsClicked, {
-                      [PropertyName.click]: true,
-                    });
+                  // {
+                  //   title: "Simulation Agent",
+                  //   path: paths.dashboard.simulate.simulatorAgent,
+                  //   icon: ICONS.simulatorAgent,
+                  //   eventTrigger: () => {
+                  //     trackEvent(Events.navigationSimulationAgentClicked, {
+                  //       [PropertyName.click]: true,
+                  //     });
+                  //   },
+                  // },
+                  {
+                    title: "Run Simulation",
+                    path: paths.dashboard.simulate.test,
+                    icon: ICONS.test,
+                    eventTrigger: () => {
+                      trackEvent(Events.navigationRunTestsClicked, {
+                        [PropertyName.click]: true,
+                      });
+                    },
                   },
-                },
-              ]),
-        ],
-      },
+                ]),
+          ],
+        },
+      ]),
       // {
       //   // subheader: "Main",
       //   items: [],
@@ -263,15 +352,20 @@ export function useNavData() {
     sections.unshift({
       items: [
         {
-          title: "Falcon AI",
+          title: "Chat",
           path: paths.dashboard.falconAI,
-          icon: ICONS.falconAI,
+          icon: ICONS.chat,
         },
       ],
     });
 
-    return sections;
-  }, [isOwner, isAdmin, agentsPath, restrictSimulateToEnvironments]);
+    return withAgentInfrastructure(
+      sections,
+      isOmegaConsoleEnabled(),
+      omegaProducts.listed,
+      { hostedWithheld: omegaProducts.hostedWithheld },
+    );
+  }, [agentsPath, omegaProducts, restrictSimulateToEnvironments]);
   return data;
 }
 
@@ -300,7 +394,7 @@ export function useNavUpgradeData() {
       },
     ];
 
-    if (getStartedCompleted) {
+    if (getStartedCompleted && !PROTOTYPE_BUILD) {
       items.splice(1, 0, {
         title: "Get started",
         path: paths.dashboard.getstarted,
@@ -344,10 +438,28 @@ const SettingsIcons = {
   Security: settingsIcon("Security"),
 };
 
+// Billing (Settings > Billing) is open to these roles; RoleProtection on the
+// route uses the same list.
+const BILLING_ROLES = [ROLES.OWNER, ROLES.ADMIN, ROLES.WORKSPACE_ADMIN];
+
 export function useNavSettingsData() {
   const { user } = useAuthContext();
   const { isCloud } = useDeploymentMode();
+  const { allowed: hostUpdatesAllowed } = useHostUpdateAccess();
   const { currentWorkspaceRole } = useWorkspace();
+  const pathname = usePathname();
+  // Central billing also shows off cloud when the gateway's credit ledger
+  // answers, which it never does while gateway credits are hidden
+  // (sections/gateway/shell/page-status.js). Asked only where the settings
+  // nav is on screen.
+  const { visible: billingVisible } = useCentralBilling({
+    enabled:
+      pathname.startsWith("/dashboard/settings") &&
+      BILLING_ROLES.includes(user?.organization_role),
+  });
+  // Falcon AI connectors exist only where the deployment allows Falcon AI;
+  // while capabilities load or fail to load, the item stays off the list.
+  const { allowed: falconAIAllowed } = useFeatureAllowed(CAPABILITY.FALCON_AI);
 
   const { data: workspaces = [] } = useWorkspacesList({
     enabled: !!user?.ws_enabled,
@@ -361,6 +473,11 @@ export function useNavSettingsData() {
   const isWsAdmin =
     isOrgAdminPlus || currentWorkspaceRole === ROLES.WORKSPACE_ADMIN;
   const wsEnabled = user?.ws_enabled;
+  const omegaProducts = useOmegaProducts();
+  // Read only with the Omega master switch on (inside the hook).
+  const { data: earlyAccess } = useEarlyAccess({ staleTime: ROLLOUT_STALE_MS });
+  const showEarlyAccess =
+    isOmegaConsoleEnabled() && hasRequestable(earlyAccess);
 
   const sections = useMemo(() => {
     // Wait for user role to be loaded before rendering tabs
@@ -402,8 +519,16 @@ export function useNavSettingsData() {
 
     // Section 2: Workspace Settings (based on role permissions)
     const wsSettingsItems = [];
+    // The roles that manage integrations (integrations/permissions.py): an
+    // organization Owner or Admin, or an Admin of the current workspace, whose
+    // organization role is Member.
     const canAccessIntegrations = isOrgAdminPlus || isWsAdmin;
-    if (canAccess(RoutesName.integrations) && canAccessIntegrations) {
+    // L7b absent-sweep (settings:pages): a prototype build lists only the
+    // settings pages the mocks serve (Profile, AI Providers, Workspaces,
+    // Your Workspaces; per workspace General, Audit log, AI Providers).
+    // Members, usage/billing, MCP, Org settings, License, Integrations and
+    // (L7c g1) Falcon AI Connectors are absent there; their routes redirect.
+    if (!PROTOTYPE_BUILD && canAccessIntegrations) {
       wsSettingsItems.push({
         title: "Integrations",
         path: "/dashboard/settings/integrations",
@@ -412,50 +537,71 @@ export function useNavSettingsData() {
     }
     if (canAccess(RoutesName.aiProvider)) {
       wsSettingsItems.push({
-        title: "AI Providers",
+        title: "AI providers",
         path: "/dashboard/settings/ai-providers",
         icon: SettingsIcons.Providers,
       });
     }
-    // Falcon AI Connectors — same access as integrations
-    if (canAccess(RoutesName.integrations)) {
+    // Falcon AI Connectors: same roles as integrations, on a deployment that
+    // allows Falcon AI
+    if (
+      !PROTOTYPE_BUILD &&
+      falconAIAllowed &&
+      canAccess(RoutesName.integrations)
+    ) {
       wsSettingsItems.push({
-        title: "Falcon AI Connectors",
+        title: "Falcon AI connectors",
         path: "/dashboard/settings/falcon-ai-connectors",
         icon: SettingsIcons.Integrations,
       });
     }
+    // Settings → Sandboxes keeps its role/admission gates. It adds
+    // only the same inert hosted-withheld information as the app sidebar.
+    if (isOmegaConsoleEnabled() && (isOrgAdminPlus || isWsAdmin)) {
+      if (omegaProducts.listed(OMEGA_PRODUCT.SANDBOXES)) {
+        wsSettingsItems.push({
+          title: "Sandboxes",
+          path: "/dashboard/settings/sandboxes",
+          icon: SettingsIcons.General,
+        });
+      } else if (omegaProducts.hostedWithheld(OMEGA_PRODUCT.SANDBOXES)) {
+        wsSettingsItems.push(
+          withheldNavRow({ title: "Sandboxes", icon: SettingsIcons.General }),
+        );
+      }
+    }
     if (wsSettingsItems.length > 0) {
       result.push({
-        subheader: "Workspace Settings",
+        subheader: "Workspace settings",
         items: wsSettingsItems,
       });
     }
 
     // Section 3: Organization (based on role permissions for each item)
     const orgItems = [];
-    if (isCloud && canAccess(RoutesName.usageSummary)) {
+    const realApp = !PROTOTYPE_BUILD;
+    if (realApp && billingVisible && canAccess(RoutesName.usageSummary)) {
       orgItems.push({
-        title: "Usage Summary",
+        title: "Usage summary",
         path: "/dashboard/settings/usage-summary",
         icon: SettingsIcons.Summary,
       });
     }
-    if (isCloud && canAccess(RoutesName.planAndPricing)) {
+    if (realApp && isCloud && canAccess(RoutesName.planAndPricing)) {
       orgItems.push({
-        title: "Plans & Pricing",
+        title: "Plans & pricing",
         path: "/dashboard/settings/pricing",
         icon: SettingsIcons.Pricing,
       });
     }
-    if (isCloud && canAccess(RoutesName.billing)) {
+    if (realApp && billingVisible && canAccess(RoutesName.billing)) {
       orgItems.push({
         title: "Billing",
         path: "/dashboard/settings/billing",
         icon: SettingsIcons.Billing,
       });
     }
-    if (canAccess(RoutesName.members)) {
+    if (realApp && canAccess(RoutesName.members)) {
       orgItems.push({
         title: "Members",
         path: "/dashboard/settings/user-management",
@@ -463,26 +609,33 @@ export function useNavSettingsData() {
       });
     }
     // MCP Server - only for Owner/Admin
-    if (isOrgAdminPlus) {
+    if (realApp && isOrgAdminPlus) {
       orgItems.push({
-        title: "MCP Server",
+        title: "MCP server",
         path: "/dashboard/settings/mcp-server",
         icon: SettingsIcons.MCPServer,
       });
     }
     // Org Settings - only for Owner/Admin
-    if (isOrgAdminPlus) {
+    if (realApp && isOrgAdminPlus) {
       orgItems.push({
-        title: "Org Settings",
+        title: "Org settings",
         path: "/dashboard/settings/org-settings",
         icon: SettingsIcons.Security,
       });
     }
-    if (!isCloud && isOrgAdminPlus) {
+    if (realApp && !isCloud && isOrgAdminPlus) {
       orgItems.push({
         title: "License",
         path: "/dashboard/settings/ee-licenses",
         icon: SettingsIcons.Keys,
+      });
+    }
+    if (realApp && hostUpdatesAllowed) {
+      orgItems.push({
+        title: "Updates",
+        path: paths.dashboard.settings.updates,
+        icon: <Iconify icon="mdi:update" />,
       });
     }
     if (wsEnabled && canAccess(RoutesName.workspace)) {
@@ -490,6 +643,17 @@ export function useNavSettingsData() {
         title: "Workspaces",
         path: "/dashboard/settings/workspace",
         icon: SettingsIcons.Workspaces,
+      });
+    }
+    // Settings → Early access: the waitlist for the hosted Omega products,
+    // listed only while the server lists a product this org is not admitted
+    // to (RC-01, AUDIT R1): no entry while products are internal, and none
+    // for an org that already has everything it can see.
+    if (showEarlyAccess) {
+      orgItems.push({
+        title: "Early access",
+        path: "/dashboard/settings/early-access",
+        icon: SettingsIcons.General,
       });
     }
     if (orgItems.length > 0) {
@@ -502,7 +666,7 @@ export function useNavSettingsData() {
     // Section 4: Your Workspaces (all roles, only when workspace feature is enabled)
     if (wsEnabled) {
       result.push({
-        subheader: "Your Workspaces",
+        subheader: "Your workspaces",
         items: workspaces.map((ws) => ({
           title: ws.display_name || ws.name,
           path: `/dashboard/settings/workspace/${ws.id}`,
@@ -520,6 +684,11 @@ export function useNavSettingsData() {
     wsEnabled,
     workspaces,
     isCloud,
+    omegaProducts,
+    showEarlyAccess,
+    billingVisible,
+    falconAIAllowed,
+    hostUpdatesAllowed,
   ]);
 
   return sections;
@@ -550,29 +719,52 @@ export function useWorkspaceSettingsNav(workspaceId) {
     },
     // Workspace usage summary — commented out until workspace-level view is ready
     // {
-    //   title: "Usage Summary",
+    //   title: "Usage summary",
     //   path: `/dashboard/settings/workspace/${workspaceId}/usage`,
     //   icon: SettingsIcons.Summary,
     // },
   ];
 
   if (isWsAdmin) {
-    items.push({
-      title: "Members",
-      path: `/dashboard/settings/workspace/${workspaceId}/members`,
-      icon: SettingsIcons.Management,
-    });
+    items.push(
+      // L7b absent-sweep: workspace Members is absent in a prototype build.
+      ...(PROTOTYPE_BUILD
+        ? []
+        : [
+            {
+              title: "Members",
+              path: `/dashboard/settings/workspace/${workspaceId}/members`,
+              icon: SettingsIcons.Management,
+            },
+          ]),
+      // W4-7 (§9 integration, M6): the workspace's audit log, admins only;
+      // prototype builds only (and unit tests, which render this nav).
+      ...(PROTOTYPE_BUILD || import.meta.env.MODE === "test"
+        ? [
+            {
+              title: "Audit log",
+              path: `/dashboard/settings/workspace/${workspaceId}/audit-log`,
+              icon: SettingsIcons.Security,
+            },
+          ]
+        : []),
+    );
   }
 
   if (!isWsViewer) {
     items.push(
+      // L7b absent-sweep: workspace Integrations is absent in a prototype build.
+      ...(PROTOTYPE_BUILD
+        ? []
+        : [
+            {
+              title: "Integrations",
+              path: `/dashboard/settings/workspace/${workspaceId}/integrations`,
+              icon: SettingsIcons.Integrations,
+            },
+          ]),
       {
-        title: "Integrations",
-        path: `/dashboard/settings/workspace/${workspaceId}/integrations`,
-        icon: SettingsIcons.Integrations,
-      },
-      {
-        title: "AI Providers",
+        title: "AI providers",
         path: `/dashboard/settings/workspace/${workspaceId}/ai-providers`,
         icon: SettingsIcons.Providers,
       },
@@ -585,103 +777,31 @@ export function useWorkspaceSettingsNav(workspaceId) {
   };
 }
 
+// The AI Gateway's rail (sections/gateway/shell/gateway-rail.js): the
+// sidebar shows it instead of the Future AGI nav once the AI Gateway is the
+// product chosen in the switcher. The Future AGI nav links one gateway page,
+// the model catalog (Models, in Build); the rest are in the rail only.
+// Billing is not in the rail: it lives in Settings, the one central billing
+// page, and Gateway settings links it. So the rail reads no credit ledger.
+// Optional managed-model and MCP status reads filter their own offers, not
+// the whole rail. Core pages remain reachable while either read is pending
+// or fails; a managed offer still needs an affirmative availability response.
+// Integrations is always listed (its page explains MCP off or a failed
+// status); a catalog switch that is off, with no account sign-in, disables
+// it with the deployment's "Not available" line.
 export function useNavGatewayData() {
-  return [
-    {
-      items: [
-        {
-          title: "Overview",
-          path: paths.dashboard.gateway.overview,
-          iconName: "mdi:view-dashboard-outline",
-        },
-      ],
-    },
-    {
-      subheader: "CONFIGURE",
-      items: [
-        {
-          title: "Providers",
-          path: paths.dashboard.gateway.providers,
-          iconName: "mdi:cloud-cog-outline",
-        },
-        {
-          title: "API Keys",
-          path: paths.dashboard.gateway.keys,
-          iconName: "mdi:key-outline",
-        },
-        {
-          title: "Guardrails",
-          path: paths.dashboard.gateway.guardrails.root,
-          iconName: "mdi:shield-check-outline",
-        },
-        {
-          title: "Fallbacks",
-          path: paths.dashboard.gateway.fallbacks,
-          iconName: "mdi:swap-horizontal",
-        },
-      ],
-    },
-    {
-      subheader: "INSIGHTS",
-      items: [
-        {
-          title: "Request Logs",
-          path: paths.dashboard.gateway.logs,
-          iconName: "mdi:text-box-search-outline",
-        },
-        {
-          title: "Analytics",
-          path: paths.dashboard.gateway.analytics,
-          iconName: "mdi:chart-line",
-        },
-        {
-          title: "Monitoring",
-          path: paths.dashboard.gateway.monitoring,
-          iconName: "mdi:bell-ring-outline",
-        },
-        {
-          title: "Sessions",
-          path: paths.dashboard.gateway.sessions,
-          iconName: "mdi:message-text-outline",
-        },
-        // {
-        //   title: "Experiments",
-        //   path: paths.dashboard.gateway.experiments,
-        //   iconName: "mdi:flask-outline",
-        // },
-      ],
-    },
-    {
-      subheader: "MANAGE",
-      items: [
-        {
-          title: "Budgets",
-          path: paths.dashboard.gateway.budgets,
-          iconName: "mdi:wallet-outline",
-        },
-        {
-          title: "Webhooks",
-          path: paths.dashboard.gateway.webhooks,
-          iconName: "mdi:webhook",
-        },
-        {
-          title: "Custom Properties",
-          path: paths.dashboard.gateway.customProperties,
-          iconName: "mdi:tag-multiple-outline",
-        },
-        {
-          title: "MCP Tools",
-          path: paths.dashboard.gateway.mcp,
-          iconName: "mdi:tools",
-        },
-        {
-          title: "Settings",
-          path: paths.dashboard.gateway.settings,
-          iconName: "mdi:cog-outline",
-        },
-      ],
-    },
-  ];
+  const pathname = usePathname();
+  const status = useManagedModelsStatus({ enabled: isGatewayPath(pathname) });
+  const mcp = useMCPStatus(isGatewayPath(pathname) ? "default" : null);
+  const integrationsOff =
+    releaseSwitchesOff(mcp).catalog &&
+    mcp.data?.features?.upstream_oauth !== true;
+  const integrations = !integrationsOff;
+  const noManagedModels = status.data?.available !== true;
+  return useMemo(
+    () => gatewayRailGroups({ noManagedModels, integrations, integrationsOff }),
+    [noManagedModels, integrations, integrationsOff],
+  );
 }
 
 export function useNavDashBoardData() {
@@ -689,7 +809,7 @@ export function useNavDashBoardData() {
   const getStartedCompleted = user?.getStartedCompleted;
   const data = useMemo(() => {
     const arrayData = [];
-    if (!getStartedCompleted) {
+    if (!getStartedCompleted && !PROTOTYPE_BUILD) {
       arrayData.push({
         title: "Get started",
         path: paths.dashboard.getstarted,

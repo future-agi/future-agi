@@ -29,7 +29,7 @@ cd "${BACKEND_DIR}"
 # `uvx ruff` when the current env doesn't ship one — this happens on fresh
 # clones or when the developer hasn't run `uv sync --group dev`.
 if uv run --quiet --with ruff ruff --version >/dev/null 2>&1; then
-  ruff_cmd=(uv run --quiet --with ruff ruff)
+  ruff_cmd=(uv run --quiet --with ruff==0.17.4 ruff)
 else
   ruff_cmd=(uvx ruff)
 fi

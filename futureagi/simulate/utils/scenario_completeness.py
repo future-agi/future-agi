@@ -9,8 +9,9 @@ scenario.
 
 The completeness check scopes through `run_test.scenarios`, so
 cross-organization UUIDs and scenarios not attached to the run-test are
-silently ignored by the gate (they're handled — or rejected — downstream by
-the executor).
+silently ignored by this gate. They never get this far on the execute
+endpoints: the request serializers refuse any id that is not one of the run
+test's own scenarios first (`simulate.utils.scenario_ownership`, T6 #7e).
 """
 
 from model_hub.models.choices import StatusType

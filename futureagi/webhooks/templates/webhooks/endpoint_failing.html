@@ -1,0 +1,16 @@
+<html>
+  <body style="font-family: Arial, sans-serif; color: #1f2933;">
+    <p>Your webhook <strong>{{ endpoint_name }}</strong> is failing.</p>
+    <p>
+      Every attempt since {{ failing_since|date:"j M Y H:i" }} UTC has failed
+      ({{ consecutive_failed_attempts }} in a row){% if last_status_code %}; the last answer was
+      {{ last_status_code }} from {{ endpoint_host }}{% endif %}. We keep retrying for up to 72 hours per delivery.
+    </p>
+    <p>Endpoint: {{ endpoint_url }}</p>
+    <p>
+      If nothing succeeds for 24 hours, the endpoint is turned off and its deliveries wait until an admin turns it
+      back on.
+    </p>
+    <p><a href="{{ base_url }}/dashboard/settings/integrations">Open Settings &gt; Integrations</a></p>
+  </body>
+</html>

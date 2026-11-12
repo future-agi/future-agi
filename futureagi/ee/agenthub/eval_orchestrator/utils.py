@@ -20,6 +20,7 @@ logger = structlog.get_logger(__name__)
 # Input summary builders (for Scout)
 # ---------------------------------------------------------------------------
 
+
 def build_input_summary(scope: str, source_id: str) -> str:
     """
     Build a lightweight input summary for the Scout.
@@ -46,7 +47,9 @@ def build_input_summary(scope: str, source_id: str) -> str:
         else:
             return f"Unknown scope: {scope} (id={source_id})"
     except Exception as e:
-        logger.error("build_input_summary failed", scope=scope, source_id=source_id, error=str(e))
+        logger.error(
+            "build_input_summary failed", scope=scope, source_id=source_id, error=str(e)
+        )
         return f"[Summary unavailable for {scope} id={source_id}: {e}]"
 
 
@@ -67,22 +70,26 @@ def _summarise_span(span_id: str) -> str:
 
 
 def _summarise_trace(trace_id: str) -> str:
-    from tracer.models.trace import Trace
     from tracer.models.observation_span import ObservationSpan
+    from tracer.models.trace import Trace
 
     trace = Trace.objects.get(id=trace_id)
-    spans = ObservationSpan.objects.filter(trace_id=trace_id).order_by("start_time", "created_at")
+    spans = ObservationSpan.objects.filter(trace_id=trace_id).order_by(
+        "start_time", "created_at"
+    )
     outline = build_trace_outline(trace, spans)
     return f"TRACE: {trace.name or trace_id}\n{outline}"
 
 
 def _summarise_session(session_id: str) -> str:
-    from tracer.models.trace_session import TraceSession
-    from tracer.models.trace import Trace
     from tracer.models.observation_span import ObservationSpan
+    from tracer.models.trace import Trace
+    from tracer.models.trace_session import TraceSession
 
     session = TraceSession.objects.get(id=session_id)
-    traces = Trace.objects.filter(session_id=session_id).prefetch_related("observation_spans")
+    traces = Trace.objects.filter(session_id=session_id).prefetch_related(
+        "observation_spans"
+    )
     lines = [
         f"SESSION: {getattr(session, 'name', None) or session_id}",
         f"Trace count: {traces.count()}",
@@ -102,7 +109,7 @@ def _summarise_session(session_id: str) -> str:
 
 
 def _summarise_dataset_row(row_id: str) -> str:
-    from model_hub.models.develop_dataset import Row, Cell
+    from model_hub.models.develop_dataset import Cell, Row
 
     row = Row.objects.get(id=row_id)
     cells = Cell.objects.filter(row=row).select_related("column")
@@ -132,6 +139,7 @@ def _summarise_cell(cell_id: str) -> str:
 # ---------------------------------------------------------------------------
 # Trace outline builder (structure only — no input/output content)
 # ---------------------------------------------------------------------------
+
 
 def build_trace_outline(trace: Any, spans: Any) -> str:
     """
@@ -199,6 +207,7 @@ def build_trace_outline(trace: Any, spans: Any) -> str:
 # Full span serializer (for Orchestrator's inspect_data detail depth)
 # ---------------------------------------------------------------------------
 
+
 def serialize_span_full(span: Any) -> dict:
     """Return a full content dict for a span — used in inspect_data(depth='detail')."""
     return {
@@ -219,10 +228,28 @@ def serialize_span_full(span: Any) -> dict:
 # Resource gatherer (for Scout + Orchestrator tool list builder)
 # ---------------------------------------------------------------------------
 
+
+def feedback_workspace_id(organization_id: str | None, workspace: Any) -> str | None:
+    """Validate the explicit execution binding; never infer it from ambient state."""
+    if not organization_id:
+        logger.warning("feedback_retrieval_missing_organization")
+        return None
+    workspace_id = getattr(workspace, "id", None)
+    workspace_org_id = getattr(workspace, "organization_id", None)
+    if (
+        not workspace_id
+        or not workspace_org_id
+        or str(workspace_org_id) != str(organization_id)
+    ):
+        return None
+    return str(workspace_id)
+
+
 def gather_available_resources(
     organization_id: str,
     eval_template_id: str | None = None,
     kb_id: str | None = None,
+    workspace: Any = None,
 ) -> dict:
     """
     Collect what external resources are connected to this eval.
@@ -246,33 +273,41 @@ def gather_available_resources(
         "mcp_tools": [],
     }
 
-    # Knowledge base
+    # Knowledge base: only one of the organization's own; any other id is
+    # left out.
     if kb_id:
         try:
-            from model_hub.models.develop_dataset import KnowledgeBaseFile  # type: ignore
-            kb = KnowledgeBaseFile.objects.get(id=kb_id)
-            resources["knowledge_bases"].append({
-                "id": str(kb.id),
-                "name": getattr(kb, "name", str(kb.id)),
-                "description": getattr(kb, "description", ""),
-            })
-        except Exception:
-            resources["knowledge_bases"].append({
-                "id": str(kb_id),
-                "name": "Knowledge Base",
-                "description": "",
-            })
+            from model_hub.utils.workspace_scope import knowledge_base_queryset_for
 
-    # Feedback examples count
-    if eval_template_id:
+            kb = (
+                knowledge_base_queryset_for(organization_id, workspace)
+                .filter(id=kb_id)
+                .first()
+            )
+        except Exception:
+            kb = None
+        if kb is not None:
+            resources["knowledge_bases"].append(
+                {
+                    "id": str(kb.id),
+                    "name": getattr(kb, "name", str(kb.id)),
+                    "description": getattr(kb, "description", ""),
+                }
+            )
+
+    # Feedback requires the admitted execution workspace, including for SYSTEM
+    # templates. Legacy callers without that binding get no feedback resources.
+    workspace_id = feedback_workspace_id(organization_id, workspace)
+    if eval_template_id and workspace_id:
         try:
             from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
+
             em = EmbeddingManager()
             try:
                 count = em.get_feedback_count(
                     eval_id=eval_template_id,
                     organization_id=organization_id,
-                    workspace_id=None,
+                    workspace_id=workspace_id,
                 )
                 resources["feedback_count"] = count or 0
             except AttributeError:
@@ -284,13 +319,14 @@ def gather_available_resources(
 
     # MCP tools — fetch from Falcon AI connectors for this org
     try:
-        from ee.falcon_ai.models import MCPConnector
+        from ee.falcon_ai.tool_scope import accessible_connectors, current_tool_context
 
-        connectors = MCPConnector.objects.filter(
-            organization_id=organization_id,
-            is_active=True,
-            is_verified=True,
-        )
+        context = current_tool_context()
+        connectors = []
+        if context.organization is not None and str(context.organization.pk) == str(
+            organization_id
+        ):
+            connectors = accessible_connectors(context)
         mcp_tools = []
         for connector in connectors:
             discovered = connector.discovered_tools or []
@@ -300,19 +336,23 @@ def gather_available_resources(
                 # If enabled list is set, only include enabled tools
                 if enabled and tool_name not in enabled:
                     continue
-                mcp_tools.append({
-                    "name": tool_name,
-                    "description": tool_schema.get("description", ""),
-                })
+                mcp_tools.append(
+                    {
+                        "name": tool_name,
+                        "description": tool_schema.get("description", ""),
+                    }
+                )
         resources["mcp_tools"] = mcp_tools
     except Exception as e:
         logger.debug("Could not fetch MCP tools", error=str(e))
 
     return resources
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _truncate(value: Any, max_chars: int) -> str:
     """Convert value to string and truncate to max_chars."""

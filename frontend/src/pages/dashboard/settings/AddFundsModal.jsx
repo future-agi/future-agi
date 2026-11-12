@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import React, { useState } from "react";
 import PropType from "prop-types";
 import {
@@ -118,7 +119,7 @@ const AddFundsModal = ({
           top: "50%",
           left: "50%",
           transform: "translate(-50%, -50%)",
-          width: 547,
+          width: 560,
           bgcolor: "background.paper",
           borderRadius: theme.spacing(1),
         }}
@@ -144,12 +145,12 @@ const AddFundsModal = ({
               <Typography
                 variant="m3"
                 color="text.primary"
-                fontWeight="fontWeightBold"
+                fontWeight="fontWeightSemiBold"
               >
                 Add Funds
               </Typography>
               <Iconify
-                icon="mingcute:close-line"
+                icon="solar:close-linear"
                 onClick={closeAndClear}
                 sx={{ cursor: "pointer", color: "text.primary" }}
               />
@@ -215,7 +216,9 @@ const AddFundsModal = ({
                     fontWeight="fontWeightRegular"
                     color="text.primary"
                   >
-                    {amount > 0 ? `US$${amount.toFixed(2)}` : "-"}
+                    {amount > 0
+                      ? formatExactMoney(amount, { prefix: "US$" })
+                      : "-"}
                   </Typography>
                 </Box>
 
@@ -232,7 +235,9 @@ const AddFundsModal = ({
                     fontWeight="fontWeightRegular"
                     color="text.primary"
                   >
-                    {amount > 0 ? `US$${estimatedTaxes.toFixed(2)}` : "-"}
+                    {amount > 0
+                      ? formatExactMoney(estimatedTaxes, { prefix: "US$" })
+                      : "-"}
                   </Typography>
                 </Box>
 
@@ -249,7 +254,9 @@ const AddFundsModal = ({
                     fontWeight="fontWeightSemiBold"
                     color="text.primary"
                   >
-                    {amount > 0 ? `US$${total.toFixed(2)}` : "-"}
+                    {amount > 0
+                      ? formatExactMoney(total, { prefix: "US$" })
+                      : "-"}
                   </Typography>
                 </Box>
               </Box>
@@ -334,7 +341,7 @@ const AddFundsModal = ({
             >
               <Button
                 variant="outlined"
-                sx={{ width: "50%", height: "30px" }}
+                sx={{ width: "50%" }}
                 onClick={() => {
                   trackEvent(Events.purchaseCancelled);
                   closeAndClear();
@@ -355,7 +362,6 @@ const AddFundsModal = ({
                 type="submit"
                 sx={{
                   width: "50%",
-                  height: "30px",
                   "&:disabled": {
                     color: "common.white",
                     backgroundColor: "action.hover",

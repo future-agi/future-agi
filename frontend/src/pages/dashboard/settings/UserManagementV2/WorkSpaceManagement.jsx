@@ -1,3 +1,4 @@
+import SelectionBar from "src/components/selection-bar";
 import {
   Box,
   Button,
@@ -5,11 +6,9 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Divider,
   InputAdornment,
   TextField,
   Typography,
-  styled,
 } from "@mui/material";
 import React, {
   useCallback,
@@ -20,7 +19,10 @@ import React, {
 } from "react";
 import { Helmet } from "react-helmet-async";
 import GridTable from "./GridTable";
-import { getWorkspaceQueryOptions } from "./getWorkspaceQueryOptions";
+import {
+  getWorkspaceQueryOptions,
+  workspaceDirectoryKey,
+} from "./getWorkspaceQueryOptions";
 import { useQueryClient } from "@tanstack/react-query";
 import { fDateTimeLocal } from "src/utils/format-time";
 import { LocalDateTime } from "src/components/date-time/LocalDateTime";
@@ -34,6 +36,7 @@ import { APP_CONSTANTS } from "src/utils/constants";
 import { useCreateWorkspace } from "src/api/workspaces/create";
 import { useSnackbar } from "notistack";
 import { useOrganization } from "src/contexts/OrganizationContext";
+import { isPrototypeMode } from "src/utils/prototype";
 
 const SelectionHeader = (props) => {
   const onCheckboxClick = (e) => {
@@ -62,43 +65,32 @@ SelectionHeader.propTypes = {
   }).isRequired,
 };
 
+// The list API accepts one scalar ordering field. Response date aliases must
+// map to model fields; admin names and updated_at are not sortable there.
+const WORKSPACE_SORT_FIELDS = {
+  display_name: "display_name",
+  start_data: "created_at",
+};
+
 const selectionColumnDef = {
   pinned: true,
   lockPinned: true,
+  sortable: false,
   headerComponent: SelectionHeader,
 };
-
-const StyledBox = styled(Box)(({ theme }) => ({
-  gap: "12px",
-  display: "flex",
-  alignItems: "center",
-  padding: "0px 16px",
-  borderRadius: theme.shape.borderRadius,
-  border: "1px solid",
-  borderColor: theme.palette.action.hover,
-}));
-
-const StyledTypography = styled(Typography)(({ theme }) => ({
-  color: theme.palette.primary.main,
-  fontWeight: theme.typography["fontWeightMedium"], // "500",
-  ...theme.typography["s1"],
-}));
-
-const StyledButton = styled(Button)(({ theme }) => ({
-  color: theme.palette.text.primary,
-  fontWeight: theme.typography["fontWeightRegular"], // "500",
-  ...theme.typography["s1"],
-  "&:hover": {
-    backgroundColor: theme.palette.action.hover,
-  },
-}));
 
 const WorkSpaceManagement = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { enqueueSnackbar } = useSnackbar();
   const { orgLevel } = useOrganization();
-  const canCreateWorkspace = typeof orgLevel === "number" && orgLevel >= 8;
+  // L7c g1 (settings:pages): the prototype mocks no workspace creation, so
+  // the button is absent there rather than a door that does nothing.
+  const canCreateWorkspace =
+    typeof orgLevel === "number" && orgLevel >= 8 && !isPrototypeMode();
+  // L7c g1 (settings:pages): no workspace invite is mocked either, so the
+  // prototype has no row selection whose only action is Share invite.
+  const canInvite = !isPrototypeMode();
   const gridApiRef = useRef(null);
   const overlayTimeoutRef = useRef(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -113,7 +105,7 @@ const WorkSpaceManagement = () => {
       enqueueSnackbar("Workspace created", { variant: "success" });
       setCreateOpen(false);
       setNewWorkspaceName("");
-      queryClient.invalidateQueries({ queryKey: ["Workspace-detail"] });
+      queryClient.invalidateQueries({ queryKey: workspaceDirectoryKey });
       gridApiRef?.current?.api?.refreshServerSide({ purge: true });
     },
     onError: (err) => {
@@ -139,6 +131,7 @@ const WorkSpaceManagement = () => {
       {
         headerName: "Workspace name",
         field: "display_name",
+        sortable: true,
         flex: 1,
         valueGetter: (params) =>
           params?.data?.display_name || params?.data?.name || "",
@@ -146,11 +139,13 @@ const WorkSpaceManagement = () => {
       {
         headerName: "Admin names",
         field: "admin_names.0.name",
+        sortable: false,
         flex: 1,
       },
       {
         headerName: "Start date",
         field: "start_data",
+        sortable: true,
         flex: 1,
         valueFormatter: (params) => fDateTimeLocal(params.value),
         cellRenderer: (params) => (
@@ -164,6 +159,7 @@ const WorkSpaceManagement = () => {
       {
         headerName: "Last updated date",
         field: "last_update_date",
+        sortable: false,
         flex: 1,
         valueFormatter: (params) => fDateTimeLocal(params.value),
         cellRenderer: (params) => (
@@ -183,10 +179,11 @@ const WorkSpaceManagement = () => {
       getRows: async (params) => {
         const { request } = params;
         const pageNumber = Math.floor(request.startRow / 20);
-        const sort = request?.sortModel?.map(({ colId, sort }) => ({
-          columnId: colId,
-          type: sort === "asc" ? "ascending" : "descending",
-        }));
+        const primarySort = request?.sortModel?.[0];
+        const sortField = WORKSPACE_SORT_FIELDS[primarySort?.colId];
+        const sort = sortField
+          ? `${primarySort.sort === "desc" ? "-" : ""}${sortField}`
+          : undefined;
         const search = searchQuery || "";
 
         if (overlayTimeoutRef.current) {
@@ -360,13 +357,14 @@ const WorkSpaceManagement = () => {
             onChange={(e) => setSearchQuery(e.target.value)}
             size="small"
             sx={{ width: 400 }}
-            placeholder="Search by name or email"
+            placeholder="Search workspaces by name"
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
                     // @ts-ignore
-                    icon="eva:search-fill"
+                    icon="solar:magnifier-linear"
+                    width={16}
                     sx={{ color: "text.disabled" }}
                   />
                 </InputAdornment>
@@ -374,53 +372,18 @@ const WorkSpaceManagement = () => {
             }}
           />
           <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
-            {(selectedAll || toggledNodes.length > 0) && (
-              <StyledBox>
-                <Box sx={{ display: "flex", alignItems: "center" }}>
-                  <StyledTypography>{selectedCount} Selected</StyledTypography>
-                </Box>
-                <Divider
-                  orientation="vertical"
-                  flexItem
-                  sx={{ height: "24px", alignSelf: "center" }}
-                />
-                <StyledButton
-                  variant="text"
-                  size="small"
-                  onClick={() => setInviteOpen(true)}
-                  startIcon={
-                    <Iconify
-                      // @ts-ignore
-                      icon="solar:share-linear"
-                      sx={{ color: "text.primary" }}
-                    />
-                  }
-                  sx={{
-                    padding: 0,
-                    minWidth: 0,
-                    color: "text.primary",
-                  }}
-                >
-                  Share invite
-                </StyledButton>
-                <Divider
-                  orientation="vertical"
-                  flexItem
-                  sx={{ height: "24px", alignSelf: "center" }}
-                />
-                <StyledButton
-                  variant="text"
-                  size="small"
-                  onClick={() => unCheckedHandler()}
-                  sx={{
-                    padding: 0,
-                    minWidth: 0,
-                    color: "text.primary",
-                  }}
-                >
-                  Cancel
-                </StyledButton>
-              </StyledBox>
+            {canInvite && (selectedAll || toggledNodes.length > 0) && (
+              <SelectionBar
+                count={selectedCount}
+                onCancel={() => unCheckedHandler()}
+                actions={[
+                  {
+                    label: "Share invite",
+                    icon: "solar:share-linear",
+                    onClick: () => setInviteOpen(true),
+                  },
+                ]}
+              />
             )}
             {canCreateWorkspace && (
               <Button
@@ -431,7 +394,7 @@ const WorkSpaceManagement = () => {
                 startIcon={
                   <Iconify
                     // @ts-ignore
-                    icon="mingcute:add-line"
+                    icon="solar:add-linear"
                   />
                 }
               >
@@ -441,7 +404,7 @@ const WorkSpaceManagement = () => {
           </Box>
         </Box>
 
-        {inviteOpen && (
+        {canInvite && inviteOpen && (
           <AllActionForm
             openActionForm={{ action: "invite-workspace-user" }}
             onClose={() => setInviteOpen(null)}
@@ -456,8 +419,13 @@ const WorkSpaceManagement = () => {
             ref={gridApiRef}
             columnDefs={columnDefs}
             otherGridOption={{
-              rowSelection: { mode: "multiRow" },
-              selectionColumnDef: selectionColumnDef,
+              suppressMultiSort: true,
+              ...(canInvite
+                ? {
+                    rowSelection: { mode: "multiRow" },
+                    selectionColumnDef: selectionColumnDef,
+                  }
+                : {}),
               onCellClicked: (params) => {
                 if (
                   params?.column?.getColId() ===
@@ -486,7 +454,8 @@ const WorkSpaceManagement = () => {
           setCreateOpen(false);
           setNewWorkspaceName("");
         }}
-        maxWidth="sm"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 720 } }}
         fullWidth
       >
         <DialogTitle>Create New Workspace</DialogTitle>

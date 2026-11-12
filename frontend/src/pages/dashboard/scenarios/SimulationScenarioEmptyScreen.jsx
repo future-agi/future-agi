@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import { Box, Button, Grid, Skeleton, Typography, Link } from "@mui/material";
 import React, { useState } from "react";
 import Iconify from "src/components/iconify";
@@ -8,7 +9,7 @@ import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import { useNavigate } from "react-router-dom";
 
 const SimulationScenarioEmptyScreen = () => {
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const { role } = useAuthContext();
   const navigate = useNavigate();
 
@@ -65,9 +66,10 @@ const SimulationScenarioEmptyScreen = () => {
                   }}
                 />
               )}
-              <iframe
+              <ExternalContentFrame
+                onRequestLoad={() => setIsLoading(true)}
                 src="https://www.loom.com/embed/f13e7911fb5c4ec583c72dc20acbc83a"
-                title="Knowledge Base"
+                title="How to create scenarios"
                 frameBorder="0"
                 loading="lazy"
                 allow="clipboard-write"
@@ -82,7 +84,7 @@ const SimulationScenarioEmptyScreen = () => {
                   colorScheme: "light",
                   borderRadius: "8px",
                   opacity: isLoading ? 0 : 1,
-                  transition: "opacity 0.3s ease-in-out",
+                  transition: "opacity 0.2s ease-in-out",
                 }}
               />
             </div>
@@ -163,20 +165,14 @@ const SimulationScenarioEmptyScreen = () => {
                 variant="contained"
                 color="primary"
                 sx={{
-                  px: "24px",
-                  borderRadius: "4px",
-                  height: "38px",
                   maxWidth: "348px",
                   width: "100%",
                 }}
                 startIcon={
                   <Iconify
-                    icon="octicon:plus-24"
+                    width={20}
+                    icon="solar:add-linear"
                     color="background.paper"
-                    sx={{
-                      width: "20px",
-                      height: "20px",
-                    }}
                   />
                 }
                 disabled={
@@ -200,7 +196,7 @@ const SimulationScenarioEmptyScreen = () => {
                   variant="s1"
                   fontWeight={"fontWeightSemiBold"}
                   href="https://docs.futureagi.com/docs/simulation/concepts/scenarios"
-                  sx={{ textDecoration: "underline", color: "blue.500" }}
+                  sx={{ textDecoration: "underline", color: "status.info.fg" }}
                 >
                   Docs
                 </Link>

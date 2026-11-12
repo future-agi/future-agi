@@ -1,0 +1,72 @@
+# Fixture for the REST generator's tests, not catalog data (see ../../gmail/app.yaml).
+schema: "connector-manifest/v1#provider"
+app: microsoft-outlook
+id: futureagi-rest
+version: 1.0.0
+kind: rest
+publisher: futureagi
+vendorStatus:
+  label: ga
+  source: https://learn.microsoft.com/en-us/graph/api/overview?view=graph-rest-1.0
+transport:
+  kind: http
+  url: "https://{connectorsHost}/microsoft-outlook/mcp"
+  variant: streamable
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
+    tokenUrl: "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+    scopes:
+      [
+        offline_access,
+        Mail.Read,
+        Mail.ReadWrite,
+        Mail.Send,
+        Calendars.Read,
+        Calendars.ReadWrite,
+      ]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    urlVariables:
+      tenant:
+        description: "Entra tenant: organizations for a multitenant app, or the tenant id of a single-tenant app."
+        pattern: "^(organizations|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
+        default: organizations
+        scope: org
+    refresh: { supported: true, rotates: true }
+    registration: [preregistered]
+    clientGroup: microsoft
+  verify: { tool: list_mail_folders }
+tools:
+  source: operations
+  defaultPosture: ask
+  generated: tools.generated.json
+retry: { "on": [429, 503], honorRetryAfter: true }
+pricing: { model: vendor_plan }
+upstream:
+  spec:
+    url: https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/8c562525694550601a232cb54014e48c6c7f6da0/openapi/v1.0/openapi.yaml
+    format: openapi-3
+    sha256: 533f6d86985584327109ba2c52c0e51454ce1ba2153c11f4d841e898b88c5b1b
+    licence: MIT (microsoftgraph/msgraph-metadata)
+quality: { tier: listed }
+lifecycle: { status: active }
+sources:
+  - fact: auth.oauth2.authorizeUrl
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://learn.microsoft.com/en-us/graph/permissions-reference
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.urlVariables.tenant
+    url: https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

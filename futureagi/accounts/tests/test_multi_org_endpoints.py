@@ -11,11 +11,8 @@ Covers real-world E2E scenarios:
 NOTE: Response keys are camelCase due to the CamelCaseMiddleware.
 """
 
-from unittest.mock import patch
-
 import pytest
 from rest_framework import status
-from rest_framework.test import APIClient
 
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
@@ -118,6 +115,25 @@ def ws_b_default(db, org_b, multi_user):
 
 
 @pytest.fixture
+def multi_user_in_ws_b_default(db, org_b, multi_user, ws_b_default):
+    """The active workspace row an org Member needs to land in Beta Default."""
+    org_mem = OrganizationMembership.no_workspace_objects.get(
+        user=multi_user,
+        organization=org_b,
+    )
+    WorkspaceMembership.no_workspace_objects.get_or_create(
+        workspace=ws_b_default,
+        user=multi_user,
+        defaults={
+            "role": OrganizationRoles.WORKSPACE_MEMBER,
+            "level": Level.WORKSPACE_MEMBER,
+            "organization_membership": org_mem,
+            "is_active": True,
+        },
+    )
+
+
+@pytest.fixture
 def auth_client(multi_user, ws_a_default):
     """Authenticated client with workspace context."""
     from conftest import WorkspaceAwareAPIClient
@@ -204,6 +220,7 @@ class TestOrganizationListEndpoint:
 
 
 class TestSwitchOrganizationEndpoint:
+    @pytest.mark.usefixtures("multi_user_in_ws_b_default")
     def test_switch_to_invited_org(self, auth_client, org_b, ws_b_default):
         """Can switch to an invited org."""
         response = auth_client.post(
@@ -218,6 +235,7 @@ class TestSwitchOrganizationEndpoint:
         assert "workspace" in result
         assert result["org_role"] == OrganizationRoles.MEMBER
 
+    @pytest.mark.usefixtures("multi_user_in_ws_b_default")
     def test_switch_returns_workspace(self, auth_client, org_b, ws_b_default):
         """Switch returns the resolved workspace for the target org."""
         response = auth_client.post(
@@ -229,6 +247,7 @@ class TestSwitchOrganizationEndpoint:
         result = data.get("result", data)
         assert result["workspace"]["id"] == str(ws_b_default.id)
 
+    @pytest.mark.usefixtures("multi_user_in_ws_b_default")
     def test_switch_updates_config(self, auth_client, multi_user, org_b, ws_b_default):
         """Switch updates user.config with new org and workspace."""
         auth_client.post(
@@ -243,6 +262,7 @@ class TestSwitchOrganizationEndpoint:
             ws_b_default.id
         )
 
+    @pytest.mark.usefixtures("multi_user_in_ws_b_default")
     def test_switch_remembers_last_workspace(
         self, auth_client, multi_user, org_b, ws_b_default
     ):
@@ -288,12 +308,27 @@ class TestSwitchOrganizationEndpoint:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    @pytest.mark.parametrize(
+        "role,level",
+        [
+            (OrganizationRoles.OWNER, Level.OWNER),
+            (OrganizationRoles.ADMIN, Level.ADMIN),
+        ],
+    )
     def test_switch_creates_default_workspace_if_needed(
-        self, auth_client, multi_user, org_b
+        self, auth_client, multi_user, org_b, role, level
     ):
-        """If org has no workspaces, switch creates a default one."""
-        # Delete all workspaces in org_b
-        Workspace.objects.filter(organization=org_b).delete()
+        """An Owner/Admin of an unprovisioned org can bootstrap on switch."""
+        membership = OrganizationMembership._base_manager.get(
+            user=multi_user, organization=org_b
+        )
+        membership.role = role
+        membership.level = level
+        membership.save(update_fields=["role", "level"])
+        assert not Workspace._base_manager.filter(organization=org_b).exists()
+        assert not WorkspaceMembership._base_manager.filter(
+            workspace__organization=org_b
+        ).exists()
 
         response = auth_client.post(
             "/accounts/organizations/switch/",
@@ -303,8 +338,45 @@ class TestSwitchOrganizationEndpoint:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         result = data.get("result", data)
-        assert "workspace" in result
+        assert result["org_role"] == role
         assert result["workspace"]["is_default"] is True
+        workspace = Workspace._base_manager.get(organization=org_b)
+        assert str(workspace.pk) == result["workspace"]["id"]
+        assert workspace.is_default and workspace.is_active
+        grant = WorkspaceMembership._base_manager.get(workspace=workspace)
+        assert grant.user_id == multi_user.pk
+        assert grant.organization_membership_id == membership.pk
+        assert grant.is_active
+
+    def test_member_switch_does_not_provision_workspace(
+        self, auth_client, multi_user, org_b
+    ):
+        """An org Member can switch without creating a workspace or grant."""
+        assert not Workspace._base_manager.filter(organization=org_b).exists()
+        workspaces_before = list(Workspace._base_manager.order_by("pk").values())
+        memberships_before = list(
+            WorkspaceMembership._base_manager.order_by("pk").values()
+        )
+        response = auth_client.post(
+            "/accounts/organizations/switch/",
+            {"organization_id": str(org_b.id)},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        result = data.get("result", data)
+        assert result["organization"]["id"] == str(org_b.id)
+        assert result["org_role"] == OrganizationRoles.MEMBER
+        assert result.get("workspace") is None
+        multi_user.refresh_from_db()
+        assert multi_user.config["currentOrganizationId"] == str(org_b.id)
+        assert (
+            list(Workspace._base_manager.order_by("pk").values()) == workspaces_before
+        )
+        assert (
+            list(WorkspaceMembership._base_manager.order_by("pk").values())
+            == memberships_before
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +421,7 @@ class TestCurrentOrganizationEndpoint:
 
 
 class TestE2EOrgSwitchScenarios:
+    @pytest.mark.usefixtures("multi_user_in_ws_b_default")
     def test_full_flow_switch_and_back(
         self, auth_client, multi_user, org_a, org_b, ws_a_default, ws_b_default
     ):

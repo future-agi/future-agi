@@ -1,0 +1,31 @@
+# Fixture for the manifest validator tests, not catalog data. Facts are
+# illustrative; the catalog itself lives in agentcc-gateway/catalog/connectors.
+schema: "connector-manifest/v1#provider"
+app: github
+id: local
+version: 1.0.0
+kind: vendor_local
+publisher: vendor
+vendorStatus: { label: ga, source: https://github.com/github/github-mcp-server }
+transport:
+  kind: stdio
+  command: docker
+  args:
+    - run
+    - "-i"
+    - "--rm"
+    - "-e"
+    - GITHUB_PERSONAL_ACCESS_TOKEN
+    - ghcr.io/github/github-mcp-server
+  env:
+    GITHUB_PERSONAL_ACCESS_TOKEN: A GitHub personal access token for the account the server acts as.
+hosted: false
+trusted: false
+accountModes: [agent]
+auth: { kind: local_setup }
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: free }
+quality: { tier: listed }
+lifecycle: { status: active }
+sources: []
+x-omega: { ossId: github }

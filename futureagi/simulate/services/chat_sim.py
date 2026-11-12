@@ -320,12 +320,10 @@ def run_prompt_based_conversation(
     """
     from simulate.pydantic_schemas.chat import ChatMessage, ChatRole
     from simulate.services.prompt_based_agent_adapter import (
-        create_adapter_from_run_test,
+        create_adapter_from_call_execution,
     )
 
     try:
-        run_test = call_execution.test_execution.run_test
-
         # Create the prompt-based agent adapter
         # Get variable values from scenario row data if available
         variable_values = {}
@@ -333,8 +331,8 @@ def run_prompt_based_conversation(
             row_data = call_execution.call_metadata.get("row_data", {})
             variable_values.update(row_data)
 
-        adapter = create_adapter_from_run_test(
-            run_test,
+        adapter = create_adapter_from_call_execution(
+            call_execution,
             organization_id=organization.id,
             workspace_id=workspace.id if workspace else None,
             variable_values=variable_values,

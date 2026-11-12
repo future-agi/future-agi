@@ -1,3 +1,8 @@
+import {
+  OBSERVE_KNOWN_ISSUES_URL,
+  VOICE_OBSERVE_NOTICE,
+  SANDBOX_OBSERVE_NOTICE,
+} from "src/utils/platformObserveAvailability";
 import React, {
   useCallback,
   useEffect,
@@ -7,6 +12,7 @@ import React, {
 } from "react";
 import {
   Box,
+  Link,
   Typography,
   Grid,
   Stack,
@@ -38,6 +44,7 @@ import {
   VOICE_TRANSPORT,
   VOICE_TRANSPORT_COPY,
   isLiveKitProvider,
+  livekitValidationStatus,
   supportsConcurrency,
   validateLiveKitCredentials,
 } from "../constants";
@@ -50,6 +57,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { spin } from "../../../animations/animations";
 import { formatDistanceToNow } from "date-fns";
 import CustomModelDropdownControl from "src/components/custom-model-dropdown/CustomModelDropdownControl";
+import PickedModelNotice from "src/components/custom-model-dropdown/PickedModelNotice";
 import { MODEL_TYPES } from "../../develop-detail/RunPrompt/common";
 import { useAuthContext } from "src/auth/hooks";
 
@@ -110,6 +118,11 @@ const EditAgentDetails = ({
     name: "agentType",
     defaultValue: getValues("agentType"),
   });
+  const pickedModel = useWatch({
+    control,
+    name: "model",
+    defaultValue: getValues("model"),
+  });
 
   const inbound = useWatch({
     control,
@@ -124,10 +137,12 @@ const EditAgentDetails = ({
   const livekitAgentName = useWatch({ control, name: "livekitAgentName" });
   const [livekitValidation, setLivekitValidation] = useState("idle");
   const [livekitValidationError, setLivekitValidationError] = useState("");
+  const [livekitValidationMessage, setLivekitValidationMessage] = useState("");
 
   const validateLivekitCredentials = async () => {
     setLivekitValidation("validating");
     setLivekitValidationError("");
+    setLivekitValidationMessage("");
     const result = await validateLiveKitCredentials({
       livekitUrl,
       livekitApiKey,
@@ -135,12 +150,12 @@ const EditAgentDetails = ({
       livekitAgentName,
       agentDefinitionId,
     });
-    if (result.valid) {
-      setLivekitValidation("valid");
-    } else {
-      setLivekitValidation("invalid");
-      setLivekitValidationError(result.error);
-    }
+    // "skipped" (Future AGI Cloud) is shown as not verified, never as
+    // connected or failed; saving does not depend on this check.
+    const status = livekitValidationStatus(result);
+    setLivekitValidation(status);
+    if (status === "skipped") setLivekitValidationMessage(result.message);
+    if (status === "invalid") setLivekitValidationError(result.error);
   };
 
   const { mutate, isPending } = useMutation({
@@ -329,6 +344,7 @@ const EditAgentDetails = ({
                 modelObjectKey={"modelDetails"}
                 extraParams={{ model_type: MODEL_TYPES.LLM }}
               />
+              <PickedModelNotice modelName={pickedModel} />
             </ShowComponent>
           </Box>
           <Box>
@@ -492,7 +508,7 @@ const EditAgentDetails = ({
                       flexDirection: "row",
                       alignItems: "center",
                       gap: 1,
-                      color: "blue.600",
+                      color: "status.info.fg",
                     }}
                   >
                     <SvgColor
@@ -518,12 +534,12 @@ const EditAgentDetails = ({
                       flexDirection: "row",
                       alignItems: "center",
                       gap: 0.5,
-                      color: "green.600",
+                      color: "status.success.fg",
                     }}
                   >
                     <SvgColor
                       src="/assets/icons/ic_success_fill.svg"
-                      sx={{ width: 16, height: 16, color: "green.600" }}
+                      sx={{ width: 16, height: 16, color: "status.success.fg" }}
                     />
                     <Typography
                       typography={"s3"}
@@ -655,20 +671,18 @@ const EditAgentDetails = ({
                 }
                 sx={{
                   minWidth: 120,
-                  height: 40,
                   whiteSpace: "nowrap",
-                  fontSize: 13,
                   borderColor:
                     livekitValidation === "valid"
-                      ? "success.main"
+                      ? "status.success.border"
                       : livekitValidation === "invalid"
-                        ? "error.main"
+                        ? "status.danger.border"
                         : "divider",
                   color:
                     livekitValidation === "valid"
-                      ? "success.main"
+                      ? "status.success.fg"
                       : livekitValidation === "invalid"
-                        ? "error.main"
+                        ? "status.danger.fg"
                         : "text.secondary",
                 }}
               >
@@ -678,12 +692,27 @@ const EditAgentDetails = ({
                     ? "Connected"
                     : livekitValidation === "invalid"
                       ? "Failed"
-                      : "Test Connection"}
+                      : livekitValidation === "skipped"
+                        ? "Not verified"
+                        : "Test Connection"}
               </Button>
             </Stack>
             {livekitValidation === "invalid" && livekitValidationError && (
-              <Typography typography="s3" color="error.main" sx={{ mt: -1 }}>
+              <Typography
+                typography="s3"
+                color="status.danger.fg"
+                sx={{ mt: -1 }}
+              >
                 {livekitValidationError}
+              </Typography>
+            )}
+            {livekitValidation === "skipped" && livekitValidationMessage && (
+              <Typography
+                typography="s3"
+                color="text.secondary"
+                sx={{ mt: -1 }}
+              >
+                {livekitValidationMessage}
               </Typography>
             )}
             <FormTextFieldV2
@@ -838,16 +867,10 @@ const EditAgentDetails = ({
                 }
               }}
             >
-              <ToggleButton
-                value={VOICE_TRANSPORT.WEBRTC}
-                sx={{ px: 2, py: 0.5, fontSize: "0.75rem" }}
-              >
+              <ToggleButton value={VOICE_TRANSPORT.WEBRTC}>
                 {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.WEBRTC].label}
               </ToggleButton>
-              <ToggleButton
-                value={VOICE_TRANSPORT.TELEPHONY}
-                sx={{ px: 2, py: 0.5, fontSize: "0.75rem" }}
-              >
+              <ToggleButton value={VOICE_TRANSPORT.TELEPHONY}>
                 {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.TELEPHONY].label}
               </ToggleButton>
             </ToggleButtonGroup>
@@ -997,13 +1020,6 @@ const EditAgentDetails = ({
                 arrow
                 size="small"
                 type="black"
-                slotProps={{
-                  tooltip: {
-                    sx: {
-                      maxWidth: "200px !important",
-                    },
-                  },
-                }}
               >
                 <Box>
                   <SwitchField
@@ -1060,9 +1076,6 @@ const EditAgentDetails = ({
                 arrow
                 size="small"
                 type="black"
-                slotProps={{
-                  tooltip: { sx: { maxWidth: "200px !important" } },
-                }}
               >
                 <Box>
                   <SwitchField
@@ -1117,7 +1130,14 @@ const EditAgentDetails = ({
               sx={{ marginLeft: 1 }}
               fontWeight="500"
             >
-              Enable if you want to monitor this agent
+              {isSourceAgent ? SANDBOX_OBSERVE_NOTICE : VOICE_OBSERVE_NOTICE}{" "}
+              <Link
+                href={OBSERVE_KNOWN_ISSUES_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                2.0.0 release notes: Known issues
+              </Link>
             </Typography>
           </Stack>
         </ShowComponent>

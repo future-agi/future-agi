@@ -23,6 +23,130 @@ import FormSearchSelectFieldState from "src/components/FromSearchSelectField/For
 import { LLM_TABS } from "../../../sections/projects/LLMTracing/common";
 import { coreSpanFields } from "../common";
 
+/**
+ * The span field → column picker of Add to dataset, reusable (R2-SPEC
+ * §7.2: one mapper, not two): a searchable select whose options may carry
+ * an edit pencil (`editable`) and an always-visible add entry. The Add-data
+ * sheet's `Field ▾` uses it too.
+ *
+ * @param {*} props.value  the selected option's value (or its label)
+ * @param {{label: string, value: *, editable?: boolean, disabled?: boolean}[]} props.options
+ * @param {(event) => void} props.onChange  `event.target.value` = option value
+ * @param {(option) => boolean} [props.isOptionDisabled]
+ * @param {(option, index) => void} [props.onEditOption]  pencil on editable options
+ * @param {string} [props.addLabel]  e.g. `+ Add Column` (value `add_column`)
+ */
+export const FieldToColumnPicker = ({
+  value,
+  options,
+  onChange,
+  label = "Column",
+  placeholder = "Select column",
+  size = "small",
+  isOptionDisabled,
+  onEditOption,
+  addLabel,
+  addValue = "add_column",
+  sx,
+}) => {
+  const theme = useTheme();
+  return (
+    <FormSearchSelectFieldState
+      size={size}
+      label={label}
+      value={value ?? ""}
+      sx={{ width: "100%", ...sx }}
+      placeholder={placeholder}
+      onChange={onChange}
+      options={[
+        ...(Array.isArray(options) ? options : []).map((opt, i) => {
+          const disabled = Boolean(opt.disabled || isOptionDisabled?.(opt));
+          return {
+            label: opt.label,
+            value: opt.value,
+            disabled,
+            component: (
+              <MenuItem
+                key={i}
+                disabled={disabled}
+                sx={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  color: theme.palette.text.primary,
+                  "&.Mui-disabled": {
+                    color: theme.palette.text.disabled,
+                  },
+                }}
+              >
+                {opt.label}
+                {opt.editable && onEditOption && (
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEditOption(opt, i);
+                    }}
+                  >
+                    <Iconify
+                      icon="fluent:edit-16-regular"
+                      width={14}
+                      height={14}
+                    />
+                  </IconButton>
+                )}
+              </MenuItem>
+            ),
+          };
+        }),
+        ...(addLabel
+          ? [
+              {
+                label: addLabel,
+                value: addValue,
+                alwaysVisible: true,
+                component: (
+                  <Box
+                    key={addValue}
+                    sx={{
+                      color: "primary.main",
+                      width: "100%",
+                      px: 2,
+                      py: 0.75,
+                    }}
+                  >
+                    {addLabel}
+                  </Box>
+                ),
+              },
+            ]
+          : []),
+      ]}
+    />
+  );
+};
+
+FieldToColumnPicker.propTypes = {
+  value: PropTypes.any,
+  options: PropTypes.arrayOf(
+    PropTypes.shape({
+      label: PropTypes.string,
+      value: PropTypes.any,
+      editable: PropTypes.bool,
+      disabled: PropTypes.bool,
+    }),
+  ),
+  onChange: PropTypes.func,
+  label: PropTypes.string,
+  placeholder: PropTypes.string,
+  size: PropTypes.oneOf(["small", "medium"]),
+  isOptionDisabled: PropTypes.func,
+  onEditOption: PropTypes.func,
+  addLabel: PropTypes.string,
+  addValue: PropTypes.string,
+  sx: PropTypes.object,
+};
+
 const AddExistingDataset = ({
   handleclose,
   selectedNode,
@@ -345,22 +469,6 @@ const AddExistingDataset = ({
                       onChange={() => handleCheckboxChange(index)}
                       checked={item.checked}
                       sx={{ marginRight: "5px" }}
-                      icon={
-                        <Iconify
-                          icon="system-uicons:checkbox-empty"
-                          color="text.disabled"
-                          width="20px"
-                          height="20px"
-                        />
-                      }
-                      checkedIcon={
-                        <Iconify
-                          icon="famicons:checkbox"
-                          color="primary.light"
-                          width="20px"
-                          height="20px"
-                        />
-                      }
                     />
                     <TextField
                       fullWidth
@@ -414,12 +522,25 @@ const AddExistingDataset = ({
                 <Grid item xs={12} sm={5}>
                   <Box>
                     <FormControl size="small" fullWidth>
-                      <FormSearchSelectFieldState
-                        size="small"
-                        label="Column"
+                      <FieldToColumnPicker
                         value={item?.column ?? ""}
-                        sx={{ width: "100%" }}
-                        placeholder="Select column"
+                        options={(Array.isArray(allColumnOption)
+                          ? allColumnOption
+                          : []
+                        ).map((col) => ({
+                          label: col?.name,
+                          value: col,
+                          editable: col?.editable,
+                        }))}
+                        isOptionDisabled={(opt) =>
+                          isMenuItemDisabled(opt.value, item)
+                        }
+                        onEditOption={(opt, i) => {
+                          setShowInputIndex(index);
+                          setNewColumnName(opt.value.name);
+                          setEditingColumnId(i);
+                        }}
+                        addLabel="+ Add Column"
                         onChange={(e) => {
                           const value = e.target.value;
                           if (value === "add_column") {
@@ -429,68 +550,6 @@ const AddExistingDataset = ({
                             handleColumnChange(index, value);
                           }
                         }}
-                        options={[
-                          ...(Array.isArray(allColumnOption)
-                            ? allColumnOption
-                            : []
-                          ).map((col, i) => ({
-                            label: col?.name,
-                            value: col,
-                            disabled: isMenuItemDisabled(col, item),
-                            component: (
-                              <MenuItem
-                                key={i}
-                                disabled={isMenuItemDisabled(col, item)}
-                                sx={{
-                                  display: "flex",
-                                  justifyContent: "space-between",
-                                  alignItems: "center",
-                                  color: theme.palette.text.primary,
-                                  "&.Mui-disabled": {
-                                    color: theme.palette.text.disabled,
-                                  },
-                                }}
-                              >
-                                {col.name}
-                                {col.editable && (
-                                  <IconButton
-                                    size="small"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setShowInputIndex(index);
-                                      setNewColumnName(col.name);
-                                      setEditingColumnId(i);
-                                    }}
-                                  >
-                                    <Iconify
-                                      icon="fluent:edit-16-regular"
-                                      width={14}
-                                      height={14}
-                                    />
-                                  </IconButton>
-                                )}
-                              </MenuItem>
-                            ),
-                          })),
-                          {
-                            label: "+ Add Column",
-                            value: "add_column",
-                            alwaysVisible: true,
-                            component: (
-                              <Box
-                                key="add_column"
-                                sx={{
-                                  color: "primary.main",
-                                  width: "100%",
-                                  px: 2,
-                                  py: 0.75,
-                                }}
-                              >
-                                + Add Column
-                              </Box>
-                            ),
-                          },
-                        ]}
                       />
                       {showInputIndex === index && (
                         <Box mt={1}>
@@ -527,7 +586,7 @@ const AddExistingDataset = ({
                                   edge="end"
                                 >
                                   <Iconify
-                                    icon="tdesign:enter"
+                                    icon="solar:arrow-left-down-linear"
                                     width="12"
                                     height="12"
                                   />
@@ -632,8 +691,6 @@ const AddExistingDataset = ({
           variant="outlined"
           fullWidth
           sx={{
-            fontSize: "14px",
-            fontWeight: 500,
             color: theme.palette.text.secondary,
             borderColor: theme.palette.divider,
           }}
@@ -653,8 +710,6 @@ const AddExistingDataset = ({
           }
           onClick={handleAddToDataset}
           sx={{
-            fontSize: "14px",
-            fontWeight: 600,
             "&.Mui-disabled": {
               bgcolor: theme.palette.divider,
               color: theme.palette.text.disabled,

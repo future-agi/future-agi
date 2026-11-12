@@ -1,0 +1,14 @@
+{
+  "http": {
+    "method": "POST",
+    "url": "https://api.example.com/agentcc/mcp/service/agent-keys/",
+    "headers": {
+      "content-type": "application/json",
+      "x-api-key": "{{EE_SERVICE_API_KEY}}",
+      "x-secret-key": "{{EE_SERVICE_SECRET_KEY}}"
+    }
+  },
+  "body": {
+    "workspace": "3f6c1e2a-8b4d-4c6e-9a1f-2b7d5e8c0a14"
+  }
+}

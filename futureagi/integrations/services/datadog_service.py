@@ -1,9 +1,11 @@
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
 from integrations.services.base import BaseIntegrationService, register_service
+from integrations.services.endpoints import endpoint_override
+from integrations.services.export_failures import validation_failure
 
 logger = logging.getLogger(__name__)
 
@@ -33,19 +35,34 @@ class DatadogService(BaseIntegrationService):
         site = credentials.get("site", "us1")
         return DATADOG_SITES.get(site, "datadoghq.com")
 
+    def api_host(self, credentials: dict) -> str:
+        """The Datadog API host of the connection's site."""
+        return f"https://api.{self._get_site_domain(credentials)}"
+
+    def _api_base(self, credentials: dict) -> str:
+        """The Datadog API host of the connection's site, or the override."""
+        return endpoint_override("INTEGRATIONS_DATADOG_URL") or self.api_host(
+            credentials
+        )
+
+    def _logs_base(self, credentials: dict) -> str:
+        """The Datadog log intake host of the connection's site, or the override."""
+        return endpoint_override("INTEGRATIONS_DATADOG_URL") or (
+            f"https://http-intake.logs.{self._get_site_domain(credentials)}"
+        )
+
     def validate_credentials(
         self,
         host_url: str,
         credentials: dict,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict:
         try:
             api_key = credentials.get("api_key", "")
             if not api_key:
                 return {"valid": False, "error": "API key is required."}
 
-            domain = self._get_site_domain(credentials)
-            url = f"https://api.{domain}/api/v1/validate"
+            url = f"{self._api_base(credentials)}/api/v1/validate"
 
             headers = {"DD-API-KEY": api_key}
             app_key = credentials.get("app_key", "")
@@ -83,18 +100,17 @@ class DatadogService(BaseIntegrationService):
                 "error": "Connection to Datadog timed out. Please try again.",
             }
         except Exception as e:
-            logger.exception("Unexpected error validating Datadog credentials")
-            return {"valid": False, "error": f"Validation failed: {str(e)}"}
+            return validation_failure("datadog", e, logger)
 
     def fetch_traces(
         self,
         host_url: str,
         credentials: dict,
-        from_timestamp: Optional[str] = None,
-        to_timestamp: Optional[str] = None,
+        from_timestamp: str | None = None,
+        to_timestamp: str | None = None,
         page: int = 1,
         limit: int = 100,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict:
         """Not used for Datadog — Datadog is an export target, not a trace source."""
         return {"traces": [], "has_more": False, "next_page": 1, "total_items": 0}
@@ -104,7 +120,7 @@ class DatadogService(BaseIntegrationService):
         host_url: str,
         credentials: dict,
         trace_id: str,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict[str, Any]:
         """Not used for Datadog — Datadog is an export target, not a trace source."""
         return {}
@@ -125,8 +141,7 @@ class DatadogService(BaseIntegrationService):
             return {"sent": 0}
 
         api_key = credentials.get("api_key", "")
-        domain = self._get_site_domain(credentials)
-        url = f"https://http-intake.logs.{domain}/api/v2/logs"
+        url = f"{self._logs_base(credentials)}/api/v2/logs"
 
         headers = {
             "DD-API-KEY": api_key,
@@ -170,8 +185,7 @@ class DatadogService(BaseIntegrationService):
             return {"sent": 0}
 
         api_key = credentials.get("api_key", "")
-        domain = self._get_site_domain(credentials)
-        url = f"https://api.{domain}/api/v2/series"
+        url = f"{self._api_base(credentials)}/api/v2/series"
 
         headers = {
             "DD-API-KEY": api_key,

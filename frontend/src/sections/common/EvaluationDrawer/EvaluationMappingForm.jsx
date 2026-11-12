@@ -678,7 +678,7 @@ const EvaluationMappingFormChild = ({
         }
         handleRun(
           payload,
-          () => {
+          (res) => {
             queryClient.invalidateQueries({
               queryKey: ["develop", "user-eval-list", _id],
             });
@@ -686,8 +686,12 @@ const EvaluationMappingFormChild = ({
               queryKey: ["optimize-develop-column-info", _id],
             });
             setVisibleSection("list");
+            // W1-2: the server says what adding it scored (the new runs
+            // that carry it, e.g. "Scored #2A … in #2A·2").
+            const said = res?.data?.result?.message;
             enqueueSnackbar({
-              message: "Evaluation added",
+              message:
+                typeof said === "string" && said ? said : "Evaluation added",
             });
           },
           { isGrouped: selectedEval?.isGroupEvals },
@@ -1207,9 +1211,6 @@ const EvaluationMappingForm = ({
               variant="contained"
               size="small"
               color="error"
-              sx={{
-                paddingX: theme.spacing(3),
-              }}
               onClick={() => {
                 setOpenConfirmDialog(false);
                 if (action === "back") {

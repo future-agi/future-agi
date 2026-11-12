@@ -84,10 +84,67 @@ export const isShipped = (fix, candidate) =>
 
 const brokeText = (n) => (n ? String(n) : "none");
 
+// A fix the engine stopped on its own error leads with what happened and what
+// to do next, never the engine's words. Only fix_engine_died's message is the
+// engine's own text, kept as details for support; fix_engine_failed's is the
+// platform's fixed copy, so it adds nothing.
+const ENGINE_STOPPED_CODES = new Set(["fix_engine_died", "fix_engine_failed"]);
+const ENGINE_TEXT_CODE = "fix_engine_died";
+
+// Why a fix that is not ready ended, as { text, details }, or null. It names
+// Retry only when the fix offers it, as RetryButton does.
+export function fixEnding(fix) {
+  const { failure } = fix;
+  if (failure && ENGINE_STOPPED_CODES.has(failure.code)) {
+    const next =
+      fix.state === "failed" && fix.retryable
+        ? "Retry it, or contact support"
+        : "Contact support";
+    return {
+      text: `The improvement stopped unexpectedly. ${next} with improvement ID ${fix.id}.`,
+      details:
+        failure.code === ENGINE_TEXT_CODE ? failure.message || null : null,
+    };
+  }
+  const text = failure?.message || fix.report?.summary;
+  return text ? { text, details: null } : null;
+}
+
+// Ship errors whose message is git's or GitHub's own text, or a raw activation
+// outcome code. Ship offers the patch on the GitHub ones, so each says to use
+// it; one the server marks retryable keeps Ship as well, so it says to try
+// again first. A version that could not become the default keeps Ship.
+const PATCH_ERROR_LEAD = new Map([
+  [
+    "fix_github_patch_failed",
+    "This change could not be applied to the repository.",
+  ],
+  [
+    "fix_github_branch_changed",
+    "The branch for this pull request changed on GitHub.",
+  ],
+  ["fix_github_push_failed", "This change could not be pushed to GitHub."],
+  // GitHub may have refused it or failed on its side, so this does not say which.
+  ["fix_github_pull_request_failed", "GitHub could not open the pull request."],
+]);
+
+const NOT_ACTIVATED =
+  "This version could not become the default. If the environment is updating, ship again once it finishes.";
+
+export function shipErrorMessage({ code, message, retryable }) {
+  const lead = PATCH_ERROR_LEAD.get(code);
+  if (lead) {
+    const next = retryable ? "Try again, or download" : "Download";
+    return `${lead} ${next} the patch to apply it by hand.`;
+  }
+  if (code === "fix_candidate_not_activated") return NOT_ACTIVATED;
+  return message;
+}
+
 export function headline(fix) {
   const winner = winnerOf(fix);
   if (fix.state !== "ready" || !winner || !fix.plan) {
-    return fix.failure?.message || fix.report?.summary || null;
+    return fixEnding(fix)?.text ?? null;
   }
   const { verdict } = winner;
   const broke = brokeText(verdict.must_pass_regressions.length);
@@ -142,6 +199,41 @@ export const hasTargetRate = (c) => Array.isArray(c.verdict?.target_pass_rate);
 const bestTargetPct = (rated) =>
   Math.max(...rated.map((c) => pct(c.verdict.target_pass_rate[1])));
 
+// The trial a finished fix's Changes and Per scenario tabs open on: the winner,
+// else the one that did best on its target scenarios, else the first.
+export function reviewTrialOf(fix) {
+  const winner = winnerOf(fix);
+  if (winner) return winner;
+  const trials = [...(fix.candidates || [])].sort(
+    (a, b) => a.attempt - b.attempt,
+  );
+  const rated = trials.filter(hasTargetRate);
+  if (!rated.length) return trials[0];
+  return rated.reduce((best, c) =>
+    c.verdict.target_pass_rate[1] > best.verdict.target_pass_rate[1] ? c : best,
+  );
+}
+
+// Trials only their must-pass check refused, on cases nobody protected: the
+// server ships one on the user's reason. Offered only when nothing won.
+export function shipAnywayTrials(fix) {
+  if (FIX_LIVE_STATES.has(fix.state) || winnerOf(fix)) return [];
+  return (fix.candidates || [])
+    .filter((c) => c.override?.allowed)
+    .sort((a, b) => a.attempt - b.attempt);
+}
+
+// Every tier but must-pass passed; each regression is a must-pass check, as
+// "scenario key: check".
+export function shipAnywayLine(fix, candidate) {
+  const broke = candidate.override.regressions;
+  const checks = broke.length === 1 ? "check" : "checks";
+  const line = `Trial ${candidate.attempt} passed every check except must-pass: it broke ${broke.length} must-pass ${checks} (${broke.join(", ")}).`;
+  const shipped =
+    isShipped(fix, candidate) || Boolean(candidate.pull_request_url);
+  return shipped ? line : `${line} You can still ship it with a reason.`;
+}
+
 function searchCount(plan, candidates) {
   const tried = `${candidates.length} of up to ${plan.max_candidates} trials`;
   const rated = candidates.filter(hasTargetRate);
@@ -170,11 +262,15 @@ function stepLines(id, fix) {
     return [count, cause].filter(Boolean);
   }
   if (id === "verify") {
-    return plan
-      ? [
-          `${plan.held_back} held-back scenarios it never saw and ${plan.must_pass} must-pass scenarios`,
-        ]
-      : [];
+    if (!plan) return [];
+    // Must-pass holds every other scenario too, so it is larger than the
+    // protected count the launch form showed; name both.
+    const kept = plan.protected
+      ? `, including the ${plan.protected} you protected`
+      : "";
+    return [
+      `${plan.held_back} held-back scenarios it never saw and ${plan.must_pass} must-pass scenarios${kept}`,
+    ];
   }
   return ["You choose the trial to keep and ship"];
 }

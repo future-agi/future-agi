@@ -1,6 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, ButtonBase, Divider } from "@mui/material";
+import {
+  Box,
+  Button,
+  ButtonBase,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  Divider,
+} from "@mui/material";
 import {
   DndContext,
   closestCenter,
@@ -36,17 +46,27 @@ import {
 import { enqueueSnackbar } from "notistack";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
 import { useAuthContext } from "src/auth/hooks";
+import { CAPABILITY, useFeatureDenied } from "src/hooks/useCapabilities";
 
 // Fixed default tabs — matches backend DEFAULT_TABS
 const FIXED_TABS = [
-  { key: "traces", label: "Trace", icon: "mdi:link-variant", shortcut: "1" },
+  { key: "traces", label: "Trace", icon: "solar:link-linear", shortcut: "1" },
   {
     key: "sessions",
     label: "Sessions",
-    icon: "mdi:account-group-outline",
+    icon: "solar:users-group-rounded-linear",
     shortcut: "2",
   },
-  { key: "users", label: "Users", icon: "mdi:account-outline", shortcut: "3" },
+  { key: "users", label: "Users", icon: "solar:user-linear", shortcut: "3" },
+  // Letter shortcut so the digit shortcuts of saved views don't shift.
+  // Insights is Enterprise: without it the tab is marked and opens its gate.
+  {
+    key: "insights",
+    label: "Insights",
+    icon: "mdi:creation-outline",
+    shortcut: "A",
+    feature: CAPABILITY.INSIGHTS,
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -89,12 +109,37 @@ SortableViewTab.propTypes = {
 // ---------------------------------------------------------------------------
 // ObserveTabBar
 // ---------------------------------------------------------------------------
+// Keys typed into a field, an editable element or an open menu's type-ahead
+// (MUI menus and listboxes) are not shortcuts.
+const TYPE_AHEAD_ROLES = new Set([
+  "menu",
+  "menuitem",
+  "listbox",
+  "option",
+  "combobox",
+  "textbox",
+]);
+export function typingInto(element) {
+  if (!element || typeof element !== "object") return false;
+  const tag = element.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (element.isContentEditable) return true;
+  const role = element.getAttribute?.("role");
+  if (role && TYPE_AHEAD_ROLES.has(role)) return true;
+  return Boolean(
+    element.closest?.(
+      '[role="menu"], [role="listbox"], [contenteditable="true"], [contenteditable=""]',
+    ),
+  );
+}
+
 const ObserveTabBar = ({
   projectId,
   activeTab,
   onTabChange,
   renderRight,
   projectSource,
+  canSaveView = true,
 }) => {
   // Hide Sessions/Users tabs for voice (simulator) projects
   const visibleFixedTabs = useMemo(() => {
@@ -104,6 +149,7 @@ const ObserveTabBar = ({
     return FIXED_TABS;
   }, [projectSource]);
   const { data: savedViewsData } = useGetSavedViews(projectId);
+  const insightsDenied = useFeatureDenied(CAPABILITY.INSIGHTS);
   const { user } = useAuthContext();
   // Only show trace-list views (traces/spans/voice) — exclude "imagine" tabs (those belong to trace detail)
   const customViews = (savedViewsData?.custom_views ?? []).filter(
@@ -174,9 +220,12 @@ const ObserveTabBar = ({
             setIsSavingView(false);
           },
           onError: (err) => {
-            enqueueSnackbar(getRequestErrorMessage(err, "Failed to create view"), {
-              variant: "error",
-            });
+            enqueueSnackbar(
+              getRequestErrorMessage(err, "Failed to create view"),
+              {
+                variant: "error",
+              },
+            );
             setIsSavingView(false);
           },
         },
@@ -233,10 +282,19 @@ const ObserveTabBar = ({
   // -----------------------------------------------------------------------
   useEffect(() => {
     const handleKeyDown = (e) => {
-      const tag = document.activeElement?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (typingInto(e.target) || typingInto(document.activeElement)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
+      if (e.key === "a" || e.key === "A") {
+        // Already on Insights: keep its URL (the report, run or new report
+        // open there).
+        if (
+          activeTab !== "insights" &&
+          visibleFixedTabs.some((t) => t.key === "insights")
+        )
+          onTabChange("insights");
+        return;
+      }
       const num = parseInt(e.key, 10);
       if (isNaN(num) || num < 1 || num > 9) return;
 
@@ -252,7 +310,7 @@ const ObserveTabBar = ({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onTabChange, allCustomTabs]);
+  }, [onTabChange, allCustomTabs, visibleFixedTabs, activeTab]);
 
   // -----------------------------------------------------------------------
   // Tab action handlers
@@ -262,18 +320,35 @@ const ObserveTabBar = ({
     [openContextMenu],
   );
 
-  const handleClose = useCallback(
-    (viewId) => {
-      deleteView(viewId, {
-        onSuccess: () => {
-          if (activeTab === `view-${viewId}`) {
-            onTabChange("traces");
-          }
-        },
-      });
-    },
-    [deleteView, activeTab, onTabChange],
-  );
+  // The tab's "x" deletes the saved view (for the whole team when shared), so
+  // it asks first, like the tab's right-click Delete.
+  const [pendingDeleteId, setPendingDeleteId] = useState(null);
+  const pendingDeleteView = customViews.find((v) => v.id === pendingDeleteId);
+
+  const handleClose = useCallback((viewId) => {
+    setPendingDeleteId(viewId);
+  }, []);
+
+  const handleDeleteCancel = useCallback(() => {
+    setPendingDeleteId(null);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(() => {
+    const viewId = pendingDeleteId;
+    setPendingDeleteId(null);
+    if (!viewId) return;
+    deleteView(viewId, {
+      onSuccess: () => {
+        if (activeTab === `view-${viewId}`) {
+          onTabChange("traces");
+        }
+      },
+      onError: (err) =>
+        enqueueSnackbar(getRequestErrorMessage(err, "Failed to delete view"), {
+          variant: "error",
+        }),
+    });
+  }, [pendingDeleteId, deleteView, activeTab, onTabChange]);
 
   const handleRenameSubmit = useCallback(
     (viewId, newName) => {
@@ -281,9 +356,12 @@ const ObserveTabBar = ({
         { id: viewId, name: newName },
         {
           onError: (err) =>
-            enqueueSnackbar(getRequestErrorMessage(err, "Failed to rename view"), {
-              variant: "error",
-            }),
+            enqueueSnackbar(
+              getRequestErrorMessage(err, "Failed to rename view"),
+              {
+                variant: "error",
+              },
+            ),
         },
       );
       // Always exit edit mode — a lingering rename state would re-submit on blur.
@@ -334,7 +412,12 @@ const ObserveTabBar = ({
               icon={tab.icon}
               shortcut={tab.shortcut}
               isActive={activeTab === tab.key}
-              onClick={onTabChange}
+              locked={tab.feature === CAPABILITY.INSIGHTS && insightsDenied}
+              onClick={(key) =>
+                // Re-clicking Insights would reset its URL (mode, scope).
+                !(key === "insights" && activeTab === "insights") &&
+                onTabChange(key)
+              }
             />
           ))}
         </Box>
@@ -398,39 +481,43 @@ const ObserveTabBar = ({
           </DndContext>
         </Box>
 
-        {/* Create view button — pinned after scrollable area */}
-        <CustomTooltip
-          show
-          title="Create new view"
-          placement="bottom"
-          arrow
-          size="small"
-          type="black"
-        >
-          <ButtonBase
-            data-create-view-btn
-            onClick={(e) => setSaveViewAnchor(e.currentTarget)}
-            sx={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              height: 26,
-              width: 26,
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: "4px",
-              bgcolor: "background.paper",
-              flexShrink: 0,
-              "&:hover": { bgcolor: "background.neutral" },
-            }}
+        {/* Create view button — pinned after scrollable area. Insights and
+            pages without a list (canSaveView false) have no list config to
+            save as a view. */}
+        {canSaveView && activeTab !== "insights" && (
+          <CustomTooltip
+            show
+            title="Create new view"
+            placement="bottom"
+            arrow
+            size="small"
+            type="black"
           >
-            <Iconify
-              icon="mdi:plus"
-              width={16}
-              sx={{ color: "text.primary" }}
-            />
-          </ButtonBase>
-        </CustomTooltip>
+            <ButtonBase
+              data-create-view-btn
+              onClick={(e) => setSaveViewAnchor(e.currentTarget)}
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                height: 26,
+                width: 26,
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "4px",
+                bgcolor: "background.paper",
+                flexShrink: 0,
+                "&:hover": { bgcolor: "background.neutral" },
+              }}
+            >
+              <Iconify
+                icon="solar:add-linear"
+                width={16}
+                sx={{ color: "text.primary" }}
+              />
+            </ButtonBase>
+          </CustomTooltip>
+        )}
       </Box>
 
       {/* ── Right: Toolbar portal target + renderRight fallback ── */}
@@ -454,6 +541,41 @@ const ObserveTabBar = ({
         isLoading={isSavingView}
         existingNames={ownViewNames}
       />
+
+      {/* Delete confirmation for the tab's "x" — same copy as TabContextMenu */}
+      {pendingDeleteView && (
+        <Dialog
+          open
+          onClose={handleDeleteCancel}
+          maxWidth={false}
+          PaperProps={{ sx: { maxWidth: 560 } }}
+        >
+          <DialogTitle>
+            Delete &ldquo;{pendingDeleteView.name}&rdquo;?
+          </DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              This view will be permanently removed.
+              {pendingDeleteView.visibility === "project" &&
+                " This will remove the view for all team members."}{" "}
+              This action cannot be undone.
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={handleDeleteCancel} size="small">
+              Cancel
+            </Button>
+            <Button
+              onClick={handleDeleteConfirm}
+              color="error"
+              variant="contained"
+              size="small"
+            >
+              Delete
+            </Button>
+          </DialogActions>
+        </Dialog>
+      )}
     </Box>
   );
 };
@@ -464,6 +586,7 @@ ObserveTabBar.propTypes = {
   onTabChange: PropTypes.func.isRequired,
   renderRight: PropTypes.node,
   projectSource: PropTypes.string,
+  canSaveView: PropTypes.bool,
 };
 
 export default React.memo(ObserveTabBar);

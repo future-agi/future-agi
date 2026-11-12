@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import { Box, Typography, useTheme } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import PropTypes from "prop-types";
@@ -10,6 +10,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import useFitHeight from "src/hooks/use-fit-height";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { getRandomId, safeParse } from "src/utils/utils";
 import { readQuery, endpoints } from "src/utils/axios";
@@ -58,7 +59,7 @@ import {
   shareInFlightListPage,
 } from "./listCursorPagination";
 import ListCursorContinuationNotice from "./ListCursorContinuationNotice";
-import { getListTotalState } from "./listTotalMetadata";
+import { getEmptyListOverlay, getListTotalState } from "./listTotalMetadata";
 import { getSpanPhysicalRowId } from "./spanPhysicalIdentity";
 import {
   parseAxiosResult,
@@ -240,6 +241,14 @@ const SpanGrid = React.forwardRef(
       canonicalColumnsRef,
       enabled = true,
       compareType,
+      // Only the visible grid of a primary/compare pair renders the drawer.
+      hideDetailDrawer = false,
+      // Empty-page context (primary grids): the date pill text and the next
+      // steps the empty overlay can offer.
+      rangeLabel,
+      onClearFilters,
+      onWidenRange,
+      listWindow,
     },
     gridRef,
   ) => {
@@ -256,12 +265,12 @@ const SpanGrid = React.forwardRef(
         headerColumnBorder: false,
         wrapperBorder: { width: 0 },
         wrapperBorderRadius: 0,
-        rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+        rowBorder: { width: 1, color: theme.palette.border.subtle },
         headerFontSize: "13px",
         headerFontWeight: theme.typography.fontWeightMedium,
         headerBackgroundColor: "transparent",
         headerTextColor: theme.palette.text.primary,
-        rowHoverColor: "rgba(120,87,252,0.04)",
+        rowHoverColor: theme.palette.action.hover,
       }),
       [theme.palette.text.primary, theme.typography.fontWeightMedium],
     );
@@ -282,9 +291,12 @@ const SpanGrid = React.forwardRef(
     const loadingRequestRef = useRef(0);
     const preserveRowsDuringNextRefreshRef = useRef(false);
     const gridElementRef = useRef(null);
+    /* Fill to the bottom of the window from wherever the grid starts. */
+    const fitHeight = useFitHeight(gridElementRef);
     const {
       beginPageLoad,
       endUnknown,
+      exactTotal,
       frontierPage,
       hasMore,
       page,
@@ -296,6 +308,7 @@ const SpanGrid = React.forwardRef(
       isPageLoading,
       publishPage,
       resetPagination,
+      visibleRowCount,
     } = useCursorGridPagination(gridRef, gridElementRef);
 
     // Use ref to track latest columns for comparison without triggering dataSource recreation
@@ -442,6 +455,9 @@ const SpanGrid = React.forwardRef(
             setOpenQuickFilter,
             setFilterOpen,
           ),
+          // This grid sits on the page, under the trace drawer: a hovered
+          // name cell's funnel stacks beneath side drawers, not over them.
+          quickFilterBelowDrawers: true,
         },
       }),
       [setFilterOpen, setExtraFilters],
@@ -485,9 +501,12 @@ const SpanGrid = React.forwardRef(
           grouping[getRandomId()] = [eachCol];
         }
       }
+      // A span row holds one value per label (no per-annotator breakdown),
+      // so each label is one column that reads it.
       const annotationColumns = generateAnnotationColumnsForTracing(
         grouping["Annotation Metrics"] || [],
         showMetricsIds,
+        { perAnnotator: false },
       );
       delete grouping["Annotation Metrics"];
       const columnDefsResult = Object.entries(grouping).flatMap(
@@ -931,8 +950,7 @@ const SpanGrid = React.forwardRef(
         }
         // Pin detail to the span's project (see TraceGrid's row click).
         const rowProjectId = event.data.project_id;
-        const sourceColumn =
-          event.column?.getColDef?.()?.context?.sourceColumn;
+        const sourceColumn = event.column?.getColDef?.()?.context?.sourceColumn;
         if (sourceColumn?.groupBy === "Evaluation Metrics") {
           setEvalFocus(true);
         }
@@ -956,7 +974,7 @@ const SpanGrid = React.forwardRef(
       <Box
         ref={gridElementRef}
         sx={{
-          height: "calc(100vh - 270px)",
+          height: fitHeight ? `${fitHeight}px` : "calc(100vh - 270px)",
           display: "flex",
           flexDirection: "column",
         }}
@@ -1011,22 +1029,22 @@ const SpanGrid = React.forwardRef(
           // free to paint the target rows before that transition can settle.
           loading={gridLoading || transitionLoading}
           suppressServerSideFullWidthLoadingRow={true}
-          noRowsOverlayComponent={() =>
-            continuationNotice
-              ? null
-              : NoRowsOverlay(
-                  <Typography
-                    sx={{
-                      fontSize: 14,
-                      fontWeight: 400,
-                      color: "text.secondary",
-                    }}
-                  >
-                    {getQueryReadMessage(readStateRef.current) ||
-                      "No spans found"}
-                  </Typography>,
-                )
-          }
+          noRowsOverlayComponent={() => {
+            if (continuationNotice) return null;
+            const readStateMessage = getQueryReadMessage(readStateRef.current);
+            if (readStateMessage) return NoRowsOverlay(readStateMessage);
+            return NoRowsOverlay(
+              "No spans found",
+              getEmptyListOverlay({
+                noun: "spans",
+                rangeLabel,
+                hasFilters: extraFilters?.length > 0,
+                onClearFilters,
+                onWidenRange,
+                listWindow,
+              }),
+            );
+          }}
           onCellClicked={handleCellClick}
           onSelectionChanged={onSelectionChanged}
           // onGridReady={(params) => {
@@ -1071,10 +1089,14 @@ const SpanGrid = React.forwardRef(
           furthestPage={furthestPage}
           hasMore={hasMore}
           provenNext={provenNext}
+          rowCount={visibleRowCount}
+          totalCount={exactTotal}
           onPageChange={goToPage}
           onPageSizeChange={changePageSize}
         />
-        <LLMTracingSpanDetailDrawer refreshGrid={refreshGrid} />
+        {!hideDetailDrawer && (
+          <LLMTracingSpanDetailDrawer refreshGrid={refreshGrid} />
+        )}
         <NumberQuickFilterPopover
           open={Boolean(openQuickFilter)}
           filterData={openQuickFilter}
@@ -1098,10 +1120,15 @@ SpanGrid.propTypes = {
   setLoading: PropTypes.func,
   setPageMap: PropTypes.func,
   compareType: PropTypes.string,
+  hideDetailDrawer: PropTypes.bool,
   hasEvalFilter: PropTypes.bool,
   cellHeight: PropTypes.string,
   metricFilters: PropTypes.array,
   enabled: PropTypes.bool,
+  rangeLabel: PropTypes.string,
+  onClearFilters: PropTypes.func,
+  onWidenRange: PropTypes.func,
+  listWindow: PropTypes.object,
 };
 
 export default SpanGrid;

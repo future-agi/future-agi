@@ -1,0 +1,16 @@
+{
+  "http": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "cache-control": "no-store"
+    }
+  },
+  "body": {
+    "access_token": "{{M24_ACCESS_TOKEN}}",
+    "token_type": "Bearer",
+    "expires_in": 900,
+    "refresh_token": "{{M24_REFRESH_TOKEN}}",
+    "scope": "mcp:tools mcp:resources mcp:prompts"
+  }
+}

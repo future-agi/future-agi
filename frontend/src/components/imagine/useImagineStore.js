@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { captureFalconRequest } from "src/sections/falcon-ai/store/falconRequestGuard";
 
 const useImagineStore = create((set, get) => ({
   widgets: [],
@@ -35,7 +36,13 @@ const useImagineStore = create((set, get) => ({
 
   clearWidgets: () => set({ widgets: [] }),
 
-  setConversationId: (conversationId) => set({ conversationId }),
+  // A dedicated conversation may survive panel unmounts, but not scope recovery.
+  isConversationCurrent: null,
+  setConversationId: (conversationId) =>
+    set({
+      conversationId,
+      isConversationCurrent: conversationId ? captureFalconRequest() : null,
+    }),
 
   setLoading: (isLoading) => set({ isLoading }),
 
@@ -69,6 +76,7 @@ const useImagineStore = create((set, get) => ({
       widgets: [],
       isLoading: false,
       conversationId: null,
+      isConversationCurrent: null,
       analysisCache: {},
       _savedViewId: null,
     }),

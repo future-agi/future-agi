@@ -11,7 +11,7 @@ from typing import Any
 import structlog
 from django.conf import settings
 from django.core.cache import cache as django_cache
-from django.db import close_old_connections
+from django.db import close_old_connections, transaction
 from django.db.models import (
     Avg,
     Case,
@@ -29,6 +29,7 @@ from django.db.models import (
 from django.db.models.functions import JSONObject, Round
 from django.utils import timezone
 from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -41,6 +42,7 @@ from analytics.utils import (
     get_mixpanel_properties,
     track_mixpanel_event,
 )
+from common.utils.page_limits import enforce_page_size, page_bounds
 from model_hub.models.choices import (
     AnnotationTypeChoices,
     DataTypeChoices,
@@ -76,6 +78,7 @@ from tracer.selectors.trace_filter_reads import (
     numbered_page_depth_exceeded,
 )
 from tracer.serializers.filters import (
+    ObserveGraphDataErrorResponseSerializer,
     ObserveGraphDataQuerySerializer,
     ObserveGraphDataRequestSerializer,
     ObserveGraphDataResponseSerializer,
@@ -194,6 +197,7 @@ from tracer.utils.helper import (
     get_annotation_labels_by_project,
     get_annotation_labels_for_project,
     get_default_span_config,
+    unvalidated_relation_keys,
     update_column_config_based_on_eval_config,
     update_span_column_config_based_on_annotations,
 )
@@ -695,6 +699,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     serializer_class = ObservationSpanSerializer
 
     def get_queryset(self):
+        if not self.kwargs.get("pk"):
+            enforce_page_size(self.request.query_params.get("page_size"))
         observation_span_id = self.kwargs.get("pk")
         # Get base queryset with automatic filtering from mixin
         query_Set = (
@@ -721,8 +727,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         if trace_id:
             query_Set = query_Set.filter(trace_id=trace_id)
 
-        start = int(page_number) * int(page_size)
-        end = start + int(page_size)
+        start, end = page_bounds(int(page_number), int(page_size), query_Set.count())
 
         return query_Set[start:end]
 
@@ -1180,8 +1185,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # Handle prompt version name (from PG, small config table)
         if observation_span["prompt_version"]:
             try:
+                # Only a prompt version of the caller's own templates is named.
                 prompt_version = PromptVersion.objects.get(
-                    id=observation_span["prompt_version"]
+                    id=observation_span["prompt_version"],
+                    original_template__organization=_get_request_organization(request),
                 )
                 observation_span["prompt_template_id"] = str(
                     prompt_version.original_template.id
@@ -1490,6 +1497,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request("observation_spans is required")
 
             for observation_span in observation_span_data:
+                if unvalidated_relation_keys(
+                    ObservationSpan,
+                    observation_span,
+                    {"project", "project_version", "trace"},
+                ):
+                    raise ValueError("Unsupported observation span fields")
                 if not observation_span.get("id"):
                     observation_span["id"] = f"span_{uuid.uuid4().hex[:16]}"
                 observation_span["project"] = Project.objects.get(
@@ -1805,8 +1818,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error updating span tags: {e}")
             return self._gm.bad_request("Error updating tags")
 
+    @swagger_auto_schema(request_body=SubmitFeedbackActionTypeSerializer)
     @action(detail=False, methods=["post"])
     def submit_feedback_action_type(self, request, *args, **kwargs):
+        saved = False
         try:
             serializer = SubmitFeedbackActionTypeSerializer(data=request.data)
             if not serializer.is_valid():
@@ -1816,15 +1831,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             action_type = validated_data.get("action_type", None)
             custom_eval_config_id = validated_data.get("custom_eval_config_id", None)
             feedback_id = validated_data.get("feedback_id", None)
-
-            try:
-                feedback = Feedback.objects.get(
-                    id=feedback_id, user=request.user, source_id=observation_span_id
-                )
-                feedback.action_type = action_type
-                feedback.save(update_fields=["action_type"])
-            except Feedback.DoesNotExist:
-                raise Exception("Feedback not found")  # noqa: B904
 
             try:
                 observation_span = ObservationSpan.objects.get(
@@ -1844,23 +1850,67 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             except CustomEvalConfig.DoesNotExist:
                 raise Exception("Custom eval config not found")  # noqa: B904
 
-            if action_type == "retune":
-                pass  ### This is coz we are using mapping_fields fxn in utils
+            # Resolve the in-scope span/config before changing any feedback.
+            try:
+                feedback = Feedback.objects.get(
+                    # The same workspace rule as the span and config above:
+                    # the default workspace also covers rows with no workspace
+                    # and the organization's default-workspace rows, so
+                    # feedback saved on a project that has no workspace is
+                    # found. Any other workspace matches only its own rows.
+                    _project_workspace_scope_q(request, project_prefix=""),
+                    id=feedback_id,
+                    user=request.user,
+                    source_id=observation_span.id,
+                    custom_eval_config_id=custom_eval_config.id,
+                    organization=observation_span.project.organization,
+                )
+            except Feedback.DoesNotExist:
+                raise Exception("Feedback not found")  # noqa: B904
 
-            elif action_type == "recalculate":
+            # Find the result to re-calculate before saving, so a span without
+            # one stores nothing.
+            eval_logger = None
+            if action_type == "recalculate":
                 try:
                     eval_logger = EvalLogger.objects.get(
                         observation_span=observation_span,
                         custom_eval_config=custom_eval_config,
                         deleted=False,
                     )
-                    task_id = eval_logger.eval_task_id
+                except EvalLogger.DoesNotExist:
+                    return self._gm.bad_request(
+                        "This span has no eval result to re-calculate, so nothing "
+                        "was saved. Choose Re-tune to save your changes without "
+                        "re-running the eval."
+                    )
 
+            feedback.action_type = action_type
+            update_fields = ["action_type"]
+            for field in ("value", "explanation"):
+                if field in validated_data:
+                    setattr(feedback, field, validated_data[field])
+                    update_fields.append(field)
+            if "explanation" in validated_data:
+                # The eval's Feedback tab shows trace feedback's note from
+                # feedback_improvement, so an edited note replaces it there too.
+                feedback.feedback_improvement = validated_data["explanation"]
+                update_fields.append("feedback_improvement")
+            # The edit and the retired result are saved together. The eval runs
+            # after the commit: a direct run opens and closes DB connections.
+            with transaction.atomic():
+                feedback.save(update_fields=update_fields)
+                if eval_logger is not None:
                     soft_delete_eval_results(
                         EvalLogger.objects.filter(pk=eval_logger.pk)
                     )
-                except EvalLogger.DoesNotExist:
-                    raise Exception("No eval associated with this span")  # noqa: B904
+            saved = True
+
+            if action_type == "retune":
+                pass  ### This is coz we are using mapping_fields fxn in utils
+
+            elif action_type == "recalculate":
+                task_id = eval_logger.eval_task_id
 
                 properties = get_mixpanel_properties(
                     user=request.user,
@@ -1873,17 +1923,16 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
                 if observation_span.project_version:
                     status = evaluate_observation_span(
-                        str(observation_span.id),
-                        str(custom_eval_config.id),
-                        task_id,
-                        feedback_id,
+                        observation_span_id=str(observation_span.id),
+                        custom_eval_config_id=str(custom_eval_config.id),
+                        feedback_id=feedback_id,
                     )
                 else:
                     status = evaluate_observation_span_observe(
-                        str(observation_span.id),
-                        str(custom_eval_config.id),
-                        task_id,
-                        feedback_id,
+                        observation_span_id=str(observation_span.id),
+                        custom_eval_config_id=str(custom_eval_config.id),
+                        eval_task_id=task_id,
+                        feedback_id=feedback_id,
                     )
 
                 if status:
@@ -1909,9 +1958,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
         except Exception:
             logger.exception("Error in submitting the feedback action type")
-            return self._gm.bad_request(
-                "Unable to submit feedback action. Please try again."
-            )
+            if saved:
+                return self._gm.bad_request(
+                    "Your feedback was saved, but the eval couldn't be re-run. "
+                    "Reload the page to see what was saved."
+                )
+            return self._gm.bad_request("Your feedback wasn't saved. Try again.")
 
     @bounded_list_request(
         wall_ms=SPAN_LIST_WALL_DEADLINE_MS,
@@ -3316,7 +3368,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             200: ObserveGraphDataResponseSerializer,
             400: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,
-            503: ApiErrorResponseSerializer,
+            503: ObserveGraphDataErrorResponseSerializer,
         },
     )
     @action(detail=False, methods=["post"])
@@ -3464,10 +3516,24 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     graph,
                     allow_sampled=False,
                 ):
+                    logger.warning(
+                        "span_graph_degraded",
+                        query_error_code=graph.get("query_error_code"),
+                        project_id=project_id,
+                        eval_config_id=metric_id if metric_type == "EVAL" else None,
+                    )
+                    graph = {
+                        **graph,
+                        "data": [],
+                        "query_complete": False,
+                        "query_status": "degraded",
+                        "query_sampled": False,
+                        "message": "Graph data is temporarily unavailable. Please retry.",
+                    }
                     return finish(
                         self._gm.custom_error_response(
                             status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "Graph data is temporarily unavailable. Please retry.",
+                            graph,
                             code="service_unavailable",
                         )
                     )
@@ -3904,10 +3970,20 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         max_traces: int | None = None,
         max_spans: int | None = None,
     ) -> list:
-        """Session-level paths: session fields + ``traces.<i>.<trace_field>``
-        + ``traces.<i>.spans.<j>.<key>`` up to the observed max traces-per-
-        session and spans-per-trace."""
-        paths = list(self._SESSION_PUBLIC_FIELDS)
+        """Session-level paths: session fields, the whole conversation
+        (``transcript``, and ``transcript_full`` with tool calls) +
+        ``traces.<i>.<trace_field>`` + ``traces.<i>.spans.<j>.<key>`` up to
+        the observed max traces-per-session and spans-per-trace."""
+        from tracer.utils.eval import (
+            SESSION_FULL_TRANSCRIPT_FIELD,
+            SESSION_TRANSCRIPT_FIELD,
+        )
+
+        paths = [
+            *self._SESSION_PUBLIC_FIELDS,
+            SESSION_TRANSCRIPT_FIELD,
+            SESSION_FULL_TRANSCRIPT_FIELD,
+        ]
         if max_traces is None:
             max_traces = self._max_traces_per_session(project_id)
         if max_spans is None:
@@ -5402,7 +5478,13 @@ def _build_span_response(span):
 
     if data["prompt_version"]:
         try:
-            prompt_version = PromptVersion.objects.get(id=data["prompt_version"])
+            # Only a prompt version of the span project's organization is named.
+            prompt_version = PromptVersion.objects.get(
+                id=data["prompt_version"],
+                original_template__organization_id=getattr(
+                    span.project, "organization_id", None
+                ),
+            )
             data["prompt_template_id"] = str(prompt_version.original_template.id)
             data["prompt_name"] = (
                 str(prompt_version.original_template.name)

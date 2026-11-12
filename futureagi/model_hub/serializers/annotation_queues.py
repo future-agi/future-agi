@@ -25,15 +25,21 @@ from model_hub.models.annotation_queues import (
 )
 from model_hub.models.choices import AnnotationQueueStatusChoices, AnnotatorRole
 from model_hub.models.develop_annotations import AnnotationsLabels
+from model_hub.serializers.pagination import PageSizeField
 from model_hub.serializers.scores import ScoreSerializer
 from model_hub.utils.annotation_queue_helpers import (
     FIELD_MAPPING,
     CollectorSourceCache,
+    QueueSourceAuthorization,
+    captured_preview_attribution,
     get_fk_field_name,
+    queue_item_source_is_available,
     resolve_source_content,
     resolve_source_object,
     resolve_source_preview,
+    unavailable_queue_source,
 )
+from tfc.utils.pagination import MAX_PAGE_SIZE
 from tfc.utils.serializer_fields import JsonValueField
 from tracer.serializers.filters import StrictInputSerializer, filter_list_field
 
@@ -85,8 +91,8 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
         required=True,
         min_length=1,
         error_messages={
-            "required": "At least one label is required.",
-            "min_length": "At least one label is required.",
+            "required": "At least one label is required. Add a label to this queue (API field: label_ids).",
+            "min_length": "At least one label is required. Add a label to this queue (API field: label_ids).",
         },
     )
     annotator_ids = serializers.ListField(
@@ -222,7 +228,9 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
 
     def _workspace_visibility_q(self, organization, workspace):
         if not workspace:
-            return Q()
+            from tfc.utils.workspace_scope import empty_workspace_filter
+
+            return empty_workspace_filter()
         if getattr(workspace, "is_default", False):
             return (
                 Q(workspace=workspace)
@@ -466,12 +474,23 @@ class QueueItemListSerializer(serializers.ListSerializer):
 
     def to_representation(self, data):
         items = list(data)
-        # Only items WITHOUT a captured preview need the CH read. Once a page is
-        # fully captured this collapses to zero reads, which is the whole point of
-        # QueueItem.source_preview (TH-7211) — building the cache unconditionally
-        # would keep paying the ``spans FINAL`` merge the capture exists to avoid.
-        uncaptured = [item for item in items if not item.source_preview]
-        self.context["ch_source_cache"] = CollectorSourceCache.for_items(uncaptured)
+        # Only live renders need CH: uncaptured items and unpinned captures with
+        # no project attribution. Pinned/attributed snapshots retain TH-7211's
+        # zero-read optimization; foreign-attributed captures never fall back.
+        request = self.context.get("request")
+        source_authorization = QueueSourceAuthorization.for_items(
+            items, request=request
+        )
+        live_items = [
+            item
+            for item in items
+            if captured_preview_attribution(item, source_authorization) == "live"
+        ]
+        self.context["ch_source_cache"] = CollectorSourceCache.for_items(
+            live_items,
+            request=request,
+            source_authorization=source_authorization,
+        )
         return super().to_representation(items)
 
 
@@ -546,13 +565,32 @@ class QueueItemSerializer(serializers.ModelSerializer):
     # etc.), so there is no one object shape to declare.
     @swagger_serializer_method(serializer_or_field=JsonValueField())
     def get_source_preview(self, obj):
-        # Captured at add time for CH-backed sources, so rendering a page costs no
-        # ``spans FINAL`` merge (TH-7211). NULL means "not captured" — a row added
-        # before this existed, or a Postgres-backed source that was always cheap —
-        # and falls back to the live read, same shape either way.
+        # Captures avoid the CH merge only when their own origin is attributable.
+        # An authorized live copy must never authorize different stored bytes.
+        request = self.context.get("request")
+        ch_cache = self.context.get("ch_source_cache")
         if obj.source_preview:
-            return obj.source_preview
-        return resolve_source_preview(obj, ch_cache=self.context.get("ch_source_cache"))
+            auth = ch_cache.source_authorization if ch_cache is not None else None
+            if auth is None:
+                auth = QueueSourceAuthorization.for_items([obj], request=request)
+            attribution = captured_preview_attribution(obj, auth)
+            if attribution == "withheld":
+                return unavailable_queue_source(obj)
+            if attribution == "snapshot":
+                if not queue_item_source_is_available(
+                    obj,
+                    request=request,
+                    ch_cache=ch_cache
+                    or CollectorSourceCache(source_authorization=auth),
+                    captured=True,
+                ):
+                    return unavailable_queue_source(obj)
+                return obj.source_preview
+            if ch_cache is None:
+                ch_cache = CollectorSourceCache.for_items(
+                    [obj], request=request, source_authorization=auth
+                )
+        return resolve_source_preview(obj, ch_cache=ch_cache, request=request)
 
     def get_workflow_status(self, obj):
         if obj.review_status == "pending_review":
@@ -776,7 +814,7 @@ class AnnotationQueueListQuerySerializer(StrictInputSerializer):
     search = serializers.CharField(required=False, allow_blank=True)
     include_counts = serializers.BooleanField(required=False)
     archived = serializers.BooleanField(required=False, default=False)
-    page_size = serializers.IntegerField(required=False, min_value=1)
+    page_size = PageSizeField(required=False, min_value=1, max_value=MAX_PAGE_SIZE)
 
 
 class QueueHardDeleteRequestSerializer(StrictInputSerializer):
@@ -968,6 +1006,22 @@ class QueueItemListQuerySerializer(StrictInputSerializer):
         choices=["created_at", "-created_at"],
         required=False,
     )
+
+    def to_internal_value(self, data):
+        if not hasattr(data, "keys") or "page_size" not in data:
+            return super().to_internal_value(data)
+        data = data.copy()
+        page_size = data["page_size"]
+        del data["page_size"]
+        validated = super().to_internal_value(data)
+        # The paginator consumes this compatibility value; new clients use limit.
+        try:
+            validated["page_size"] = PageSizeField(
+                min_value=1, max_value=MAX_PAGE_SIZE
+            ).run_validation(page_size)
+        except serializers.ValidationError as exc:
+            raise serializers.ValidationError({"page_size": exc.detail}) from exc
+        return validated
 
 
 class QueueItemNextQuerySerializer(StrictInputSerializer):
@@ -1514,6 +1568,21 @@ class AssignItemsSerializer(StrictInputSerializer):
         default="add",
     )
 
+    def to_internal_value(self, data):
+        if hasattr(data, "keys") and "user_id" in data:
+            data = data.copy()
+            if "user_ids" in data or "action" in data:
+                raise serializers.ValidationError(
+                    {"user_id": ["Use either user_id or user_ids/action, not both."]}
+                )
+            user_id = data["user_id"]
+            del data["user_id"]
+            # Only explicit null means unassign in the released client.
+            # An assignment must add a user without replacing other assignees.
+            data["user_ids"] = [] if user_id is None else [user_id]
+            data["action"] = "set" if user_id is None else "add"
+        return super().to_internal_value(data)
+
 
 class DiscussionCommentRequestSerializer(StrictInputSerializer):
     comment = serializers.CharField(required=False, allow_blank=True)
@@ -1864,8 +1933,9 @@ class AnnotateDetailSerializer(serializers.Serializer):
         # already uses. content and preview resolve the SAME tracer source, so
         # without it they each did their own CH point-read (TH-7104).
         ch_cache = self.context.get("ch_source_cache")
+        request = self.context.get("request")
         if ch_cache is None:
-            ch_cache = CollectorSourceCache.for_items([item])
+            ch_cache = CollectorSourceCache.for_items([item], request=request)
 
         return {
             "item": {
@@ -1903,8 +1973,12 @@ class AnnotateDetailSerializer(serializers.Serializer):
                         "user"
                     )
                 ],
-                "source_content": resolve_source_content(item, ch_cache=ch_cache),
-                "source_preview": resolve_source_preview(item, ch_cache=ch_cache),
+                "source_content": resolve_source_content(
+                    item, ch_cache=ch_cache, request=request
+                ),
+                "source_preview": resolve_source_preview(
+                    item, ch_cache=ch_cache, request=request
+                ),
                 "review_notes": item.review_notes,
                 "reviewed_by_name": (
                     item.reviewed_by.name if item.reviewed_by else None
@@ -1993,11 +2067,42 @@ class AutomationRuleSerializer(serializers.ModelSerializer):
         source_type = attrs.get(
             "source_type", getattr(self.instance, "source_type", None)
         )
-        conditions = attrs.get("conditions")
-        if not conditions and self.instance is not None:
-            conditions = self.instance.conditions or {}
+        conditions = (
+            attrs.get(
+                "conditions",
+                getattr(self.instance, "conditions", None),
+            )
+            or {}
+        )
+        from model_hub.utils.annotation_queue_helpers import (
+            AUTOMATION_RULE_SCOPE_CODE,
+            AUTOMATION_RULE_SCOPE_ERROR,
+            automation_rule_scope_is_allowed,
+        )
 
-        rules = (conditions or {}).get("rules") or []
+        request = self.context.get("request")
+        queue = getattr(self.instance, "queue", None)
+        if queue is None:
+            view = self.context.get("view")
+            queue_id = getattr(view, "kwargs", {}).get("queue_id")
+            queue = AnnotationQueue.no_workspace_objects.filter(pk=queue_id).first()
+        if not automation_rule_scope_is_allowed(
+            queue,
+            source_type,
+            conditions,
+            user=getattr(request, "user", None),
+            require_actor=True,
+        ):
+            raise serializers.ValidationError(
+                {
+                    "conditions": serializers.ErrorDetail(
+                        AUTOMATION_RULE_SCOPE_ERROR,
+                        code=AUTOMATION_RULE_SCOPE_CODE,
+                    ),
+                }
+            )
+
+        rules = conditions.get("rules") or []
         if rules and source_type in FIELD_MAPPING:
             valid_fields = set(FIELD_MAPPING[source_type])
             invalid_fields = sorted(

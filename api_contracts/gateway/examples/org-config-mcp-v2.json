@@ -1,0 +1,207 @@
+{
+  "mcp": {
+    "enabled": true,
+    "access": { "default": "deny" },
+    "servers": {
+      "github": {
+        "url": "https://mcp.github.example.com/mcp",
+        "transport": "http",
+        "era": "auto",
+        "credential": {
+          "mode": "shared",
+          "credential_id": "cred_7d1e",
+          "header": "Authorization",
+          "state": "active",
+          "secret": {
+            "type": "bearer",
+            "header": "Authorization",
+            "value": "test-mcp-secret-not-a-real-token"
+          }
+        },
+        "trusted_annotations": false,
+        "timeout_ms": 20000,
+        "tools_cache_ttl_seconds": 120,
+        "forward_headers": ["x-request-source"],
+        "propagate_depth": true,
+        "enabled": true,
+        "oauth": { "adapter": "github" },
+        "labels": ["private_data", "egress"]
+      },
+      "issues": {
+        "url": "https://issues.example.com/mcp",
+        "transport": "http",
+        "era": "2026-07-28",
+        "credential": { "mode": "per_user", "state": "needs_reauth" },
+        "labels": ["untrusted_input"]
+      },
+      "crm": {
+        "url": "https://connect.vendor.example.com/mcp",
+        "credential": {
+          "mode": "vendor_end_user",
+          "vendor": "pipedream",
+          "identity_binding": { "in": "header", "name": "x-end-user-id" }
+        }
+      },
+      "warehouse": {
+        "url": "https://warehouse.example.com/mcp",
+        "era": "2025-11-25",
+        "credential": { "mode": "id_jag" },
+        "oauth": { "adapter": "okta" },
+        "enabled": false
+      },
+      "legacy_docs": {
+        "url": "https://docs.example.com/sse",
+        "transport": "sse",
+        "era": "2024-11-05",
+        "auth": { "type": "bearer", "token": "test-legacy-token-not-real" },
+        "tools_cache_ttl": "5m"
+      }
+    },
+    "virtual_servers": {
+      "engineering": {
+        "id": "vs_01M4ZEB9E0J3AADR85Z4T4428X",
+        "title": "Engineering tools",
+        "description": "Code and issue tools for the engineering agents.",
+        "members": ["github", "issues@work", "fagi.web"],
+        "tools": {
+          "include": ["github/*", "issues/*", "fagi.web/*"],
+          "exclude": ["github/delete_repo"]
+        },
+        "overrides": {
+          "github/create_issue": {
+            "name": "open_issue",
+            "title": "Open an issue",
+            "description": "Open an issue in a repository.",
+            "hidden": false,
+            "labels": ["egress"]
+          }
+        },
+        "naming": "prefixed",
+        "mode": "direct",
+        "step_profiles": {
+          "plan": { "include": ["issues/*"] },
+          "act": { "include": ["github/*", "fagi.web/*"] }
+        },
+        "access": {
+          "keys": ["key_7f3a"],
+          "agents": ["researcher"],
+          "users": ["user_42"],
+          "default_for_org": true,
+          "rules": [
+            {
+              "match": { "agent_ids": ["researcher"] },
+              "allow": ["github/get_*"],
+              "deny": ["github/delete_*"]
+            }
+          ]
+        },
+        "approval": {
+          "require": "listed",
+          "tools": ["github/merge_*"],
+          "validity": "ttl",
+          "ttl_seconds": 600
+        },
+        "budgets": {
+          "max_tool_calls_per_run": 200,
+          "max_tool_usd_per_run": 2.5,
+          "rpm_per_key": 120,
+          "per_tool": {
+            "fagi.web/search": { "max_calls_per_run": 20, "rpm": 30 }
+          }
+        },
+        "cache_scope": "private"
+      },
+      "research": {
+        "id": "vs_01M4ZEB9E1A6Y8ATM7S5TJZ9YY",
+        "members": ["fagi.web"],
+        "naming": "flat",
+        "mode": "search",
+        "access": { "keys": ["key_9c2d"], "default_for_org": false },
+        "approval": { "require": "destructive", "validity": "step" }
+      }
+    },
+    "managed_tools": {
+      "enabled": true,
+      "allow": ["fagi.web/*", "search/exa"],
+      "deny": ["fagi.web/crawl"],
+      "max_call_cost_usd": 0.25,
+      "fallback_to_managed": false,
+      "allow_user_tokens": false,
+      "credentials": {
+        "fagi.web": {
+          "mode": "shared",
+          "credential_id": "cred_9a0b",
+          "state": "active",
+          "secret": {
+            "type": "api_key",
+            "header": "x-api-key",
+            "value": "test-managed-secret-not-a-real-key"
+          }
+        }
+      }
+    },
+    "pinning": {
+      "mode": "quarantine",
+      "new_tools": "quarantine",
+      "auto_baseline": true,
+      "pins": {
+        "github/create_issue": "cc1441cea3b1f974d2f8bb95234d3c36b99536a4b6dbc21dc7dee08b463908d0"
+      }
+    },
+    "scanning": {
+      "descriptions": "block",
+      "arguments": ["prompt-injection"],
+      "results": ["secret-detection"],
+      "shadow": false
+    },
+    "guardrails": {
+      "enabled": true,
+      "blocked_tools": ["shell"],
+      "allowed_servers": ["github", "issues"],
+      "validate_inputs": true,
+      "validate_outputs": false,
+      "tool_rate_limits": { "github/search_code": 30 }
+    },
+    "flow_control": { "mode": "enforce", "on_egress_after_taint": "deny" },
+    "policy": {
+      "rules": [
+        {
+          "id": "no-prod-deletes",
+          "match": {
+            "tools": ["*/delete_*"],
+            "servers": ["github"],
+            "agents": ["researcher"],
+            "steps": ["act"],
+            "env": ["prod"]
+          },
+          "when": "args.force == true",
+          "action": "deny",
+          "reason": "Deletes in production need a human.",
+          "shadow": false
+        }
+      ],
+      "combos": [
+        {
+          "id": "read-then-publish",
+          "sequence": ["issues/read_*", "github/create_*"],
+          "within": "run",
+          "action": "approve"
+        }
+      ],
+      "default_tier": {
+        "read_only": "allow",
+        "undeclared": "approve",
+        "destructive": "approve",
+        "destructive_prod": "deny"
+      }
+    },
+    "shaping": {
+      "per_tool": {
+        "github/search_code": {
+          "budget_bytes": 32768,
+          "project": ["/items", "/total_count"]
+        }
+      }
+    }
+  }
+}

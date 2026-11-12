@@ -462,10 +462,29 @@ jobs:
           pass "setup checks: $(jq -r '[.result.checks[] | "\(.id)=\(.status)"] | join(", ")' "$RUNNER_TEMP/setup-checks.json")"
 
           # A program that went FATAL leaves /health/ green; only one-shot
-          # programs (the bootstrap) may have exited.
+          # programs (the bootstrap) may have exited. STOPPED is allowed only
+          # for programs explicitly configured not to autostart in this image.
+          stopped_ok=$(docker compose exec -T app awk '
+            /^[[:space:]]*\[/ {
+              program = ""
+              if ($0 ~ /^[[:space:]]*\[program:[^]]+\]/) {
+                program = $0
+                sub(/^[[:space:]]*\[program:/, "", program)
+                sub(/\].*$/, "", program)
+              }
+            }
+            program != "" && /^[[:space:]]*autostart[[:space:]]*=[[:space:]]*false[[:space:]]*([;#].*)?$/ { print program }
+          ' /etc/futureagi/supervisord.conf)
           programs=$(docker compose exec -T app supervisorctl -c /etc/futureagi/supervisord.conf status || true)
           printf '%s\n' "$programs"
-          down=$(awk '$2 != "RUNNING" && $2 != "EXITED"' <<<"$programs")
+          down=$(awk -v stopped_ok="$stopped_ok" '
+            BEGIN { n = split(stopped_ok, names); for (i = 1; i <= n; i++) allowed[names[i]] = 1 }
+            $2 == "STOPPED" && ($1 in allowed) {
+              print "Accepted STOPPED (autostart=false): " $1 > "/dev/stderr"
+              next
+            }
+            $2 != "RUNNING" && $2 != "EXITED"
+          ' <<<"$programs")
           if [ -z "$programs" ] || [ -n "$down" ]; then
             fail "supervised programs not running: ${down:-no status}"
           fi
@@ -474,7 +493,7 @@ jobs:
           token=$(smoke_sign_in) || fail "sign-in as $FAGI_ADMIN_EMAIL (POST /accounts/token/)"
           pass "sign-in with the account ./bin/install created"
 
-          keys=$(smoke_keys "$token") || fail "no API key pair from GET /accounts/keys/"
+          keys=$(smoke_keys "$token") || fail "personal key creation through the signed-in session failed"
           { read -r api_key; read -r secret_key; } <<<"$keys"
           echo "::add-mask::$secret_key"
           pass "API key pair issued"

@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: hex
+version: 1.0.0
+name: Hex
+description: "Search Hex projects, ask data questions in Threads, and build projects."
+vendor:
+  name: Hex
+  domains: [hex.tech]
+eeCategory: data
+group: other
+categories: [data, analytics]
+tags: [notebooks, analytics, sql]
+docsUrl: https://learn.hex.tech/docs/api-integrations/mcp-server
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://learn.hex.tech/docs/api-integrations/mcp-server
+    fetchedAt: 2026-10-21

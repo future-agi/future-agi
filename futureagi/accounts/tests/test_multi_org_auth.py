@@ -12,7 +12,7 @@ These are integration tests that hit the actual auth layer.
 """
 
 import base64
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from rest_framework.exceptions import AuthenticationFailed
@@ -176,6 +176,40 @@ class TestAPIKeyAuthentication:
         with pytest.raises(AuthenticationFailed):
             auth_instance.authenticate(request)
 
+    def test_deactivated_personal_api_key_is_rejected(
+        self, auth_instance, auth_user, org_primary
+    ):
+        key = OrgApiKey.no_workspace_objects.create(
+            name="Deactivated personal auth key",
+            organization=org_primary,
+            type="user",
+            user=auth_user,
+        )
+        auth_user.is_active = False
+        auth_user.save(update_fields=["is_active"])
+        request = _make_request(
+            headers={"X-Api-Key": key.api_key, "X-Secret-Key": key.secret_key}
+        )
+
+        with pytest.raises(AuthenticationFailed, match="Invalid API key or secret key"):
+            auth_instance.authenticate(request)
+
+    def test_deactivated_personal_api_key_is_rejected_by_mcp(
+        self, auth_user, org_primary
+    ):
+        from accounts.tests.personal_keys import personal_key_for
+        from mcp_server.mcp_app import _authenticate_and_set_context
+
+        key = personal_key_for(
+            auth_user, org_primary, name="Deactivated personal MCP key"
+        )
+        secret = key.secret_key
+        assert _authenticate_and_set_context(key.api_key, secret) is not None
+        auth_user.is_active = False
+        auth_user.save(update_fields=["is_active"])
+
+        assert _authenticate_and_set_context(key.api_key, secret) is None
+
     def test_deleted_basic_api_key_is_rejected(self, auth_user, org_primary):
         key = OrgApiKey.no_workspace_objects.create(
             name="Deleted basic auth key",
@@ -184,9 +218,9 @@ class TestAPIKeyAuthentication:
             user=auth_user,
             deleted=True,
         )
-        encoded = base64.b64encode(
-            f"{key.api_key}:{key.secret_key}".encode("utf-8")
-        ).decode("ascii")
+        encoded = base64.b64encode(f"{key.api_key}:{key.secret_key}".encode()).decode(
+            "ascii"
+        )
         request = _make_request()
         request.META = {"HTTP_AUTHORIZATION": f"Basic {encoded}"}
 
@@ -267,30 +301,33 @@ class TestResolveOrganization:
         org = auth_instance._resolve_organization(request, user)
         assert org is None
 
-    def test_invalid_header_falls_through(self, auth_instance, auth_user):
-        """Invalid X-Organization-Id falls through to first active membership."""
+    def test_invalid_header_refuses_with_organization_unavailable(self, auth_instance, auth_user):
+        """An absent explicit org must not fall through to an accessible tenant."""
+        from rest_framework.exceptions import PermissionDenied
+        from accounts.authentication import custom_exception_handler
+
         request = _make_request(
             headers={"X-Organization-Id": "00000000-0000-0000-0000-000000000000"}
         )
-        org = auth_instance._resolve_organization(request, auth_user)
-        # Should resolve to any active membership's org
-        assert org is not None
-        assert OrganizationMembership.no_workspace_objects.filter(
-            user=auth_user, organization=org, is_active=True
-        ).exists()
+        with pytest.raises(PermissionDenied) as refused:
+            auth_instance._resolve_organization(request, auth_user)
+        response = custom_exception_handler(refused.value, {})
+        assert response.status_code == 403
+        assert response.data["code"] == "organization_unavailable"
 
-    def test_no_access_org_in_header_falls_through(
+    def test_no_access_org_in_header_refuses_with_organization_unavailable(
         self, auth_instance, auth_user, org_no_access
     ):
-        """Org in header that user can't access falls through to first membership."""
+        """An inaccessible explicit org must not select a different membership."""
+        from rest_framework.exceptions import PermissionDenied
+        from accounts.authentication import custom_exception_handler
+
         request = _make_request(headers={"X-Organization-Id": str(org_no_access.id)})
-        org = auth_instance._resolve_organization(request, auth_user)
-        # Should resolve to any active membership's org (not the no-access org)
-        assert org is not None
-        assert org.id != org_no_access.id
-        assert OrganizationMembership.no_workspace_objects.filter(
-            user=auth_user, organization=org, is_active=True
-        ).exists()
+        with pytest.raises(PermissionDenied) as refused:
+            auth_instance._resolve_organization(request, auth_user)
+        response = custom_exception_handler(refused.value, {})
+        assert response.status_code == 403
+        assert response.data["code"] == "organization_unavailable"
 
     def test_stale_config_falls_through(self, auth_instance, auth_user):
         """Stale org in config (deleted) falls through to first membership."""
@@ -408,12 +445,29 @@ class TestGetUserDefaultWorkspace:
     def test_creates_default_workspace_if_missing(
         self, auth_instance, auth_user, org_invited
     ):
-        """Creates default workspace for org if none exists."""
-        # org_invited has no workspaces
+        """Only explicit organization provisioning creates the missing workspace."""
+        from accounts.views.organization_selection import SwitchOrganizationView
+
+        # Authentication is a read, even for an unprovisioned organization.
+        assert not Workspace.objects.filter(organization=org_invited).exists()
+        memberships_before = WorkspaceMembership.no_workspace_objects.count()
         ws = auth_instance._get_user_default_workspace(auth_user, org_invited)
+        assert ws is None
+        assert not Workspace.objects.filter(organization=org_invited).exists()
+        assert WorkspaceMembership.no_workspace_objects.count() == memberships_before
+
+        # The explicit switch/bootstrap path requires authority in the TARGET
+        # org; being Owner of the primary org does not grant that authority.
+        OrganizationMembership._base_manager.filter(
+            user=auth_user, organization=org_invited
+        ).update(role=OrganizationRoles.ADMIN, level=Level.ADMIN)
+        ws = SwitchOrganizationView()._resolve_workspace_for_org(auth_user, org_invited)
         assert ws is not None
         assert ws.organization_id == org_invited.id
         assert ws.is_default is True
+        assert Workspace.objects.filter(organization=org_invited).count() == 1
+        assert auth_user.can_access_workspace(ws)
+        assert auth_instance._get_user_default_workspace(auth_user, org_invited) == ws
 
     def test_returns_none_when_no_org(self, auth_instance, auth_user):
         ws = auth_instance._get_user_default_workspace(auth_user, None)
@@ -558,25 +612,28 @@ class TestE2EAuthScenarios:
         assert request2.organization.id == org_invited.id
         assert request2.workspace.id == ws_invited.id
 
-    def test_scenario_user_removed_during_session(
+    def test_scenario_user_removed_during_session_refuses_without_tenant_fallback(
         self, auth_instance, auth_user, org_invited, org_primary, ws_primary
     ):
-        """
-        Scenario: User has header pointing to Invited org, but membership
-        was just deactivated. Should fall through to FK org.
-        """
-        # Deactivate invited membership
+        """A removed membership refuses the request; recovery is a separate read."""
+        from rest_framework.exceptions import PermissionDenied
+        from accounts.authentication import custom_exception_handler
+
         membership = OrganizationMembership.no_workspace_objects.get(
             user=auth_user, organization=org_invited
         )
         membership.is_active = False
         membership.save()
+        clear_workspace_context()
 
         request = _make_request(headers={"X-Organization-Id": str(org_invited.id)})
-        auth_instance._set_workspace_context(request, auth_user)
-
-        # Should fall back to primary org
-        assert request.organization.id == org_primary.id
+        with pytest.raises(PermissionDenied) as refused:
+            auth_instance._set_workspace_context(request, auth_user)
+        response = custom_exception_handler(refused.value, {})
+        assert response.status_code == 403
+        assert response.data["code"] == "organization_unavailable"
+        assert get_current_organization() is None
+        assert get_current_workspace() is None
 
     def test_scenario_fresh_login_uses_last_org(
         self, auth_instance, auth_user, org_invited, ws_invited

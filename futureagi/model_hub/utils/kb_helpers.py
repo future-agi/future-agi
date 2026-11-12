@@ -7,6 +7,7 @@ used by both views and tasks.
 
 import os
 import time
+import uuid
 
 import structlog
 from django.db import transaction
@@ -154,17 +155,79 @@ def schedule_kb_ingestion_on_commit(file_metadata, kb_id, org_id):
     workflow_id = get_kb_workflow_id(kb_id)
 
     def _start_ingestion():
+        from temporalio.exceptions import WorkflowAlreadyStartedError
+
         import tfc.temporal.background_tasks.activities  # noqa: F401
         from tfc.temporal.drop_in import start_activity
 
-        start_activity(
-            "ingest_kb_files_activity",
-            args=(metadata, kb_id_str, org_id_str),
-            queue="default",
-            task_id=workflow_id,
-        )
+        try:
+            start_activity(
+                "ingest_kb_files_activity",
+                args=(metadata, kb_id_str, org_id_str),
+                queue="default",
+                task_id=workflow_id,
+            )
+        except WorkflowAlreadyStartedError:
+            # An earlier batch of this KB is still being ingested (for example
+            # files added right after create). Ingest this batch in its own run;
+            # it still stops early when the KB is deleted, through
+            # is_kb_deleted_or_cancelled.
+            batch_task_id = f"{workflow_id}-{uuid.uuid4().hex[:8]}"
+            logger.info(
+                "kb_ingestion_started_in_separate_run",
+                kb_id=kb_id_str,
+                task_id=batch_task_id,
+            )
+            start_activity(
+                "ingest_kb_files_activity",
+                args=(metadata, kb_id_str, org_id_str),
+                queue="default",
+                task_id=batch_task_id,
+            )
 
-    transaction.on_commit(_start_ingestion)
+    def _start_ingestion_or_fail_batch():
+        try:
+            _start_ingestion()
+        except Exception:
+            # The batch's files are already saved but no run was started for
+            # them. Mark them failed so they do not stay Processing forever
+            # and can be added again; the request still fails.
+            _mark_files_not_started(metadata, kb_id_str)
+            raise
+
+    transaction.on_commit(_start_ingestion_or_fail_batch)
+
+
+INGESTION_NOT_STARTED_ERROR = (
+    "Processing could not be started for this file. Add the file again to retry."
+)
+
+
+def _mark_files_not_started(file_metadata, kb_id):
+    """Mark a batch whose ingestion run could not be started as FAILED.
+
+    Each file keeps its metadata (the files table reads its size there) and
+    gets an ``error``, as files that fail during ingestion do.
+    """
+    try:
+        # Import here to avoid circular import
+        from model_hub.tasks.develop_dataset import _file_metadata_with_error
+
+        file_ids = list(file_metadata)
+        for file_row in Files.objects.filter(id__in=file_ids):
+            Files.objects.filter(id=file_row.id).update(
+                status=StatusType.FAILED.value,
+                metadata=_file_metadata_with_error(
+                    file_row.metadata, INGESTION_NOT_STARTED_ERROR
+                ),
+            )
+        logger.warning(
+            "kb_ingestion_not_started_files_marked_failed",
+            kb_id=kb_id,
+            file_ids=file_ids,
+        )
+    except Exception:
+        logger.exception("kb_ingestion_not_started_files_not_marked", kb_id=kb_id)
 
 
 def cancel_kb_ingestion_workflow(kb_id):

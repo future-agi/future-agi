@@ -1,7 +1,9 @@
 // What the launch dialog says about a pick, from launch-options and the
 // user's choices. Nothing is estimated: the budget and the time limit are what
 // hold a fix, and it stops at the limit with the best it found.
-import { formatCredits, formatMinutes } from "./fixRunView";
+import { paths } from "src/routes/paths";
+
+import { fixName, formatCredits, formatMinutes } from "./fixRunView";
 
 export const HELD_BACK_MINIMUM = 12;
 
@@ -69,6 +71,51 @@ export function launchError({ targets, protectedKeys, surfaces, limits }) {
   }
   if (!surfaces.length) return "Pick at least one part it may change.";
   return null;
+}
+
+const ONE_AT_A_TIME =
+  "is still running in this environment. One runs at a time.";
+
+// What a refused launch says and where it leads instead: the improvement
+// already running here, or usage when AI credits are out. Any other refusal
+// reads as the platform gives it.
+export function blockedNote(blocked, { envId, liveFix } = {}) {
+  const env = paths.dashboard.simulate.environments;
+  if (blocked.code === "fix_run_active") {
+    if (!liveFix) {
+      return {
+        message: `Another improvement ${ONE_AT_A_TIME}`,
+        action: {
+          label: "Open improvements",
+          href: env.workspaceTab(envId, "improvements"),
+        },
+      };
+    }
+    const named = liveFix.number != null;
+    return {
+      message: `${named ? fixName(liveFix) : "An improvement"} ${ONE_AT_A_TIME}`,
+      action: {
+        label: named ? `Open ${fixName(liveFix)}` : "Open improvement",
+        href: env.improvement(envId, liveFix.id),
+      },
+    };
+  }
+  if (blocked.code === "usage_limit") {
+    return {
+      message: "You are out of AI credits.",
+      action: {
+        label: "View usage",
+        href: paths.dashboard.settings.usageSummary,
+      },
+    };
+  }
+  if (blocked.code === "fix_source_running") {
+    return {
+      message: "Wait for this run to finish, then start the improvement.",
+      action: null,
+    };
+  }
+  return { message: blocked.message, action: null };
 }
 
 export const scenarioStatus = (passed) => {

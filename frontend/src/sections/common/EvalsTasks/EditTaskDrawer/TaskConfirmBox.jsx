@@ -29,6 +29,7 @@ const RadioOption = ({
         value={value}
         checked={selectedValue === value}
         onChange={() => onChange(value)}
+        inputProps={{ "aria-label": title }}
         sx={{
           "&:hover": { backgroundColor: "transparent" },
         }}
@@ -76,12 +77,14 @@ export default function TaskConfirmDialog({
   isLoading,
   ...other
 }) {
-  const [editType, setEditType] = useState("fresh_run");
+  // Keeping past results is the default. "Delete Past Data & Start Fresh"
+  // removes the task's previous evaluations, so it is only ever an explicit
+  // pick. The dialog stays mounted between opens, so reset on every open: a
+  // delete picked last time must not be preselected next time.
+  const [editType, setEditType] = useState("edit_rerun");
 
-  // The dialog stays mounted between opens, so a previous "edit_rerun" pick
-  // would still be selected next time — and the other option deletes data.
   useEffect(() => {
-    if (open) setEditType("fresh_run");
+    if (open) setEditType("edit_rerun");
   }, [open]);
 
   const handleConfirm = () => {
@@ -114,8 +117,7 @@ export default function TaskConfirmDialog({
       PaperProps={{
         sx: {
           borderRadius: "8px",
-          boxShadow: "0px 4px 12px rgba(0, 0, 0, 0.1)",
-          width: "544px",
+          width: "560px",
           height: "282px",
         },
       }}
@@ -131,7 +133,7 @@ export default function TaskConfirmDialog({
               color: "text.primary",
               padding: 0,
               mt: 2.8,
-              fontSize: "14px",
+              fontSize: "13px",
               fontWeight: 500,
               mb: 1.2,
             }}
@@ -168,13 +170,6 @@ export default function TaskConfirmDialog({
             onClick={handleConfirm}
             loading={isLoading}
             color="primary"
-            sx={{
-              fontSize: "16px",
-              fontWeight: 600,
-              borderRadius: "8px",
-              textTransform: "none",
-              px: 3,
-            }}
           >
             {confirmText}
           </LoadingButton>

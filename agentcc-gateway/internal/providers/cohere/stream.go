@@ -155,6 +155,22 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, bool, e
 		return nil, false, nil
 
 	case "message-end":
+		// Cohere v2 puts the terminal usage in delta; retain support for
+		// top-level usage emitted by older compatible endpoints.
+		if event.Delta != nil {
+			var terminal struct {
+				FinishReason string       `json:"finish_reason"`
+				Usage        *cohereUsage `json:"usage"`
+			}
+			if err := json.Unmarshal(event.Delta, &terminal); err == nil {
+				if terminal.FinishReason != "" {
+					event.FinishReason = terminal.FinishReason
+				}
+				if terminal.Usage != nil {
+					event.Usage = terminal.Usage
+				}
+			}
+		}
 		finishReason := mapCohereFinishReason(event.FinishReason)
 		chunk := &models.StreamChunk{
 			ID:      s.chunkID,
@@ -168,12 +184,8 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, bool, e
 				},
 			},
 		}
-		if event.Usage != nil && event.Usage.Tokens != nil {
-			chunk.Usage = &models.Usage{
-				PromptTokens:     event.Usage.Tokens.InputTokens,
-				CompletionTokens: event.Usage.Tokens.OutputTokens,
-				TotalTokens:      event.Usage.Tokens.InputTokens + event.Usage.Tokens.OutputTokens,
-			}
+		if event.Usage != nil {
+			chunk.Usage = event.Usage.toUsage()
 		}
 		return chunk, true, nil
 	}

@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  render as rtlRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -10,6 +17,15 @@ import {
   resetFixRunFixtures,
   updateFixtureFixRun,
 } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
+
+// The trials table reads theme.palette.data, so render with the app theme.
+const appTheme = createTheme({ palette: palette("light") });
+// eslint-disable-next-line react/prop-types
+const AppTheme = ({ children }) => (
+  <ThemeProvider theme={appTheme}>{children}</ThemeProvider>
+);
+const render = (ui, options) =>
+  rtlRender(ui, { wrapper: AppTheme, ...options });
 
 vi.mock("src/utils/axios", async (importOriginal) => {
   const { withFakeFixRunsApi } = await import(
@@ -29,7 +45,11 @@ vi.mock("src/api/simulate-environments/fixRuns", async (importOriginal) => {
   };
 });
 
+const axios = (await import("src/utils/axios")).default;
 const { default: FixRunPage } = await import("../FixRunPage");
+
+const IMPROVEMENTS_HREF =
+  "/dashboard/simulate/environments/env-1?tab=improvements";
 
 const fixOf = (id) => ({
   ...structuredClone(fixtureFixRun(id)),
@@ -113,7 +133,9 @@ describe("FixRunPage", () => {
     expect(
       within(dialog).queryByText(/None of them has been checked/),
     ).toBeNull();
-    expect(within(dialog).getByText(/Today's version stays/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/Today's version stays/),
+    ).toBeInTheDocument();
   });
 
   it("shows the server's message when it refuses the Stop", async () => {
@@ -147,6 +169,78 @@ describe("FixRunPage", () => {
     expect(
       screen.queryByText("This improvement could not be found"),
     ).toBeNull();
+  });
+
+  // The improvement page replaces the workspace chrome and its Back arrow
+  // comes with the loaded fix, so a fix that never loaded needs its own way
+  // back, and a failed read must not read as a missing fix.
+  it("offers the way back when the improvement is not there", async () => {
+    renderPage("fix-missing");
+    expect(
+      await screen.findByText("This improvement could not be found"),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Back to improvements" }),
+    ).toHaveAttribute("href", IMPROVEMENTS_HREF);
+  });
+
+  it("says the plan lacks Fix my agent when the read answers 402", async () => {
+    hooks.fixRun = {
+      fix: undefined,
+      isLoading: false,
+      error: {
+        statusCode: 402,
+        upgrade_required: true,
+        error: { message: "Upgrade to use Fix my agent." },
+      },
+      refetch: vi.fn(),
+    };
+    renderPage("fix-search");
+    expect(
+      await screen.findByText("Fix my agent is not included in your plan"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("This improvement could not be found"),
+    ).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Back to improvements" }),
+    ).toHaveAttribute("href", IMPROVEMENTS_HREF);
+  });
+
+  it("offers Try again when the first read fails, then shows the fix", async () => {
+    axios.get.mockImplementationOnce(() =>
+      Promise.reject({ statusCode: 503, message: "Service unavailable" }),
+    );
+    const user = userEvent.setup();
+    renderPage("fix-search");
+    expect(
+      await screen.findByText("Could not load this improvement"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("This improvement could not be found"),
+    ).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Back to improvements" }),
+    ).toHaveAttribute("href", IMPROVEMENTS_HREF);
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Improvement 13")).toBeInTheDocument();
+  });
+
+  it("does not call a dropped connection a missing improvement", async () => {
+    hooks.fixRun = {
+      fix: undefined,
+      isLoading: false,
+      error: { message: "Network Error", transportCode: "ERR_NETWORK" },
+      refetch: vi.fn(),
+    };
+    renderPage("fix-search");
+    expect(
+      await screen.findByText("Could not load this improvement"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("This improvement could not be found"),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   });
 
   it("switches to the finished view when a running fix ends", async () => {

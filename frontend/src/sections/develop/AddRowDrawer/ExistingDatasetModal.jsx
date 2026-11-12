@@ -15,13 +15,19 @@ import {
   useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useEffect, useMemo, useState } from "react";
+import { v1LineText } from "../AddDatasetDrawer/v1Line";
+import React, { useEffect, useId, useMemo, useState } from "react";
 import Iconify from "src/components/iconify";
-import { existingDatasetValidationSchema } from "./validation";
+import { dsSize } from "src/theme/ds-tokens";
+import { existingDatasetValidationSchema, SKIP_FIELD } from "./validation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { IMPORTS_PATH } from "src/sections/common/AddData/mappingModel";
 import axios, { endpoints } from "src/utils/axios";
+import { useChangeSetStore } from "src/sections/develop-detail/DataTab/Versions/changeSetStore";
+import { revealNewRows } from "src/sections/develop-detail/DataTab/DataGrid/newRowsReveal";
+import { toPendingOps } from "./fileImport";
 import {
   useGetDatasetColumns,
   useDevelopDatasetList,
@@ -40,12 +46,21 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
 import { getExistingDatasetConfigValues } from "./existingDatasetMapping";
 import { getCreatedDatasetCopyId } from "./existingDatasetResponse";
+import { isSurfaceShown } from "src/launch/launchSwitch";
+
+// FR-DATASETS-002: a first dataset has no other dataset to copy from.
+const NO_SOURCE_DATASETS =
+  "No other datasets to copy from. Upload a file or start a blank grid first.";
 
 function replaceKeys(obj, arr) {
   const output = {};
   arr.forEach((item) => {
     const keyInObj = item.name;
-    if (obj[keyInObj] !== undefined && obj[keyInObj] !== "") {
+    if (
+      obj[keyInObj] !== undefined &&
+      obj[keyInObj] !== "" &&
+      obj[keyInObj] !== SKIP_FIELD
+    ) {
       output[item.id] = obj[keyInObj];
     }
   });
@@ -139,6 +154,8 @@ const ExistingDatasetModal = ({
   onClose,
   refreshGrid,
   datasetId,
+  // Opt in only when the host also stacks its chooser below lg.
+  stackBelowLg = false,
   ...rest
 }) => {
   const { dataset: datasetFromParams } = useParams();
@@ -170,6 +187,8 @@ const ExistingDatasetModal = ({
     defaultValues: {
       name: "",
       value: "",
+      // As production: "Import data and prompt configuration" is the default;
+      // it lists the source's Run Prompt columns too (include_prompt).
       dataType: "ImportDataPromptConfiguration",
       config: {
         mapping: {},
@@ -212,6 +231,7 @@ const ExistingDatasetModal = ({
   };
 
   const selectedValue = watch("value");
+  const newName = watch("name");
   const configData = watch("config");
   const dataType = watch("dataType");
 
@@ -221,6 +241,19 @@ const ExistingDatasetModal = ({
     {},
     { include_experiments: true },
   );
+
+  // The dataset being added to is never its own source. Once the list has
+  // loaded with nothing else in it, the pane says so and Add stays disabled.
+  const sourceOptions = useMemo(
+    () =>
+      (datasetList ?? [])
+        .filter((item) => item.datasetId !== dataset)
+        .map((item) => ({ label: item.name, value: item.datasetId })),
+    [datasetList, dataset],
+  );
+  const noSourceDatasets =
+    Array.isArray(datasetList) && sourceOptions.length === 0;
+  const noSourceReasonId = useId();
 
   const { data: currentDatasetColumns } = useGetDatasetColumns(dataset, {
     enabled: !!dataset,
@@ -259,6 +292,48 @@ const ExistingDatasetModal = ({
       setCheckboxHandle(checkboxState);
     }
   }, [currentDatasetColumns, dataset, selectedDatasetColumn, setValue]);
+
+  // W3-7: the create door says what it will make before it makes it (IM1
+  // preview of a `dataset` source with `target.new`; writes nothing).
+  // PF-7: the imports endpoint is DSX-only; a build that hides
+  // dataset.imports.sources never asks it (dev has no preview,
+  // absentPathGuard would refuse it), and Add still posts add-as-new.
+  const copyColumnMap = useMemo(() => {
+    if (dataset || !selectedDatasetColumns?.length) return null;
+    const out = {};
+    selectedDatasetColumns.forEach((c) => {
+      if (checkboxHandle?.[c.name] === false) return;
+      out[c.name] =
+        String(configData?.mapping?.[c.name] ?? c.name).trim() || c.name;
+    });
+    return Object.keys(out).length ? out : null;
+  }, [dataset, selectedDatasetColumns, checkboxHandle, configData]);
+  const v1Preview = useQuery({
+    queryKey: ["copy-v1-preview", selectedValue, copyColumnMap, newName],
+    queryFn: () =>
+      axios
+        .post(IMPORTS_PATH, {
+          op: "preview",
+          source: {
+            kind: "dataset",
+            dataset_id: selectedValue,
+            version: "latest",
+            column_map: copyColumnMap,
+          },
+          target: { new: { name: String(newName ?? "").trim() } },
+        })
+        .then((r) => r?.data?.result?.v1 ?? null),
+    enabled: Boolean(
+      open &&
+        !dataset &&
+        selectedValue &&
+        copyColumnMap &&
+        String(newName ?? "").trim() &&
+        isSurfaceShown("dataset.imports.sources"),
+    ),
+    retry: false,
+    staleTime: 30000,
+  });
 
   const performClose = () => {
     onClose();
@@ -325,9 +400,31 @@ const ExistingDatasetModal = ({
             "add from existing model dataset or experiment",
         });
 
+        // W3-1: copied rows land as pending changes when the server answers
+        // with operations (IM1 `dataset` source); Save version keeps them.
+        const operations = data?.data?.result?.operations;
+        const pending = Array.isArray(operations)
+          ? toPendingOps(operations, {
+              stamp: `${Date.now().toString(36)}-`,
+              hint: data?.data?.result?.description_hint,
+            })
+          : null;
+        if (dataset && pending) {
+          const cs = useChangeSetStore.getState();
+          pending.forEach((op) => cs.addOp(dataset, op));
+          revealNewRows(
+            dataset,
+            pending.filter((o) => o.op === "add_row").map((o) => o.temp_id),
+          );
+        }
+        const added = pending
+          ? pending.filter((o) => o.op === "add_row").length
+          : 0;
         enqueueSnackbar(
           dataset
-            ? "Rows imported successfully"
+            ? pending
+              ? `${added} ${added === 1 ? "row" : "rows"} added to pending changes`
+              : "Rows imported successfully"
             : "New dataset has been created",
           { variant: "success" },
         );
@@ -436,12 +533,34 @@ const ExistingDatasetModal = ({
   };
 
   return (
-    <Collapse in={open} orientation="horizontal">
+    <Collapse
+      in={open}
+      orientation="horizontal"
+      sx={
+        stackBelowLg
+          ? {
+              maxWidth: { xs: "100%", lg: "none" },
+              flexShrink: 0,
+              "&.MuiCollapse-hidden": { height: 0 },
+              // Horizontal Collapse measures its wrapper before entering.
+              // Preserve MUI's intrinsic width above the stacking breakpoint.
+              [theme.breakpoints.down("lg")]: {
+                "& .MuiCollapse-wrapper, & .MuiCollapse-wrapperInner": {
+                  width: "100%",
+                  maxWidth: "100%",
+                },
+              },
+            }
+          : undefined
+      }
+    >
       <ClickAwayListener onClickAway={handleClickAway} mouseEvent="onMouseDown">
         <Box
           sx={{
-            width: "550px",
-            height: "100vh",
+            width: stackBelowLg ? dsSize.drawer.md : "550px",
+            maxWidth: stackBelowLg ? { xs: "100%", lg: "none" } : undefined,
+            boxSizing: stackBelowLg ? "border-box" : undefined,
+            height: stackBelowLg ? { xs: "auto", lg: "100dvh" } : "100vh",
             borderRight: "1px solid",
             borderColor: "divider",
             overflowY: "auto",
@@ -465,21 +584,22 @@ const ExistingDatasetModal = ({
                   color="text.primary"
                   variant="m3"
                 >
-                  Add from existing model dataset or experiment
+                  Copy rows from another dataset
                 </Typography>
               </Box>
               <IconButton
                 onClick={() => closeDrawer()}
+                aria-label="Close copy rows"
                 sx={{ padding: (theme) => theme.spacing(0) }}
               >
-                <Iconify icon="mingcute:close-line" color="text.primary" />
+                <Iconify icon="solar:close-linear" color="text.primary" />
               </IconButton>
             </Box>
             <HelperText
               text={
                 dataset
                   ? "Choose from existing datasets to import rows into this dataset"
-                  : "Choose from the existing datasets in our system to create a new dataset"
+                  : "Choose one of your datasets to copy into a new dataset"
               }
             />
           </Box>
@@ -522,20 +642,19 @@ const ExistingDatasetModal = ({
                   <FormSearchSelectFieldControl
                     isSearchable={true}
                     control={control}
-                    options={datasetList
-                      ?.filter((item) => item.datasetId !== dataset)
-                      ?.map((item) => ({
-                        label: item.name,
-                        value: item.datasetId,
-                      }))}
+                    options={sourceOptions}
                     fieldName="value"
                     valueSelector={(o) => o.value}
                     fullWidth
-                    label="Choose Datasets or experiments"
+                    label="Choose a dataset"
                     size="small"
                     dropDownMaxHeight={300}
-                    error={""}
-                    helperText={""}
+                    disabled={noSourceDatasets}
+                    // Add with nothing chosen says why, not a silent no-op.
+                    error={Boolean(errors?.value)}
+                    helperText={
+                      errors?.value ? "Choose a dataset to copy from" : ""
+                    }
                   />
                   <RadioField
                     control={control}
@@ -587,9 +706,10 @@ const ExistingDatasetModal = ({
                       border: "1px solid",
                       borderColor: "divider",
                       borderRadius: theme.spacing(1),
-                      padding: theme.spacing(2),
+                      padding: theme.spacing(1.5),
                       overflow: "auto",
-                      height: `calc(100vh - ${dataset ? "330" : "380"}px)`,
+                      // As tall as its rows, up to the space available.
+                      maxHeight: `calc(100vh - ${dataset ? "330" : "380"}px)`,
                     }}
                   >
                     <ShowComponent
@@ -604,9 +724,30 @@ const ExistingDatasetModal = ({
                         sx={{
                           display: "flex",
                           flexDirection: "column",
-                          gap: theme.spacing(1.5),
+                          gap: theme.spacing(1),
                         }}
                       >
+                        {/* Said once for the whole list, not above every row. */}
+                        <Box
+                          sx={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 1.5,
+                            pl: dataset ? 0 : 4.5,
+                            typography: "s3",
+                            color: "text.subtitle",
+                          }}
+                        >
+                          <Box sx={{ width: theme.spacing(21) }}>
+                            Source column
+                          </Box>
+                          <Box sx={{ width: 16 }} />
+                          <Box>
+                            {dataset
+                              ? "Column in this dataset"
+                              : "New column name"}
+                          </Box>
+                        </Box>
                         {isSelectedDatasetColumn ? (
                           <FieldSelectionSkeleton check={true} />
                         ) : (
@@ -640,6 +781,15 @@ const ExistingDatasetModal = ({
                                 allColumns.map((item) => [item.field, item]),
                               ).values(),
                             );
+                            // v2.1 g8: adding rows, any field can be skipped.
+                            if (dataset && allColumns.length)
+                              allColumns = [
+                                {
+                                  headerName: "Skip (don't copy this field)",
+                                  field: SKIP_FIELD,
+                                },
+                                ...allColumns,
+                              ];
 
                             if (allColumns.length === 0) return null;
 
@@ -676,20 +826,33 @@ const ExistingDatasetModal = ({
                       <Box
                         sx={{
                           display: "flex",
-                          height: `calc(100vh - ${dataset ? "380" : "430"}px)`,
+                          py: 6,
                           justifyContent: "center",
                           alignItems: "center",
+                          textAlign: "center",
                         }}
                       >
                         <Typography
+                          id={noSourceDatasets ? noSourceReasonId : undefined}
                           variant="s1"
                           fontWeight="fontWeightRegular"
                           color="text.primary"
                         >
-                          Choose Dataset
+                          {noSourceDatasets
+                            ? NO_SOURCE_DATASETS
+                            : "Choose a dataset to see its columns"}
                         </Typography>
                       </Box>
                     </ShowComponent>
+                    {v1Preview.data && (
+                      <Typography
+                        typography="s2"
+                        color="text.secondary"
+                        data-testid="copy-v1-note"
+                      >
+                        {v1LineText(v1Preview.data)}
+                      </Typography>
+                    )}
                     {errors?.config?.mapping?.root?.message && (
                       <FormHelperText
                         sx={{
@@ -719,7 +882,6 @@ const ExistingDatasetModal = ({
                   variant="outlined"
                   sx={{
                     typography: "s1",
-                    fontWeight: "fontWeightMedium",
                     paddingY: (theme) => theme.spacing(1),
                     paddingX: (theme) => theme.spacing(3),
                   }}
@@ -733,9 +895,12 @@ const ExistingDatasetModal = ({
                   variant="contained"
                   color="primary"
                   loading={submitDatasetLoading}
+                  disabled={noSourceDatasets}
+                  aria-describedby={
+                    noSourceDatasets ? noSourceReasonId : undefined
+                  }
                   sx={{
                     typography: "s1",
-                    fontWeight: "fontWeightMedium",
                     paddingY: (theme) => theme.spacing(1),
                     paddingX: (theme) => theme.spacing(3),
                   }}
@@ -748,7 +913,8 @@ const ExistingDatasetModal = ({
             <Dialog
               open={Boolean(openCreateColumn)}
               onClose={() => setOpenCreateColumn("")}
-              maxWidth="sm"
+              maxWidth={false}
+              PaperProps={{ sx: { maxWidth: 720 } }}
               fullWidth
             >
               <DialogTitle
@@ -761,8 +927,11 @@ const ExistingDatasetModal = ({
                 <Typography fontWeight="fontWeightBold" variant="m2">
                   Create New Column
                 </Typography>
-                <IconButton onClick={() => setOpenCreateColumn("")}>
-                  <Iconify icon="mdi:close" />
+                <IconButton
+                  onClick={() => setOpenCreateColumn("")}
+                  aria-label="Close new column"
+                >
+                  <Iconify icon="solar:close-linear" />
                 </IconButton>
               </DialogTitle>
               <form onSubmit={handleFormSubmit(onSubmitCreateColumn)}>
@@ -830,6 +999,7 @@ ExistingDatasetModal.propTypes = {
   onClose: PropTypes.func,
   refreshGrid: PropTypes.func,
   datasetId: PropTypes.string,
+  stackBelowLg: PropTypes.bool,
 };
 
 export default ExistingDatasetModal;

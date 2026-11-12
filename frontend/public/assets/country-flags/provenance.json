@@ -1,0 +1,316 @@
+{
+  "source": "@iconify/json@2.2.548/json/circle-flags.json",
+  "licence": "MIT; see ../licences/icons/circle-flags.txt (notice acquisition gate must pass)",
+  "files": [
+    {
+      "file": "us.svg",
+      "icon": "circle-flags:us",
+      "digest": "sha256:dfd995787896090f1d36b0e11d411ecac137cff57177b82b49cb63d120debf0e"
+    },
+    {
+      "file": "ca.svg",
+      "icon": "circle-flags:ca",
+      "digest": "sha256:1825ec48dbcba9d2bdc3ec253cd5c95b20b186d48a3ae79a28ff71dfcb6474c1"
+    },
+    {
+      "file": "gb.svg",
+      "icon": "circle-flags:gb",
+      "digest": "sha256:0a15d1cbbf9d7960aeeb221db802c07c4c469be00b78f33acb0b9035a42a84ef"
+    },
+    {
+      "file": "in.svg",
+      "icon": "circle-flags:in",
+      "digest": "sha256:9d7a0868f087a0e3f78056a5fbbaf8855107625f6997494ec1874e336facc568"
+    },
+    {
+      "file": "au.svg",
+      "icon": "circle-flags:au",
+      "digest": "sha256:4080f79c2f32ec1fe212f7a3fdb89b49117bb4357c12f9678b9e7aed769fdc9a"
+    },
+    {
+      "file": "de.svg",
+      "icon": "circle-flags:de",
+      "digest": "sha256:98205ee87ccf5b0ec132285d3459124ce8a7aee0b58caecb9e1436912e356106"
+    },
+    {
+      "file": "fr.svg",
+      "icon": "circle-flags:fr",
+      "digest": "sha256:e949165c714fbf521dd97417ebefc17d9be34b0093bc7fb65271a36e61909383"
+    },
+    {
+      "file": "it.svg",
+      "icon": "circle-flags:it",
+      "digest": "sha256:edcd945ec159e78109e1cd2b0e6330a6623bebabb5c305073294f4434958ba95"
+    },
+    {
+      "file": "es.svg",
+      "icon": "circle-flags:es",
+      "digest": "sha256:63ef14329bac5220fb650223a2e5ca82ba96bfb32dd71e64ecd303ae42fa56c5"
+    },
+    {
+      "file": "nl.svg",
+      "icon": "circle-flags:nl",
+      "digest": "sha256:d3447b714e3440d9866ba470505e6916a551a2099f0ee94cdfe9afb15af46384"
+    },
+    {
+      "file": "se.svg",
+      "icon": "circle-flags:se",
+      "digest": "sha256:daf7a7c0fe4b8904586c0fcee3a8439216e3ed83a98e870dac8b8a5c67b67157"
+    },
+    {
+      "file": "no.svg",
+      "icon": "circle-flags:no",
+      "digest": "sha256:e72644a1244861dca83a0de02aaf1d611d874bcb2500c08b5c87039dae4ecde6"
+    },
+    {
+      "file": "dk.svg",
+      "icon": "circle-flags:dk",
+      "digest": "sha256:b77ddd29eac652df3805cf16c4ae81f78e10b57bfb6ce7bb47189b46efba1e1a"
+    },
+    {
+      "file": "ch.svg",
+      "icon": "circle-flags:ch",
+      "digest": "sha256:bd583466374e93cd9e9541cc6b22c6683c4776208a3beeb08a842ac55744190a"
+    },
+    {
+      "file": "be.svg",
+      "icon": "circle-flags:be",
+      "digest": "sha256:22d23fdc978904ceaff3f5689cc4c6f35e2eddf86f725ee0780a187506193c92"
+    },
+    {
+      "file": "at.svg",
+      "icon": "circle-flags:at",
+      "digest": "sha256:7b3570041c0d07a02d23a14961f751b8d0fc6066d2f5493bfbdeb8b9e8845e61"
+    },
+    {
+      "file": "fi.svg",
+      "icon": "circle-flags:fi",
+      "digest": "sha256:2a617a96ff7abbfd910af027eec1f9d0ed34b2735043f43b4cf3b834b301cc71"
+    },
+    {
+      "file": "ie.svg",
+      "icon": "circle-flags:ie",
+      "digest": "sha256:ed3da4bc24ef8f7a7230119a7c4168f6b9a0ed78dccd795cee81bcff602502e0"
+    },
+    {
+      "file": "pt.svg",
+      "icon": "circle-flags:pt",
+      "digest": "sha256:3db9a82f0ff4ce4513c5d29da23d5d9a1b85cb1c2e5db9cd86819b779ed0d5a0"
+    },
+    {
+      "file": "gr.svg",
+      "icon": "circle-flags:gr",
+      "digest": "sha256:8420983ae5f501408a7f9399f2c4acbd71c5c029b33232bb598e354a3bf9227c"
+    },
+    {
+      "file": "pl.svg",
+      "icon": "circle-flags:pl",
+      "digest": "sha256:b7c4d9f8d6b407de71b6145e6b2ef5699af292bbcc7c24bcea682aaa91843fac"
+    },
+    {
+      "file": "cz.svg",
+      "icon": "circle-flags:cz",
+      "digest": "sha256:143cdb4d0bc63de892618b2cd7c3fc60291c123af6c58941abc86af409d37ca3"
+    },
+    {
+      "file": "hu.svg",
+      "icon": "circle-flags:hu",
+      "digest": "sha256:09a9a3c20e96ac7297d41495695a87906273b6e6e0eb6e5f62e0c436b84679e3"
+    },
+    {
+      "file": "ro.svg",
+      "icon": "circle-flags:ro",
+      "digest": "sha256:73af59656c5c82bd3eb351efb1164a36ff53ae05ac03ee6d59922de1e23792c3"
+    },
+    {
+      "file": "ru.svg",
+      "icon": "circle-flags:ru",
+      "digest": "sha256:fa0a58668d19fba56daf8d10dfa1f04eb999e571730e92c7b4b5ed24828708ca"
+    },
+    {
+      "file": "ua.svg",
+      "icon": "circle-flags:ua",
+      "digest": "sha256:c387d02bc430420c13ba84266edb13fa69e3cd3b6f2add39c34c54010902976d"
+    },
+    {
+      "file": "tr.svg",
+      "icon": "circle-flags:tr",
+      "digest": "sha256:432f157f002529a606ec0a0f79d8b4686b50ca13786d94f2c7b59049c9db1fc9"
+    },
+    {
+      "file": "sa.svg",
+      "icon": "circle-flags:sa",
+      "digest": "sha256:cb51a94179d9649412d8947a364d4416e91d70505a7632219b9065bc05c22eb9"
+    },
+    {
+      "file": "ae.svg",
+      "icon": "circle-flags:ae",
+      "digest": "sha256:82eb9e9cf17d076e20dd97b2728fd6416615d40b6ab122e8c334586eb1849535"
+    },
+    {
+      "file": "qa.svg",
+      "icon": "circle-flags:qa",
+      "digest": "sha256:f2f24c8dfa050e96e5fbc12c881a89dd26cc2a39e72eb28e713e5b9c904f067e"
+    },
+    {
+      "file": "kw.svg",
+      "icon": "circle-flags:kw",
+      "digest": "sha256:46fd6683a7d928facfa392ab902ed01c5ea1e209372d7fd8742a3d003ad97772"
+    },
+    {
+      "file": "om.svg",
+      "icon": "circle-flags:om",
+      "digest": "sha256:82e3aaf6b8999b21944184ed52cc6f7137d01a24b8a3ea2772c8da705ede56cb"
+    },
+    {
+      "file": "bh.svg",
+      "icon": "circle-flags:bh",
+      "digest": "sha256:44f2d0ce02f8b1513e7744ff6435824f49bb700d6ec0830d6d4b10905b0c7a98"
+    },
+    {
+      "file": "pk.svg",
+      "icon": "circle-flags:pk",
+      "digest": "sha256:da7b6631d74b1d55be10ad5f0f963ebae1bee82ad88095df5f7dc2f029a8d8a8"
+    },
+    {
+      "file": "bd.svg",
+      "icon": "circle-flags:bd",
+      "digest": "sha256:20eaaaefebb47031c879873387bd09ac9c8667a0cab6238798a5289e07189f68"
+    },
+    {
+      "file": "lk.svg",
+      "icon": "circle-flags:lk",
+      "digest": "sha256:2535fa99fe25ad59d0da5b013ebba1586866e1ce8c91537db20a343c2c8aa411"
+    },
+    {
+      "file": "np.svg",
+      "icon": "circle-flags:np",
+      "digest": "sha256:d8fe7d335e1e20764ec02b5a53a622e32b42b32bf389208f5d219eb0392221a0"
+    },
+    {
+      "file": "bt.svg",
+      "icon": "circle-flags:bt",
+      "digest": "sha256:9afc3ea084edf4e346dbe14a4a099f59966363727cadba339bc688e9ec1c65c5"
+    },
+    {
+      "file": "cn.svg",
+      "icon": "circle-flags:cn",
+      "digest": "sha256:bff230d15e28690281d7017396864bd778bc33f7e9bd5b6fce676d29c3acb61f"
+    },
+    {
+      "file": "jp.svg",
+      "icon": "circle-flags:jp",
+      "digest": "sha256:d60f3a980331c04a30b797a205eb0352c17b44fd53b7ab1b35e28d693bc38696"
+    },
+    {
+      "file": "kr.svg",
+      "icon": "circle-flags:kr",
+      "digest": "sha256:385f91f97a40c4f2ffa263d65e31e981bea8e553477e10f5ad5a585c48816c47"
+    },
+    {
+      "file": "tw.svg",
+      "icon": "circle-flags:tw",
+      "digest": "sha256:51c76f739377ac23a5517ef4d11087e1b990870639acad34e265a81ab57604dd"
+    },
+    {
+      "file": "hk.svg",
+      "icon": "circle-flags:hk",
+      "digest": "sha256:2163fd2a162c1e4376ace7d7f74013878fc559cc6e1b71c31a8ec8a18b5d0dd4"
+    },
+    {
+      "file": "sg.svg",
+      "icon": "circle-flags:sg",
+      "digest": "sha256:c59e5d28472beeb3d90a614d5e1c6ad88357487b3bb0ca6e840410c92e9dacd1"
+    },
+    {
+      "file": "my.svg",
+      "icon": "circle-flags:my",
+      "digest": "sha256:2e2b5381e97691117eb7afdbc3b8262b4b94bc577daa8760805c804283c3e03f"
+    },
+    {
+      "file": "id.svg",
+      "icon": "circle-flags:id",
+      "digest": "sha256:92348e2a1a144137a2d6af9186706d5ca1ead03ac7d69d10125f3bd2e781e91f"
+    },
+    {
+      "file": "th.svg",
+      "icon": "circle-flags:th",
+      "digest": "sha256:f248d1ca9396ab4a6da961d0ca41e7a80f765d5984ffba2ec3a58150eb4016a4"
+    },
+    {
+      "file": "vn.svg",
+      "icon": "circle-flags:vn",
+      "digest": "sha256:5dbe86012d7c7b3320133765b8e338077fe2a824ceaa427ed2906b66928722af"
+    },
+    {
+      "file": "ph.svg",
+      "icon": "circle-flags:ph",
+      "digest": "sha256:1552e23065ae61e3ba3c863cc2a576e4f5224a4241cbc9a4c9be0db3dcd9d5aa"
+    },
+    {
+      "file": "nz.svg",
+      "icon": "circle-flags:nz",
+      "digest": "sha256:f8ae154d84cd78b1bb1a131c9fd550b16d82a0dbc72314bf37a66ef111ffd7c9"
+    },
+    {
+      "file": "za.svg",
+      "icon": "circle-flags:za",
+      "digest": "sha256:1674efe89309dc0c20aa87045cb9a69810df27dc81e85dedb65d9199a489aea6"
+    },
+    {
+      "file": "ng.svg",
+      "icon": "circle-flags:ng",
+      "digest": "sha256:142b559bcaf65a309038c0532576e4574a48d3ce95152257c980bb73a3121044"
+    },
+    {
+      "file": "ke.svg",
+      "icon": "circle-flags:ke",
+      "digest": "sha256:5776fcc9e796f66b89c9e20329b91dd4ba0db7bbfdba4e06b53a0f3ca8fa0f75"
+    },
+    {
+      "file": "eg.svg",
+      "icon": "circle-flags:eg",
+      "digest": "sha256:ba55f15d104c593baac55a3c0ea5885c7df3b47ff175d946f658b00c54517ab4"
+    },
+    {
+      "file": "ma.svg",
+      "icon": "circle-flags:ma",
+      "digest": "sha256:69c52d58f74ec8e41119bb078cad4d9de6837504af4b6e9ee2f1ec88ba646fbb"
+    },
+    {
+      "file": "br.svg",
+      "icon": "circle-flags:br",
+      "digest": "sha256:2c2e0bf44c559e4e3a357e5af7296da42606f64b965fcb73f9cc6666ddda4b6c"
+    },
+    {
+      "file": "mx.svg",
+      "icon": "circle-flags:mx",
+      "digest": "sha256:00f4913ba78e72a84ae65cdf6b4c1c1224e245e1f46a33e105488e4c93027686"
+    },
+    {
+      "file": "ar.svg",
+      "icon": "circle-flags:ar",
+      "digest": "sha256:08f3c7709eed54198659a270e56c92ffee55a35e416f9210186c095386474dde"
+    },
+    {
+      "file": "cl.svg",
+      "icon": "circle-flags:cl",
+      "digest": "sha256:19b3e8f4126991aab62466565b164908a547f137f1dc077bccdd0cf3decd1ad6"
+    },
+    {
+      "file": "co.svg",
+      "icon": "circle-flags:co",
+      "digest": "sha256:9376d05447771baa7a62586e9f3b4cacd3bfa7a0a8e56a925da346bdd5605fc5"
+    },
+    {
+      "file": "pe.svg",
+      "icon": "circle-flags:pe",
+      "digest": "sha256:9ec33b6a3eea03993c0a257838daedffce1ec3a323965d6cbef210dac9b12060"
+    },
+    {
+      "file": "ve.svg",
+      "icon": "circle-flags:ve",
+      "digest": "sha256:8a7d65d4a77c595e8af5522da8070acc07eb483f44c7e8ff3646e80caf6aa0d0"
+    }
+  ]
+}

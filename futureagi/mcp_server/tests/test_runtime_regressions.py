@@ -335,16 +335,15 @@ def test_resolved_tenant_drift_is_denied_even_if_membership_checks_pass(
 def test_api_key_context_resolves_tenant_from_the_key(user, workspace):
     """With the OrgApiKey on the context, Django resolves the org from the key
     (as the REST API does) and the key's workspace is honoured."""
-    from accounts.models import OrgApiKey
+    from accounts.tests.personal_keys import personal_key_for
 
     member, own_workspace, _, _ = _org_member_with_own_workspace(
         user.organization, "keyed-member"
     )
-    org_api_key = OrgApiKey.no_workspace_objects.create(
-        organization=user.organization,
+    org_api_key = personal_key_for(
+        member,
+        user.organization,
         workspace=own_workspace,
-        user=member,
-        type="user",
         enabled=True,
         api_key=f"fi-{uuid.uuid4().hex}",
         secret_key=f"sk-{uuid.uuid4().hex}",

@@ -1,7 +1,7 @@
 """Tests for integration Temporal activities."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -31,7 +31,7 @@ from integrations.transformers.langfuse_transformer import LangfuseTransformer
 class TestPollActiveIntegrations:
     @patch("integrations.temporal.activities.sync_integration_connection")
     def test_dispatches_due_connections(self, mock_sync, integration_connection):
-        integration_connection.last_synced_at = datetime.now(timezone.utc) - timedelta(
+        integration_connection.last_synced_at = datetime.now(UTC) - timedelta(
             minutes=10
         )
         integration_connection.sync_interval_seconds = 300
@@ -45,7 +45,7 @@ class TestPollActiveIntegrations:
 
     @patch("integrations.temporal.activities.sync_integration_connection")
     def test_skips_not_yet_due(self, mock_sync, integration_connection):
-        integration_connection.last_synced_at = datetime.now(timezone.utc) - timedelta(
+        integration_connection.last_synced_at = datetime.now(UTC) - timedelta(
             seconds=120
         )
         integration_connection.sync_interval_seconds = 300
@@ -91,8 +91,11 @@ class TestPollActiveIntegrations:
         poll_active_integrations()
 
     @patch("integrations.temporal.activities.sync_integration_connection")
-    def test_skips_error_status(self, mock_sync, error_connection):
-        """Error connections are not polled for sync."""
+    def test_waits_out_the_retry_delay_of_an_error_connection(
+        self, mock_sync, error_connection
+    ):
+        """A connection that has just entered Error is retried only after its
+        sync interval (test_export_recovery.py covers the retries)."""
         poll_active_integrations()
         mock_sync.delay.assert_not_called()
 
@@ -239,7 +242,9 @@ class TestSyncIntegrationConnection:
 
         integration_connection.refresh_from_db()
         assert integration_connection.status == ConnectionStatus.ERROR
-        assert "Authentication" in (integration_connection.status_message or "")
+        assert integration_connection.status_message == (
+            "Langfuse refused the credentials (HTTP 401). Replace them in Edit, then Sync Now."
+        )
 
     @patch("time.sleep")
     @patch("integrations.transformers.base.get_transformer")
@@ -382,14 +387,27 @@ class TestSyncIntegrationConnection:
         integration_connection,
     ):
         """Credential decryption failure sets connection to ERROR."""
-        mock_cred_mgr.decrypt.side_effect = ValueError("Failed to decrypt")
+        mock_cred_mgr.decrypt.side_effect = ValueError(
+            "Failed to decrypt synthetic-sensitive-value"
+        )
         mock_get_tf.return_value = LangfuseTransformer()
 
         sync_integration_connection(str(integration_connection.id))
 
         integration_connection.refresh_from_db()
         assert integration_connection.status == ConnectionStatus.ERROR
-        assert "decrypt" in (integration_connection.status_message or "").lower()
+        assert "synthetic-sensitive-value" not in (
+            integration_connection.status_message or ""
+        )
+        log = SyncLog.objects.filter(connection=integration_connection).latest(
+            "started_at"
+        )
+        assert log.error_details == {
+            "kind": "unexpected",
+            "type": "ValueError",
+            "http_status": None,
+            "vendor_code": None,
+        }
 
     @patch("time.sleep")
     @patch("integrations.transformers.base.get_transformer")
@@ -527,7 +545,7 @@ class TestCheckIntegrationErrorAlerts:
         IntegrationConnection.no_workspace_objects.filter(
             id=error_connection.id
         ).update(
-            updated_at=datetime.now(timezone.utc) - timedelta(hours=2),
+            updated_at=datetime.now(UTC) - timedelta(hours=2),
             last_error_notified_at=None,
         )
 
@@ -540,8 +558,8 @@ class TestCheckIntegrationErrorAlerts:
         IntegrationConnection.no_workspace_objects.filter(
             id=error_connection.id
         ).update(
-            updated_at=datetime.now(timezone.utc) - timedelta(hours=2),
-            last_error_notified_at=datetime.now(timezone.utc) - timedelta(hours=1),
+            updated_at=datetime.now(UTC) - timedelta(hours=2),
+            last_error_notified_at=datetime.now(UTC) - timedelta(hours=1),
         )
 
         check_integration_error_alerts()
@@ -567,7 +585,7 @@ class TestCheckIntegrationErrorAlerts:
         IntegrationConnection.no_workspace_objects.filter(
             id=error_connection.id
         ).update(
-            updated_at=datetime.now(timezone.utc) - timedelta(hours=2),
+            updated_at=datetime.now(UTC) - timedelta(hours=2),
             last_error_notified_at=None,
         )
         mock_send.side_effect = RuntimeError("SMTP down")

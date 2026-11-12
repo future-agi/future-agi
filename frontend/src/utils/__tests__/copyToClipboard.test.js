@@ -79,4 +79,53 @@ describe("copyToClipboard", () => {
     expect(result).toBe(true);
     if (!hadExec) delete document.execCommand;
   });
+
+  // W10-DESIGN-SYSTEM-U06 (W11-QUICKSTART2-R): the fallback copies from a
+  // hidden textarea, which takes focus from the control that asked for the
+  // copy. Focus goes back to that control, so a keyboard user keeps their place
+  // and the control's tooltip stays open.
+  describe("gives focus back after the execCommand fallback", () => {
+    let execDescriptor;
+    let button;
+
+    beforeEach(() => {
+      Object.assign(navigator, { clipboard: undefined });
+      execDescriptor = Object.getOwnPropertyDescriptor(document, "execCommand");
+      button = document.createElement("button");
+      document.body.appendChild(button);
+      button.focus();
+    });
+
+    afterEach(() => {
+      button.remove();
+      if (execDescriptor)
+        Object.defineProperty(document, "execCommand", execDescriptor);
+      else delete document.execCommand;
+    });
+
+    it.each([
+      ["copies", () => true, true],
+      ["does not copy", () => false, false],
+      [
+        "throws",
+        () => {
+          throw new Error("copy is not supported");
+        },
+        false,
+      ],
+    ])("when the copy command %s", async (_, exec, expected) => {
+      Object.defineProperty(document, "execCommand", {
+        configurable: true,
+        value: vi.fn(exec),
+      });
+      expect(document.activeElement).toBe(button);
+      const refocus = vi.spyOn(button, "focus");
+
+      await expect(copyToClipboard("text")).resolves.toBe(expected);
+
+      expect(refocus).toHaveBeenCalledTimes(1);
+      expect(document.activeElement).toBe(button);
+      expect(document.querySelector("textarea")).toBeNull();
+    });
+  });
 });

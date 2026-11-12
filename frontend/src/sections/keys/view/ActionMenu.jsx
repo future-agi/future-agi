@@ -1,6 +1,6 @@
 import {
   Box,
-  IconButton,
+  Button,
   ListItemIcon,
   ListItemText,
   Menu,
@@ -9,7 +9,7 @@ import {
   useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React, { useId, useState } from "react";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
@@ -23,16 +23,18 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 const allMenuItems = [
   {
     id: 1,
-    title: "Disable Key",
-    icon: "mdi:cancel",
-    iconColor: "red.500",
-    titleColor: "red.500",
+    title: "Disable key",
+    verb: "disable",
+    icon: "solar:forbidden-circle-linear",
+    iconColor: "status.danger.fg",
+    titleColor: "status.danger.fg",
     iconType: "iconify",
     actionType: "disable",
   },
   {
     id: 2,
     title: "Re-enable key",
+    verb: "re-enable",
     icon: "/assets/icons/re_enable.svg",
     iconColor: "text.disabled",
     titleColor: "text.primary",
@@ -41,10 +43,11 @@ const allMenuItems = [
   },
   {
     id: 3,
-    title: "Delete Key",
+    title: "Delete key",
+    verb: "delete",
     icon: "/assets/icons/ic_delete.svg",
-    iconColor: "red.500",
-    titleColor: "red.500",
+    iconColor: "status.danger.fg",
+    titleColor: "status.danger.fg",
     iconType: "svg",
     actionType: "delete",
   },
@@ -56,6 +59,15 @@ const ActionMenu = ({ data, onRefresh }) => {
   const [menuItems, setMenuItems] = useState([...allMenuItems]);
   const open = Boolean(anchorEl);
   const [openConfirmation, setOpenConfirmation] = useState(null);
+  const actionsId = useId();
+  const buttonId = `${actionsId}-button`;
+  const menuId = `${actionsId}-menu`;
+  const actionsName = data?.key_name
+    ? `Actions for ${data.key_name}`
+    : "Key actions";
+  const actionsHint = data?.enabled
+    ? "Disable or delete this key"
+    : "Re-enable or delete this key";
 
   const handleClick = (event) => {
     event.stopPropagation();
@@ -71,7 +83,11 @@ const ActionMenu = ({ data, onRefresh }) => {
     setAnchorEl(null);
   };
 
+  // The menu closes as its action's confirmation opens, so it does not stay
+  // open behind the dialog.
   const handleMenuItemClick = (action) => {
+    if (data?.type === "system") return;
+    handleClose();
     setOpenConfirmation(action);
   };
   const handledialogClose = () => {
@@ -81,6 +97,9 @@ const ActionMenu = ({ data, onRefresh }) => {
 
   const { mutate: handleMutate, isPending: loading } = useMutation({
     mutationFn: (variable) => {
+      if (data?.type === "system") {
+        throw new Error("System keys cannot be changed.");
+      }
       const payload = { key_id: data.id };
       if (variable?.action == "disable") {
         return axios.post(endpoints.keys.disablekey, payload);
@@ -111,49 +130,44 @@ const ActionMenu = ({ data, onRefresh }) => {
           height: "100%",
         }}
       >
-        <Box
-          sx={{
-            display: "flex",
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: "8px",
-            height: "26px",
-            width: "71px",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            "&:hover": {
-              backgroundColor: "background.default",
-            },
-          }}
-          onClick={handleClick}
-        >
-          <SvgColor
-            sx={{
-              color: "text.disabled",
-              width: "16px",
-              height: "16px",
-              ml: 1,
-            }}
-            src="/assets/icons/action_buttons/ic_configure.svg"
+        <CustomTooltip show title={actionsHint} placement="top" arrow>
+          <Button
+            id={buttonId}
+            size="small"
+            variant="outlined"
+            color="inherit"
+            aria-label={actionsName}
+            aria-haspopup="menu"
+            aria-controls={open ? menuId : undefined}
+            aria-expanded={open ? "true" : undefined}
+            onClick={handleClick}
+            startIcon={
+              <SvgColor
+                width={16}
+                sx={{ color: "text.disabled" }}
+                src="/assets/icons/action_buttons/ic_configure.svg"
+              />
+            }
+            endIcon={
+              <Iconify
+                icon={`fluent:chevron-${open ? "up" : "down"}-16-filled`}
+                width="18px"
+                height="18px"
+                color="text.disabled"
+              />
+            }
+            sx={{ borderColor: "divider" }}
           />
-          <IconButton size="small" sx={{ ml: 0.2 }}>
-            <Iconify
-              icon={`fluent:chevron-${open ? "up" : "down"}-16-filled`}
-              width="18px"
-              height="18px"
-              color="text.disabled"
-            />
-          </IconButton>
-        </Box>
+        </CustomTooltip>
       </Box>
 
       <Menu
+        id={menuId}
         anchorEl={anchorEl}
         open={open}
         onClose={handleClose}
         MenuListProps={{
-          "aria-labelledby": "actions-button",
+          "aria-labelledby": buttonId,
         }}
         anchorOrigin={{
           vertical: "bottom",
@@ -165,7 +179,7 @@ const ActionMenu = ({ data, onRefresh }) => {
         }}
         PaperProps={{
           sx: {
-            width: 224,
+            width: 240,
             border: "1px solid",
             borderColor: (theme) => theme.palette.divider,
             borderRadius: "8px",
@@ -178,7 +192,7 @@ const ActionMenu = ({ data, onRefresh }) => {
           <CustomTooltip
             show={data?.type === "system"}
             key={item.title}
-            title={`Can't ${item.actionType} system key`}
+            title={`Can't ${item.verb} a system key`}
             placement="left"
             arrow
           >
@@ -190,9 +204,7 @@ const ActionMenu = ({ data, onRefresh }) => {
                   py: 0.5,
                   "&:hover": {
                     bgcolor: "action.hover",
-                    "& .MuiTypography-root": {
-                      fontWeight: 500,
-                    },
+                    "& .MuiTypography-root": {},
                   },
                 }}
               >
@@ -200,7 +212,7 @@ const ActionMenu = ({ data, onRefresh }) => {
                   {item.iconType === "svg" && (
                     <SvgColor
                       src={item.icon}
-                      sx={{ width: 20, height: 20, color: item.iconColor }}
+                      sx={{ width: 16, height: 16, color: item.iconColor }}
                     />
                   )}
                   {item.iconType === "iconify" && (
@@ -234,14 +246,14 @@ const ActionMenu = ({ data, onRefresh }) => {
               />
             </Typography>
             <Typography typography="s1" fontWeight="fontWeightRegular">
-              Both the API key and secret Key will be permanently deleted and
-              cannot be undone.
+              The API key and secret key will be deleted. This cannot be undone.
             </Typography>
           </Box>
         }
         action={
           <LoadingButton
             loading={loading}
+            disabled={data?.type === "system"}
             size="small"
             variant="contained"
             color="error"
@@ -262,12 +274,12 @@ const ActionMenu = ({ data, onRefresh }) => {
               />
             }
           >
-            Delete Key
+            Delete key
           </LoadingButton>
         }
         open={openConfirmation?.actionType === "delete"}
         onClose={handledialogClose}
-        title="Delete Key?"
+        title="Delete key?"
       />
       <ConfirmDialog
         fullWidth
@@ -279,13 +291,15 @@ const ActionMenu = ({ data, onRefresh }) => {
               />
             </Typography>
             <Typography typography="s1" fontWeight="fontWeightRegular">
-              Both the API key and Secret Key will be disabled
+              The API key and secret key will stop working until you re-enable
+              the key.
             </Typography>
           </Box>
         }
         action={
           <LoadingButton
             loading={loading}
+            disabled={data?.type === "system"}
             size="small"
             variant="contained"
             color="error"
@@ -296,12 +310,12 @@ const ActionMenu = ({ data, onRefresh }) => {
               })
             }
           >
-            Disable Key
+            Disable key
           </LoadingButton>
         }
         open={openConfirmation?.actionType === "disable"}
         onClose={handledialogClose}
-        title="Disable Key?"
+        title="Disable key?"
       />
       <ConfirmDialog
         fullWidth
@@ -313,29 +327,30 @@ const ActionMenu = ({ data, onRefresh }) => {
               />
             </Typography>
             <Typography typography="s1" fontWeight="fontWeightRegular">
-              Both the API key and Secret Key will be re-enabled again
+              The API key and secret key will work again.
             </Typography>
           </Box>
         }
         action={
           <LoadingButton
             loading={loading}
+            disabled={data?.type === "system"}
             size="small"
             variant="contained"
             color="primary"
             onClick={() =>
               handleMutate({
                 action: "enable",
-                successMessage: `${data.key_name} has been enabled`,
+                successMessage: `${data.key_name} has been re-enabled`,
               })
             }
           >
-            Re-enable
+            Re-enable key
           </LoadingButton>
         }
         open={openConfirmation?.actionType === "enable"}
         onClose={handledialogClose}
-        title="Re-Enable API Key"
+        title="Re-enable key?"
       />
     </>
   );

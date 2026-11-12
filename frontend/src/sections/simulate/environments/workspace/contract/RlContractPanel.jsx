@@ -1,5 +1,4 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
@@ -8,12 +7,32 @@ import SectionCard from "../../components/SectionCard";
 // import ActorsPanel from "./ActorsPanel";
 import CapabilityGraph from "../overview/CapabilityGraph";
 import WorldInternalsSection from "./WorldInternalsSection";
-import { CONTRACT_COPY } from "./contract.constants";
+import { Label } from "./ContractPart";
+import { CONTRACT_COPY, MONO_FONT } from "./contract.constants";
+
+const END_COPY = CONTRACT_COPY.endConditions;
+
+// A reason code read as words: "provider-hung_up" -> "Provider hung up".
+const codeAsWords = (code) => {
+  const words = String(code).replace(/[-_]+/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : String(code);
+};
+
+// One way a call can end: its plain label and note, with the raw code kept as
+// the reference call logs show. A code outside the known set still reads as
+// words rather than as a bare code with an empty note.
+const endedReason = (code) => {
+  const known = Object.prototype.hasOwnProperty.call(END_COPY.endedReasons, code)
+    ? END_COPY.endedReasons[code]
+    : null;
+  return { code, when: known?.label ?? codeAsWords(code), note: known?.note ?? "" };
+};
 
 // Map the real §6 `end_conditions` onto the episode-card shape. Returns null when
 // the environment carries no end conditions yet, and the card says so.
-// `ended_reasons` is the vocabulary a finished call may carry (terminate); the
-// two limits are the run's truncation ceilings.
+// `ended_reasons` is the vocabulary a finished call may carry; the two limits
+// are the run's truncation ceilings: each scenario's own turn budget, and the
+// wall-clock time the whole run (every scenario together) must finish inside.
 const CLOCK_NOTE = {
   "real-time": "Wall-clock time: the voice call runs in real time.",
   stepped: "Stepped: the chat advances a turn at a time.",
@@ -23,16 +42,18 @@ function realEpisode(env) {
   if (!ec) return null;
   const truncate = [
     ec.max_turns != null && {
-      when: `${ec.max_turns} turns`,
-      note: "Ceiling across the suite. Each scenario carries its own.",
+      key: "turns",
+      when: END_COPY.turnsLimit(ec.max_turns),
+      note: END_COPY.turnsNote,
     },
     ec.max_duration_seconds != null && {
-      when: `${ec.max_duration_seconds}s`,
-      note: "The job's wall-clock limit.",
+      key: "duration",
+      when: END_COPY.durationLimit(ec.max_duration_seconds),
+      note: END_COPY.durationNote,
     },
   ].filter(Boolean);
   return {
-    terminate: (ec.ended_reasons || []).map((reason) => ({ when: reason, note: "" })),
+    terminate: (ec.ended_reasons || []).map(endedReason),
     truncate,
     clock: {
       mode: ec.clock || "-",
@@ -82,8 +103,8 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
         sx={{ mb: 2 }}
       >
         {!episode ? (
-          <Box sx={{ px: 2.5, py: 2.25 }}>
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          <Box sx={{ p: 1.5 }}>
+            <Typography sx={{ typography: "s1", fontWeight: 500 }}>
               {CONTRACT_COPY.endConditions.notAuthored}
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -98,32 +119,48 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
           sx={{
             display: "grid", gap: "1px",
             gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
-            bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.09 : 0.07),
+            bgcolor: "divider",
           }}
         >
-          <Box sx={{ p: 2.5, bgcolor: "background.paper" }}>
-            <Label>Terminate</Label>
+          <Box sx={{ p: 1.5, bgcolor: "background.paper" }}>
+            <Label>{CONTRACT_COPY.terminateLabel}</Label>
             <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}>
-              The episode has a value. Goal verifiers settle.
+              {CONTRACT_COPY.terminateBlurb}
             </Typography>
             <Stack spacing={1}>
               {episode.terminate.map((e) => (
-                <Box key={e.when}>
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>{e.when}</Typography>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{e.note}</Typography>
+                <Box key={e.code}>
+                  <Stack
+                    direction="row"
+                    alignItems="baseline"
+                    justifyContent="space-between"
+                    sx={{ columnGap: 1, flexWrap: "wrap" }}
+                  >
+                    <Typography sx={{ typography: "s1", fontWeight: 500 }}>{e.when}</Typography>
+                    <Typography
+                      component="code"
+                      title={END_COPY.codeTitle}
+                      sx={{ typography: "s3", fontFamily: MONO_FONT, color: "text.subtitle" }}
+                    >
+                      {e.code}
+                    </Typography>
+                  </Stack>
+                  {e.note && (
+                    <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{e.note}</Typography>
+                  )}
                 </Box>
               ))}
             </Stack>
           </Box>
-          <Box sx={{ p: 2.5, bgcolor: "background.paper" }}>
-            <Label>Truncate</Label>
+          <Box sx={{ p: 1.5, bgcolor: "background.paper" }}>
+            <Label>{CONTRACT_COPY.truncateLabel}</Label>
             <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}>
-              Not a failure, and not terminal. Bootstrap from the last state.
+              {CONTRACT_COPY.truncateBlurb}
             </Typography>
             <Stack spacing={1}>
               {episode.truncate.map((e) => (
-                <Box key={e.when}>
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>{e.when}</Typography>
+                <Box key={e.key}>
+                  <Typography sx={{ typography: "s1", fontWeight: 500 }}>{e.when}</Typography>
                   <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{e.note}</Typography>
                 </Box>
               ))}
@@ -132,14 +169,14 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
         </Box>
         <Stack
           direction="row"
-          spacing={1.75}
+          spacing={1.5}
           alignItems="flex-start"
-          sx={{ px: 2.5, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}
+          sx={{ px: 1.5, py: 1.25, borderTop: "1px solid", borderColor: "divider" }}
         >
           <Iconify icon="solar:clock-circle-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }} />
           <Box>
-            <Typography sx={{ typography: "s2", fontWeight: 700 }}>Clock · {episode.clock.mode}</Typography>
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>{episode.clock.note}</Typography>
+            <Typography sx={{ typography: "s1", fontWeight: 500 }}>Clock · {episode.clock.mode}</Typography>
+            <Typography sx={{ typography: "s1", color: "text.secondary" }}>{episode.clock.note}</Typography>
           </Box>
         </Stack>
         </>
@@ -182,12 +219,3 @@ RlContractPanel.propTypes = {
   // A built (harness) environment; a template or fork is never built.
   backed: PropTypes.bool,
 };
-
-function Label({ children }) {
-  return (
-    <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, mb: 1 }}>
-      {children}
-    </Typography>
-  );
-}
-Label.propTypes = { children: PropTypes.node };

@@ -158,6 +158,19 @@ case ",${COMPOSE_PROFILES:-}," in
     ;;
 esac
 
+# The Omega Hub's profile (COMPOSE_PROFILES=hub) runs its checker, so the UI
+# shows the Omega products too (each to the organisations its rollout admits).
+# Without the profile nothing checks uploads, so the UI keeps them hidden
+# unless VITE_OMEGA_CONSOLE is set explicitly.
+case ",${COMPOSE_PROFILES:-}," in
+  *,hub,*)
+    if [ -z "${VITE_OMEGA_CONSOLE:-}" ]; then
+      export VITE_OMEGA_CONSOLE=1
+      echo "[start] the Omega Hub's checker runs (COMPOSE_PROFILES=hub): the UI shows the Omega products"
+    fi
+    ;;
+esac
+
 # Vertex AI: docker-compose.yml mounts the key file here, while
 # GOOGLE_APPLICATION_CREDENTIALS from .env is its path on the host. Without a
 # key (the /dev/null mount) the variable is dropped, so Google's other
@@ -174,6 +187,74 @@ fi
 if [ -z "${AGENTCC_WEBHOOK_SECRET:-}" ]; then
   AGENTCC_WEBHOOK_SECRET=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
   export AGENTCC_WEBHOOK_SECRET
+fi
+
+# The gateway refuses to start on an admin token anyone could guess (and,
+# being in this container, would take the API and UI down with it), and the
+# API's admin endpoints refuse one. The token holds no state and both ends run
+# here, so an empty one, a CHANGEME- placeholder or the default the compose file
+# publishes is replaced by a random one for this start. Set a stable one in
+# .env to call the admin API from outside. The dev-only opt-in keeps it as is.
+admin_token_needs_replacing() {
+  case "${AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN:-}" in
+    1 | [Tt] | [Tt][Rr][Uu][Ee]) return 1 ;;
+  esac
+  case "${AGENTCC_ADMIN_TOKEN:-}" in
+    "" | CHANGEME-* | local-dev-only-admin-token-replace-me) return 0 ;;
+  esac
+  return 1
+}
+if admin_token_needs_replacing; then
+  AGENTCC_ADMIN_TOKEN=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+  AGENTCC_CONTROL_PLANE_TOKEN=$AGENTCC_ADMIN_TOKEN
+  export AGENTCC_ADMIN_TOKEN AGENTCC_CONTROL_PLANE_TOKEN
+  echo "[start] AGENTCC_ADMIN_TOKEN is empty or the published default: using a random one for this start (set one in .env to call the admin API from outside this container)"
+fi
+
+# The API calls the gateway with AGENTCC_INTERNAL_API_KEY, and the gateway
+# seeds it as an internal key: one that may use the providers configured
+# with this install's keys (OPENAI_API_KEY and the rest), on a port published
+# to the network. So the gateway refuses to start on an empty or blank one, a
+# CHANGEME- placeholder, the text of an `openssl rand` command (.env does not
+# run commands) or one that contains a default published in this repository
+# (publishedAdminTokens in agentcc-gateway/internal/config/admin_token.go,
+# listed below), and, being in this container, would take the API and UI down
+# with it. Nothing stores the key or anything made from it, and both ends run
+# here, so such a value is replaced by a random one for this start, as the
+# admin token is. The dev-only opt-in keeps it as is. The trim and the case
+# fold here are ASCII-only, the gateway's are Unicode-aware: a key that differs
+# only there is kept here and refused by the gateway, which fails closed.
+internal_key_needs_replacing() {
+  case "${AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN:-}" in
+    1 | [Tt] | [Tt][Rr][Uu][Ee]) return 1 ;;
+  esac
+  local key="${AGENTCC_INTERNAL_API_KEY:-}" published
+  key="${key#"${key%%[![:space:]]*}"}"
+  key="${key%"${key##*[![:space:]]}"}"
+  [ -n "$key" ] || return 0
+  # printf is a builtin: the key goes down a pipe, never onto a command line.
+  key=$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')
+  case "$key" in
+    changeme* | *"openssl rand"*) return 0 ;;
+  esac
+  for published in \
+    agentcc-admin-secret \
+    local-dev-only-admin-token-replace-me \
+    local-dev-only-shared-secret-replace-me \
+    your-secret-admin-token \
+    test-admin-secret \
+    fi-internal-dev-key-change-in-prod \
+    test-webhook-secret; do
+    case "$key" in
+      *"$published"*) return 0 ;;
+    esac
+  done
+  return 1
+}
+if internal_key_needs_replacing; then
+  AGENTCC_INTERNAL_API_KEY=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+  export AGENTCC_INTERNAL_API_KEY
+  echo "[start] AGENTCC_INTERNAL_API_KEY is empty, a placeholder or a published default: using a random one for this start (set one in .env to call the gateway with it from outside this container)"
 fi
 
 # Every probe in this container (the bootstrap's wait for the API and the

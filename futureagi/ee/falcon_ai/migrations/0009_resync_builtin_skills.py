@@ -26,18 +26,16 @@ from django.db import migrations
 
 def resync_builtin_skills(apps, schema_editor):
     Skill = apps.get_model("falcon_ai", "Skill")
-    from ee.falcon_ai.builtin_skills_loader import (
-        load_builtin_skills,
-        seed_builtin_skills,
-    )
+    from ee.falcon_ai.builtin_skills_loader import load_builtin_skills
+    from ._builtin_skills import seed_builtin_skills
 
     # 1. Refresh tool_names/instructions for every slug still defined on disk.
-    seed_builtin_skills(skill_model=Skill)
+    seed_builtin_skills(Skill, schema_editor.connection.alias)
 
     # 2. Retire builtins whose YAML is gone. Scoped to is_builtin=True and
     #    organization=NULL so workspace-authored skills are never touched.
     on_disk = {skill["slug"] for skill in load_builtin_skills()}
-    Skill.objects.filter(
+    Skill.objects.using(schema_editor.connection.alias).filter(
         is_builtin=True, organization__isnull=True, is_active=True
     ).exclude(slug__in=on_disk).update(is_active=False)
 

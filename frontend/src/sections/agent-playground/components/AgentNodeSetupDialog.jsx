@@ -16,7 +16,8 @@ import { PLAYGROUND_AGENTS_PATH } from "../agentsTabs";
 import { AGENT_NODE_AVAILABILITY } from "../hooks/useAgentNodeAvailability";
 
 // Copy per availability state (PRD r1.1 layout sketch + AC-05). Never names
-// hidden agents, counts, IDs or org-wide statements.
+// hidden agents, counts, IDs or org-wide statements. Empty is one sentence;
+// the Agent Playground link below it is the one action that fixes it.
 const COPY = {
   [AGENT_NODE_AVAILABILITY.LOADING]: {
     title: "Agent node setup",
@@ -36,7 +37,7 @@ const COPY = {
   },
   [AGENT_NODE_AVAILABILITY.EMPTY]: {
     title: "No eligible agents available here",
-    body: "Use another agent in this organization and workspace with an active or inactive version. Draft versions cannot be used, and agents that would create a reference cycle are not eligible. In the new tab, check the same organization and workspace, then create or finish another agent. Return here and refresh. Refresh agents updates choices, not this page.",
+    body: "An Agent node runs a different saved agent, so create and save one in the Agent Playground, then click Refresh agents.",
   },
   [AGENT_NODE_AVAILABILITY.READY]: {
     title: "Eligible agents are available",

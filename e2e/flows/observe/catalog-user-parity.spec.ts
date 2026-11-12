@@ -266,7 +266,13 @@ test('OBS-E2E-007: Users discovery selects only authorized user activity', {
       expect(emptyUI.result).toMatchObject({ query_complete: true, query_status: 'complete',
         query_exact: true, ordering_exact: true, has_more: false, next_cursor: null });
       expect(emptyUI.result.table).toEqual([]);
-      await expect(page.getByText('Setup Telemetry', { exact: true })).toBeVisible({ timeout: UI_READY });
+      // Every Users read carries the toolbar's date window, so an empty page
+      // names that range and links the setup docs; the grid stays in place.
+      await expect(page.getByRole('heading', { name: 'No users for Past 7D', exact: true }))
+        .toBeVisible({ timeout: UI_READY });
+      await expect(page.getByRole('link', { name: 'Set up user tracking' }))
+        .toHaveAttribute('href', 'https://docs.futureagi.com/docs/observe/features/users');
+      await expect(page.getByText('Set up telemetry', { exact: true })).toHaveCount(0);
       await testInfo.attach('empty-users', { body: await page.screenshot(), contentType: 'image/png' });
     });
     await context.close(); context = undefined;
@@ -961,7 +967,7 @@ test('OBS-E2E-007: Users discovery selects only authorized user activity', {
       const drawer = page.locator('.MuiDrawer-paper:visible').filter({ has: page.getByRole('tablist', { name: 'session drawer tabs' }) });
       const firstTrace = body.result.response[0].trace_id;
       await drawer.getByRole('button', { name: 'View Trace', exact: true }).first().click();
-      await expect(page.getByText(userFacts.find(f => f.seeded.traceId === firstTrace)!.seeded.spanIds[0], { exact: true }).first()).toBeVisible({ timeout: UI_READY });
+      await expect(page.getByText(userFacts.find(f => f.seeded.traceId === firstTrace)!.seeded.spanIds[0], { exact: true }).filter({ visible: true }).first()).toBeVisible({ timeout: UI_READY });
       // Return through the actual user detail and choose its Traces tab.
       await page.goto(`/dashboard/users/${encodeURIComponent(shared)}`, { waitUntil: 'domcontentloaded' });
       // FixedTab's inactive tooltip sets aria-label="Press 2"; match its exact visible Trace label within MAIN.

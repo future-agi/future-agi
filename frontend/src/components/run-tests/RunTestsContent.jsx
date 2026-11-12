@@ -1,14 +1,14 @@
 /* eslint-disable react/prop-types */
+import { ROW_HEIGHT } from "src/theme/sizes";
 import {
-  alpha,
   Box,
   Button,
-  Chip,
   ListItemIcon,
   ListItemText,
   Menu,
   MenuItem,
   Popover,
+  Stack,
   Tooltip,
   Typography,
   useTheme,
@@ -25,6 +25,7 @@ import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import { DataTable, DataTablePagination } from "src/components/data-table";
+import OverflowCellText from "src/components/data-table/OverflowCellText";
 import { ShowComponent } from "src/components/show";
 import CustomDialog from "src/sections/develop-detail/Common/CustomDialog/CustomDialog";
 
@@ -59,34 +60,15 @@ function HoverChipList({ items, label, emptyText, getLabel, getTooltip }) {
   const firstItem = resolveLabel(items[0]);
   const remaining = items.length - 1;
 
-  const chipStyles = {
-    backgroundColor: (theme) =>
-      alpha(
-        theme.palette.primary.main,
-        theme.palette.mode === "dark" ? 0.24 : 0.1,
-      ),
-    "&:hover": {
-      backgroundColor: (theme) =>
-        alpha(
-          theme.palette.primary.main,
-          theme.palette.mode === "dark" ? 0.32 : 0.16,
-        ),
-    },
-    color: (theme) =>
-      theme.palette.mode === "dark"
-        ? theme.palette.primary.light
-        : theme.palette.primary.main,
-    border: "1px solid",
-    borderColor: (theme) =>
-      alpha(
-        theme.palette.primary.main,
-        theme.palette.mode === "dark" ? 0.4 : 0.2,
-      ),
-    borderRadius: "4px",
-    fontWeight: 500,
+  // Plain text, not a bordered tag — these sit inside table cells.
+  const itemStyles = {
+    color: "text.primary",
+    fontWeight: 400,
     fontSize: "12px",
-    height: 22,
-    "& .MuiChip-label": { px: 0.75 },
+    lineHeight: "18px",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   };
 
   return (
@@ -102,15 +84,20 @@ function HoverChipList({ items, label, emptyText, getLabel, getTooltip }) {
           minWidth: 0,
         }}
       >
-        <Chip
-          label={firstItem}
-          size="small"
-          sx={{ ...chipStyles, maxWidth: 180 }}
-        />
+        <Typography sx={{ ...itemStyles, maxWidth: 180 }}>
+          {firstItem}
+        </Typography>
         {remaining > 0 && (
           <Typography
             variant="caption"
-            sx={{ color: "text.secondary", fontSize: "12px", pl: 0.5 }}
+            sx={{
+              color: "text.subtitle",
+              fontSize: "11px",
+              pl: 0.5,
+              // The first name gives way; the count stays whole.
+              flexShrink: 0,
+              whiteSpace: "nowrap",
+            }}
           >
             +{remaining} other{remaining > 1 ? "s" : ""}
           </Typography>
@@ -152,15 +139,15 @@ function HoverChipList({ items, label, emptyText, getLabel, getTooltip }) {
             const labelText = resolveLabel(item);
             const tooltip = getTooltip ? getTooltip(item) : "";
             const chip = (
-              <Chip
-                label={labelText}
-                size="small"
+              <Typography
                 sx={{
-                  ...chipStyles,
+                  ...itemStyles,
                   alignSelf: "flex-start",
                   maxWidth: "100%",
                 }}
-              />
+              >
+                {labelText}
+              </Typography>
             );
             return (
               <Box key={idx}>
@@ -204,11 +191,8 @@ function RunTestActionMenu({ test, onView, onDelete }) {
         sx={{
           display: "flex",
           gap: 1,
-          borderRadius: theme.spacing(1),
           borderColor: `${theme.palette.divider} !important`,
           minWidth: 71,
-          px: 1,
-          py: 0.25,
         }}
       >
         <SvgColor
@@ -229,7 +213,7 @@ function RunTestActionMenu({ test, onView, onDelete }) {
         anchorEl={anchorEl}
         open={open}
         onClose={handleClose}
-        PaperProps={{ sx: { mt: 1, minWidth: 100, p: 0.5 } }}
+        PaperProps={{ sx: { mt: 1, minWidth: 200, p: 0.5 } }}
         transformOrigin={{ horizontal: "right", vertical: "top" }}
         anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
       >
@@ -244,7 +228,7 @@ function RunTestActionMenu({ test, onView, onDelete }) {
           <ListItemIcon sx={{ minWidth: "unset", mr: 1 }}>
             <SvgColor
               src="/assets/icons/ic_hide.svg"
-              sx={{ width: 20, height: 20 }}
+              sx={{ width: 16, height: 16 }}
             />
           </ListItemIcon>
           <ListItemText
@@ -258,7 +242,7 @@ function RunTestActionMenu({ test, onView, onDelete }) {
             onDelete?.(test);
             handleClose();
           }}
-          sx={{ color: "error.main", px: 1.25, py: 0.75 }}
+          sx={{ px: 1.25, py: 0.75 }}
         >
           <ListItemIcon sx={{ minWidth: "unset", mr: 1 }}>
             <SvgColor
@@ -366,7 +350,7 @@ const RunTestsContent = ({
     return params;
   }, [page, pageSize, debouncedSearchQuery, simulationType, promptTemplateId]);
 
-  const { isPending, data } = useQuery({
+  const { isPending, isError, isFetching, refetch, data } = useQuery({
     queryKey: [
       "run-tests",
       simulationType,
@@ -382,10 +366,13 @@ const RunTestsContent = ({
 
   const items = useMemo(() => data?.results ?? [], [data]);
   const total = data?.count ?? 0;
-  const hasData = items.length > 0;
 
   const showEmptyScreen =
     !isPending && data && total === 0 && debouncedSearchQuery === "";
+  // A failed list must read as an error, not as "No tests found". A failed
+  // refresh keeps the list already on screen; only a failed read with nothing
+  // to show gets the error line and Try again.
+  const showError = isError && data === undefined;
 
   const canManage =
     RolePermission.SIMULATION_AGENT[PERMISSIONS.UPDATE][role] &&
@@ -398,23 +385,27 @@ const RunTestsContent = ({
         accessorKey: "name",
         header: "Name",
         meta: { flex: 1.4 },
-        minSize: 180,
+        // Every column's minimum (778 px) fits the 784 px a 1024 px window
+        // leaves the table (1024 - 200 menu - 2 x 16 padding, less the 8 px
+        // bar when the rows scroll), settings button included; wider
+        // windows give the room to the four name columns. A long name ends
+        // in an ellipsis and shows whole on hover or when its cell takes
+        // focus.
+        minSize: 148,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography
-            variant="body2"
-            noWrap
+          <OverflowCellText
+            text={getValue()}
             sx={{ fontWeight: 500, color: "text.primary" }}
-          >
-            {getValue()}
-          </Typography>
+          />
         ),
       },
       {
         id: "agent",
         accessorKey: "agent_definition_detail",
         header: "Agent",
-        size: 200,
+        meta: { flex: 1 },
+        minSize: 124,
         enableSorting: false,
         cell: ({ row }) => {
           const agent = row.original.agent_definition_detail;
@@ -442,7 +433,7 @@ const RunTestsContent = ({
               <Typography
                 variant="body2"
                 noWrap
-                sx={{ fontSize: 13, color: "text.primary" }}
+                sx={{ fontSize: 12, color: "text.primary" }}
               >
                 {agent.agent_name}
               </Typography>
@@ -454,7 +445,8 @@ const RunTestsContent = ({
         id: "scenarios",
         accessorKey: "scenarios_detail",
         header: "Scenarios",
-        size: 240,
+        meta: { flex: 1.2 },
+        minSize: 140,
         enableSorting: false,
         cell: ({ row }) => (
           <HoverChipList
@@ -485,7 +477,8 @@ const RunTestsContent = ({
         id: "evals",
         accessorKey: "evals_detail",
         header: "Evals",
-        size: 240,
+        meta: { flex: 1.2 },
+        minSize: 124,
         enableSorting: false,
         cell: ({ row }) => (
           <HoverChipList
@@ -510,6 +503,7 @@ const RunTestsContent = ({
         id: "last_run_at",
         accessorKey: "last_run_at",
         header: "Last Run",
+        // "less than a minute ago" (127.5 px at 12 px/400 Inter), whole.
         size: 150,
         enableSorting: false,
         cell: ({ row }) => {
@@ -518,7 +512,8 @@ const RunTestsContent = ({
             <Typography
               variant="body2"
               color="text.secondary"
-              sx={{ fontSize: 13 }}
+              noWrap
+              sx={{ fontSize: 12 }}
             >
               {v ? formatDistanceToNow(new Date(v), { addSuffix: true }) : "-"}
             </Typography>
@@ -531,7 +526,8 @@ const RunTestsContent = ({
         id: "actions",
         accessorKey: "id",
         header: "",
-        size: 100,
+        // The 71 px settings button.
+        size: 92,
         enableSorting: false,
         cell: ({ row }) => (
           <Box
@@ -576,8 +572,8 @@ const RunTestsContent = ({
                 Run Simulation
               </Typography>
               <Typography typography="s1" color="text.secondary">
-                Create and manage comprehensive tests for your AI agents with
-                scenarios, evaluations, and automated runs.
+                Run your agent through scenarios at scale and score every
+                conversation with your evals.
               </Typography>
             </Box>
           </Box>
@@ -590,7 +586,7 @@ const RunTestsContent = ({
             action={
               <Button
                 variant="contained"
-                startIcon={<Iconify icon="eva:plus-fill" />}
+                startIcon={<Iconify icon="solar:add-linear" />}
                 onClick={handleAddRunTest}
                 sx={{
                   bgcolor: "primary.main",
@@ -634,69 +630,104 @@ const RunTestsContent = ({
               <ShowComponent condition={!showSearch}>
                 <Box />
               </ShowComponent>
-              <ShowComponent condition={hasData || debouncedSearchQuery !== ""}>
-                <Box sx={{ display: "flex", gap: 1.5, alignItems: "center" }}>
-                  <ShowComponent condition={showHeader}>
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      sx={{
-                        color: "text.primary",
-                        borderColor: "divider",
-                        px: 1.5,
-                        height: 38,
-                      }}
-                      startIcon={
-                        <SvgColor src="/assets/icons/ic_docs_single.svg" />
-                      }
-                      component="a"
-                      href="https://docs.futureagi.com/docs/simulation"
-                      target="_blank"
-                    >
-                      View Docs
-                    </Button>
-                  </ShowComponent>
+              <Box sx={{ display: "flex", gap: 1.5, alignItems: "center" }}>
+                <ShowComponent condition={showHeader}>
                   <Button
-                    variant="contained"
-                    startIcon={<Iconify icon="eva:plus-fill" />}
-                    onClick={handleAddRunTest}
+                    variant="outlined"
+                    size="small"
                     sx={{
-                      bgcolor: "primary.main",
-                      color: "primary.contrastText",
-                      "&:hover": { bgcolor: "primary.dark" },
+                      color: "text.primary",
+                      borderColor: "divider",
                     }}
-                    disabled={
-                      !RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role]
+                    startIcon={
+                      <SvgColor src="/assets/icons/ic_docs_single.svg" />
                     }
+                    component="a"
+                    href="https://docs.futureagi.com/docs/simulation"
+                    target="_blank"
                   >
-                    {createButtonText}
+                    View Docs
                   </Button>
-                </Box>
-              </ShowComponent>
+                </ShowComponent>
+                <Button
+                  variant="contained"
+                  startIcon={<Iconify icon="solar:add-linear" />}
+                  onClick={handleAddRunTest}
+                  sx={{
+                    bgcolor: "primary.main",
+                    color: "primary.contrastText",
+                    "&:hover": { bgcolor: "primary.dark" },
+                  }}
+                  disabled={
+                    !RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role]
+                  }
+                >
+                  {createButtonText}
+                </Button>
+              </Box>
             </Box>
 
-            {/* Table */}
-            <DataTable
-              columns={columns}
-              data={items}
-              isLoading={isPending}
-              rowCount={total}
-              onRowClick={handleRowClick}
-              getRowId={(row) => row.id}
-              rowHeight={44}
-              emptyMessage="No tests found"
-            />
+            {showError ? (
+              <Box
+                sx={{
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Stack spacing={1.5} alignItems="center">
+                  <Stack spacing={0.5} alignItems="center">
+                    <Typography
+                      sx={{ typography: "s2", color: "text.secondary" }}
+                    >
+                      Couldn&apos;t load your simulations.
+                    </Typography>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.subtitle" }}
+                    >
+                      Something went wrong loading the list.
+                    </Typography>
+                  </Stack>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    disabled={isFetching}
+                    onClick={() => refetch()}
+                  >
+                    Try again
+                  </Button>
+                </Stack>
+              </Box>
+            ) : (
+              <>
+                {/* Table */}
+                <DataTable
+                  columns={columns}
+                  data={items}
+                  isLoading={isPending}
+                  rowCount={total}
+                  onRowClick={handleRowClick}
+                  getRowId={(row) => row.id}
+                  rowHeight={ROW_HEIGHT.default}
+                  showScrollbar
+                  pinnedRight="actions"
+                  emptyMessage="No tests found"
+                />
 
-            <DataTablePagination
-              page={page}
-              pageSize={pageSize}
-              total={total}
-              onPageChange={setPage}
-              onPageSizeChange={(size) => {
-                setPageSize(size);
-                setPage(0);
-              }}
-            />
+                <DataTablePagination
+                  page={page}
+                  pageSize={pageSize}
+                  total={total}
+                  onPageChange={setPage}
+                  onPageSizeChange={(size) => {
+                    setPageSize(size);
+                    setPage(0);
+                  }}
+                />
+              </>
+            )}
           </>
         )}
       </Box>

@@ -17,6 +17,9 @@ export function useEvalVersions(templateId) {
 export function useCreateEvalVersion(templateId) {
   const queryClient = useQueryClient();
   return useMutation({
+    /**
+     * @param {{ config_snapshot?: Record<string, unknown> | null, criteria?: string | null, model?: string | null }} [payload]
+     */
     mutationFn: async (payload = {}) => {
       const { data } = await axios.post(
         endpoints.develop.eval.createEvalVersion(templateId),

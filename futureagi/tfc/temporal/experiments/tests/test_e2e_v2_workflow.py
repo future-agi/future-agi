@@ -25,12 +25,13 @@ import asyncio
 import pytest
 from asgiref.sync import sync_to_async
 from django.db import close_old_connections
+from django.test import override_settings
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from tfc.temporal.agent_playground.activities import ALL_ACTIVITIES as GRAPH_ACTIVITIES
 from tfc.temporal.agent_playground.workflows import GraphExecutionWorkflow
 from tfc.temporal.experiments import get_activities, get_workflows
-from tfc.temporal.experiments.types import RunExperimentInput, RunExperimentOutput
+from tfc.temporal.experiments.types import RunExperimentInput
 from tfc.temporal.experiments.workflows import RunExperimentV2Workflow
 
 # All tests in this module must run on the same xdist worker (sequential), and
@@ -253,6 +254,8 @@ class TestLLMPromptFlow:
 class TestLLMAgentFlow:
     """Tests for LLM experiments with ExperimentAgentConfig only (no prompts)."""
 
+    # TX1-B: agent graph targets run only when the setting is on.
+    @override_settings(DSX_CONSOLE_AGENT_EXPERIMENTS_ENABLED=True)
     async def test_single_node_agent(
         self,
         workflow_environment,
@@ -290,6 +293,8 @@ class TestLLMAgentFlow:
             assert status == "pass"
             assert value != ""  # CellOutputSink wrote the node output
 
+    # TX1-B: agent graph targets run only when the setting is on.
+    @override_settings(DSX_CONSOLE_AGENT_EXPERIMENTS_ENABLED=True)
     async def test_two_node_agent(
         self,
         workflow_environment,
@@ -331,6 +336,8 @@ class TestLLMAgentFlow:
 class TestLLMMixedFlow:
     """Tests for LLM experiments with BOTH prompt and agent configs."""
 
+    # TX1-B: agent graph targets run only when the setting is on.
+    @override_settings(DSX_CONSOLE_AGENT_EXPERIMENTS_ENABLED=True)
     async def test_prompt_and_agent_together(
         self,
         workflow_environment,
@@ -362,6 +369,8 @@ class TestLLMMixedFlow:
             cells = await _get_cells_for_column(col_id)
             assert len(cells) == 3
 
+    # TX1-B: agent graph targets run only when the setting is on.
+    @override_settings(DSX_CONSOLE_AGENT_EXPERIMENTS_ENABLED=True)
     async def test_prompt_and_two_node_agent(
         self,
         workflow_environment,
@@ -425,7 +434,7 @@ class TestTTSFlow:
         col_id = columns[0][0]
         cells = await _get_cells_for_column(col_id)
         assert len(cells) == 3
-        for _, value, status in cells:
+        for _, _value, status in cells:
             assert status == "pass"
 
 
@@ -466,7 +475,7 @@ class TestSTTFlow:
         col_id = columns[0][0]
         cells = await _get_cells_for_column(col_id)
         assert len(cells) == 3
-        for _, value, status in cells:
+        for _, _value, status in cells:
             assert status == "pass"
 
 
@@ -507,7 +516,7 @@ class TestImageFlow:
         col_id = columns[0][0]
         cells = await _get_cells_for_column(col_id)
         assert len(cells) == 3
-        for _, value, status in cells:
+        for _, _value, status in cells:
             assert status == "pass"
 
 

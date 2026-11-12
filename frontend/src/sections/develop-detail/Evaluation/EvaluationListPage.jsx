@@ -51,10 +51,15 @@ const EvaluationListPage = ({
     useMutation({
       mutationFn: (d) =>
         axios.post(endpoints.develop.eval.runEvals(datasetId), d),
-      onSuccess: () => {
-        enqueueSnackbar("Evaluations started successfully", {
-          variant: "success",
-        });
+      onSuccess: (res) => {
+        // L7c g7 (dsdrawer:run): unchanged evals keep their stored results.
+        const said = res?.data?.result;
+        enqueueSnackbar(
+          typeof said === "string" && said.startsWith("Nothing changed")
+            ? said
+            : "Evaluations started successfully",
+          { variant: "success" },
+        );
         refreshGrid();
         onClose();
       },
@@ -184,7 +189,7 @@ const EvaluationListPage = ({
               backgroundColor: "background.paper",
             }}
           >
-            <Typography fontWeight={700} color="text.secondary">
+            <Typography fontWeight={600} color="text.secondary">
               Added Evaluations
             </Typography>
             <ShowComponent condition={Boolean(userEvalList?.length)}>
@@ -361,7 +366,7 @@ const EvaluationListPage = ({
         onClick={onClose}
         sx={{ position: "absolute", top: "12px", right: "12px" }}
       >
-        <Iconify icon="mingcute:close-line" />
+        <Iconify icon="solar:close-linear" />
       </IconButton>
       <Box
         sx={{
@@ -382,7 +387,7 @@ const EvaluationListPage = ({
               gap: 0.5,
             }}
           >
-            <Typography fontWeight={700} color="text.primary">
+            <Typography fontWeight={600} color="text.primary">
               Run Evaluations
             </Typography>
             <HelperText text="Setup custom or pre-defined metrics for your dataset" />
@@ -390,15 +395,7 @@ const EvaluationListPage = ({
         </Box>
         {errorMessage && (
           <Box sx={{ px: "20px" }}>
-            <Alert
-              severity="error"
-              onClose={() => setErrorMessage(null)}
-              sx={{
-                "& .MuiAlert-message": {
-                  color: "error.main",
-                },
-              }}
-            >
+            <Alert severity="error" onClose={() => setErrorMessage(null)}>
               {errorMessage}
             </Alert>
           </Box>

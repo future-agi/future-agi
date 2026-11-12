@@ -1,0 +1,56 @@
+# Semgrep AppSec Platform's hosted MCP server (beta) with a Semgrep API
+# token as the bearer. A Web API token reads and writes; a Read-only token
+# only reads; Member tokens are not supported. The token works in the
+# organization it was created in, capped by its owner's role. Tools also
+# follow the organization's plan: one not on Teams or Enterprise sees only
+# semgrep_account. Multi-tenant URL only: single-tenant deployments use
+# their own host and are not in this record. The same server also signs in
+# with OAuth, but its OAuth metadata answers with a redirect, which the
+# gateway's discovery does not follow, so this app has no OAuth provider yet.
+# Semgrep's experimental scan-only server at mcp.semgrep.ai is a different
+# server and is not this record.
+schema: "connector-manifest/v1#provider"
+app: semgrep
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: beta
+  source: https://docs.semgrep.dev/semgrep-appsec-platform/mcp
+transport:
+  kind: http
+  url: https://semgrep.dev/api/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API token
+      help: "A Semgrep Web API token (read and write) or Read-only token, from Settings > Tokens > API tokens. Member tokens are not supported."
+      helpUrl: https://docs.semgrep.dev/semgrep-appsec-platform/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.semgrep.dev/semgrep-appsec-platform/mcp
+    fetchedAt: 2026-11-11
+  - fact: transport.variant
+    url: https://docs.semgrep.dev/semgrep-appsec-platform/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://docs.semgrep.dev/semgrep-appsec-platform/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.credentialParts
+    url: https://docs.semgrep.dev/semgrep-appsec-platform/mcp
+    fetchedAt: 2026-11-11
+x-omega: { oss: exclude }

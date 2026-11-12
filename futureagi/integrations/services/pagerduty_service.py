@@ -1,11 +1,12 @@
 import hashlib
 import logging
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import requests
 
 from integrations.services.base import BaseIntegrationService, register_service
+from integrations.services.export_failures import validation_failure
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class PagerDutyService(BaseIntegrationService):
         self,
         host_url: str,
         credentials: dict,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict:
         try:
             routing_key = credentials.get("routing_key", "")
@@ -37,7 +38,7 @@ class PagerDutyService(BaseIntegrationService):
                 "routing_key": routing_key,
                 "payload": {
                     "summary": "Agentcc connection test",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                     "source": "agentcc-gateway",
                 },
             }
@@ -56,15 +57,10 @@ class PagerDutyService(BaseIntegrationService):
                 }
 
             if resp.status_code in (400, 429):
-                body = (
-                    resp.json()
-                    if resp.headers.get("content-type", "").startswith(
-                        "application/json"
-                    )
-                    else {}
-                )
-                msg = body.get("message", "Invalid routing key or rate limited.")
-                return {"valid": False, "error": msg}
+                return {
+                    "valid": False,
+                    "error": f"PagerDuty refused validation (HTTP {resp.status_code}). Check the routing key or retry later.",
+                }
 
             return {
                 "valid": False,
@@ -82,18 +78,17 @@ class PagerDutyService(BaseIntegrationService):
                 "error": "Connection to PagerDuty timed out. Please try again.",
             }
         except Exception as e:
-            logger.exception("Unexpected error validating PagerDuty credentials")
-            return {"valid": False, "error": f"Validation failed: {str(e)}"}
+            return validation_failure("pagerduty", e, logger)
 
     def fetch_traces(
         self,
         host_url: str,
         credentials: dict,
-        from_timestamp: Optional[str] = None,
-        to_timestamp: Optional[str] = None,
+        from_timestamp: str | None = None,
+        to_timestamp: str | None = None,
         page: int = 1,
         limit: int = 100,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict:
         """Not used — PagerDuty is an alert target, not a trace source."""
         return {"traces": [], "has_more": False, "next_page": 1, "total_items": 0}
@@ -103,7 +98,7 @@ class PagerDutyService(BaseIntegrationService):
         host_url: str,
         credentials: dict,
         trace_id: str,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict[str, Any]:
         """Not used — PagerDuty is an alert target, not a trace source."""
         return {}

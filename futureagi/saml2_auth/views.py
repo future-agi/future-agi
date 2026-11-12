@@ -7,20 +7,7 @@ from urllib.parse import urlencode
 
 import requests
 import structlog
-from django.conf import settings
-from django.core.cache import cache
-from django.db import transaction
-from django.http import HttpResponse, HttpResponseRedirect
-from django.utils import timezone
-from django.utils.http import urlsafe_base64_encode
-from drf_yasg import openapi
-from drf_yasg.utils import no_body, swagger_auto_schema
-from rest_framework import viewsets
-from rest_framework.exceptions import PermissionDenied
-from rest_framework.parsers import FormParser, MultiPartParser
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework.views import APIView
-
+from accounts.services.auth_cache import cache_access_token
 from accounts.authentication import generate_encrypted_message
 from accounts.gcp_marketplace_utils import encode_oauth_state, read_oauth_state
 from accounts.gcp_marketplace_utils import process_signup as marketplace_signup
@@ -37,6 +24,19 @@ from analytics.utils import (
     get_mixpanel_properties,
     track_mixpanel_event,
 )
+from django.conf import settings
+from django.core.cache import cache
+from django.db import transaction
+from django.http import HttpResponse, HttpResponseRedirect
+from django.utils import timezone
+from django.utils.http import urlsafe_base64_encode
+from drf_yasg import openapi
+from drf_yasg.utils import no_body, swagger_auto_schema
+from rest_framework import viewsets
+from rest_framework.exceptions import PermissionDenied
+from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.views import APIView
 from saml2_auth.forms import IDPUploadForm
 from saml2_auth.models import SamlLoginAttempt, SAMLMetadataModel, SamlResponseCandidate
 from saml2_auth.permissions import SAMLConfigPermission
@@ -94,6 +94,9 @@ from tfc.settings.settings import (
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
+
+from accounts.services.handoff_exchange import KIND_SAML, KIND_SSO
+from accounts.services.handoff_exchange import issue as issue_handoff_code
 
 logger = structlog.get_logger(__name__)
 security_logger = structlog.get_logger("saml2_auth.security")
@@ -298,8 +301,10 @@ class CompleteView(APIView):
                 org_id=str(idp.organization_id),
                 user_id=str(user.id),
             )
+            # CR-07c: the redirect carries a one-time code, never the session.
+            code = issue_handoff_code(KIND_SAML, {"access": token, "refresh": None})
             response = HttpResponseRedirect(
-                f"{default_next_url}?{urlencode({'sso_token': token, 'next': attempt.next_path, 'auth': 'saml'})}"
+                f"{default_next_url}?{urlencode({'code': code, 'kind': KIND_SAML, 'next': attempt.next_path})}"
             )
         except SamlDenied as exc:
             if claimed_attempt_id:
@@ -699,7 +704,41 @@ class IDPUploadViews(viewsets.ModelViewSet):
 
 import urllib.parse  # noqa: E402
 
-from jose import jwt  # noqa: E402
+import jwt  # noqa: E402
+
+# The AUTH0_* settings are Google's OAuth client (AUTH0_DOMAIN is
+# accounts.google.com/o/oauth2), so the ID token is Google's: its issuer and
+# signing keys are the ones https://accounts.google.com/.well-known/
+# openid-configuration publishes. Google documents both issuer spellings.
+GOOGLE_ID_TOKEN_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
+GOOGLE_ID_TOKEN_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
+# One client per process: the key set is cached for an hour, and a token that
+# names a key id not in the cache (Google rotated) triggers one early refetch.
+_GOOGLE_JWKS_CLIENT = jwt.PyJWKClient(
+    GOOGLE_ID_TOKEN_JWKS_URL, cache_jwk_set=True, lifespan=3600, timeout=10
+)
+
+
+def _verified_google_id_token(id_token):
+    """Claims of an ID token Google signed for our client, or raise.
+
+    Only RS256 is accepted, so neither an unsigned token nor one HMAC-keyed
+    with the public key passes. The account is looked up by email, so the
+    email must be one Google has verified.
+    """
+    signing_key = _GOOGLE_JWKS_CLIENT.get_signing_key_from_jwt(id_token)
+    claims = jwt.decode(
+        id_token,
+        key=signing_key.key,
+        algorithms=["RS256"],
+        audience=AUTH0_CLIENT_ID,
+        issuer=GOOGLE_ID_TOKEN_ISSUERS,
+        leeway=60,
+        options={"require": ["exp", "iat", "iss", "aud"]},
+    )
+    if claims.get("email_verified") is not True:
+        raise PermissionDenied("Google has not verified this email address.")
+    return claims
 
 
 class Auth0LoginView(APIView):
@@ -807,6 +846,17 @@ def resolve_sso_user(user_email, name, onboarding_token, mode):
         return user_model, get_started_url, "true"
 
 
+def _sso_handoff_query(access_token_encrypted, new_org):
+    """CR-07b: the redirect carries a one-time code, never the session itself.
+
+    The app redeems the code by POST for the access token minted here.
+    """
+    code = issue_handoff_code(
+        KIND_SSO, {"access": str(access_token_encrypted), "refresh": None}
+    )
+    return f"?code={code}&kind={KIND_SSO}&is_new_user={new_org}"
+
+
 class Auth0CallbackView(APIView):
     permission_classes = (AllowAny,)
     authentication_classes = []
@@ -846,16 +896,10 @@ class Auth0CallbackView(APIView):
             tokens = response.json()
             id_token = tokens.get("id_token")
 
-            # Decode the ID token
+            # Verify the ID token before trusting the identity it names
             if id_token:
                 access_token = tokens.get("access_token")
-                decoded = jwt.decode(
-                    id_token,
-                    options={"verify_signature": False},
-                    key=AUTH0_CLIENT_ID,
-                    audience=AUTH0_CLIENT_ID,
-                    access_token=access_token,
-                )
+                decoded = _verified_google_id_token(id_token)
                 logger.info("oauth_identity_decoded", provider="auth0")
 
                 user_email = decoded.get("email")
@@ -901,15 +945,15 @@ class Auth0CallbackView(APIView):
                 access_token_encrypted = generate_encrypted_message(
                     {"user_id": str(user_model.id), "id": str(access_token.id)}
                 )
-                cache.set(
-                    f"access_token_{str(access_token.id)}",
-                    {"token": access_token_encrypted, "user": user_model},
+                cache_access_token(
+                    str(access_token.id),
+                    access_token_encrypted,
+                    user_model,
                     timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
+                    cache_backend=cache,
                 )
 
-                next_url += (
-                    f"?sso_token={str(access_token_encrypted)}&is_new_user={new_org}"
-                )
+                next_url += _sso_handoff_query(access_token_encrypted, new_org)
                 login_next_url = request.session.get("login_next_url", None)
                 if login_next_url:
                     next_url += f"&next={login_next_url}"
@@ -1040,15 +1084,15 @@ class GithubCallbackView(APIView):
             access_token_encrypted = generate_encrypted_message(
                 {"user_id": str(user_model.id), "id": str(access_token.id)}
             )
-            cache.set(
-                f"access_token_{str(access_token.id)}",
-                {"token": access_token_encrypted, "user": user_model},
+            cache_access_token(
+                str(access_token.id),
+                access_token_encrypted,
+                user_model,
                 timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
+                cache_backend=cache,
             )
 
-            next_url += (
-                f"?sso_token={str(access_token_encrypted)}&is_new_user={new_org}"
-            )
+            next_url += _sso_handoff_query(access_token_encrypted, new_org)
             login_next_url = request.session.get("login_next_url", None)
             if login_next_url:
                 next_url += f"&next={login_next_url}"
@@ -1067,6 +1111,65 @@ class GithubCallbackView(APIView):
             encoded = urlsafe_base64_encode(b"Unable to process OAuth callback")
             redirect_url = f"{default_error_next_url}&reason={encoded}"
             return HttpResponseRedirect(redirect_url)
+
+
+MICROSOFT_SIGN_IN_REFUSED_MESSAGE = (
+    "We couldn't sign you in with Microsoft. Sign in with your email, "
+    "or contact support."
+)
+
+
+class MicrosoftIdentityRefused(Exception):
+    """A Microsoft identity that must not be mapped to an account.
+
+    reason is a short code for the security log; the user sees one generic
+    message whatever the reason.
+    """
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _normalised_address(value):
+    # User.email is looked up exactly, and first_signup stores it lowercased,
+    # so stripping and lowercasing keeps lookup and creation on one key.
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
+def microsoft_account_email(graph_user):
+    """The account address a Graph /me profile resolves to, or raise.
+
+    Only the userPrincipalName names the account. Its suffix has to be one of
+    the tenant's verified domains, whereas `mail` is a directory attribute any
+    tenant admin can set to any address, so trusting `mail` let a foreign
+    tenant sign in as a victim. Guest UPNs (#EXT#) carry the home address
+    only in an unverified, rewritten local part, so they are refused too.
+    """
+    upn = _normalised_address(graph_user.get("userPrincipalName"))
+    if not upn:
+        raise MicrosoftIdentityRefused("upn_missing")
+    if "#ext#" in upn:
+        raise MicrosoftIdentityRefused("upn_guest")
+    local, _, domain = upn.partition("@")
+    if not local or not domain or "@" in domain:
+        raise MicrosoftIdentityRefused("upn_malformed")
+    return upn
+
+
+def refuse_if_microsoft_signup_would_duplicate(upn, mail):
+    """Refuse rather than create a second account for someone who has one.
+
+    Reached only when no account has the UPN. An account under the profile's
+    `mail`, or under a case variant of the UPN, most likely belongs to this
+    person, but `mail` is unverified, so neither signing them in nor creating
+    a parallel account is safe. They are sent to sign in with their email.
+    """
+    if User.objects.filter(email__iexact=upn).exists():
+        raise MicrosoftIdentityRefused("upn_matches_other_case")
+    mail = _normalised_address(mail)
+    if mail and User.objects.filter(email__iexact=mail).exists():
+        raise MicrosoftIdentityRefused("mail_matches_other_account")
 
 
 class MicrosoftCallbackView(APIView):
@@ -1135,12 +1238,7 @@ class MicrosoftCallbackView(APIView):
             microsoft_user = user_response.json()
             logger.info("oauth_profile_loaded", provider="microsoft")
 
-            # Extract user information
-            user_email = microsoft_user.get("mail") or microsoft_user.get(
-                "userPrincipalName"
-            )
-            if not user_email:
-                raise Exception("Email not found in Microsoft account.")
+            user_email = microsoft_account_email(microsoft_user)
 
             name = microsoft_user.get("displayName")
             if not name:
@@ -1165,6 +1263,9 @@ class MicrosoftCallbackView(APIView):
                 track_mixpanel_event(MixpanelEvents.SSO_LOGIN.value, properties)
 
             except User.DoesNotExist:
+                refuse_if_microsoft_signup_would_duplicate(
+                    user_email, microsoft_user.get("mail")
+                )
                 new_org = "true"
                 data = {"full_name": name, "email": user_email}
                 user_model = first_signup(data, mode=MixpanelModes.MICROSOFT.value)
@@ -1180,15 +1281,15 @@ class MicrosoftCallbackView(APIView):
             access_token_encrypted = generate_encrypted_message(
                 {"user_id": str(user_model.id), "id": str(access_token.id)}
             )
-            cache.set(
-                f"access_token_{str(access_token.id)}",
-                {"token": access_token_encrypted, "user": user_model},
+            cache_access_token(
+                str(access_token.id),
+                access_token_encrypted,
+                user_model,
                 timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
+                cache_backend=cache,
             )
 
-            next_url += (
-                f"?sso_token={str(access_token_encrypted)}&is_new_user={new_org}"
-            )
+            next_url += _sso_handoff_query(access_token_encrypted, new_org)
             login_next_url = request.session.get("login_next_url", None)
             if login_next_url:
                 next_url += f"&next={login_next_url}"
@@ -1198,6 +1299,12 @@ class MicrosoftCallbackView(APIView):
             response["new_org"] = new_org
             return response
 
+        except MicrosoftIdentityRefused as exc:
+            security_logger.warning(
+                "oauth_identity_refused", provider="microsoft", reason=exc.reason
+            )
+            encoded = urlsafe_base64_encode(MICROSOFT_SIGN_IN_REFUSED_MESSAGE.encode())
+            return HttpResponseRedirect(f"{default_error_next_url}&reason={encoded}")
         except Exception as exc:
             logger.error(
                 "oauth_callback_failed",

@@ -96,7 +96,7 @@ def forwards(apps, schema_editor):
     DashboardWidget = apps.get_model("tracer", "DashboardWidget")
     updated = 0
 
-    for widget in DashboardWidget.objects.iterator(chunk_size=500):
+    for widget in DashboardWidget.objects.using(schema_editor.connection.alias).iterator(chunk_size=500):
         query_config, query_changed = _canonicalize_query_config(widget.query_config)
         chart_config, chart_changed = _canonicalize_chart_config(widget.chart_config)
         update_fields = []
@@ -108,7 +108,7 @@ def forwards(apps, schema_editor):
             widget.chart_config = chart_config
             update_fields.append("chart_config")
         if update_fields:
-            widget.save(update_fields=update_fields)
+            widget.save(using=schema_editor.connection.alias, update_fields=update_fields)
             updated += 1
 
     print(f"[canonicalize_dashboard_widget_configs] {updated} widgets updated")

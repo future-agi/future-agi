@@ -1,6 +1,4 @@
 import _ from "lodash";
-import { blue, green, orange, pink, red } from "../../../theme/palette";
-import { alpha } from "@mui/material";
 import { fCurrency } from "src/utils/format-number";
 
 export const ICON_MAPPER = {
@@ -11,55 +9,19 @@ export const ICON_MAPPER = {
   agent_compass: "/assets/icons/navbar/ic_feed.svg",
   simulate: "/assets/icons/usage-summary/ic_simulate.svg",
 };
+// Metric icons are neutral: grey glyph on a quiet tile (colour is for status only).
+const NEUTRAL_ICON_STYLE = {
+  iconStyle: { color: "text.secondary" },
+  containerStyle: { backgroundColor: "background.neutral" },
+};
+
 export const ICON_STYLES = {
-  credits_used: {
-    iconStyle: {
-      color: "green.500",
-    },
-    containerStyle: {
-      "background-color": green.o5,
-    },
-  },
-  traces: {
-    iconStyle: {
-      color: "orange.500",
-    },
-    containerStyle: {
-      "background-color": orange.o5,
-    },
-  },
-  evaluations: {
-    iconStyle: {
-      color: "blue.500",
-    },
-    containerStyle: {
-      "background-color": blue.o5,
-    },
-  },
-  error_localizations: {
-    iconStyle: {
-      color: "red.500",
-    },
-    containerStyle: {
-      "background-color": red.o5,
-    },
-  },
-  agent_compass: {
-    iconStyle: {
-      color: "primary.main",
-    },
-    containerStyle: {
-      "background-color": (theme) => alpha(theme.palette.primary.main, 0.05),
-    },
-  },
-  simulate: {
-    iconStyle: {
-      color: "pink.500",
-    },
-    containerStyle: {
-      "background-color": pink.o5,
-    },
-  },
+  credits_used: NEUTRAL_ICON_STYLE,
+  traces: NEUTRAL_ICON_STYLE,
+  evaluations: NEUTRAL_ICON_STYLE,
+  error_localizations: NEUTRAL_ICON_STYLE,
+  agent_compass: NEUTRAL_ICON_STYLE,
+  simulate: NEUTRAL_ICON_STYLE,
 };
 
 export const tabOptions = [
@@ -135,16 +97,16 @@ export function convertTotalsToMetrics(totals) {
         ? "negative"
         : "positive";
 
-    let value = typeof data.cost === "number" ? data.cost : 0;
+    let value = data.cost;
 
     // Optionally replace credits_used value with total_credit if available
-    if (key === "credits_used" && typeof data.total_credit === "number") {
+    if (key === "credits_used" && data.total_credit != null) {
       value = data.total_credit;
     }
 
     let formattedValue = "$0";
     try {
-      formattedValue = fCurrency(value, true) || "$0";
+      formattedValue = fCurrency(value, true) || "—";
     } catch (e) {
       formattedValue = "$0";
     }
@@ -181,10 +143,10 @@ export function convertWorkspaceToMetrics(ws) {
 
   return mapping.map(({ key, data }) => {
     const d = data || {};
-    const value = typeof d.cost === "number" ? d.cost : 0;
+    const value = d.cost;
     let formattedValue = "$0";
     try {
-      formattedValue = fCurrency(value, true) || "$0";
+      formattedValue = fCurrency(value, true) || "—";
     } catch (e) {
       formattedValue = "$0";
     }

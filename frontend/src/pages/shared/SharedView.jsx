@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, { useState, useCallback, useMemo } from "react";
 import { useParams } from "react-router";
 import PropTypes from "prop-types";
@@ -6,28 +7,47 @@ import {
   Box,
   Button,
   Chip,
-  CircularProgress,
   Divider,
+  IconButton,
   Stack,
   Typography,
 } from "@mui/material";
 import { Helmet } from "react-helmet-async";
+import { enqueueSnackbar } from "notistack";
 import { useResolveSharedLink } from "src/api/shared-links";
 import TraceTreeV2 from "src/components/traceDetail/TraceTreeV2";
 import SpanDetailPane from "src/components/traceDetail/SpanDetailPane";
+import { useAuthContext } from "src/auth/hooks";
 import {
   formatLatency,
   formatTokenCount,
   formatCost,
 } from "src/sections/projects/LLMTracing/formatters";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import { copyToClipboard } from "src/utils/utils";
 import SharedVoiceView from "./SharedVoiceView";
 import SharedSimulationCallView from "./SharedSimulationCallView";
 import SharedErrorIssueView from "./SharedErrorIssueView";
 import { isVoiceCall, simulationCallKind } from "./sharedViewHelpers";
+import SharedDatasetView from "./SharedDatasetView";
+import ContentSkeleton from "src/components/content-skeleton";
 
 function getSpan(entry) {
   return entry?.observation_span || entry?.observationSpan || {};
+}
+
+// The span's annotations as a restricted link's trace read returned them,
+// through the link. Never the viewer's own session: a viewer from another
+// organization would get their own (empty) scope instead of the sharer's
+// annotations. A public link's read carries none, so this is undefined.
+function getSharedAnnotations(entry) {
+  const block = entry?.shared_annotations || entry?.sharedAnnotations;
+  if (!block) return undefined;
+  return {
+    scores: Array.isArray(block.scores) ? block.scores : [],
+    spanNotes: Array.isArray(block.span_notes) ? block.span_notes : [],
+  };
 }
 
 const SHARED_LINK_ERROR_COPY = {
@@ -39,6 +59,7 @@ const SHARED_LINK_ERROR_COPY = {
 
 export default function SharedView() {
   const { token } = useParams();
+  const { authenticated, loading: authLoading } = useAuthContext();
   const [selectedSpanId, setSelectedSpanId] = useState(null);
   const [leftPanelWidth, setLeftPanelWidth] = useState(35);
 
@@ -74,6 +95,11 @@ export default function SharedView() {
   const spans =
     resourceData?.observationSpans || resourceData?.observation_spans;
   const summary = resourceData?.summary;
+  // A trace too large for the full read comes through its link with its
+  // spans only: no evaluations, no annotations, a span count as its summary.
+  const detailLimited =
+    isTrace &&
+    Boolean(resourceData?.detail_limited || resourceData?.detailLimited);
 
   const selectedSpanData = useMemo(() => {
     if (!selectedSpanId || !spans) return null;
@@ -90,6 +116,11 @@ export default function SharedView() {
     }
     return find(spans);
   }, [selectedSpanId, spans]);
+
+  const selectedSpanAnnotations = useMemo(
+    () => getSharedAnnotations(selectedSpanData),
+    [selectedSpanData],
+  );
 
   const handleSelectSpan = useCallback((spanId) => {
     setSelectedSpanId((prev) => (prev === spanId ? null : spanId));
@@ -122,6 +153,14 @@ export default function SharedView() {
     [leftPanelWidth],
   );
 
+  // The header shows the whole id; this copies it, with the same "Copied"
+  // note as the span id's copy button in the pane below.
+  const handleCopyId = useCallback(async () => {
+    if (await copyToClipboard(resourceId)) {
+      enqueueSnackbar("Copied", { variant: "info", autoHideDuration: 1500 });
+    }
+  }, [resourceId]);
+
   const isLoading = resolving;
 
   // Error states
@@ -147,10 +186,10 @@ export default function SharedView() {
             <Iconify
               icon={
                 status === 401
-                  ? "mdi:lock-outline"
+                  ? "solar:lock-linear"
                   : status === 403
-                    ? "mdi:shield-lock-outline"
-                    : "mdi:link-off"
+                    ? "solar:shield-keyhole-linear"
+                    : "solar:link-broken-linear"
               }
               width={48}
               sx={{ color: "text.disabled", mb: 2 }}
@@ -173,7 +212,7 @@ export default function SharedView() {
                   display: "inline-block",
                   mt: 2,
                   color: "primary.main",
-                  fontSize: 14,
+                  fontSize: 13,
                   fontWeight: 500,
                 }}
               >
@@ -185,6 +224,10 @@ export default function SharedView() {
       </>
     );
   }
+
+  // W4-6: a public dataset link (no app chrome, read-only).
+  if (resourceType === "dataset" && resourceData)
+    return <SharedDatasetView token={token} shared={shared} />;
 
   return (
     <>
@@ -225,29 +268,39 @@ export default function SharedView() {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            gap: 2,
             flexShrink: 0,
           }}
         >
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          {/* minWidth 0 lets a long id give way (ellipsis) before the title
+              or View only does; a short one shows whole. */}
+          <Box
+            sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}
+          >
             <Iconify
               icon={
                 isVoiceView
-                  ? "mdi:phone-outline"
+                  ? "solar:phone-linear"
                   : isChatCall
-                    ? "mdi:message-text-outline"
+                    ? "solar:chat-round-line-linear"
                     : isErrorIssue
-                      ? "mdi:bug-outline"
+                      ? "solar:bug-linear"
                       : resourceType === "dashboard"
-                        ? "mdi:view-dashboard-outline"
+                        ? "solar:widget-4-linear"
                         : resourceType === "project"
-                          ? "mdi:folder-outline"
-                          : "mdi:share-variant-outline"
+                          ? "solar:folder-linear"
+                          : "solar:share-linear"
               }
               width={20}
-              sx={{ color: "primary.main" }}
+              sx={{ color: "primary.main", flexShrink: 0 }}
             />
             <Typography
-              sx={{ fontSize: 14, fontWeight: 600, color: "text.primary" }}
+              sx={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: "text.primary",
+                flexShrink: 0,
+              }}
             >
               {isVoiceView
                 ? "Shared voice call"
@@ -262,23 +315,72 @@ export default function SharedView() {
                         : `Shared ${resourceType || "resource"}`}
             </Typography>
             {resourceId && (
-              <Typography
+              <Box
                 sx={{
-                  fontSize: 12,
-                  fontFamily: "monospace",
-                  color: "text.disabled",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.25,
+                  minWidth: 0,
                 }}
               >
-                {resourceId.length > 12
-                  ? `${resourceId.substring(0, 12)}...`
-                  : resourceId}
-              </Typography>
+                <Typography
+                  noWrap
+                  title={resourceId}
+                  sx={{
+                    fontSize: 12,
+                    fontFamily: "monospace",
+                    color: "text.secondary",
+                  }}
+                >
+                  {resourceId}
+                </Typography>
+                <CustomTooltip
+                  show
+                  size="small"
+                  placement="top"
+                  title="Copy ID"
+                >
+                  <IconButton
+                    size="small"
+                    aria-label="Copy ID"
+                    onClick={handleCopyId}
+                    sx={{ p: 0.25, flexShrink: 0, color: "text.secondary" }}
+                  >
+                    <Iconify icon="solar:copy-linear" width={14} />
+                  </IconButton>
+                </CustomTooltip>
+              </Box>
             )}
           </Box>
-          <Typography sx={{ fontSize: 11, color: "text.disabled" }}>
+          <Typography
+            sx={{
+              fontSize: 11,
+              color: "text.secondary",
+              whiteSpace: "nowrap",
+              flexShrink: 0,
+            }}
+          >
             View only
           </Typography>
         </Box>
+
+        {detailLimited && !isLoading && (
+          <Typography
+            sx={{
+              px: 2,
+              py: 1,
+              fontSize: 12,
+              color: "text.secondary",
+              bgcolor: "background.default",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              flexShrink: 0,
+            }}
+          >
+            This trace is large, so evaluations and annotations are not included
+            on this link.
+          </Typography>
+        )}
 
         {/* Content */}
         {isLoading ? (
@@ -290,7 +392,7 @@ export default function SharedView() {
               justifyContent: "center",
             }}
           >
-            <CircularProgress size={32} />
+            <ContentSkeleton variant="panel" />
           </Box>
         ) : isErrorIssue ? (
           <SharedErrorIssueView token={token} data={resourceData} />
@@ -317,7 +419,11 @@ export default function SharedView() {
                 flexShrink: 0,
               }}
             >
-              <Box sx={{ flex: 1, overflow: "auto" }}>
+              {/* The page has no sidebar, so this pane meets the window's
+                  left edge. The tree's toolbar and rows inset themselves
+                  8 px; 8 px more puts the Trace Tree label and Search box
+                  on the header's 16 px gutter. */}
+              <Box sx={{ flex: 1, overflow: "auto", pl: 1 }}>
                 <TraceTreeV2
                   spans={spans}
                   selectedSpanId={selectedSpanId}
@@ -376,6 +482,10 @@ export default function SharedView() {
                 <SpanDetailPane
                   entry={selectedSpanData}
                   onClose={() => setSelectedSpanId(null)}
+                  readOnly
+                  annotationsUnavailable={!authenticated}
+                  annotationsPending={Boolean(authLoading)}
+                  sharedAnnotations={selectedSpanAnnotations}
                 />
               ) : (
                 <Box
@@ -387,7 +497,7 @@ export default function SharedView() {
                   }}
                 >
                   <Iconify
-                    icon="mdi:cursor-default-click-outline"
+                    icon="solar:cursor-linear"
                     width={40}
                     sx={{ mb: 1, opacity: 0.5 }}
                   />
@@ -478,7 +588,7 @@ function SharedProjectView({ project }) {
               component="h1"
               sx={{
                 fontSize: { xs: 22, md: 28 },
-                fontWeight: 700,
+                fontWeight: 600,
                 color: "text.primary",
                 wordBreak: "break-word",
               }}
@@ -502,7 +612,9 @@ function SharedProjectView({ project }) {
             <Button
               href={projectUrl}
               variant="contained"
-              startIcon={<Iconify icon="mdi:open-in-new" width={16} />}
+              startIcon={
+                <Iconify icon="solar:arrow-right-up-linear" width={16} />
+              }
               sx={{ flexShrink: 0 }}
             >
               Open project
@@ -521,7 +633,7 @@ function SharedProjectView({ project }) {
         >
           <Box sx={{ p: 2.5 }}>
             <Typography
-              sx={{ fontSize: 13, fontWeight: 700, color: "text.primary" }}
+              sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
             >
               Project details
             </Typography>
@@ -574,7 +686,7 @@ function SharedDashboardView({ dashboard }) {
               component="h1"
               sx={{
                 fontSize: { xs: 22, md: 28 },
-                fontWeight: 700,
+                fontWeight: 600,
                 color: "text.primary",
                 wordBreak: "break-word",
               }}
@@ -585,7 +697,7 @@ function SharedDashboardView({ dashboard }) {
               <Typography
                 sx={{
                   mt: 0.75,
-                  fontSize: 14,
+                  fontSize: 13,
                   color: "text.secondary",
                   maxWidth: 760,
                 }}
@@ -597,7 +709,7 @@ function SharedDashboardView({ dashboard }) {
           <Chip
             size="small"
             variant="outlined"
-            icon={<Iconify icon="mdi:view-grid-outline" width={16} />}
+            icon={<Iconify icon="solar:widget-4-linear" width={16} />}
             label={`${widgetCount} ${widgetCount === 1 ? "widget" : "widgets"}`}
             sx={{ flexShrink: 0 }}
           />
@@ -619,26 +731,19 @@ function SharedDashboardView({ dashboard }) {
             ))}
           </Box>
         ) : (
-          <Box
+          <EmptyState
+            icon="solar:widget-4-linear"
+            title="No widgets yet"
+            description="This dashboard has no widgets."
             sx={{
-              py: 8,
-              px: 2,
-              textAlign: "center",
+              pt: 6,
+              pb: 6,
               bgcolor: "background.paper",
               border: "1px solid",
               borderColor: "divider",
               borderRadius: 1,
             }}
-          >
-            <Iconify
-              icon="mdi:view-dashboard-outline"
-              width={40}
-              sx={{ color: "text.disabled", mb: 1 }}
-            />
-            <Typography sx={{ fontSize: 14, color: "text.secondary" }}>
-              No widgets in this dashboard
-            </Typography>
-          </Box>
+          />
         )}
       </Box>
     </Box>
@@ -678,8 +783,8 @@ function DashboardWidgetPreview({ widget }) {
           <Box sx={{ minWidth: 0 }}>
             <Typography
               sx={{
-                fontSize: 15,
-                fontWeight: 700,
+                fontSize: 13,
+                fontWeight: 600,
                 color: "text.primary",
                 wordBreak: "break-word",
               }}
@@ -723,9 +828,9 @@ function DashboardWidgetPreview({ widget }) {
           sx={{
             mb: 1,
             fontSize: 11,
-            fontWeight: 700,
+            fontWeight: 600,
             color: "text.secondary",
-            textTransform: "uppercase",
+            textTransform: "none",
           }}
         >
           Metrics
@@ -757,9 +862,9 @@ function WidgetStat({ label, value }) {
       <Typography
         sx={{
           fontSize: 11,
-          fontWeight: 700,
+          fontWeight: 600,
           color: "text.disabled",
-          textTransform: "uppercase",
+          textTransform: "none",
         }}
       >
         {label}

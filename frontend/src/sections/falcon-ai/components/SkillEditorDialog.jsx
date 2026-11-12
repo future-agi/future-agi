@@ -11,21 +11,58 @@ import Typography from "@mui/material/Typography";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Alert from "@mui/material/Alert";
-import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { createSkill, updateSkill, deleteSkill } from "../hooks/useFalconAPI";
+import { captureFalconRequest } from "../store/falconRequestGuard";
+
+// A new skill starts on this icon, and an Icon field left empty saves it too.
+// An edited skill starts on its own. The server stores `icon` (Skill.icon),
+// and the skill lists, picker and slash menu show it.
+const DEFAULT_ICON = "solar:star-linear";
 
 const INITIAL_STATE = {
   name: "",
   description: "",
-  icon: "mdi:star-outline",
+  icon: DEFAULT_ICON,
   instructions: "",
   trigger_phrases: [],
 };
 
+// Same rules and messages as the Customize skill editor (validateSkillForm in
+// CustomizePanel.jsx); only this window has the Icon field. Change both together.
+function withPendingPhrase(phrases, pending) {
+  const phrase = pending.trim();
+  return phrase && !phrases.includes(phrase) ? [...phrases, phrase] : phrases;
+}
+
+function validateSkillForm(form, phrases) {
+  const name = form.name.trim();
+  const instructions = form.instructions.trim();
+  if (!name) {
+    return { field: "name", message: "Name is required" };
+  }
+  if (name.length < 2) {
+    return { field: "name", message: "Name must be at least 2 characters" };
+  }
+  if (!instructions) {
+    return { field: "instructions", message: "Instructions are required" };
+  }
+  if (instructions.length < 10) {
+    return {
+      field: "instructions",
+      message: "Instructions should be at least 10 characters",
+    };
+  }
+  if (phrases.length === 0) {
+    return {
+      field: "trigger_phrases",
+      message: "Add at least one trigger phrase",
+    };
+  }
+  return null;
+}
+
 export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const [form, setForm] = useState(INITIAL_STATE);
   const [phraseInput, setPhraseInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -39,7 +76,7 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
       setForm({
         name: skill.name || "",
         description: skill.description || "",
-        icon: skill.icon || "mdi:star-outline",
+        icon: skill.icon || DEFAULT_ICON,
         instructions: skill.instructions || "",
         trigger_phrases: skill.trigger_phrases || [],
       });
@@ -76,35 +113,19 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) {
-      setError("Name is required");
-      return;
-    }
-    if (form.name.trim().length < 2) {
-      setError("Name must be at least 2 characters");
-      return;
-    }
-    if (!form.instructions.trim()) {
-      setError("Instructions are required — tell Falcon how to behave");
-      return;
-    }
-    if (form.instructions.trim().length < 10) {
-      setError("Instructions should be at least 10 characters");
+    const phrases = withPendingPhrase(form.trigger_phrases, phraseInput);
+    const invalid = validateSkillForm(form, phrases);
+    if (invalid) {
+      setError(invalid);
       return;
     }
 
-    const pending = phraseInput.trim();
-    const phrases =
-      pending && !form.trigger_phrases.includes(pending)
-        ? [...form.trigger_phrases, pending]
-        : form.trigger_phrases;
-
-    if (phrases.length === 0) {
-      setError("Add at least one trigger phrase (type and press Enter)");
-      return;
-    }
-
-    const payload = { ...form, trigger_phrases: phrases };
+    const isCurrent = captureFalconRequest();
+    const payload = {
+      ...form,
+      icon: form.icon.trim() || DEFAULT_ICON,
+      trigger_phrases: phrases,
+    };
     setSaving(true);
     setError(null);
     try {
@@ -113,16 +134,19 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
       } else {
         await createSkill(payload);
       }
+      if (!isCurrent()) return;
       setPhraseInput("");
       onSaved?.();
       onClose();
     } catch (err) {
-      setError(
-        err?.response?.data?.error ||
+      setError({
+        field: null,
+        message:
+          err?.response?.data?.error ||
           err?.response?.data?.detail ||
           err?.message ||
           "Failed to save skill.",
-      );
+      });
     } finally {
       setSaving(false);
     }
@@ -130,23 +154,28 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
 
   const handleDelete = async () => {
     if (!skill?.id) return;
+    const isCurrent = captureFalconRequest();
     setDeleting(true);
     try {
       await deleteSkill(skill.id);
+      if (!isCurrent()) return;
       onSaved?.();
       onClose();
     } catch {
-      setError("Failed to delete skill.");
+      setError({ field: null, message: "Failed to delete skill." });
     } finally {
       setDeleting(false);
     }
   };
 
-  const hasPhrase = form.trigger_phrases.length > 0 || !!phraseInput.trim();
-  const canSave = form.name.trim() && form.instructions.trim() && hasPhrase;
-
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle sx={{ pb: 1 }}>
         <Typography variant="h6" component="span">
           {isEdit ? "Edit Skill" : "Create Skill"}
@@ -156,14 +185,14 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
       <DialogContent>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5, pt: 1 }}>
           <TextField
-            label="Name *"
+            label="Name"
+            required
             value={form.name}
             onChange={handleChange("name")}
             fullWidth
             size="small"
-            placeholder="e.g. Bug Analyzer"
-            error={error && !form.name.trim()}
-            helperText={error && !form.name.trim() ? "Name is required" : ""}
+            placeholder="e.g. Build a Dataset"
+            error={error?.field === "name"}
           />
 
           <TextField
@@ -172,71 +201,62 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
             onChange={handleChange("description")}
             fullWidth
             size="small"
-            placeholder="Short description shown in skill picker"
+            placeholder="What does this skill do?"
           />
 
-          <Box>
-            <TextField
-              label="Icon"
-              value={form.icon}
-              onChange={handleChange("icon")}
-              fullWidth
-              size="small"
-              placeholder="mdi:star-outline"
-              InputProps={{
-                startAdornment: (
-                  <Box
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      mr: 1,
-                    }}
-                  >
-                    <Iconify
-                      icon={form.icon || "mdi:star-outline"}
-                      width={20}
-                      sx={{ color: "text.secondary" }}
-                    />
-                  </Box>
-                ),
-              }}
-            />
-            <Typography
-              variant="caption"
-              sx={{ color: "text.disabled", mt: 0.5, display: "block" }}
-            >
-              Use an MDI icon name (e.g. mdi:bug, mdi:chart-line)
-            </Typography>
-          </Box>
+          {/* The icon the skill lists, picker and slash menu show, with a
+              preview of what was typed. Left empty, it saves the default.
+              Icons are bundled, not fetched, so the hint's examples are
+              names every skill list always has (backend-icon-consumers.mjs);
+              a name the app doesn't ship previews as the missing-icon box. */}
+          <TextField
+            label="Icon"
+            value={form.icon}
+            onChange={handleChange("icon")}
+            fullWidth
+            size="small"
+            placeholder={DEFAULT_ICON}
+            helperText="Icon name, e.g. mdi:bug-outline or mdi:star. Leave empty for the default star."
+            InputProps={{
+              startAdornment: (
+                <Box sx={{ display: "flex", alignItems: "center", mr: 1 }}>
+                  <Iconify
+                    icon={form.icon.trim() || DEFAULT_ICON}
+                    width={20}
+                    sx={{ color: "text.secondary" }}
+                  />
+                </Box>
+              ),
+            }}
+          />
 
           <TextField
-            label="Instructions *"
+            label="Instructions"
+            required
             value={form.instructions}
             onChange={handleChange("instructions")}
             fullWidth
             multiline
             minRows={4}
             maxRows={12}
-            placeholder="Write the skill prompt here. This tells the AI how to behave when this skill is active..."
-            error={error && !form.instructions.trim()}
-            helperText={
-              error && !form.instructions.trim()
-                ? "Instructions are required"
-                : "Describe the workflow, reasoning, and approach — not rigid commands"
-            }
+            placeholder="Write detailed instructions for how Falcon should behave when this skill is active..."
+            error={error?.field === "instructions"}
           />
 
-          {/* Trigger Phrases */}
+          {/* Trigger Phrases. Plain words, never "/...": a slash command
+              comes from the skill name, not from these phrases. */}
           <Box>
             <TextField
-              label="Trigger Phrases *"
+              label="Trigger phrases"
+              required
               value={phraseInput}
               onChange={(e) => setPhraseInput(e.target.value)}
               onKeyDown={handleAddPhrase}
               fullWidth
               size="small"
-              placeholder="Type a phrase and press Enter"
-              helperText="Press Enter to add each phrase — at least one required"
+              placeholder="e.g. weekly summary"
+              helperText="Press Enter to add each phrase"
+              error={error?.field === "trigger_phrases"}
             />
             {form.trigger_phrases.length > 0 && (
               <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mt: 1 }}>
@@ -247,11 +267,7 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
                     size="small"
                     onDelete={() => handleRemovePhrase(phrase)}
                     sx={{
-                      fontSize: 12,
-                      height: 26,
-                      bgcolor: isDark
-                        ? alpha(theme.palette.common.white, 0.06)
-                        : alpha(theme.palette.common.black, 0.05),
+                      bgcolor: "background.neutral",
                     }}
                   />
                 ))}
@@ -259,7 +275,7 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
             )}
           </Box>
 
-          {error && <Alert severity="error">{error}</Alert>}
+          {error && <Alert severity="error">{error.message}</Alert>}
         </Box>
       </DialogContent>
 
@@ -273,7 +289,7 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
               deleting ? (
                 <CircularProgress size={16} />
               ) : (
-                <Iconify icon="mdi:delete-outline" width={18} />
+                <Iconify icon="solar:trash-bin-trash-linear" width={20} />
               )
             }
             sx={{ mr: "auto" }}
@@ -287,7 +303,7 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
         <Button
           onClick={handleSave}
           variant="contained"
-          disabled={!canSave || saving}
+          disabled={saving}
           startIcon={
             saving ? <CircularProgress size={16} color="inherit" /> : null
           }

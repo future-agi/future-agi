@@ -2,9 +2,9 @@ import { AGENT_TYPES } from "src/sections/agents/constants";
 
 // Hosted-platform providers grouped by agent type — the roster only makes sense
 // once we know what kind of agent is being connected. Only the two live agent
-// types (voice, chat) keep rosters; coming-soon types cannot be selected, so
-// their rosters would be dead data. `brand` hexes are each vendor's own mark
-// colour, used to tint the platform chip. The five voice logos live in
+// types (voice, chat) keep rosters; the other types cannot be selected, so
+// their rosters would be dead data. Chat platforms that are not connectors in
+// this release are listed disabled (not selectable). The voice logos live in
 // components/platformLogos.js — this module stays svg-free so it is runnable
 // on its own.
 export const HOSTED_PLATFORMS_BY_TYPE = {
@@ -13,7 +13,6 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       id: "vapi",
       name: "Vapi",
       icon: "solar:phone-calling-rounded-linear",
-      brand: "#12A594",
       idLabel: "Assistant ID",
       idPlaceholder: "asst_9f2c…",
       keyLabel: "Vapi API key",
@@ -22,7 +21,6 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       id: "retell",
       name: "Retell AI",
       icon: "solar:microphone-3-linear",
-      brand: "#635BFF",
       idLabel: "Agent ID",
       idPlaceholder: "agent_9f2c…",
       keyLabel: "Retell API key",
@@ -40,32 +38,9 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       keyLabel: "API key",
     },
     {
-      id: "bland",
-      name: "Bland.ai",
-      icon: "solar:phone-linear",
-      brand: "#F26D5B",
-      idLabel: "Pathway ID",
-      idPlaceholder: "pathway_9f2c…",
-      keyLabel: "Bland API key",
-      // Not a real connector yet (submit would 400) — surfaced but not selectable.
-      comingSoon: true,
-    },
-    {
-      id: "elevenlabs",
-      name: "ElevenLabs",
-      icon: "solar:soundwave-linear",
-      brand: "#111111",
-      idLabel: "Agent ID",
-      idPlaceholder: "agent_9f2c…",
-      keyLabel: "ElevenLabs API key",
-      // Not a real connector yet (submit would 400) — surfaced but not selectable.
-      comingSoon: true,
-    },
-    {
       id: "livekit",
       name: "LiveKit",
       icon: "solar:server-minimalistic-linear",
-      brand: "#1FD5F9",
       isLiveKit: true,
       idLabel: "Agent name",
       idPlaceholder: "returns-line-agent",
@@ -76,11 +51,10 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
     {
       // The only real chat connector today (maps to `retell_chat`); listed first
       // so it's the default when Chat is selected. The rest are not connectors
-      // yet, so they're surfaced coming-soon (not selectable).
+      // in this release, so they're shown disabled (not selectable).
       id: "retell_chat",
       name: "Retell AI",
       icon: "solar:chat-round-line-linear",
-      brand: "#635BFF",
       idLabel: "Chat agent ID",
       idPlaceholder: "agent_9f2c…",
       keyLabel: "Retell API key",

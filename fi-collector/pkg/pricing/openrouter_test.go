@@ -44,9 +44,9 @@ func TestTableOpenRouterCost(t *testing.T) {
 	}
 }
 
-// Precedence for OpenRouter traffic: exact table key, then the org's own
-// price for the exact name, then OpenRouter's rate for the slug, then the
-// bare provider entry.
+// Exact table hits bypass custom pricing, but use the OpenRouter rate when
+// available. With no exact hit, the org's own price for the exact name wins
+// over OpenRouter's rate for the slug, then the bare provider entry.
 func TestOpenRouterTokenCostPrecedence(t *testing.T) {
 	ctx := context.Background()
 
@@ -79,10 +79,15 @@ func TestOpenRouterTokenCostPrecedence(t *testing.T) {
 		t.Fatalf("TokenCost openai/gpt-4o = %v ok=%v, want %v", c, ok, want)
 	}
 
-	// An exact table key wins over the openrouter/ entry.
+	// The openrouter/ entry wins over a colliding direct-provider exact key.
 	c, ok = p.OpenRouterTokenCost(ctx, "org", "anthropic/exact-slug", 1000, 0)
+	if want := 1000 * 1e-9; !ok || !nearCost(c, want) {
+		t.Fatalf("OpenRouter exact slug = %v ok=%v, want %v", c, ok, want)
+	}
+	// Direct-provider traffic still uses that exact key's own rate.
+	c, ok = p.TokenCost(ctx, "org", "anthropic/exact-slug", 1000, 0)
 	if want := 1000 * 7e-6; !ok || !nearCost(c, want) {
-		t.Fatalf("exact key = %v ok=%v, want %v", c, ok, want)
+		t.Fatalf("direct exact key = %v ok=%v, want %v", c, ok, want)
 	}
 
 	// The org's own price for the exact name wins over the openrouter/ entry.

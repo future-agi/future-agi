@@ -1,0 +1,24 @@
+schema: "connector-manifest/v1#app"
+id: github
+version: 1.0.0
+name: GitHub
+description: "Issues, pull requests and code in your repositories."
+vendor:
+  name: GitHub
+  domains: [github.com, githubcopilot.com]
+  githubOrgs: [github]
+eeCategory: developer
+group: other
+categories: [developer, code-hosting]
+tags: [git, issues, pull-requests]
+docsUrl: https://github.com/github/github-mcp-server
+archetype: code-host
+defaultProvider: remote-pat
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-20
+  - fact: vendor.githubOrgs
+    url: https://github.com/github/github-mcp-server
+    fetchedAt: 2026-10-20

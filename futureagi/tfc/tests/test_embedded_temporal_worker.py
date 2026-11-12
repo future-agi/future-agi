@@ -182,8 +182,10 @@ def test_worker_kwargs_size_each_worker_to_its_own_slots():
     generic = embedded._QueuePlan("tasks_xl", [], [], 8, 8)
     exact = embedded._QueuePlan("exact_aggregation", [], [], 1, 1)
 
-    generic_kwargs = embedded._worker_kwargs(client, generic, interceptor)
-    exact_kwargs = embedded._worker_kwargs(client, exact, interceptor)
+    generic_pool, exact_pool = object(), object()
+
+    generic_kwargs = embedded._worker_kwargs(client, generic, interceptor, generic_pool)
+    exact_kwargs = embedded._worker_kwargs(client, exact, interceptor, exact_pool)
 
     # temporalio builds a per-Worker workflow pool sized to the slots when no
     # shared executor is passed.
@@ -195,6 +197,9 @@ def test_worker_kwargs_size_each_worker_to_its_own_slots():
     assert exact_kwargs["max_concurrent_activities"] == 1
     assert exact_kwargs["max_concurrent_workflow_tasks"] == 1
     assert exact_kwargs["max_cached_workflows"] == 0
+    # Sync activities (webhooks_dispatch_loop) run on the queue's own pool.
+    assert generic_kwargs["activity_executor"] is generic_pool
+    assert exact_kwargs["activity_executor"] is exact_pool
 
 
 # -- activity thread isolation ------------------------------------------------

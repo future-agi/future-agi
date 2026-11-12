@@ -1,3 +1,4 @@
+import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -70,6 +71,14 @@ describe("UsageSummaryV2", () => {
   it("should be importable", async () => {
     const module = await import("../UsageSummaryV2");
     expect(module.default).toBeDefined();
+  });
+
+  it("says No usage data when there is none", async () => {
+    const { default: UsageSummaryV2 } = await import("../UsageSummaryV2");
+    renderWithQuery(<UsageSummaryV2 />);
+
+    expect(await screen.findByText("No usage data")).toBeInTheDocument();
+    expect(screen.queryByText(/No usage data yet/)).toBeNull();
   });
 
   it("does not show countdown chip for lifetime free plan", async () => {
@@ -249,6 +258,76 @@ describe("UsageSummaryV2", () => {
     await userEvent.click(screen.getByRole("button", { name: "12M" }));
 
     expect(await screen.findByText("$76.80")).toBeInTheDocument();
+  });
+});
+
+describe("UsageSummaryV2 when /usage/v2 fails", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("shows Usage couldn't be loaded with Retry, and no $0 or 0 of 0 defaults", async () => {
+    let calls = 0;
+    let fail = true;
+    mockGet.mockImplementation((url) => {
+      if (url === "/usage/v2/usage-overview/") {
+        calls += 1;
+        return fail
+          ? Promise.reject(
+              Object.assign(new Error("Not found"), { statusCode: 404 }),
+            )
+          : Promise.resolve({ data: { result: BASE_OVERVIEW } });
+      }
+      return Promise.reject(new Error("Not found"));
+    });
+
+    const { default: UsageSummaryV2 } = await import("../UsageSummaryV2");
+    renderWithQuery(<UsageSummaryV2 />);
+
+    expect(
+      await screen.findByText("Usage couldn't be loaded"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Usage & Billing")).not.toBeInTheDocument();
+    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
+    expect(screen.queryByText(/0 of 0/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Free/)).not.toBeInTheDocument();
+
+    const before = calls;
+    fail = false;
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Usage & Billing")).toBeInTheDocument();
+    expect(calls).toBe(before + 1);
+    expect(
+      screen.queryByText("Usage couldn't be loaded"),
+    ).not.toBeInTheDocument();
+  });
+});
+
+// The loading placeholder at phone width. The fix-round walk on 455a27eac
+// (firefox and webkit, hosted owner, 390 px) measured its header 26 px past
+// the screen: a 280 px bar and a 120 px bar side by side in a row that does
+// not wrap. The browser walk proves the layout; this pins the CSS behind it.
+describe("UsageSummaryV2 loading placeholder at phone width", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("wraps its header columns and caps each bar at its column", async () => {
+    mockGet.mockImplementation(() => new Promise(() => {}));
+    const { default: UsageSummaryV2 } = await import("../UsageSummaryV2");
+    const { container } = renderWithQuery(<UsageSummaryV2 />);
+
+    const firstBar = container.querySelector(".MuiSkeleton-root");
+    expect(firstBar).not.toBeNull();
+    const header = firstBar.parentElement.parentElement;
+    expect(getComputedStyle(header).flexWrap).toBe("wrap");
+
+    const columns = Array.from(header.children);
+    expect(columns).toHaveLength(2);
+    const bars = header.querySelectorAll(".MuiSkeleton-root");
+    expect(bars).toHaveLength(4);
+    for (const column of columns) {
+      expect(getComputedStyle(column).maxWidth).toBe("100%");
+    }
+    for (const bar of bars) {
+      expect(getComputedStyle(bar).maxWidth).toBe("100%");
+    }
   });
 });
 

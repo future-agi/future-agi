@@ -1,19 +1,3 @@
-import { BUILD_TONES } from "../../../buildEnvironment/buildTones";
-
-// Eval identity colours, indexed by the eval's position in the derived set —
-// green first, purple second, matching the designer's Task-success / Policy
-// graph. Mapped onto BUILD_TONES so this module carries no raw hex.
-export const EVAL_COLORS = [
-  BUILD_TONES.green,
-  BUILD_TONES.accent,
-  BUILD_TONES.blue,
-  BUILD_TONES.amber,
-  BUILD_TONES.orange,
-  BUILD_TONES.pink,
-  BUILD_TONES.tealDeep,
-  BUILD_TONES.indigo,
-];
-
 // A backend score key ("task_success") → a display name ("Task success"). The
 // kpis payload keys the eval metrics by snake_case; the graph legend and the
 // table header want the human label. Sentence case (first word capitalised
@@ -53,7 +37,13 @@ export function buildSummaryRow(run, scores) {
     scenarioCount: run?.scenarioCount ?? null,
     scenarioIds: run?.scenarioIds ?? [],
     trials: run?.trials ?? 1,
-    passRate: total ? Math.round((passed / total) * 100) : 0,
+    // v3 judges only measured calls, not errors/queued/inconclusive calls.
+    // Preserve its null rate too: no measured calls is not a zero-percent run.
+    passRate: run?.passRate !== undefined
+      ? run.passRate
+      : total
+        ? Math.round((passed / total) * 100)
+        : 0,
     durationS: run?.durationS ?? null,
     scores: scores || {},
     tokens: null,
@@ -73,7 +63,7 @@ export function countCoveredScenarios(rows, fallback) {
 // The environment's eval set for the summary, derived from the union of the
 // runs' score keys (first-seen order) — so the graph lines and the table's eval
 // columns come from the same source the scores do, and always agree. Each entry
-// carries a humanised name and a stable identity colour. No scores → no evals.
+// carries a humanised name and a stable identity colour index (resolved against the data palette). No scores → no evals.
 export function deriveEvals(rows) {
   const seen = [];
   (rows || []).forEach((r) => {
@@ -84,7 +74,7 @@ export function deriveEvals(rows) {
   return seen.map((id, i) => ({
     id,
     name: humanizeEvalKey(id),
-    color: EVAL_COLORS[i % EVAL_COLORS.length],
+    colorIndex: i,
   }));
 }
 
@@ -95,7 +85,7 @@ export function buildEvalSeries(rowsChrono, evals) {
   return (evals || []).map((e) => ({
     id: e.id,
     name: e.name,
-    color: e.color,
+    colorIndex: e.colorIndex,
     data: (rowsChrono || []).map((r) => {
       const v = r?.scores?.[e.id];
       return v == null ? null : v;

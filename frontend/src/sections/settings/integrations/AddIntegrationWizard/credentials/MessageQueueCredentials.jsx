@@ -4,19 +4,19 @@ import {
   Alert,
   Box,
   Button,
-  Card,
-  CardActionArea,
   IconButton,
   MenuItem,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
+import Section from "src/components/section";
 import { LoadingButton } from "@mui/lab";
 import Iconify from "src/components/iconify";
 import { useValidateCredentials } from "src/api/integrations";
 import { backButtonSx } from "../../styles";
 import { getErrorMessage, unwrapResponse } from "../../utils";
+import { isDestinationListed } from "../../constants";
 
 const AWS_REGIONS = [
   "us-east-1",
@@ -35,6 +35,10 @@ const SUB_PLATFORMS = [
   { id: "pubsub", label: "Google Pub/Sub", icon: "mdi:google-cloud" },
 ];
 
+const LISTED_SUB_PLATFORMS = SUB_PLATFORMS.filter((sp) =>
+  isDestinationListed("message_queue", sp.id),
+);
+
 export default function MessageQueueCredentials({
   data,
   onUpdate,
@@ -42,7 +46,8 @@ export default function MessageQueueCredentials({
   onBack,
 }) {
   const [subPlatform, setSubPlatform] = useState(
-    data.credentials?.sub_platform || "",
+    data.credentials?.sub_platform ||
+      (LISTED_SUB_PLATFORMS.length === 1 ? LISTED_SUB_PLATFORMS[0].id : ""),
   );
 
   // SQS fields
@@ -144,31 +149,25 @@ export default function MessageQueueCredentials({
 
       {/* Sub-platform selector */}
       <Stack direction="row" spacing={1.5}>
-        {SUB_PLATFORMS.map((sp) => (
-          <Card
+        {LISTED_SUB_PLATFORMS.map((sp) => (
+          <Section
             key={sp.id}
-            variant="outlined"
+            variant="panel"
+            onClick={() => {
+              setSubPlatform(sp.id);
+              setFieldErrors({});
+            }}
             sx={{
               flex: 1,
-              border: "2px solid",
-              borderColor:
-                subPlatform === sp.id ? "primary.main" : "action.hover",
-              transition: "border-color 0.2s",
+              textAlign: "center",
+              borderColor: subPlatform === sp.id ? "text.primary" : "divider",
             }}
           >
-            <CardActionArea
-              onClick={() => {
-                setSubPlatform(sp.id);
-                setFieldErrors({});
-              }}
-              sx={{ p: 1.5, textAlign: "center" }}
-            >
-              <Iconify icon={sp.icon} width={28} sx={{ mb: 0.5 }} />
-              <Typography sx={{ typography: "s2", fontWeight: 500 }}>
-                {sp.label}
-              </Typography>
-            </CardActionArea>
-          </Card>
+            <Iconify icon={sp.icon} width={28} sx={{ mb: 0.5 }} />
+            <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+              {sp.label}
+            </Typography>
+          </Section>
         ))}
       </Stack>
 
@@ -298,7 +297,9 @@ export default function MessageQueueCredentials({
           size="small"
           variant="outlined"
           onClick={onBack}
-          startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
+          startIcon={
+            <Iconify icon="solar:arrow-left-linear" width={16} height={16} />
+          }
           sx={backButtonSx}
         >
           Back
@@ -309,7 +310,6 @@ export default function MessageQueueCredentials({
           size="small"
           loading={isPending}
           onClick={handleValidate}
-          sx={{ fontWeight: 500 }}
         >
           Validate & Continue
         </LoadingButton>

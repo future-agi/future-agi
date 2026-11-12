@@ -3,22 +3,17 @@ import json
 import logging
 import os
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
-logging.disable(logging.CRITICAL)
-import django
-
-django.setup()
-
-from ee.falcon_ai.llm_client import FalconLLMClient
-
-client = FalconLLMClient()
-print(f"Provider: {client.provider}")
-print(f"Model: {client.model[:60]}")
+# Manual live-provider script (collect_ignore in this folder's conftest). Run it as
+#   python ee/falcon_ai/tests/integration/test_non_streaming.py
+# Importing it does nothing, so a runner that names this file explicitly collects no tests and makes no calls.
+# It drives FalconLLMClient.stream_completion, the client's completion API; non_streaming_completion never
+# existed in this repository.
+client = None
 
 
-async def test_simple():
+async def check_simple():
     print("\n--- Test 1: Simple text ---")
-    async for chunk in client.non_streaming_completion(
+    async for chunk in client.stream_completion(
         [{"role": "user", "content": "Say exactly: hello world"}]
     ):
         delta = chunk["choices"][0]["delta"]
@@ -30,7 +25,7 @@ async def test_simple():
         print(f"  Usage: {usage}")
 
 
-async def test_tool_call():
+async def check_tool_call():
     print("\n--- Test 2: Tool call ---")
     tools = [
         {
@@ -46,7 +41,7 @@ async def test_tool_call():
             },
         }
     ]
-    async for chunk in client.non_streaming_completion(
+    async for chunk in client.stream_completion(
         [{"role": "user", "content": "Weather in London?"}],
         tools=tools,
     ):
@@ -62,7 +57,7 @@ async def test_tool_call():
                 )
 
 
-async def test_real():
+async def check_real():
     print("\n--- Test 3: Real tools (explore_trace) ---")
     from ee.falcon_ai.modes import load_tools_for_mode
 
@@ -86,7 +81,7 @@ async def test_real():
         )
     print(f"  Tools: {len(openai_tools)}")
 
-    async for chunk in client.non_streaming_completion(
+    async for chunk in client.stream_completion(
         [
             {
                 "role": "system",
@@ -110,9 +105,26 @@ async def test_real():
                 print(f"  Tool: {tc['function']['name']}({args})")
 
 
-loop = asyncio.new_event_loop()
-loop.run_until_complete(test_simple())
-loop.run_until_complete(test_tool_call())
-loop.run_until_complete(test_real())
-loop.close()
-print("\n=== ALL PASSED ===")
+def main():
+    global client
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
+    logging.disable(logging.CRITICAL)
+    import django
+
+    django.setup()
+
+    from ee.falcon_ai.llm_client import FalconLLMClient
+
+    client = FalconLLMClient()
+    print(f"Provider: {client.provider}")
+    print(f"Model: {client.model[:60]}")
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(check_simple())
+    loop.run_until_complete(check_tool_call())
+    loop.run_until_complete(check_real())
+    loop.close()
+    print("\n=== ALL PASSED ===")
+
+
+if __name__ == "__main__":
+    main()

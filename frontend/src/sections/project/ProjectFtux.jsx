@@ -1,10 +1,15 @@
-import { Box, Typography } from "@mui/material";
+import { Box } from "@mui/material";
 import React, { useEffect, useState } from "react";
 import { ShowComponent } from "src/components/show";
+import PageHeader from "src/components/page-header";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { useLocation } from "react-router-dom";
 
 import NewExperiment from "./NewProject/NewExperiment";
 import NewObserve from "./NewProject/NewObserve";
+
+const WAITING_FOR_FIRST_TRACE =
+  "Waiting for your first trace. This page updates when it arrives.";
 
 const ProjectFtux = () => {
   const location = useLocation();
@@ -16,37 +21,38 @@ const ProjectFtux = () => {
     setIsObserve(isObserve);
   }, [currentPath]);
 
+  // A work-screen header in the same place and type as the project list's
+  // header: title and one-line purpose on the left, the live waiting status
+  // on the right, the setup steps below.
   return (
     <Box
       sx={{
         backgroundColor: "background.paper",
-        paddingX: "16px",
-        paddingTop: "12px",
-        paddingBottom: "12px",
+        padding: 2,
         display: "flex",
         flexDirection: "column",
-        alignItems: "center",
+        gap: 4, // the 32px the setup steps use between their own sections
       }}
     >
-      <Box
-        sx={{ display: "flex", flexDirection: "column", alignItems: "center" }}
-      >
-        <Box
-          component={"img"}
-          sx={{ height: "51px", width: "51px" }}
-          src="/favicon/logo.svg"
-        />
-        <Box sx={{ height: "10px" }} />
-        <Typography fontSize="20px" fontWeight={700} color="text.primary">
-          Welcome to {isObserve ? `Observe` : `Prototype`}
-        </Typography>
-        <Box sx={{ height: "5px" }} />
-        <Typography fontSize="14px" color="text.secondary">
-          Create a project to experiment on your model
-        </Typography>
-        <Box sx={{ height: "20px" }} />
-      </Box>
-      <Box sx={{ height: "27px" }} />
+      <PageHeader
+        title={`Welcome to ${isObserve ? "Observe" : "Prototype"}`}
+        description="Send traces from your agents to inspect every step, debug failures and track cost and latency."
+        actions={
+          isObserve ? (
+            // ProjectWrapperView re-reads the project list every 5 s while
+            // this page is shown and swaps in the list once the first trace
+            // lands. flexShrink 0 keeps the chip whole; the title column
+            // wraps first on narrow screens.
+            <Box
+              role="status"
+              sx={{ display: "flex", flexShrink: 0, maxWidth: "100%" }}
+            >
+              <StatusBadge status="syncing" label={WAITING_FOR_FIRST_TRACE} />
+            </Box>
+          ) : null
+        }
+        sx={{ mb: 0 }}
+      />
       <ShowComponent condition={!isObserve}>
         <NewExperiment />
       </ShowComponent>

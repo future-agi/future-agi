@@ -1,0 +1,75 @@
+# incident.io's remote MCP server with OAuth. Its authorization server
+# registers clients dynamically or by a client ID metadata document, and
+# takes public clients only (PKCE, no client secret). incident.io also
+# publishes a client id for clients that need OAuth details typed in.
+# Built-in assistants are trusted automatically; any other
+# client's redirect domain must be added by an incident.io admin (Settings >
+# MCP server > Allowed redirect domains, up to five). That is the customer's
+# own setting, not a vendor approval, so there is no clientApproval. Each
+# approval is read only or read and write, and lasts 28 days. incident.io's
+# page says to leave scopes empty. Team, Pro and Enterprise plans only. EE
+# reads a pre-registered client with a secret from its environment, so it
+# gets none.
+schema: "connector-manifest/v1#provider"
+app: incident-io
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.incident.io/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://app.incident.io/auth/plugin/authorize
+    tokenUrl: https://app.incident.io/auth/plugin/token
+    scopes: []
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    registration: [cimd, dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.incident.io/ai/remote-mcp
+    fetchedAt: 2026-11-11
+  - fact: transport.url
+    url: https://mcp.incident.io/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://docs.incident.io/ai/remote-mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.authorizeUrl
+    url: https://docs.incident.io/ai/remote-mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp.incident.io/.well-known/oauth-authorization-server/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.tokenUrl
+    url: https://docs.incident.io/ai/remote-mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.tokenUrl
+    url: https://mcp.incident.io/.well-known/oauth-authorization-server/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.scopes
+    url: https://docs.incident.io/ai/remote-mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.pkce
+    url: https://docs.incident.io/ai/remote-mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.registration
+    url: https://docs.incident.io/ai/remote-mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.registration
+    url: https://mcp.incident.io/.well-known/oauth-authorization-server/mcp
+    fetchedAt: 2026-11-11
+x-omega: { ee: exclude }

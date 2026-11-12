@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: square
+version: 1.0.0
+name: Square
+description: "Payments, orders, catalog, customers and invoices for a Square seller."
+vendor:
+  name: Square
+  domains: [squareup.com]
+eeCategory: data
+group: other
+categories: [data, payments]
+tags: [payments, commerce, invoices]
+docsUrl: https://developer.squareup.com/docs/mcp
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developer.squareup.com/docs/mcp
+    fetchedAt: 2026-11-11

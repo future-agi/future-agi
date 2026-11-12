@@ -1,0 +1,142 @@
+{
+  "schema": "j02-l1-invocation-amendment/v1",
+  "ruling": "J02-ADOPT-01(b,c)",
+  "packet": "<plan>/JOURNEYS-708/packets/J02/PACKET.json#/legs/0",
+  "packet_amendment": "<plan>/JOURNEYS-708/packets/J02/AMEND-r2.json",
+  "execution": "NOT_RUN",
+  "dispatch_allowed": false,
+  "scope": "Source invocation amendment only. Retain one AUTH-E2E-005 flow and its unchanged landing config. Separate mail tests are subtests of that flow, not new catalog flows. This is not runtime, fixture, source-review or release acceptance.",
+  "session_source": "270c80a188fa3c6af35af15c59a20d91f2cbf449",
+  "describe": "AUTH-E2E-005 / J02.L1",
+  "required_test_ids": [
+    "AUTH-E2E-005: workspace landing stays within the current organization and authorized workspaces",
+    "AUTH-E2E-005: invite-link",
+    "AUTH-E2E-005: invite-deadline-expired-pending",
+    "AUTH-E2E-005: invite-cancelled",
+    "AUTH-E2E-005: invite-missing-authority"
+  ],
+  "required_cases_by_test": {
+    "AUTH-E2E-005: workspace landing stays within the current organization and authorized workspaces": [
+      "reversed-uuid",
+      "membership-order",
+      "is-default",
+      "stale-preference",
+      "cross-org-preference",
+      "saml-scoped-default",
+      "owner-without-membership",
+      "member-without-membership",
+      "saved-preference",
+      "legacy-current",
+      "configured-default",
+      "inactive-preference"
+    ],
+    "AUTH-E2E-005: invite-link": ["invite-link", "invite-explicit-expired"],
+    "AUTH-E2E-005: invite-deadline-expired-pending": [
+      "invite-deadline-expired-pending"
+    ],
+    "AUTH-E2E-005: invite-cancelled": ["invite-cancelled"],
+    "AUTH-E2E-005: invite-missing-authority": ["invite-missing-authority"]
+  },
+  "session_contract": "One fixed Stage A E2E_MAIL_CAPTURE_SOCKET; no reconfiguration. Each test opens a fresh UUID-nonce session and exact synthetic recipient allowlist; closes/disposes before another session. invite-link includes accepted-link replay in a fresh signed-out context, then a separate fresh session for the explicitly stored Expired control. The deadline test changes only created_at via expirePendingInvite and proves Pending plus valid token plus derived Expired. No nonce, identity or cursor reuse; the shared session owner rejects overlap/replay/undrained sessions.",
+  "ordered_invocations": [
+    {
+      "id": "j02-l1-catalog",
+      "type": "command",
+      "argv": ["yarn", "catalog:check"],
+      "cwd": "e2e",
+      "network": "none",
+      "browser": "none"
+    },
+    {
+      "id": "j02-l1-typecheck",
+      "type": "command",
+      "argv": ["yarn", "typecheck"],
+      "cwd": "e2e",
+      "network": "none",
+      "browser": "none"
+    },
+    {
+      "id": "j02-l1-chromium",
+      "type": "browser",
+      "argv": [
+        "yarn",
+        "playwright",
+        "test",
+        "flows/auth/workspace-landing.spec.ts",
+        "--config=playwright.landing.config.ts",
+        "--project=chromium",
+        "--workers=1",
+        "--reporter=line"
+      ],
+      "cwd": "e2e",
+      "network": "own-host",
+      "browser": "chromium",
+      "required_test_ids_ref": "#/required_test_ids"
+    },
+    {
+      "id": "j02-l1-firefox",
+      "type": "browser",
+      "argv": [
+        "yarn",
+        "playwright",
+        "test",
+        "flows/auth/workspace-landing.spec.ts",
+        "--config=playwright.landing.config.ts",
+        "--project=firefox",
+        "--workers=1",
+        "--reporter=line"
+      ],
+      "cwd": "e2e",
+      "network": "own-host",
+      "browser": "firefox",
+      "required_test_ids_ref": "#/required_test_ids"
+    },
+    {
+      "id": "j02-l1-aggregate",
+      "type": "command",
+      "argv_prefix": [
+        "node",
+        "--experimental-strip-types",
+        "flows/auth/workspace-landing.inventory.ts"
+      ],
+      "cwd": "e2e",
+      "network": "none",
+      "browser": "none",
+      "arguments_owed": "Exactly ten create-only landing-inventory-<cell>.json receipt paths from those two jobs, bound by Stage A before admission. No glob or latest-directory selection. Prefix alone is not dispatchable."
+    }
+  ],
+  "aggregate_requirement": "All five exact test titles PASS in each of Chromium and Firefox, with all 34 scenario rows and twenty distinct test-owned tenant digests; zero retries, skipped/missing/duplicate/negative-control rows or external attempts. Independent counts/reporter reconciliation, exact tuple/config/source binding and current egress evidence still belong to the shared kit. Inventory completeness alone is never WALKED_PASS.",
+  "controls": [
+    {
+      "selector": "E2E_LANDING_EXPECT_WRONG=all",
+      "expected_red": "Each applicable expected_landing check after successful real login/acceptance, or signed-out refusal with null scope instead of the deliberately wrong foreign workspace. Never sent to fixture/config/auth/headers."
+    },
+    {
+      "selector": "E2E_LANDING_INACTIVE_WRITE=after-login",
+      "expected_red": "AUTH004_member-without-membership_no_membership_writes_after_login after real authentication, independent null/empty API checks and one shared inactive-row injection."
+    },
+    {
+      "selector": "E2E_LANDING_INACTIVE_WRITE=after-reload",
+      "expected_red": "AUTH004_member-without-membership_no_membership_writes_after_reload after login snapshot and reload, with independent null/empty API checks."
+    },
+    {
+      "selector": "producer-owned exact product hunk reversals",
+      "expected_red": "Saved/current/configured/default/order ladder, invite fixed-default, deadline/refusal/no-write, configured cache/auth and transaction rollback oracles; restored unchanged positives. No private product patching or runtime provided here."
+    },
+    {
+      "selector": "remove one case or browser receipt from aggregate inputs",
+      "expected_red": "J02.L1.A13 completeness refuses; restored unchanged ten-receipt inventory passes."
+    }
+  ],
+  "remaining_gates": [
+    "Independent source review",
+    "G1 shared runner and Stage A",
+    "G2 final tuple and person-only bootstrap",
+    "G3 shared fixture/session/native mail/cache qualification",
+    "G4 effective inertness and attempted-traffic observer",
+    "G6 bound descriptors and pre-dispatch review",
+    "G7 named projects and additive reporters",
+    "G8/A2 integrated invite-expiry and backend regressions",
+    "A1 exact two-browser evidence and restored controls"
+  ]
+}

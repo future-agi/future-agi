@@ -1,0 +1,36 @@
+schema: connector-manifest/v1#platform
+id: composio
+version: 1.0.0
+name: Composio
+description: Customer-owned project with minted end-user sessions and fixed direct tools.
+connect:
+  modes: [headers]
+  # This is the permitted origin, NOT a recipe for constructing a session URL.
+  # The full endpoint must come from session.mcp.url; cross-origin URLs fail closed.
+  urlPattern: https://backend.composio.dev/
+account: byo
+toolMode: fixed
+metaTools:
+  - COMPOSIO_SEARCH_TOOLS
+  - COMPOSIO_GET_TOOL_SCHEMAS
+  - COMPOSIO_MULTI_EXECUTE_TOOL
+  - COMPOSIO_MANAGE_CONNECTIONS
+  - COMPOSIO_WAIT_FOR_CONNECTIONS
+  - COMPOSIO_REMOTE_WORKBENCH
+  - COMPOSIO_REMOTE_BASH_TOOL
+selfHostable: false
+termsUrl: https://composio.dev/terms
+termsCheckedAt: "2026-10-28"
+sources:
+  - fact: connect
+    url: https://docs.composio.dev/docs/sessions-via-mcp.md
+    fetchedAt: "2026-10-28"
+  - fact: toolMode
+    url: https://docs.composio.dev/docs/configuring-sessions.md
+    fetchedAt: "2026-10-28"
+  - fact: connect.urlPattern
+    url: https://docs.composio.dev/reference/api-reference/tool-router/postToolRouterSession
+    fetchedAt: "2026-10-28"
+  - fact: termsUrl
+    url: https://composio.dev/terms
+    fetchedAt: "2026-10-28"

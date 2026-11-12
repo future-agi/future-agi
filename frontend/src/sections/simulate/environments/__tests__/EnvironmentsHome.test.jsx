@@ -125,8 +125,16 @@ describe("EnvironmentsHome", () => {
       screen.getByRole("tab", { name: "Build environment" }),
     ).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("Source repository")).toBeInTheDocument();
-    // 2 hero + 5 option cards; tabs are role="tab", not button.
-    expect(screen.getAllByRole("button")).toHaveLength(7);
+    // 2 hero + 5 option cards; tabs are role="tab", not button. The two
+    // heroes and two options not built in this release are disabled.
+    const cards = screen.getAllByRole("button");
+    expect(cards).toHaveLength(7);
+    expect(
+      cards.filter((c) => c.getAttribute("aria-disabled") === "true"),
+    ).toHaveLength(4);
+    expect(screen.getAllByText("Not available in this release")).toHaveLength(
+      4,
+    );
     // "Customer Support Line" doubles as a Prebuilt hero chip, so assert a
     // table-only harness-job name to prove the My Environments list is absent.
     expect(screen.queryByText("Billing Chat Agent")).toBeNull();
@@ -220,6 +228,47 @@ describe("EnvironmentsHome", () => {
     expect(useEnvironmentsStore.getState().draft).toEqual({ kind: "repo" });
   });
 
+  // "Start a new build" on a failed or canceled environment lands here with its
+  // id. The draft that built it reopens the same form, filled in (secrets aside).
+  const BUILT_DRAFT = {
+    kind: "repo",
+    provider: "github",
+    value: "acme/support-bot",
+    ref: "release",
+    entry: "src/agent.py",
+    visibility: "public",
+    installationId: null,
+    egress: null,
+    secretFiles: [],
+    scenarioCount: 12,
+    observabilityEnabled: false,
+    envId: "job-failed",
+  };
+
+  it("reopens the source form filled in for the environment it built", async () => {
+    useEnvironmentsStore.getState().setDraft(BUILT_DRAFT);
+    renderHome("/dashboard/simulate/environments?tab=build&rebuild=job-failed");
+
+    expect(await screen.findByPlaceholderText("owner/repo")).toHaveValue(
+      "acme/support-bot",
+    );
+    expect(screen.getByDisplayValue("release")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("src/agent/index.ts")).toHaveValue(
+      "src/agent.py",
+    );
+    expect(useEnvironmentsStore.getState().choice).toBe("source");
+  });
+
+  it("starts clean when the kept draft built a different environment", () => {
+    useEnvironmentsStore
+      .getState()
+      .setDraft({ ...BUILT_DRAFT, envId: "job-other" });
+    renderHome("/dashboard/simulate/environments?tab=build&rebuild=job-failed");
+
+    expect(useEnvironmentsStore.getState().draft).toBeNull();
+    expect(screen.queryByPlaceholderText("owner/repo")).toBeNull();
+  });
+
   it("keeps adopted workspace envs on mount (the reset only clears the entry slice)", () => {
     useEnvironmentsStore
       .getState()
@@ -236,7 +285,7 @@ describe("EnvironmentsHome", () => {
     expect(screen.getByText("Environments")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "An environment is the world your agent runs in: seeded state, tools, and rules. Pick how you want to bring your agent in and we take care of the rest.",
+        "Set up the world your agent is tested in: seeded data, tools and rules.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Start from scratch")).toBeNull();

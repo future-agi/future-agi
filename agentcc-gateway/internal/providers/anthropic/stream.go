@@ -2,7 +2,6 @@ package anthropic
 
 import (
 	"encoding/json"
-	"net/http"
 	"strings"
 	"time"
 
@@ -13,8 +12,13 @@ import (
 type streamState struct {
 	messageID   string
 	model       string
-	inputTokens int
+	inputTokens *int
 	created     int64
+
+	// cacheReadTokens and cacheWriteTokens are message_start's cache reads
+	// and writes, which inputTokens does not count.
+	cacheReadTokens  int
+	cacheWriteTokens int
 
 	// toolCallIndex tracks the current tool call index for streaming tool calls.
 	// Each content_block_start of type "tool_use" increments this.
@@ -42,9 +46,9 @@ type streamEvent struct {
 }
 
 type messageStartData struct {
-	ID    string         `json:"id"`
-	Model string         `json:"model"`
-	Usage anthropicUsage `json:"usage"`
+	ID    string          `json:"id"`
+	Model string          `json:"model"`
+	Usage *anthropicUsage `json:"usage"`
 }
 
 type textDelta struct {
@@ -95,10 +99,7 @@ func (s *streamState) parseSSELine(eventType, data string) (*models.StreamChunk,
 	case "ping":
 		return nil, false, nil
 	case "error":
-		// The upstream failed mid-stream. Returned as an APIError so the read
-		// loop ends the stream with it; skipped, the stream would read as a
-		// finished one.
-		return nil, false, parseAnthropicError(http.StatusBadGateway, []byte(data))
+		return nil, false, nil
 	}
 
 	return nil, false, nil
@@ -116,11 +117,20 @@ func (s *streamState) handleMessageStart(event streamEvent) (*models.StreamChunk
 
 	s.messageID = msg.ID
 	s.model = msg.Model
-	s.inputTokens = msg.Usage.InputTokens
+	var startUsage *models.Usage
+	if msg.Usage != nil {
+		s.inputTokens = msg.Usage.InputTokens
+		s.cacheReadTokens = msg.Usage.CacheReadInputTokens
+		s.cacheWriteTokens = msg.Usage.CacheCreationInputTokens
+		inputOnly := *msg.Usage
+		inputOnly.OutputTokens = nil // message_start is not the final output count.
+		startUsage = inputOnly.toUsage()
+	}
 
 	role := "assistant"
 	chunk := &models.StreamChunk{
 		ID:      s.messageID,
+		Usage:   startUsage,
 		Object:  "chat.completion.chunk",
 		Model:   s.model,
 		Created: s.created,
@@ -282,13 +292,17 @@ func (s *streamState) handleMessageDelta(event streamEvent) (*models.StreamChunk
 		},
 	}
 
-	// Include usage if available.
+	// Include usage if available. message_delta carries the output count;
+	// newer streams repeat the input counts there too. Every count is
+	// cumulative, so the larger of message_start's and message_delta's wins.
 	if event.Usage != nil {
-		chunk.Usage = &models.Usage{
-			PromptTokens:     s.inputTokens,
-			CompletionTokens: event.Usage.OutputTokens,
-			TotalTokens:      s.inputTokens + event.Usage.OutputTokens,
+		u := anthropicUsage{
+			InputTokens:              models.MaxTokenCount(s.inputTokens, event.Usage.InputTokens),
+			CacheReadInputTokens:     max(s.cacheReadTokens, event.Usage.CacheReadInputTokens),
+			CacheCreationInputTokens: max(s.cacheWriteTokens, event.Usage.CacheCreationInputTokens),
+			OutputTokens:             event.Usage.OutputTokens,
 		}
+		chunk.Usage = u.toUsage()
 	}
 
 	return chunk, false, nil

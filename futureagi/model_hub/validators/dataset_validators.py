@@ -1,11 +1,8 @@
 """Shared dataset validation helpers used by views, services, and AI tools."""
 
-import os
-
 from rest_framework.exceptions import ValidationError
 
 from model_hub.constants import (
-    ALLOWED_FILE_EXTENSIONS,
     MAX_BATCH_DELETE_SIZE,
     MAX_EMPTY_DATASET_ROWS,
     MAX_FILE_SIZE_BYTES,
@@ -30,6 +27,24 @@ def validate_dataset_name_unique(name, organization, exclude_id=None):
         qs = qs.exclude(id=exclude_id)
     if qs.exists():
         raise ValidationError(get_error_message("DATASET_EXIST_IN_ORG"))
+
+
+def available_dataset_copy_name(source_name, organization):
+    """Name an automatic copy without colliding with this org's live datasets."""
+    from model_hub.models.develop_dataset import Dataset
+
+    limit = Dataset._meta.get_field("name").max_length
+    base = f"Copy of {source_name}"
+    # Name availability is org-wide, even when a request has workspace context.
+    # This lookup never returns dataset contents or crosses the caller's org.
+    datasets = Dataset.no_workspace_objects.filter(organization=organization)
+    candidate = base[:limit]
+    copy_number = 2
+    while datasets.filter(name=candidate).exists():
+        suffix = f" ({copy_number})"
+        candidate = f"{base[: limit - len(suffix)]}{suffix}"
+        copy_number += 1
+    return candidate
 
 
 def validate_row_column_bounds(rows=None, columns=None):

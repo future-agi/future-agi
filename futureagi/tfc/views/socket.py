@@ -1,8 +1,10 @@
 import traceback
 
 import structlog
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
+
+from tfc.websocket_relay import verify_relay
 
 from model_hub.utils.utils import send_message_to_channel, send_message_to_uuid
 from tfc.utils.api_contracts import validated_request
@@ -18,7 +20,23 @@ logger = structlog.get_logger(__name__)
 
 class CallWebsocketView(APIView):
     _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def dispatch(self, request, *args, **kwargs):
+        # Verify before serializer parsing consumes the exact signed body.
+        self.relay_organization = verify_relay(request)
+        return super().dispatch(request, *args, **kwargs)
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if self.relay_organization is None:
+            from rest_framework.exceptions import AuthenticationFailed
+
+            raise AuthenticationFailed("Invalid relay signature")
+
+    def get_authenticate_header(self, request):
+        return "Relay"
 
     # Sending message to websocket
     @validated_request(
@@ -32,9 +50,7 @@ class CallWebsocketView(APIView):
         try:
             data = request.validated_data
             message = data["message"]
-            org_id = (
-                getattr(request, "organization", None) or request.user.organization
-            ).id
+            org_id = self.relay_organization
             if data.get("send_to_uuid"):
                 send_message_to_uuid(data.get("uuid"), message, org_id)
             else:

@@ -75,12 +75,16 @@ class MCPRequestContext:
     authentication time; the executor refuses to run a tool anywhere else.
     ``api_key`` is the ``OrgApiKey`` row when the caller used key auth, so the
     Django request resolves the tenant exactly as the REST API would for it.
+    ``granted_tool_groups`` is the immutable OAuth grant used for tool admission.
+    None preserves connection policy for non-OAuth callers; an empty grant
+    permits no tools, regardless of connection defaults or later edits.
     """
 
     user: Any
     organization: Any
     workspace: Any
     api_key: Any = None
+    granted_tool_groups: frozenset[str] | None = None
 
 
 class DjangoAPIExecutor:
@@ -240,6 +244,14 @@ class DjangoAPIExecutor:
         before Django's resolution runs, also avoids its side effects (such as
         auto-joining the user to the default workspace) for a denied caller.
         """
+        if context.api_key is not None:
+            from accounts.api_key_policy import admit_api_key
+            from accounts.models import OrgApiKey
+
+            key = OrgApiKey._base_manager.filter(pk=context.api_key.pk).first()
+            admit_api_key(key)
+            context.user.organization_role = key.user.organization_role
+            context.user.organization = key.organization
         if not context.user.can_access_organization(context.organization):
             raise PermissionDenied("Access denied to this organization")
         workspace = context.workspace

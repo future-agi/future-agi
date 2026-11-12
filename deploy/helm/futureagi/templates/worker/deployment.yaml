@@ -89,9 +89,13 @@ backend.image. */ -}}
 {{- $preStop := int (ternary $v.preStopSleepSeconds $w.preStopSleepSeconds (hasKey $v "preStopSleepSeconds")) -}}
 {{- $pdb := deepCopy $w.pdb -}}
 {{- range $key, $value := ($v.pdb | default dict) }}{{ $_ := set $pdb $key $value }}{{ end -}}
+{{- /* Every worker may run the Omega revocation drain (omega.hostEvents), and
+each one that gets the channel carries the label EE admits senders by.
+config.extraEnvFrom cannot supply it (futureagi.omega.envFromPins). */ -}}
+{{- $channel := include "futureagi.omega.hostEvents.env" $root | fromYaml -}}
 {{- $component := merge (dict
       "SERVICE_TYPE" "temporal-worker"
-      "TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT" (toString $graceful)) $spec.env -}}
+      "TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT" (toString $graceful)) $spec.env $channel (include "futureagi.omega.envFromPins" $root | fromYaml) -}}
 {{- /* A queue's extraEnv wins over worker.extraEnv, and both over the chart. */ -}}
 {{- $overrides := merge (dict) ($spec.extraEnv | default dict) ($w.extraEnv | default dict) }}
 ---
@@ -117,6 +121,9 @@ spec:
         {{- include "futureagi.componentLabels" $ctx | nindent 8 }}
         {{- with merge (dict) ($v.podLabels | default dict) ($w.podLabels | default dict) }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if $channel }}
+        {{- include "futureagi.omega.hostEvents.senderLabel" $root | nindent 8 }}
         {{- end }}
       annotations:
         checksum/secrets: {{ include "futureagi.secretsChecksum" $root }}
@@ -168,11 +175,13 @@ spec:
             {{- include "futureagi.containerSecurityContext" (dict "root" $ "overrides" $w.containerSecurityContext) | nindent 12 }}
           volumeMounts:
             {{- include "futureagi.python.volumeMounts" $root | trim | nindent 12 }}
+            {{- include "futureagi.block" (dict "text" (include "futureagi.omega.hostEvents.volumeMounts" $root) "indent" 12) }}
             {{- with $w.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
       volumes:
         {{- include "futureagi.python.volumes" $root | trim | nindent 8 }}
+        {{- include "futureagi.block" (dict "text" (include "futureagi.omega.hostEvents.volumes" $root) "indent" 8) }}
         {{- with $w.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

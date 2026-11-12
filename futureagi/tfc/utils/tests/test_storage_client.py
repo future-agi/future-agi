@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 from minio import Minio
+from minio.error import S3Error
 
 PROXY_ENV_KEYS = tuple(
     name
@@ -646,3 +647,93 @@ def test_failed_tightening_does_not_fail_the_upload(monkeypatch):
     storage_client.ensure_bucket(client, "futureagi")
 
     assert client.get_calls == 1
+
+
+def _s3_error(code, bucket):
+    return S3Error(
+        None, code, "synthetic", f"/{bucket}", "request", "host", bucket_name=bucket
+    )
+
+
+class RacingStore:
+    """One object store shared by workers that all see the bucket missing before any creates it;
+    a later create is refused the way MinIO refuses it (BucketAlreadyOwnedByYou)."""
+
+    def __init__(self, parties=2, refusal="BucketAlreadyOwnedByYou"):
+        self.barrier = threading.Barrier(parties)
+        self.lock = threading.Lock()
+        self.exists = False
+        self.refusal = refusal
+        self.policy = None
+        self.set_calls = []
+
+    def bucket_exists(self, bucket_name):
+        seen = self.exists
+        self.barrier.wait(timeout=10)
+        return seen
+
+    def make_bucket(self, bucket_name):
+        with self.lock:
+            if self.exists:
+                raise _s3_error(self.refusal, bucket_name)
+            self.exists = True
+
+    def get_bucket_policy(self, bucket_name):
+        if self.policy is None:
+            raise _s3_error("NoSuchBucketPolicy", bucket_name)
+        return self.policy
+
+    def set_bucket_policy(self, bucket_name, policy):
+        self.set_calls.append(json.loads(policy))
+        self.policy = policy
+
+
+def _refused(code):
+    def make_bucket(bucket_name):
+        raise _s3_error(code, bucket_name)
+
+    return make_bucket
+
+
+def test_two_first_uploads_at_once_both_get_the_bucket(monkeypatch):
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    store = RacingStore()
+    errors = []
+
+    def first_upload():
+        try:
+            storage_client.ensure_bucket(store, "fi-content-dev")
+        except Exception as exc:  # what failed a knowledge-base file on a fresh install
+            errors.append(exc)
+
+    workers = [threading.Thread(target=first_upload) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=20)
+
+    assert errors == []
+    assert store.exists
+    (policy,) = store.set_calls
+    (statement,) = _anonymous_statements(policy)
+    assert statement["Action"] == ["s3:GetObject"]
+
+
+def test_a_bucket_created_between_the_check_and_the_create_is_used(monkeypatch):
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    store = RacingStore(parties=1)
+    store.make_bucket = _refused("BucketAlreadyOwnedByYou")
+
+    storage_client.ensure_bucket(store, "fi-content-dev")
+
+    # The worker that created it applies the read policy; this one does not replace it.
+    assert store.set_calls == []
+
+
+def test_a_bucket_name_another_account_owns_still_fails(monkeypatch):
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="s3")
+    store = RacingStore(parties=1)
+    store.make_bucket = _refused("BucketAlreadyExists")
+
+    with pytest.raises(S3Error):
+        storage_client.ensure_bucket(store, "fi-content-dev")

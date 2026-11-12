@@ -1,11 +1,13 @@
-import { Box, Chip, Divider, Stack, Typography, useTheme } from "@mui/material";
+import { Box, Chip, Divider, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import {
   getLabel,
-  getStatusColor,
+  evalResultRole,
 } from "src/sections/develop-detail/DataTab/common";
+import { levelText } from "src/sections/common/EvalTypes/compositeModel";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 
 const AGGREGATION_LABELS = {
   weighted_avg: "Weighted Average",
@@ -13,7 +15,19 @@ const AGGREGATION_LABELS = {
   min: "Minimum",
   max: "Maximum",
   pass_rate: "Pass Rate",
+  majority: "Majority",
+  all_pass: "All pass",
 };
+
+/** W7-5: the scored children's verdicts split (`Judges disagree (2–1)`). */
+function splitOf(children) {
+  const scored = children.filter((c) => c.status === "completed");
+  const pass = scored.filter((c) => c.output === "Passed").length;
+  const fail = scored.length - pass;
+  return scored.length > 1 && pass && fail
+    ? `Judges disagree (${Math.max(pass, fail)}–${Math.min(pass, fail)})`
+    : null;
+}
 
 /**
  * Renders the result of executing a composite eval:
@@ -25,7 +39,6 @@ const AGGREGATION_LABELS = {
  * playground drawer.
  */
 const CompositeResultView = ({ compositeResult }) => {
-  const theme = useTheme();
   const {
     aggregation_enabled: aggregationEnabled,
     aggregation_function: aggregationFunction,
@@ -67,12 +80,7 @@ const CompositeResultView = ({ compositeResult }) => {
                   {aggregateScore.toFixed(3)}
                 </Typography>
                 {aggregatePass != null && (
-                  <Chip
-                    size="small"
-                    label={aggregatePass ? "PASS" : "FAIL"}
-                    color={aggregatePass ? "success" : "error"}
-                    sx={{ fontWeight: 600 }}
-                  />
+                  <StatusBadge status={aggregatePass ? "passed" : "failed"} />
                 )}
               </Box>
             </>
@@ -95,15 +103,24 @@ const CompositeResultView = ({ compositeResult }) => {
             color="default"
           />
           {failedChildren > 0 && (
-            <Chip
-              size="small"
+            <StatusBadge
               label={`${failedChildren} failed`}
-              color="error"
+              role="danger"
+              dot={false}
             />
           )}
         </Stack>
       </Box>
 
+      {splitOf(children) ? (
+        <Typography
+          variant="caption"
+          sx={{ display: "block", mb: 1, fontWeight: 600 }}
+          data-testid="composite-test-split"
+        >
+          {splitOf(children)}
+        </Typography>
+      ) : null}
       <Divider sx={{ mb: 1.5 }} />
 
       {/* Per-child results */}
@@ -116,10 +133,9 @@ const CompositeResultView = ({ compositeResult }) => {
       </Typography>
       <Stack spacing={1}>
         {children.map((child) => {
-          const statusColor = child.status === "failed" ? "error" : "default";
           return (
             <Box
-              key={child.child_id}
+              key={`${child.child_id}#${child.order}`}
               sx={{
                 border: "1px solid",
                 borderColor: "divider",
@@ -155,34 +171,39 @@ const CompositeResultView = ({ compositeResult }) => {
                       size="small"
                       label={`w: ${child.weight}`}
                       variant="outlined"
+                    />
+                  )}
+                  {/* W7-5: the seat's judge and the child's level */}
+                  {child.judge_model && (
+                    <Chip
+                      size="small"
+                      label={child.judge_model}
+                      variant="outlined"
                       sx={{ height: 18, fontSize: "10px" }}
                     />
+                  )}
+                  {child.level && (
+                    <Typography variant="caption" color="text.secondary">
+                      {levelText(child)}
+                    </Typography>
                   )}
                 </Box>
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                   {child.score != null && (
-                    <Chip
-                      size="small"
+                    <StatusBadge
                       label={child.score.toFixed(3)}
-                      sx={{
-                        ...getStatusColor(child.score, theme),
-                        fontWeight: 600,
-                      }}
+                      role={evalResultRole(child.score)}
+                      dot={false}
                     />
                   )}
                   {child.output != null && child.score == null && (
-                    <Chip
-                      size="small"
+                    <StatusBadge
                       label={getLabel(child.output)}
-                      sx={getStatusColor(child.output, theme)}
+                      role={evalResultRole(child.output)}
+                      dot={false}
                     />
                   )}
-                  <Chip
-                    size="small"
-                    label={child.status}
-                    color={statusColor}
-                    sx={{ textTransform: "capitalize" }}
-                  />
+                  <StatusBadge status={child.status} />
                 </Box>
               </Box>
               {child.reason && (
@@ -192,9 +213,23 @@ const CompositeResultView = ({ compositeResult }) => {
                     "& div, pre": { whiteSpace: "pre-wrap" },
                   }}
                 >
-                  <CellMarkdown fontSize={11} text={child.reason} />
+                  <CellMarkdown fontSize={12} text={child.reason} />
                 </Box>
               )}
+              {child.steps?.length ? (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: "block", mt: 0.5 }}
+                >
+                  {child.steps
+                    .map(
+                      (st) =>
+                        `Step ${st.n} ${st.passed == null ? "skipped" : st.passed ? "pass" : "fail"}`,
+                    )
+                    .join(" · ")}
+                </Typography>
+              ) : null}
               {child.error && (
                 <Typography
                   variant="caption"
@@ -227,7 +262,7 @@ const CompositeResultView = ({ compositeResult }) => {
               "& div, pre": { whiteSpace: "pre-wrap" },
             }}
           >
-            <CellMarkdown fontSize={11} text={summary} />
+            <CellMarkdown fontSize={12} text={summary} />
           </Box>
         </Box>
       )} */}

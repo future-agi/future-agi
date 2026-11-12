@@ -2134,7 +2134,11 @@ class AgentEvaluator:
                         ws = Workspace.objects.filter(
                             id=self.workspace_id, organization=org
                         ).first()
-                    mcp_tools = load_mcp_tools(organization=org, workspace=ws)
+                    mcp_tools = load_mcp_tools(
+                        organization=org,
+                        workspace=ws,
+                        user=tool_context.user if self.user_id else None,
+                    )
                     requested_ids = set(str(cid) for cid in connector_ids)
                     for mcp_tool in mcp_tools:
                         connector_id = str(mcp_tool._connector.id)

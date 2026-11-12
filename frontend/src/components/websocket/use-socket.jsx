@@ -7,10 +7,43 @@ import React, {
   useCallback,
   useMemo,
 } from "react";
-import { useNavigate } from "react-router";
 import { useSafeAuthContext } from "src/auth/hooks/use-auth-context";
 import { HOST_API } from "src/config-global";
 import logger from "src/utils/logger";
+import { useSocketResume, useSocketSessionToken, withSocketTicketRetry } from "./socket-recovery";
+
+// CR-07f: session bearers travel only in this JSON POST's Authorization header.
+// Never cache a ticket: every socket attempt, including reconnect, needs a new one.
+export async function requestWebSocketUrl(token, path, query = {}) {
+  if (!token || !["/ws/connect/", "/ws/simulation-updates/", "/ws/prompt-stream/", "/ws/falcon-ai/"].includes(path)) {
+    throw new Error("Socket ticket refused");
+  }
+  return withSocketTicketRetry(token, async () => {
+    const base = HOST_API.replace(/\/+$/, "");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(`${base}/accounts/handoff/ws-ticket/`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ path, query }),
+        cache: "no-store",
+        credentials: "omit",
+        redirect: "error",
+        signal: controller.signal,
+      });
+      if (!response.ok) throw Object.assign(new Error("Socket ticket refused"), { status: response.status });
+      const { ticket } = await response.json();
+      if (typeof ticket !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(ticket)) {
+        throw new Error("Socket ticket refused");
+      }
+      const socketBase = base.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
+      return `${socketBase}${path}?ticket=${encodeURIComponent(ticket)}`;
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
+}
 
 export const WebSocketContext = createContext();
 
@@ -21,12 +54,15 @@ const HEARTBEAT_INTERVAL = 10000;
 
 export const WebSocketProvider = ({ children }) => {
   const { user, authenticated } = useSafeAuthContext();
+  const sessionToken = useSocketSessionToken(authenticated ? user?.accessToken : null);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState(null);
   const reconnectAttempts = useRef(0);
-  const navigate = useNavigate();
+  const pendingTicket = useRef(false);
+  const retryStopped = useRef(false);
 
   const socketRef = useRef(null);
+  const connectionGeneration = useRef(0);
   const reconnectTimeoutRef = useRef(null);
   const heartbeatIntervalRef = useRef(null);
   const accessToken = useRef(null);
@@ -49,6 +85,10 @@ export const WebSocketProvider = ({ children }) => {
   }, []);
 
   const closeConnection = useCallback(() => {
+    connectionGeneration.current += 1;
+    pendingTicket.current = false;
+    clearTimeout(reconnectTimeoutRef.current);
+    reconnectTimeoutRef.current = null;
     stopHeartbeat();
 
     if (socketRef.current) {
@@ -99,6 +139,7 @@ export const WebSocketProvider = ({ children }) => {
   const attemptReconnect = useCallback(() => {
     // Don't attempt to reconnect if already trying or if connection is already open
     if (
+      !accessToken.current || retryStopped.current || pendingTicket.current ||
       reconnectTimeoutRef.current ||
       socketRef.current?.readyState === WebSocket.OPEN ||
       socketRef.current?.readyState === WebSocket.CONNECTING
@@ -129,31 +170,38 @@ export const WebSocketProvider = ({ children }) => {
     );
 
     reconnectTimeoutRef.current = setTimeout(() => {
+      reconnectTimeoutRef.current = null;
       reconnectAttempts.current++;
       // Use ref to avoid circular dependency
-      if (createWebSocketConnectionRef.current) {
-        createWebSocketConnectionRef.current();
-      }
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
+      createWebSocketConnectionRef.current?.();
     }, backoffTime);
   }, []);
 
-  const createWebSocketConnection = useCallback(() => {
-    if (!accessToken.current) {
-      logger.debug("No access token found, skipping WebSocket connection.");
-      return;
-    }
+  const createWebSocketConnection = useCallback(async () => {
+    if (!accessToken.current || pendingTicket.current || retryStopped.current) return;
 
     // Close any existing connection before creating a new one
     closeConnection();
+    pendingTicket.current = true;
 
-    const isSecure = HOST_API.includes("https");
-    const wsHost = HOST_API.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-    const protocol = isSecure ? "wss" : "ws";
-    const wsUrl = `${protocol}://${wsHost}/ws/connect/?token=${accessToken.current}`;
-
-    const socket = new WebSocket(wsUrl);
+    const generation = connectionGeneration.current;
+    const token = accessToken.current;
+    let socket;
+    try {
+      const wsUrl = await requestWebSocketUrl(token, "/ws/connect/");
+      if (generation !== connectionGeneration.current || token !== accessToken.current) return;
+      socket = new WebSocket(wsUrl);
+    } catch (ticketError) {
+      if (generation === connectionGeneration.current && token === accessToken.current) {
+        pendingTicket.current = false;
+        retryStopped.current = ticketError?.retryable === false;
+        setError("WebSocket connection error");
+        attemptReconnect();
+      }
+      return;
+    } finally {
+      if (generation === connectionGeneration.current) pendingTicket.current = false;
+    }
     socketRef.current = socket;
 
     // Create and store event handlers
@@ -195,7 +243,7 @@ export const WebSocketProvider = ({ children }) => {
 
       const errorContext = {
         readyState: ws ? readyStateMap[ws.readyState] || ws.readyState : "null",
-        url: ws?.url ? ws.url.replace(/token=[^&]+/, "token=***") : "unknown",
+        url: ws?.url ? ws.url.split("?", 1)[0] : "unknown",
         protocol: ws?.protocol || "none",
         reconnectAttempts: reconnectAttempts.current,
       };
@@ -271,7 +319,6 @@ export const WebSocketProvider = ({ children }) => {
   }, [
     authenticated,
     closeConnection,
-    navigate,
     startHeartbeat,
     stopHeartbeat,
     attemptReconnect,
@@ -303,27 +350,23 @@ export const WebSocketProvider = ({ children }) => {
     };
   }, []);
 
-  // Consolidated authentication state handling
+  // A new session retires pending work and starts a fresh bounded attempt.
   useEffect(() => {
-    if (authenticated && user?.accessToken) {
-      accessToken.current = user?.accessToken;
+    accessToken.current = sessionToken;
+    reconnectAttempts.current = 0;
+    retryStopped.current = false;
+    closeConnection();
+    if (sessionToken) createWebSocketConnection();
+    return closeConnection;
+  }, [sessionToken, createWebSocketConnection, closeConnection]);
 
-      if (
-        !socketRef.current ||
-        socketRef.current.readyState !== WebSocket.OPEN
-      ) {
-        createWebSocketConnection();
-      }
-    } else {
-      accessToken.current = null;
-      closeConnection();
-    }
-  }, [
-    authenticated,
-    user?.accessToken,
-    createWebSocketConnection,
-    closeConnection,
-  ]);
+  useSocketResume(() => {
+    if (!accessToken.current || socketRef.current?.readyState === WebSocket.OPEN) return;
+    reconnectAttempts.current = 0;
+    retryStopped.current = false;
+    closeConnection();
+    createWebSocketConnection();
+  });
 
   // Network status handling
   useEffect(() => {

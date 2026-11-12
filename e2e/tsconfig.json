@@ -8,5 +8,14 @@
     "esModuleInterop": true,
     "types": ["node"]
   },
-  "include": ["lib", "flows", "harness", "playwright.config.ts"]
+  "include": [
+    "lib",
+    "flows",
+    "harness",
+    "playwright.config.ts",
+    "playwright.walk.config.ts",
+    "playwright.compat.config.ts",
+    "playwright.census.config.ts",
+    "walks/census-consumer.spec.ts"
+  ]
 }

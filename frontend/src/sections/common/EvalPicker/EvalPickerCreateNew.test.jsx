@@ -1,14 +1,23 @@
 import React from "react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render } from "src/utils/test-utils";
 import { screen, fireEvent, act } from "@testing-library/react";
 
 import EvalPickerProvider from "./context/EvalPickerProvider";
 import EvalPickerCreateNew from "./EvalPickerCreateNew";
 
-const { capturedProps, enqueueSnackbarSpy } = vi.hoisted(() => ({
-  capturedProps: { simulation: null, tracing: null, dataset: null },
-  enqueueSnackbarSpy: vi.fn(),
+const { capturedProps, enqueueSnackbarSpy, createDraft, updateDraft, mode } =
+  vi.hoisted(() => ({
+    capturedProps: { simulation: null, tracing: null, dataset: null },
+    enqueueSnackbarSpy: vi.fn(),
+    createDraft: vi.fn(async () => ({ id: "draft-1" })),
+    updateDraft: vi.fn(async () => ({})),
+    mode: { prototype: false },
+  }));
+
+vi.mock("src/utils/prototype", async (importOriginal) => ({
+  ...(await importOriginal()),
+  isPrototypeMode: () => mode.prototype,
 }));
 
 vi.mock("src/sections/evals/components/SimulationTestMode", () => {
@@ -50,7 +59,14 @@ vi.mock("src/sections/evals/components/ModelSelector", () => ({
 }));
 
 vi.mock("src/sections/evals/components/InstructionEditor", () => ({
-  default: () => <div />,
+  // eslint-disable-next-line react/prop-types
+  default: ({ value, onChange }) => (
+    <textarea
+      aria-label="Instructions"
+      value={value ?? ""}
+      onChange={(e) => onChange?.(e.target.value)}
+    />
+  ),
 }));
 
 vi.mock("src/sections/evals/components/LLMPromptEditor", () => ({
@@ -95,14 +111,14 @@ vi.mock("src/sections/evals/components/EvalResultDisplay", () => ({
 
 vi.mock("src/sections/evals/hooks/useCreateEval", () => ({
   useCreateEval: () => ({
-    mutateAsync: vi.fn(async () => ({ id: "draft-1" })),
+    mutateAsync: createDraft,
   }),
 }));
 
 vi.mock("src/sections/evals/hooks/useEvalDetail", () => ({
   useUpdateEval: () => ({
     mutate: vi.fn(),
-    mutateAsync: vi.fn(async () => ({})),
+    mutateAsync: updateDraft,
   }),
 }));
 
@@ -234,12 +250,15 @@ describe("EvalPickerCreateNew — requireInputs", () => {
     const onSave = vi.fn();
     renderWithSource("simulation", { onSave, requireInputs: true });
 
-    // Switch to the Code tab: its default template code is non-empty, so
-    // `validate()` needs nothing else to pass for this eval type.
-    fireEvent.click(screen.getByRole("tab", { name: "Code" }));
+    // L7c g7: no Code type in Create; an Agents judge with instructions
+    // that name a variable needs nothing else to pass `validate()`.
+    expect(screen.queryByRole("tab", { name: "Code" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Instructions"), {
+      target: { value: "Pass if {{output}} is polite." },
+    });
     fireEvent.change(
       screen.getByPlaceholderText("e.g. hallucination_detector"),
-      { target: { value: "my_code_eval" } },
+      { target: { value: "my_polite_eval" } },
     );
 
     // Simulate the (mocked) SimulationTestMode reporting "ready" with an
@@ -267,10 +286,12 @@ describe("EvalPickerCreateNew — requireInputs", () => {
     const onSave = vi.fn();
     renderWithSource("simulation", { onSave });
 
-    fireEvent.click(screen.getByRole("tab", { name: "Code" }));
+    fireEvent.change(screen.getByLabelText("Instructions"), {
+      target: { value: "Pass if {{output}} is polite." },
+    });
     fireEvent.change(
       screen.getByPlaceholderText("e.g. hallucination_detector"),
-      { target: { value: "my_code_eval" } },
+      { target: { value: "my_polite_eval" } },
     );
 
     await act(async () => {
@@ -293,6 +314,59 @@ describe("EvalPickerCreateNew — requireInputs", () => {
     );
   });
 });
+
+describe.each([false, true])(
+  "Create New dev parity (prototype=%s)",
+  (prototype) => {
+    beforeEach(() => {
+      mode.prototype = prototype;
+      createDraft.mockClear();
+      updateDraft.mockClear();
+    });
+    afterEach(() => {
+      mode.prototype = false;
+    });
+
+    it("keeps N/A prototype-only in the switch, draft, publish and added binding", async () => {
+      const onSave = vi.fn();
+      renderWithSource("dataset", { onSave });
+      const toggle = screen.queryByTestId("allow-na-switch");
+      expect(Boolean(toggle)).toBe(prototype);
+      if (prototype)
+        fireEvent.click(screen.getByLabelText("Let the judge answer N/A"));
+      fireEvent.change(screen.getByLabelText("Instructions"), {
+        target: { value: "Pass if {{output}} is polite." },
+      });
+      fireEvent.change(
+        screen.getByPlaceholderText("e.g. hallucination_detector"),
+        {
+          target: { value: "my_polite_eval" },
+        },
+      );
+      await act(async () => {
+        capturedProps.dataset.onReadyChange(true, { output: "output-column" });
+      });
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole("button", { name: "Save & Add Evaluation" }),
+        );
+      });
+      expect(createDraft).toHaveBeenCalledTimes(1);
+      expect(updateDraft).toHaveBeenCalled();
+      expect(onSave).toHaveBeenCalledTimes(1);
+      // JSON is the actual wire contract: undefined properties are not sent.
+      expect(createDraft.mock.calls[0][0]).not.toHaveProperty("allow_na");
+      for (const [payload] of updateDraft.mock.calls) {
+        const wire = JSON.parse(JSON.stringify(payload));
+        if (prototype) expect(wire.allow_na).toBe(true);
+        else expect(wire).not.toHaveProperty("allow_na");
+      }
+      const binding = onSave.mock.calls[0][0];
+      if (prototype) expect(binding.config.allow_na).toBe(true);
+      else expect(binding.config || {}).not.toHaveProperty("allow_na");
+    });
+  },
+);
 
 describe("EvalPickerCreateNew — composite mode", () => {
   it("offers composite by default", () => {

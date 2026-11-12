@@ -34,8 +34,11 @@ export default function LinearCredentials({
     isPending: validating,
     error,
   } = useValidateCredentials();
-  const { mutate: createConnection, isPending: creating } =
-    useCreateConnection();
+  const {
+    mutate: createConnection,
+    isPending: creating,
+    error: createError,
+  } = useCreateConnection();
 
   const isPending = validating || creating;
 
@@ -125,9 +128,11 @@ export default function LinearCredentials({
         }}
       />
 
-      {error && (
+      {(error || createError) && (
         <Alert severity="error">
-          {getErrorMessage(error, "Failed to validate credentials")}
+          {error
+            ? getErrorMessage(error, "Failed to validate credentials")
+            : getErrorMessage(createError, "Failed to connect Linear")}
         </Alert>
       )}
 
@@ -136,7 +141,9 @@ export default function LinearCredentials({
           size="small"
           variant="outlined"
           onClick={onBack}
-          startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
+          startIcon={
+            <Iconify icon="solar:arrow-left-linear" width={16} height={16} />
+          }
           sx={backButtonSx}
         >
           Back
@@ -147,7 +154,6 @@ export default function LinearCredentials({
           size="small"
           loading={isPending}
           onClick={handleValidate}
-          sx={{ fontWeight: 500 }}
         >
           {isPending ? "Connecting…" : "Connect Linear"}
         </LoadingButton>

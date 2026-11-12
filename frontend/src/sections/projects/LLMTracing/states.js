@@ -62,8 +62,10 @@ function createUrlSyncedState(urlKey, defaultValue = null) {
           } else {
             url.searchParams.delete(urlKey);
           }
-          // Use replaceState to update URL without page refresh, preserving all other params
-          window.history.replaceState({}, "", url.toString());
+          // Use replaceState to update URL without page refresh, preserving all other params.
+          // Keep the router's history.state ({ usr, key, idx }): erasing it
+          // leaves the entry unidentifiable on a later Back/Forward.
+          window.history.replaceState(window.history.state, "", url.toString());
         }
       },
       // Initializer that reads from URL (can be called manually if needed)

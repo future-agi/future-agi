@@ -6,7 +6,7 @@ import FormStaticDropdown from "./FormStaticDropdownState";
 import { mergeRefs } from "src/utils/utils";
 
 const FormStaticDropdownControl = React.forwardRef(
-  (
+  /** @param {Omit<React.ComponentProps<typeof import("./index").default>, "ref">} props */ (
     { control, fieldName, label, helperText, defaultValue = "", ...rest },
     ref,
   ) => {

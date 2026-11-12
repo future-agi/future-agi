@@ -21,7 +21,7 @@ def _backfill(apps, schema_editor):
         backfill_queue_item_source_previews,
     )
 
-    backfill_queue_item_source_previews()
+    backfill_queue_item_source_previews(using=schema_editor.connection.alias)
 
 
 def _noop(apps, schema_editor):

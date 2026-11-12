@@ -1,6 +1,14 @@
 import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Box, Typography, Button, CircularProgress } from "@mui/material";
+import {
+  Alert,
+  AlertTitle,
+  Box,
+  Typography,
+  Button,
+  CircularProgress,
+  ButtonBase,
+} from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
 import PropTypes from "prop-types";
 import { useGetScenarioDetail } from "src/api/scenarios/scenarios";
@@ -19,6 +27,57 @@ import {
   isScenarioFailed,
   isScenarioInProgress,
 } from "src/utils/scenarioStatus";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+
+const CREATE_SCENARIO_PATH = "/dashboard/simulate/scenarios/create";
+
+// A failed generation says what happened and offers a way forward. The
+// scenario API returns the plain reason recorded when generation stopped
+// (failure_reason), which also names the next step. A scenario that failed
+// without one says none was recorded instead of guessing.
+const ScenarioFailedNotice = ({ reason, canCreate, onCreateAgain }) => (
+  <Alert
+    severity="error"
+    action={
+      <Button
+        color="inherit"
+        size="small"
+        variant="outlined"
+        disabled={!canCreate}
+        onClick={onCreateAgain}
+      >
+        Create again
+      </Button>
+    }
+  >
+    <AlertTitle>Scenario generation failed</AlertTitle>
+    <Typography variant="body2">
+      Generation stopped before it finished, so the graph, prompt or rows below
+      may be missing.
+      {!reason && " No reason was recorded for this failure."}
+    </Typography>
+    {reason ? (
+      <Typography variant="body2">{reason}</Typography>
+    ) : (
+      <Typography variant="body2">
+        Create the scenario again. If it keeps failing, try a different agent or
+        prompt version.
+      </Typography>
+    )}
+    {!canCreate && (
+      <Typography variant="body2">
+        Your role can&apos;t create scenarios, so ask a teammate who can.
+      </Typography>
+    )}
+  </Alert>
+);
+
+ScenarioFailedNotice.propTypes = {
+  reason: PropTypes.string,
+  canCreate: PropTypes.bool,
+  onCreateAgain: PropTypes.func.isRequired,
+};
 
 const MetaChip = ({ label, value, icon }) => (
   <Box
@@ -28,7 +87,7 @@ const MetaChip = ({ label, value, icon }) => (
       gap: 0.75,
       border: "1px solid",
       borderColor: "divider",
-      borderRadius: 0.5,
+      borderRadius: "4px",
       px: 1.25,
       py: 0.5,
       backgroundColor: "background.default",
@@ -73,6 +132,7 @@ const ScenarioDatasetView = () => {
   const navigate = useNavigate();
   const [addRowScenarioOpen, setAddRowScenarioOpen] = useState(false);
   const [addColumnScenarioOpen, setColumnScenarioOpen] = useState(false);
+  const { role } = useAuthContext();
   // Fetch scenario details
   const { data: scenario, isLoading, error } = useGetScenarioDetail(scenarioId);
   if (isLoading) {
@@ -111,6 +171,11 @@ const ScenarioDatasetView = () => {
   const createdAt = scenario?.createdAt || scenario?.created_at;
   const agentChipConfig = getChipConfig(agentType);
   const scenarioTypeChipConfig = getChipConfig(scenarioType);
+  const isFailed = isScenarioFailed(scenario?.status);
+  const failureReason = scenario?.failureReason ?? scenario?.failure_reason;
+  const canCreate = Boolean(
+    RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role],
+  );
 
   return (
     <DevelopDetailProvider>
@@ -133,15 +198,17 @@ const ScenarioDatasetView = () => {
           }}
         >
           <Box sx={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <Typography
-              typography="m3"
-              fontWeight="fontWeightMedium"
-              color="text.disabled"
+            <ButtonBase
+              disableRipple
               onClick={() => navigate("/dashboard/simulate/scenarios")}
-              sx={{ cursor: "pointer" }}
+              sx={{
+                typography: "m3",
+                fontWeight: "fontWeightMedium",
+                color: "text.disabled",
+              }}
             >
               All Scenarios
-            </Typography>
+            </ButtonBase>
             <SvgColor src="/assets/icons/custom/lucide--chevron-right.svg" />
             <Typography typography="m3" fontWeight="fontWeightMedium">
               {scenario?.name}
@@ -158,10 +225,24 @@ const ScenarioDatasetView = () => {
               value={scenarioTypeChipConfig.label}
               icon={scenarioTypeChipConfig.icon}
             />
-            <MetaChip label="No of Datapoints" value={datasetRows} />
+            <MetaChip
+              label="No of Datapoints"
+              value={
+                isFailed ? `${datasetRows} (generation failed)` : datasetRows
+              }
+            />
             <MetaChip label="Created" value={formatCreatedAt(createdAt)} />
           </Box>
         </Box>
+        <ShowComponent condition={isFailed}>
+          <Box sx={{ paddingX: 2, paddingTop: 1 }}>
+            <ScenarioFailedNotice
+              reason={failureReason}
+              canCreate={canCreate}
+              onCreateAgain={() => navigate(CREATE_SCENARIO_PATH)}
+            />
+          </Box>
+        </ShowComponent>
         <Box
           sx={{
             display: "flex",
@@ -210,7 +291,7 @@ const ScenarioDatasetView = () => {
               </Typography>
             </Box>
           </ShowComponent>
-          <ShowComponent condition={isScenarioFailed(scenario?.status)}>
+          <ShowComponent condition={isFailed}>
             <Box
               sx={{
                 display: "flex",
@@ -222,7 +303,7 @@ const ScenarioDatasetView = () => {
               }}
             >
               <Typography typography="s1">
-                There was an error generating the scenario.
+                No scenarios were generated.
               </Typography>
             </Box>
           </ShowComponent>

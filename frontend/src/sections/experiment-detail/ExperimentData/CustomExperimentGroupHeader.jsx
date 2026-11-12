@@ -3,8 +3,18 @@ import PropTypes from "prop-types";
 import React, { useRef } from "react";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
+import ResultGroupHeader from "../results/headers/ResultGroupHeader";
 
-const CustomExperimentGroupHeader = ({
+// Results grid groups (PRODUCT-SPEC §3.10.7) pass `resultGroup`; the
+// dataset compare grid and the legacy experiment grid pass `group`.
+const CustomExperimentGroupHeader = (props) =>
+  props.resultGroup ? (
+    <ResultGroupHeader group={props.resultGroup} />
+  ) : (
+    <LegacyGroupHeader {...props} />
+  );
+
+const LegacyGroupHeader = ({
   group,
   displayName,
   api: _api,
@@ -31,7 +41,7 @@ const CustomExperimentGroupHeader = ({
     if (group.origin === "Evaluation" || group.origin === "evaluation") {
       return (
         <Iconify
-          icon="material-symbols:check-circle-outline"
+          icon="solar:check-circle-linear"
           sx={{ color: "info.success" }}
         />
       );
@@ -54,13 +64,13 @@ const CustomExperimentGroupHeader = ({
         />
       );
     } else if (group.origin === "annotation_label") {
-      return <Iconify icon="jam:write" sx={iconStyle} />;
+      return <Iconify icon="solar:pen-linear" sx={iconStyle} />;
     } else if (group.dataType === "text") {
-      return <Iconify icon="material-symbols:notes" sx={iconStyle} />;
+      return <Iconify icon="solar:notes-linear" sx={iconStyle} />;
     } else if (group.dataType === "array") {
-      return <Iconify icon="material-symbols:data-array" sx={iconStyle} />;
+      return <Iconify icon="solar:brackets-linear" sx={iconStyle} />;
     } else if (group.dataType === "integer") {
-      return <Iconify icon="material-symbols:tag" sx={iconStyle} />;
+      return <Iconify icon="solar:hashtag-linear" sx={iconStyle} />;
     } else if (group.dataType === "float") {
       return <Iconify icon="tabler:decimal" sx={iconStyle} />;
     } else if (group.dataType === "boolean") {
@@ -68,9 +78,9 @@ const CustomExperimentGroupHeader = ({
         <Iconify icon="material-symbols:toggle-on-outline" sx={iconStyle} />
       );
     } else if (group.dataType === "datetime") {
-      return <Iconify icon="tabler:calendar" sx={iconStyle} />;
+      return <Iconify icon="solar:calendar-linear" sx={iconStyle} />;
     } else if (group.dataType === "json") {
-      return <Iconify icon="material-symbols:data-object" sx={iconStyle} />;
+      return <Iconify icon="solar:braces-linear" sx={iconStyle} />;
     } else if (group.dataType === "image") {
       return (
         <SvgColor
@@ -103,7 +113,7 @@ const CustomExperimentGroupHeader = ({
       >
         {renderIcon()}
         <Typography
-          fontWeight={700}
+          fontWeight={600}
           fontSize="13px"
           color={"text.secondary"}
           sx={{
@@ -123,7 +133,7 @@ const CustomExperimentGroupHeader = ({
           ref={refButton}
           onClick={onMenuClicked}
         >
-          <Iconify icon="mdi:dots-vertical" />
+          <Iconify icon="solar:menu-dots-vertical-linear" />
         </IconButton>
       )}
     </Box>
@@ -131,6 +141,10 @@ const CustomExperimentGroupHeader = ({
 };
 
 CustomExperimentGroupHeader.propTypes = {
+  resultGroup: PropTypes.object,
+};
+
+LegacyGroupHeader.propTypes = {
   displayName: PropTypes.string,
   group: PropTypes.object,
   api: PropTypes.object,

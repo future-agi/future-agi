@@ -17,6 +17,8 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
+from temporalio.exceptions import WorkflowAlreadyStartedError
+
 from tfc.logging.temporal import get_logger
 
 logger = get_logger(__name__)
@@ -107,6 +109,15 @@ def start_activity(
             context="sync_bridge",
         )
         return result
+    except WorkflowAlreadyStartedError:
+        # The run for this workflow id is still open. Callers that start work
+        # under a fixed id handle this themselves, so it is not a failure.
+        logger.info(
+            "start_activity_already_started",
+            activity_name=activity_name,
+            task_id=task_id,
+        )
+        raise
     except Exception as e:
         logger.exception(
             "start_activity_failed", activity_name=activity_name, error=str(e)
@@ -219,6 +230,13 @@ async def _start_activity_async(
         )
         return workflow_id
 
+    except WorkflowAlreadyStartedError:
+        logger.info(
+            "start_activity_async_already_started",
+            activity_name=activity_name,
+            task_id=task_id,
+        )
+        raise
     except Exception as e:
         logger.exception(
             "start_activity_async_failed",

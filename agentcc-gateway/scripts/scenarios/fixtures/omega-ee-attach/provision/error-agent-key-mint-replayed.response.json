@@ -1,0 +1,21 @@
+{
+  "http": {
+    "status": 409,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": false,
+    "type": "conflict",
+    "code": "agent_key_mint_replayed",
+    "detail": "A mint with this Idempotency-Key already made the agent key named here. Its key was in that mint's answer and is never shown again: revoke this agent key, then mint with a new Idempotency-Key.",
+    "message": "A mint with this Idempotency-Key already made the agent key named here. Its key was in that mint's answer and is never shown again: revoke this agent key, then mint with a new Idempotency-Key.",
+    "error": "A mint with this Idempotency-Key already made the agent key named here. Its key was in that mint's answer and is never shown again: revoke this agent key, then mint with a new Idempotency-Key.",
+    "result": "A mint with this Idempotency-Key already made the agent key named here. Its key was in that mint's answer and is never shown again: revoke this agent key, then mint with a new Idempotency-Key.",
+    "agent_key_id": "key_3c9f1a7e5b2d8c4f6a0e1b9d",
+    "created_at": "2026-10-21T23:00:00Z",
+    "expires_at": "2027-01-19T23:00:00Z",
+    "revoked": false
+  }
+}

@@ -203,9 +203,9 @@ def filter_observation_spans_by_trace(
     aggregate sites that iterate the result work unchanged; sites that chain
     additional `.filter()` calls need explicit porting.
 
-    ``project_id`` scopes the CH read so ClickHouse can prune ``spans`` by the
-    ``project_id`` sort-key prefix instead of scanning all projects for the
-    trace's spans.
+    ``project_id`` must come from the authorized trace or request. Missing
+    scope returns no spans; both CH and PG reads are pinned to that project.
+    This also lets ClickHouse prune by the ``project_id`` sort-key prefix.
 
     ``heavy_span_ids`` (optional): ids whose heavy columns (attributes_extra /
     span_events / resource_attrs) are required. A lean pass loads all spans
@@ -215,9 +215,18 @@ def filter_observation_spans_by_trace(
     """
     from tracer.models.observation_span import ObservationSpan
 
+    # A trace id alone does not identify a tenant. Missing scope must not
+    # fall through to either an unscoped CH read or the legacy PG fallback.
+    if not project_id:
+        return []
+
     src = _read_source()
     if src != "clickhouse":
-        return list(ObservationSpan.objects.filter(trace_id=trace_id, deleted=deleted))
+        return list(
+            ObservationSpan.objects.filter(
+                trace_id=trace_id, project_id=project_id, deleted=deleted
+            )
+        )
 
     try:
         from tracer.services.clickhouse.v2 import get_reader
@@ -253,7 +262,11 @@ def filter_observation_spans_by_trace(
             raise EvalTelemetryReadError(
                 "Evaluation trace spans could not be loaded from ClickHouse."
             ) from e
-        return list(ObservationSpan.objects.filter(trace_id=trace_id, deleted=deleted))
+        return list(
+            ObservationSpan.objects.filter(
+                trace_id=trace_id, project_id=project_id, deleted=deleted
+            )
+        )
 
     out = []
     for ch_row in ch_rows:

@@ -1,3 +1,7 @@
+import ContentSkeleton from "src/components/content-skeleton";
+import PersonalKeySnippet, {
+  PersonalKeyControl,
+} from "src/sections/keys/view/PersonalKeySnippet";
 import {
   Box,
   Button,
@@ -8,8 +12,7 @@ import {
   IconButton,
   Modal,
   Typography,
-  useTheme,
-  CircularProgress,
+  Tab,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
@@ -23,7 +26,7 @@ import { useMutation } from "@tanstack/react-query";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { LoadingButton } from "@mui/lab";
 import { useNavigate } from "react-router";
-import { CustomTab, CustomTabs, TabWrapper } from "./AddDatasetStyle";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { ShowComponent } from "src/components/show";
 import { FormCodeEditor } from "src/components/form-code-editor";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
@@ -57,7 +60,6 @@ const tabOptions = [
 ];
 
 const AddSDKModal = ({ open, onClose, refreshGrid }) => {
-  const theme = useTheme();
   const { control, handleSubmit, reset, setValue } = useForm({
     defaultValues,
     resolver: zodResolver(ManuallyCreateDatasetValidationSchema2),
@@ -142,8 +144,13 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
   };
 
   return (
-    <>
-      <Dialog open={open} onClose={onCloseClick} maxWidth="sm" PaperProps={{}}>
+    <PersonalKeySnippet active={isNext}>
+      <Dialog
+        open={open}
+        onClose={onCloseClick}
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 720 } }}
+      >
         <Box sx={{ padding: 2 }}>
           <DialogTitle sx={{ padding: 0, margin: 0 }}>
             <Box
@@ -162,7 +169,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                 Create Dataset
               </Typography>
               <IconButton onClick={onCloseClick}>
-                <Iconify icon="mdi:close" color="text.primary" />
+                <Iconify icon="solar:close-linear" color="text.primary" />
               </IconButton>
             </Box>
             <HelperText text="Datasets can be used to for evals, prompt experimentation, or fine - tuning." />
@@ -222,13 +229,13 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
           flexWrap: "wrap",
           // p: "15px",
           overflow: "auto",
-          "& .MuiBackdrop-root": { backgroundColor: "#00000040" },
+          "& .MuiBackdrop-root": { backgroundColor: "rgba(0,0,0,0.25)" },
         }}
       >
         <Box
           bgcolor="background.paper"
           mx="auto"
-          maxWidth="919px"
+          maxWidth="960px"
           width="100%"
           borderRadius="16px"
           padding={2}
@@ -256,7 +263,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                   );
                 }}
               >
-                <Iconify icon="mdi:close" />
+                <Iconify icon="solar:close-linear" />
               </IconButton>
             </Box>
             <Box sx={{}}>
@@ -271,7 +278,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
               minHeight="200px"
               margin="25px 0"
             >
-              <CircularProgress size={40} />
+              <ContentSkeleton variant="panel" />
             </Box>
           ) : (
             <Box
@@ -314,7 +321,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     }
                     sx={{ color: "text.secondary" }}
                   >
-                    <Iconify icon="eva:copy-outline" width={16} height={16} />
+                    <Iconify icon="solar:copy-linear" width={16} height={16} />
                   </IconButton>
                 </Box>
               </Box>
@@ -353,108 +360,30 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     }
                     sx={{ color: "text.secondary" }}
                   >
-                    <Iconify icon="eva:copy-outline" width={16} height={16} />
+                    <Iconify icon="solar:copy-linear" width={16} height={16} />
                   </IconButton>
                 </Box>
               </Box>
-              <Box display="flex" alignItems="center">
-                <Typography
-                  fontWeight={"fontWeightMedium"}
-                  color="text.primary"
-                  variant="s1"
-                  component="span"
-                  width="141px"
-                >
-                  API Key:
-                </Typography>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Typography
-                    bgcolor="background.neutral"
-                    borderRadius="8px"
-                    variant="s1"
-                    fontWeight={"fontWeightRegular"}
-                    p="5px 12px"
-                    color="black"
-                  >
-                    {data?.data?.result?.api_keys?.api_key}
-                  </Typography>
-                  <IconButton
-                    size="small"
-                    onClick={() =>
-                      copyToClipboard(
-                        data?.data?.result?.api_keys?.api_key,
-                        "API Key",
-                      )
-                    }
-                    sx={{ color: "text.secondary" }}
-                  >
-                    <Iconify icon="eva:copy-outline" width={16} height={16} />
-                  </IconButton>
-                </Box>
-              </Box>
-              <Box display="flex" alignItems="center">
-                <Typography
-                  fontWeight={"fontWeightMedium"}
-                  color="text.primary"
-                  variant="s1"
-                  component="span"
-                  width="141px"
-                >
-                  Secret Key:
-                </Typography>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Typography
-                    bgcolor="background.neutral"
-                    borderRadius="8px"
-                    variant="s1"
-                    fontWeight={"fontWeightRegular"}
-                    p="5px 12px"
-                    color="black"
-                  >
-                    {data?.data?.result?.api_keys?.secret_key}
-                  </Typography>
-                  <IconButton
-                    size="small"
-                    onClick={() =>
-                      copyToClipboard(
-                        data?.data?.result?.api_keys?.secret_key,
-                        "Secret Key",
-                      )
-                    }
-                    sx={{ color: "text.secondary" }}
-                  >
-                    <Iconify icon="eva:copy-outline" width={16} height={16} />
-                  </IconButton>
-                </Box>
-              </Box>
+              <PersonalKeyControl />
             </Box>
           )}
           {!isPending && (
             <Box>
-              <TabWrapper>
-                <CustomTabs
-                  textColor="primary"
+              <Box sx={{ mb: 1.5 }}>
+                <SegmentedTabs
                   value={currentTab}
                   onChange={(e, value) => setCurrentTab(value)}
-                  TabIndicatorProps={{
-                    style: {
-                      backgroundColor: theme.palette.primary.main,
-                      opacity: 0.08,
-                      height: "100%",
-                      borderRadius: "8px",
-                    },
-                  }}
                 >
                   {tabOptions.map((tab) => (
-                    <CustomTab
+                    <Tab
                       key={tab.value}
                       label={tab.label}
                       value={tab.value}
                       disabled={tab.disabled}
                     />
                   ))}
-                </CustomTabs>
-              </TabWrapper>
+                </SegmentedTabs>
+              </Box>
               <Box
                 bgcolor="background.neutral"
                 borderRadius="8px"
@@ -528,7 +457,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
           </Box>
         </Box>
       </Modal>
-    </>
+    </PersonalKeySnippet>
   );
 };
 

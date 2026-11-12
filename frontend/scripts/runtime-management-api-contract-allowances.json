@@ -1,0 +1,26 @@
+[
+  {
+    "path": "futureagi/accounts/views/handoff_exchange.py",
+    "class": "HandoffRedeemView",
+    "function": "post",
+    "reason": "Preserve one-time sign-in code refusal responses until paired post-launch conversion."
+  },
+  {
+    "path": "futureagi/accounts/views/handoff_exchange.py",
+    "class": "WebSocketTicketView",
+    "function": "post",
+    "reason": "Preserve socket-ticket sign-in refusal responses until paired post-launch conversion."
+  },
+  {
+    "path": "futureagi/agentcc/views/mcp_approvals.py",
+    "class": "MCPApprovalDecisionView",
+    "function": "post",
+    "reason": "Convert the MCP approval decision to validated_request after launch."
+  },
+  {
+    "path": "futureagi/tracer/views/observation_span.py",
+    "class": "ObservationSpanView",
+    "function": "submit_feedback_action_type",
+    "reason": "Documents the feedback action request body; convert to validated_request after launch."
+  }
+]

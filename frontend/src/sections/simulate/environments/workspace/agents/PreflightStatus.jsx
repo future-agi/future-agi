@@ -1,18 +1,17 @@
 import PropTypes from "prop-types";
 import { Stack, Typography } from "@mui/material";
-import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { VersionBadge } from "../EnvVersionPin";
 import { AGENT_VERSIONS_COPY as COPY } from "../workspace.constants";
 
-const PREFLIGHT_TONES = {
-  pending: BUILD_TONES.accent,
-  failed: BUILD_TONES.red,
-  passed: BUILD_TONES.green,
+const PREFLIGHT_ROLES = {
+  pending: "info",
+  failed: "danger",
+  passed: "success",
 };
 export function PreflightBadge({ status }) {
   const label = COPY.preflight[status];
   if (!label) return null;
-  return <VersionBadge label={label} tone={PREFLIGHT_TONES[status]} />;
+  return <VersionBadge label={label} role={PREFLIGHT_ROLES[status]} />;
 }
 PreflightBadge.propTypes = { status: PropTypes.string };
 
@@ -34,16 +33,23 @@ export function PreflightReport({ report }) {
           key={check.id || check.label}
           sx={{
             typography: "s3",
-            color: check.status === "failed" ? "error.main" : "text.secondary",
+            color:
+              check.status === "failed" ? "status.danger.fg" : "text.secondary",
           }}
         >
           {`${check.label}: ${COPY.checks[check.status] || check.status}`}
           {check.missing?.length ? ` · ${COPY.missing(check.missing)}` : ""}
         </Typography>
       ))}
-      {missing.length > 0 && line(COPY.missing(missing), "error.main")}
-      {invalid.length > 0 && line(COPY.invalid(invalid), "error.main")}
-      {report.error && line(COPY.checkError(report.error), "error.main")}
+      {missing.length > 0 && line(COPY.missing(missing), "status.danger.fg")}
+      {invalid.length > 0 && line(COPY.invalid(invalid), "status.danger.fg")}
+      {report.error &&
+        line(
+          Object.hasOwn(COPY.checkErrors, report.error)
+            ? COPY.checkErrors[report.error]
+            : COPY.checkError(report.error),
+          "status.danger.fg",
+        )}
     </Stack>
   );
 }

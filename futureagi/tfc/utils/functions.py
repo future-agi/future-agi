@@ -7,14 +7,15 @@ import numpy as np
 import structlog
 from django.db.models import Count, F, Sum
 
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from model_hub.models.choices import CellStatus, SourceChoices
-from model_hub.models.develop_dataset import Cell, Column
+from model_hub.models.develop_dataset import Cell, Column, Dataset
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.utils.SQL_queries import SQLQueryHandler
-from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.constants.api_calls import APICallStatusChoices
+from tfc.utils.clickhouse import ClickHouseClientSingleton
+
+logger = structlog.get_logger(__name__)
 
 
 def add_one_day_in_date(date_str):
@@ -126,8 +127,14 @@ def _calculate_numeric_choices_average(cells, multi_choice, numeric_choices):
             0 <= choice <= 1 for choice in numeric_choices
         )
 
+        from tfc.temporal.experiments.run_policy import is_policy_zero
+
         for cell in cells:
             try:
+                # An errored row the run counts as 0 scores 0, choice or not.
+                if is_policy_zero(cell):
+                    numeric_values.append(0.0)
+                    continue
                 cell_numeric_values = _extract_numeric_choices(
                     cell.value,
                     numeric_choice_set,
@@ -374,7 +381,7 @@ def get_numeric_choices_score_format(
 
                 # Convert counts to percentages
                 total_count = len(metric_numeric_values)
-                distribution_percentages = {
+                distribution_percentages = {  # noqa: F841
                     key: round((count / total_count), 2)
                     for key, count in distribution.items()
                 }
@@ -408,6 +415,61 @@ def get_numeric_choices_score_format(
         logger.error(f"Error calculating numeric choices score format: {str(e)}")
         traceback.print_exc()
         return None
+
+
+def _calculate_scored_choices_average(cells, eval_template):
+    """Average persisted choice scores, not labels or execution status.
+
+    The envelope already reflects the run's version and runtime score mapping.
+    Return None for legacy unscored choices so their existing handling remains.
+    Policy zeros alone must not bypass the legacy numeric-choice scale.
+    """
+    from ast import literal_eval
+
+    from tfc.temporal.experiments.run_policy import is_policy_zero
+
+    scores = []
+    has_scored_choices = False
+    for cell in cells:
+        if is_policy_zero(cell):
+            scores.append(0.0)
+            continue
+
+        value = cell.value
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                # Cell.value is a TextField; dict values can be Python reprs.
+                # Parse rather than replacing quotes (labels can contain them).
+                try:
+                    value = literal_eval(value)
+                except (ValueError, SyntaxError):
+                    continue
+        if not isinstance(value, dict) or "score" not in value:
+            continue
+
+        has_scored_choices = True
+        try:
+            score = float(value["score"])
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if 0 <= score <= 1:
+            scores.append(score)
+
+    if not has_scored_choices:
+        # Policy zeros remain scores for categorical choices, but do not
+        # turn legacy numeric choices into normalized-score envelopes.
+        if not scores or _is_template_numeric_choices(eval_template)[0]:
+            return None
+
+    total_rows = cells.count()
+    return {
+        "average": round(sum(scores) / len(scores) * 100, 2) if scores else None,
+        "valid_rows": len(scores),
+        "success_rate": round(len(scores) / total_rows * 100, 2) if total_rows else 0,
+        "percentiles": calculate_percentiles(scores),
+    }
 
 
 def calculate_column_average(column_id, row_ids=None):
@@ -517,9 +579,7 @@ def calculate_column_average(column_id, row_ids=None):
                                             scores = json.loads(
                                                 cell.value.replace("'", '"')
                                             )
-                                            if isinstance(
-                                                scores, (float, int)
-                                            ):  # noqa: UP038
+                                            if isinstance(scores, (float, int)):  # noqa: UP038
                                                 scores = {"single_score": scores}
                                         except json.JSONDecodeError:
                                             if cell.value in ["Passed", "Failed"]:
@@ -561,13 +621,21 @@ def calculate_column_average(column_id, row_ids=None):
                             stats["percentiles"] = percentiles
 
                     elif output_type in ["reason", "choices"]:
-                        # TEMPORARY FIX: Check if this is a user-created numeric choices eval
-                        # If yes, calculate actual numeric average instead of just counting valid responses
-                        numeric_eval_handled = False
+                        # Saved scores take precedence over numeric-looking labels
+                        # and live template mappings, which may have changed.
+                        choice_stats = (
+                            _calculate_scored_choices_average(
+                                cells, eval_metric.template
+                            )
+                            if output_type == "choices"
+                            else None
+                        )
+                        choices_handled = choice_stats is not None
+                        if choices_handled:
+                            stats.update(choice_stats)
 
-                        if (
-                            output_type == "choices"
-                        ):  # Only apply to choices, not reason
+                        # Preserve the legacy unscored numeric-choice path.
+                        if output_type == "choices" and not choices_handled:
                             is_numeric, numeric_choices = _is_template_numeric_choices(
                                 eval_metric.template
                             )
@@ -582,10 +650,10 @@ def calculate_column_average(column_id, row_ids=None):
                                 stats.update(numeric_stats)
                                 # Update stats with numeric_stats values, but also update "is_numeric_eval" to True
                                 stats["is_numeric_eval"] = True
-                                numeric_eval_handled = True
+                                choices_handled = True
 
-                        # EXISTING CATEGORICAL LOGIC (for non-numeric or system evals)
-                        if not numeric_eval_handled:
+                        # Unscored categorical/reason outputs keep completion stats.
+                        if not choices_handled:
                             valid_responses = cells.filter(status="pass").count()
                             stats["valid_rows"] = valid_responses
                             stats["average"] = round(
@@ -638,14 +706,16 @@ def calculate_column_average(column_id, row_ids=None):
         }
 
 
-def calculate_eval_average(eval_template, api_logs):
+def calculate_eval_average(eval_template, api_logs, *, empty_value=0):
     """
     Calculate average and related metrics for evaluations based on the eval template and logs.
     Args:
         eval_template: The evaluation template object.
         api_logs: Queryset/List of APICallLog objects
+        empty_value: Result when no valid logs can be scored. Defaults to 0 for
+            legacy callers; pass None to distinguish unscored graph intervals.
     Returns:
-        float: Average score or 0 if no valid logs.
+        float | None: Average score, or empty_value if no valid logs.
     """
     try:
         output_type = eval_template.config.get("output")
@@ -693,19 +763,14 @@ def calculate_eval_average(eval_template, api_logs):
             except Exception:
                 continue
 
-        if output_type == "Pass/Fail":
-            average = round((success_count / valid_logs) * 100, 2) if valid_logs else 0
-        elif output_type == "score":
-            average = round((success_count / valid_logs) * 100, 2) if valid_logs else 0
-        elif output_type in ["choices", "reason"]:
-            average = round((success_count / valid_logs) * 100, 2) if valid_logs else 0
-
-        return average
+        return (
+            round((success_count / valid_logs) * 100, 2) if valid_logs else empty_value
+        )
 
     except Exception as e:
         logger.error(f"Error calculating eval average: {str(e)}")
         traceback.print_exc()
-        return 0
+        return empty_value
 
 
 def get_eval_stats(eval_template, dataset_id, user_eval_metric_ids=None, row_ids=None):
@@ -945,6 +1010,14 @@ def get_prompt_stats(run_prompters, dataset_id, row_ids=None):
     total_cost = 0
     total_time = 0
     total_cells = 0
+    # The cells' organization, so a custom model's summary cost uses its saved
+    # price as its cells do (a run prompter saved without one uses the
+    # dataset's).
+    dataset_org_id = (
+        Dataset.objects.filter(id=dataset_id)
+        .values_list("organization_id", flat=True)
+        .first()
+    )
 
     def process_run_prompter(run_prompter):
         filter_kwargs = {}
@@ -993,6 +1066,7 @@ def get_prompt_stats(run_prompters, dataset_id, row_ids=None):
                 "prompt_tokens": total_prompt_tokens,
                 "completion_tokens": total_completion_tokens,
             },
+            organization_id=run_prompter.organization_id or dataset_org_id,
         )
 
         return {

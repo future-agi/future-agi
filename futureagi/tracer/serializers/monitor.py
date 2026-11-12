@@ -1,12 +1,14 @@
 import json
 
-from accounts.serializers.user import UserSerializer
 from rest_framework import serializers
+
+from accounts.serializers.user import UserSerializer
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import (
     AlertTypeChoices,
     MonitorMetricTypeChoices,
     ThresholdCalculationMethodChoices,
+    ThresholdRuleChoices,
     UserAlertMonitor,
     UserAlertMonitorLog,
 )
@@ -21,6 +23,26 @@ from tracer.serializers.filters import (
 from tracer.utils.monitor import uses_choice_threshold
 
 OBSERVATION_SPAN_TYPES = [t[0] for t in ObservationSpan.OBSERVATION_SPAN_TYPES]
+
+# A new value in any of these changes how the monitor's thresholds are judged,
+# so a monitor saved before the threshold update moves to the current rule. A
+# name, filter, notification or mute change keeps the rule it was saved with.
+THRESHOLD_RULE_FIELDS = (
+    "threshold_type",
+    "threshold_operator",
+    "critical_threshold_value",
+    "warning_threshold_value",
+    "auto_threshold_time_window",
+    "alert_frequency",
+    "metric_type",
+    "metric",
+    "threshold_metric_value",
+)
+
+
+def _stored_value(value):
+    """A blank text value is stored as no value."""
+    return None if value == "" else value
 
 
 class UserAlertMonitorListQuerySerializer(serializers.Serializer):
@@ -60,6 +82,13 @@ class UserAlertMonitorListItemSerializer(serializers.Serializer):
     no_of_alerts = serializers.IntegerField(min_value=0)
     last_triggered = serializers.DateTimeField(allow_null=True)
     is_mute = serializers.BooleanField()
+    threshold_type = serializers.ChoiceField(
+        choices=ThresholdCalculationMethodChoices.choices,
+    )
+    threshold_rule = serializers.ChoiceField(
+        choices=ThresholdRuleChoices.choices,
+        help_text="How the saved thresholds are judged: earlier for monitors saved before the threshold update and not edited since, current otherwise.",
+    )
     trends = UserAlertMonitorTrendSerializer(many=True)
 
 
@@ -89,7 +118,22 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserAlertMonitor
         fields = "__all__"
-        read_only_fields = ("last_checked_at", "logs", "deleted", "deleted_at")
+        read_only_fields = (
+            "last_checked_at",
+            "logs",
+            "deleted",
+            "deleted_at",
+            "threshold_rule",
+        )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from tracer.serializers.relation_scope import scope_relations
+
+        scope_relations(self, {"project": ("organization", "workspace")})
+        self.fields["project"].queryset = self.fields["project"].queryset.filter(
+            trace_type="observe"
+        )
 
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
@@ -297,6 +341,29 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
             validated_data["filters"] = self.validate_filters(filters)
 
         return validated_data
+
+    def update(self, instance, validated_data):
+        if instance.threshold_rule == ThresholdRuleChoices.EARLIER and (
+            self._changes_a_threshold(instance, validated_data)
+        ):
+            validated_data["threshold_rule"] = ThresholdRuleChoices.CURRENT.value
+        return super().update(instance, validated_data)
+
+    def _changes_a_threshold(self, instance, validated_data) -> bool:
+        """True when the request sets a threshold field to a new value.
+
+        Only fields the request sent count: a value ``validate`` sets itself
+        (a stale choice it drops) is no edit. A field sent unchanged is no
+        edit either, since the edit form sends every field.
+        """
+        sent = self.initial_data
+        return any(
+            name in sent
+            and name in validated_data
+            and _stored_value(validated_data[name])
+            != _stored_value(getattr(instance, name))
+            for name in THRESHOLD_RULE_FIELDS
+        )
 
 
 class UserAlertMonitorBulkMuteRequestSerializer(StrictInputSerializer):
@@ -621,8 +688,23 @@ _FETCH_GRAPH_POINT_SCHEMA = {
     "required": ["timestamp", "value"],
     "properties": {
         "timestamp": {"type": "string"},
-        "value": {"type": "number"},
+        "value": {"type": "number", "x-nullable": True},
         "primary_traffic": {"type": "number"},
+        "error_rate": {"type": "number", "x-nullable": True},
+        **{
+            key: {"type": "integer", "minimum": 0}
+            for key in (
+                "count",
+                "scored_count",
+                "unscored_count",
+                "completed_count",
+                "error_count",
+                "pending_count",
+                "running_count",
+                "skipped_count",
+                "failed_count",
+            )
+        },
     },
     "additionalProperties": True,
 }

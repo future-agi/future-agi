@@ -1,32 +1,15 @@
-import React, { useMemo, useState } from "react";
-import { Stack, Grid, Box, Typography, Button } from "@mui/material";
+import React, { useMemo } from "react";
+import { Stack, Grid } from "@mui/material";
 import PromptTTSInput from "../../RunPrompt/Components/PromptTTSInput";
 import CustomModelDropdownControl from "src/components/custom-model-dropdown/CustomModelDropdownControl";
 import NewModelRenderWithParamsTool from "./NewModelRenderWithParamsTool";
 import { findInvalidVariables, MODEL_TYPES } from "../../RunPrompt/common";
 import PropTypes from "prop-types";
-import { useFieldArray, useWatch } from "react-hook-form";
-import RadioField from "src/components/RadioField/RadioField";
-import { ShowComponent } from "src/components/show";
-import SvgColor from "src/components/svg-color/svg-color";
-import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField";
-import { getRandomId } from "src/utils/utils";
-import CustomToolModal from "../../RunPrompt/Modals/CustomToolModal";
-import { useRunPromptOptions } from "src/api/develop/develop-detail";
-const toolsChoiceOptions = [
-  {
-    label: "Auto",
-    value: "auto",
-  },
-  {
-    label: "Required",
-    value: "required",
-  },
-  {
-    label: "None",
-    value: "none",
-  },
-];
+import { useWatch } from "react-hook-form";
+
+// A TTS / Image prompt item: the text to speak or draw and its models. No
+// tool block: a media run makes one generation per try and calls no tools
+// (options-truth L7b typed:add-tool), so none is offered.
 const ConfigureStepTTSItem = ({
   index,
   field: _field,
@@ -44,18 +27,6 @@ const ConfigureStepTTSItem = ({
   watchModelType,
   derivedVariables,
 }) => {
-  const [isAddToolModalOpen, setIsAddToolModalOpen] = useState(false);
-  const [selectedTool, setSelectedTool] = useState(null);
-  const { data: runPromptOptions } = useRunPromptOptions();
-  const toolsOptions = useMemo(() => {
-    return (
-      runPromptOptions?.available_tools?.map((t) => ({
-        label: t.name,
-        value: t.id,
-        tool: t,
-      })) ?? []
-    );
-  }, [runPromptOptions?.available_tools]);
   const watchedMessages =
     useWatch({
       name: `promptConfig.${index}.messages`,
@@ -106,18 +77,6 @@ const ConfigureStepTTSItem = ({
       }
     }
   };
-  const watchModelPromptConfiguration = useWatch({
-    control,
-    name: `promptConfig.${index}.configuration`,
-  });
-  const watchedTools = useWatch({
-    control,
-    name: `promptConfig.${index}.configuration.tools`,
-  });
-  const { replace } = useFieldArray({
-    control,
-    name: `promptConfig.${index}.configuration.tools`,
-  });
 
   return (
     <Stack sx={{ gap: 3, backgroundColor: "background.paper", padding: 2 }}>
@@ -194,102 +153,6 @@ const ConfigureStepTTSItem = ({
             </Grid>
           ))}
       </Grid>
-
-      <Stack spacing={0.5}>
-        <Typography variant="s1" fontWeight={"fontWeightMedium"}>
-          Add Tool
-        </Typography>
-        <Typography variant="s2" fontWeight={"fontWeightRegular"}>
-          If your application should have a function
-        </Typography>
-      </Stack>
-      <Box sx={{ marginTop: -2 }}>
-        <RadioField
-          optionColor={"text.primary"}
-          optionFontWeight={"fontWeightMedium"}
-          optionDirection="row"
-          parentSx={{ marginLeft: -2 }}
-          fieldName={`promptConfig.${index}.configuration.toolChoice`}
-          control={control}
-          options={toolsChoiceOptions}
-        />
-        <ShowComponent
-          condition={watchModelPromptConfiguration?.toolChoice === "required"}
-        >
-          <Box
-            sx={{
-              display: "flex",
-              gap: 1,
-              alignItems: "center",
-              width: "100%",
-              mt: 3,
-            }}
-          >
-            <FormSearchSelectFieldState
-              size="small"
-              label="Select a tool"
-              options={toolsOptions}
-              placeholder="Select a tool"
-              multiple
-              checkbox
-              value={watchedTools?.map((t) => t?.tool?.value) || []}
-              sx={{ flex: 1 }}
-              onChange={(e) => {
-                const selectedValues = e.target.value; // array of selected ids
-                const selectedTools = toolsOptions.filter((tool) =>
-                  selectedValues.includes(tool.value),
-                );
-                const newFields = selectedTools.map((tool) => ({
-                  id: getRandomId(),
-                  tool,
-                }));
-                replace(newFields); // replace the entire field array
-              }}
-            />
-
-            <Button
-              size="medium"
-              variant="outlined"
-              startIcon={
-                <SvgColor
-                  sx={{
-                    color: "text.secondary",
-                    height: 20,
-                    width: 20,
-                  }}
-                  src={"/assets/icons/ic_add.svg"}
-                />
-              }
-              onClick={() => setIsAddToolModalOpen(true)}
-              sx={{
-                "& .MuiButton-icon > svg": { marginRight: 0 },
-                minWidth: "unset",
-                borderColor: "divider",
-                height: 40,
-                ml: "auto",
-              }}
-            >
-              <Typography
-                variant="s1"
-                color={"text.primary"}
-                fontWeight={"fontWeightMedium"}
-              >
-                Create tool
-              </Typography>
-            </Button>
-          </Box>
-        </ShowComponent>
-      </Box>
-
-      <CustomToolModal
-        editTool={selectedTool}
-        setEditTool={setSelectedTool}
-        open={isAddToolModalOpen || Boolean(selectedTool)}
-        onClose={() => {
-          setIsAddToolModalOpen(false);
-          setSelectedTool(null);
-        }}
-      />
     </Stack>
   );
 };

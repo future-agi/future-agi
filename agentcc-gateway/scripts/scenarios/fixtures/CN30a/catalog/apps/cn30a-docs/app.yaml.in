@@ -1,0 +1,24 @@
+# 97a_cn_release_proof_static.sh's catalogue app, a template: the script copies
+# it to apps/cn30a-docs/app.yaml in a scratch catalog directory. Its provider is
+# agentcc-mcpmock behind the script's TLS pipe. The gateway loads that directory
+# (connectors.catalog_dir) and Django reads the bundle agentcc-catalog builds
+# from it, the way CN6's generated Django copy reaches a deployment.
+schema: "connector-manifest/v1#app"
+id: cn30a-docs
+version: 1.0.0
+name: CN30a Docs
+description: "The CN30a proof's stand-in docs app: agentcc-mcpmock behind a TLS pipe."
+vendor:
+  name: CN30a Docs
+  domains: [cn30a-docs.example.com]
+eeCategory: productivity
+group: other
+categories: [productivity]
+tags: [docs]
+docsUrl: https://cn30a-docs.example.com/mcp
+defaultProvider: key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://cn30a-docs.example.com/mcp
+    fetchedAt: 2026-10-24

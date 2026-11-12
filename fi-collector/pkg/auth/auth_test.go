@@ -47,11 +47,11 @@ func TestConfigDefaults(t *testing.T) {
 		cfg := Config{PGWrite: "postgres://localhost/db"}
 		cfg.defaults()
 
-		if cfg.CacheTTL != 5*time.Minute {
-			t.Errorf("CacheTTL = %v, want 5m", cfg.CacheTTL)
+		if cfg.CacheTTL != 30*time.Second {
+			t.Errorf("CacheTTL = %v, want 30s", cfg.CacheTTL)
 		}
-		if cfg.WarmTTL != 1*time.Hour {
-			t.Errorf("WarmTTL = %v, want 1h", cfg.WarmTTL)
+		if cfg.WarmTTL != 0 {
+			t.Errorf("WarmTTL = %v, want no stale-serving window", cfg.WarmTTL)
 		}
 		if cfg.PGPoolRead != 5 {
 			t.Errorf("PGPoolRead = %d, want 5", cfg.PGPoolRead)
@@ -86,8 +86,8 @@ func TestConfigDefaults(t *testing.T) {
 		if cfg.CacheTTL != 10*time.Second {
 			t.Errorf("CacheTTL = %v, want 10s", cfg.CacheTTL)
 		}
-		if cfg.WarmTTL != 30*time.Second {
-			t.Errorf("WarmTTL = %v, want 30s", cfg.WarmTTL)
+		if cfg.WarmTTL != 0 {
+			t.Errorf("WarmTTL = %v, want zero even when configured", cfg.WarmTTL)
 		}
 		if cfg.PGPoolRead != 20 {
 			t.Errorf("PGPoolRead = %d, want 20", cfg.PGPoolRead)
@@ -151,8 +151,11 @@ func TestCacheWarmStatus(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 
 	_, st = c.get(ck)
-	if st != "warm" {
-		t.Fatalf("expected warm after TTL expiry, got %q", st)
+	if st != "miss" {
+		t.Fatalf("expired entries must not use a warm window, got %q", st)
+	}
+	if _, exists := c.m.Load(ck); exists {
+		t.Fatal("expired entry retained")
 	}
 }
 
@@ -1282,18 +1285,12 @@ func TestWatchRevocationsEvictsOnPublish(t *testing.T) {
 		rdb:   rdb,
 		log:   slog.Default(),
 	}
+	startFreshnessWatcher(t, a)
 	a.cache.putPositive(ck, &ResolveResult{OrgID: "org-evict", Projects: map[string]string{}})
-
 	if _, status := a.cache.get(ck); status != "fresh" {
 		t.Fatal("expected fresh cache entry before revocation")
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Start watcher first, then wait for the subscription to register before publishing.
-	go a.WatchRevocations(ctx)
-	time.Sleep(100 * time.Millisecond)
+	ctx := context.Background()
 
 	if err := rdb.Publish(ctx, revocationChannel, ck).Err(); err != nil {
 		t.Fatalf("publish failed: %v", err)
@@ -1352,14 +1349,10 @@ func TestWatchRevocationsIgnoresUnrelatedKeys(t *testing.T) {
 		rdb:   rdb,
 		log:   slog.Default(),
 	}
+	startFreshnessWatcher(t, a)
 	a.cache.putPositive(ck, &ResolveResult{OrgID: "org-a", Projects: map[string]string{}})
 	a.cache.putPositive(otherCK, &ResolveResult{OrgID: "org-b", Projects: map[string]string{}})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go a.WatchRevocations(ctx)
-	time.Sleep(100 * time.Millisecond)
+	ctx := context.Background()
 
 	// Revoke only key-a.
 	if err := rdb.Publish(ctx, revocationChannel, ck).Err(); err != nil {
@@ -1440,14 +1433,10 @@ func TestWatchProjectInvalidationEvictsByID(t *testing.T) {
 		rdb:   rdb,
 		log:   slog.Default(),
 	}
+	startFreshnessWatcher(t, a)
 	a.cache.putPositive("ck-1", &ResolveResult{OrgID: "org-1", Projects: map[string]string{"pokedex": "P1"}})
 	a.cache.putPositive("ck-2", &ResolveResult{OrgID: "org-1", Projects: map[string]string{"pokedex": "P1", "live": "P3"}})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go a.WatchRevocations(ctx)
-	time.Sleep(100 * time.Millisecond)
+	ctx := context.Background()
 
 	if err := rdb.Publish(ctx, projectInvalidateChannel, "P1").Err(); err != nil {
 		t.Fatalf("publish failed: %v", err)

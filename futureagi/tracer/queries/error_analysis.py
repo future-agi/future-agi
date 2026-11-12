@@ -7,7 +7,7 @@ from typing import Any
 import structlog
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count, Max, Min, Q, QuerySet
+from django.db.models import Count, Max, Min, Q, QuerySet, Sum
 from django.db.models.functions import TruncDate, TruncHour
 from django.utils import timezone
 
@@ -60,6 +60,34 @@ class TraceErrorAnalysisDB:
             logger.exception(f"Error in fetching children span ids: {str(e)}")
             return []
 
+    def _trace_project_id(self, trace):
+        """Use a scoped trace, a bound worker attempt, or the caller's scope.
+
+        Never infer ownership from spans returned for a bare trace id.
+        """
+        project_id = getattr(trace, "project_id", None)
+        if project_id:
+            return str(project_id)
+
+        from model_hub.utils.workspace_scope import request_workspace_filter
+        from tfc.middleware.workspace_context import get_current_organization
+        from tracer.services.analysis_result_binding import current_attempt
+
+        trace_id = str(getattr(trace, "id", trace))
+        attempt = current_attempt()
+        if attempt is not None:
+            return attempt[0] if attempt[1] == trace_id else None
+        organization = get_current_organization()
+        if organization is None:
+            return None
+        scoped_trace = Trace.objects.filter(
+            request_workspace_filter(field_name="project__workspace"),
+            id=trace_id,
+            project__organization=organization,
+            project__deleted=False,
+        ).first()
+        return str(scoped_trace.project_id) if scoped_trace is not None else None
+
     def get_all_spans(self, trace_id) -> list[CHSpan]:
         """Return every span in a trace, ordered by start_time.
 
@@ -74,12 +102,14 @@ class TraceErrorAnalysisDB:
         filtering matches the legacy `.filter()` default (soft-delete
         semantics live in the writer / merge layer).
 
-        Return type changed from `list[ObservationSpan]` (no callers
-        depend on the ORM model type — this method is currently unused
-        outside the class).
+        The analysis worker supplies its project through the bound attempt;
+        foreground bare ids must resolve inside the caller's org/workspace.
         """
+        project_id = self._trace_project_id(trace_id)
+        if not project_id:
+            return []
         with get_reader() as reader:
-            return reader.list_by_trace(str(trace_id))
+            return reader.list_by_trace(str(trace_id), project_id=project_id)
 
     def get_or_create_error_pattern(
         self,
@@ -119,13 +149,23 @@ class TraceErrorAnalysisDB:
             logger.exception(f"Error in list_error_patterns: {str(e)}")
             return ErrorPattern.objects.none()
 
+    def get_bound_result_totals(self, project_id):
+        """Result counts, not cumulative counters from obsolete attempts."""
+        totals = TraceErrorAnalysis.objects.filter(project_id=project_id).aggregate(
+            total_traces_analyzed=Count("pk"), total_errors_found=Sum("total_errors")
+        )
+        totals["total_errors_found"] = totals["total_errors_found"] or 0
+        return totals
+
     def get_recent_trace_error_analyses(
         self,
         project_id: Any,
         cutoff_date,
         limit: int,
-    ) -> QuerySet:
+    ) -> list[TraceErrorAnalysis]:
         try:
+            from tracer.services.analysis_result_snapshot import read_analyses
+
             qs = (
                 TraceErrorAnalysis.objects.filter(
                     project_id=project_id, analysis_date__gte=cutoff_date
@@ -133,10 +173,10 @@ class TraceErrorAnalysisDB:
                 .select_related("trace", "trace__project_version")
                 .order_by("-analysis_date")
             )
-            return qs[:limit]
+            return read_analyses(qs[:limit])
         except Exception as e:
             logger.exception(f"Error in get_recent_trace_error_analyses: {str(e)}")
-            return TraceErrorAnalysis.objects.none()
+            return []
 
     def get_analysis_by_trace_id(
         self,
@@ -177,11 +217,10 @@ class TraceErrorAnalysisDB:
                     # For non-default workspaces, only match the specific workspace
                     query = query.filter(project__workspace_id=workspace_id)
 
-            result = (
-                query.select_related("trace", "project")
-                .prefetch_related("error_details", "analysis_error_groups")
-                .order_by("-analysis_date")
-                .first()
+            from tracer.services.analysis_result_snapshot import read_analysis
+
+            result = read_analysis(
+                query.select_related("trace", "project").order_by("-analysis_date")
             )
 
             logger.debug(
@@ -198,6 +237,8 @@ class TraceErrorAnalysisDB:
 
     def get_error_details_for_analysis(self, analysis: TraceErrorAnalysis) -> QuerySet:
         try:
+            if hasattr(analysis, "_analysis_snapshot_details"):
+                return analysis._analysis_snapshot_details
             return analysis.error_details.all()
         except Exception as e:
             logger.exception(f"Error in get_error_details_for_analysis: {str(e)}")
@@ -208,6 +249,8 @@ class TraceErrorAnalysisDB:
         Get error groups for a specific analysis
         """
         try:
+            if hasattr(analysis, "_analysis_snapshot_groups"):
+                return analysis._analysis_snapshot_groups
             return analysis.analysis_error_groups.all()
         except Exception as e:
             logger.exception(f"Error in get_error_groups_for_analysis: {str(e)}")
@@ -226,8 +269,7 @@ class TraceErrorAnalysisDB:
         """Spans on a trace with status="ERROR" (case-insensitive).
 
         Was: ObservationSpan.objects.filter(trace=trace, status="ERROR").
-        Returns a list of CHSpan (was QuerySet). Currently unused
-        outside the class so the return-type change is safe.
+        Returns a list of CHSpan (was QuerySet) for the scoped analysis trace.
 
         CH path: load every span for the trace (bounded set), then
         Python-filter on status — same idiom as analyze_errors.py
@@ -236,8 +278,11 @@ class TraceErrorAnalysisDB:
         """
         try:
             trace_id = str(getattr(trace, "id", trace))
+            project_id = self._trace_project_id(trace)
+            if not project_id:
+                return []
             with get_reader() as reader:
-                spans = reader.list_by_trace(trace_id)
+                spans = reader.list_by_trace(trace_id, project_id=project_id)
             return [s for s in spans if (s.status or "").upper() == "ERROR"]
         except Exception as e:
             logger.exception(f"Error in get_error_spans_for_trace: {str(e)}")
@@ -331,14 +376,19 @@ class TraceErrorAnalysisDB:
                 "category", "impact", "recommendation", "immediate_fix"
             )[:limit]
 
-    def get_analyses_for_similarity(self, project_id, cutoff_date) -> QuerySet:
+    def get_analyses_for_similarity(
+        self, project_id, cutoff_date
+    ) -> list[TraceErrorAnalysis]:
         try:
-            return TraceErrorAnalysis.objects.filter(
+            from tracer.services.analysis_result_snapshot import read_analyses
+
+            query = TraceErrorAnalysis.objects.filter(
                 project_id=project_id, analysis_date__gte=cutoff_date
             ).select_related("trace", "trace__project_version")
+            return read_analyses(query)
         except Exception as e:
             logger.exception(f"Error in get_analyses_for_similarity: {str(e)}")
-            return TraceErrorAnalysis.objects.none()
+            return []
 
     def get_or_create_memory(
         self,
@@ -1338,31 +1388,37 @@ class TraceErrorAnalysisDB:
             logger.exception(f"Error in ensure_all_projects_have_tasks: {str(e)}")
             return 0
 
-    def ingest_trace_error_embeddings(self, trace_id: str) -> int:
+    def ingest_trace_error_embeddings(self, trace_id: str, *, guard=None) -> int:
         """
         Generate and store embeddings for all errors from a single trace analysis.
         Called after trace analysis completes.
 
         Returns number of embeddings created.
         """
+
+        def checkpoint():
+            if guard is not None:
+                guard.check()
+
+        em = None
         try:
-            # Get the analysis and error details for this trace
-            analysis = (
-                TraceErrorAnalysis.objects.filter(trace_id=trace_id)
-                .select_related("project", "trace")
-                .first()
+            checkpoint()
+            from tracer.services.analysis_result_snapshot import read_analysis
+
+            analysis = read_analysis(
+                TraceErrorAnalysis.objects.filter(trace_id=trace_id).select_related(
+                    "project", "trace"
+                )
             )
 
+            checkpoint()
             if not analysis:
                 logger.warning(f"No analysis found for trace {trace_id}")
                 return 0
 
-            error_details = list(
-                TraceErrorDetail.objects.filter(analysis=analysis).select_related(
-                    "analysis__project", "analysis__trace"
-                )
-            )
+            error_details = analysis._analysis_snapshot_details
 
+            checkpoint()
             if not error_details:
                 logger.info(f"No error details to embed for trace {trace_id}")
                 return 0
@@ -1384,19 +1440,27 @@ class TraceErrorAnalysisDB:
                 model_manager,
             )
 
+            checkpoint()
             clusterer = ErrorEmbeddingClusterer()
+            checkpoint()
             text_embed = model_manager.text_model
+            checkpoint()
             em = EmbeddingManager()
+            checkpoint()
 
             vectors = []
             metadata_list = []
 
             for detail in error_details:
                 try:
-                    # Check if already embedded
-                    if self._embedding_exists_for_detail(
+                    checkpoint()
+                    # A blocking existence read must not authorize a subsequent
+                    # provider call using the authorization it started with.
+                    exists = self._embedding_exists_for_detail(
                         detail.id, clusterer.table_name
-                    ):
+                    )
+                    checkpoint()
+                    if exists:
                         logger.debug(
                             f"Embedding already exists for error detail {detail.id}"
                         )
@@ -1408,7 +1472,9 @@ class TraceErrorAnalysisDB:
                         continue
 
                     # Generate embedding
+                    checkpoint()
                     embedding = text_embed(text)
+                    checkpoint()
                     if not embedding:
                         continue
 
@@ -1429,6 +1495,7 @@ class TraceErrorAnalysisDB:
                     metadata_list.append(metadata)
 
                 except Exception as e:
+                    checkpoint()
                     logger.error(
                         f"Failed to generate embedding for error detail {detail.id}: {str(e)}"
                     )
@@ -1436,27 +1503,29 @@ class TraceErrorAnalysisDB:
 
             # Bulk insert embeddings
             if vectors and metadata_list:
-                try:
-                    em.db_client.bulk_upsert_vectors(
-                        table_name=clusterer.table_name,
-                        eval_id=str(analysis.project_id),
-                        vectors=vectors,
-                        metadata_list=metadata_list,
-                        unique_keys=["error_detail_pk"],
-                    )
-                    logger.info(
-                        f"Ingested {len(vectors)} embeddings for trace {trace_id}"
-                    )
-                finally:
-                    em.close()
+                checkpoint()
+                em.db_client.bulk_upsert_vectors(
+                    table_name=clusterer.table_name,
+                    eval_id=str(analysis.project_id),
+                    vectors=vectors,
+                    metadata_list=metadata_list,
+                    unique_keys=["error_detail_pk"],
+                    **({"before_write": guard.check} if guard is not None else {}),
+                )
+                checkpoint()
+                logger.info(f"Ingested {len(vectors)} embeddings for trace {trace_id}")
 
             return len(vectors)
 
         except Exception as e:
+            checkpoint()
             logger.exception(
                 f"Error ingesting embeddings for trace {trace_id}: {str(e)}"
             )
             return 0
+        finally:
+            if em is not None:
+                em.close()
 
     def _embedding_exists_for_detail(
         self, error_detail_id: str, table_name: str

@@ -1,4 +1,6 @@
 import React from "react";
+import { localProviderLogo } from "src/utils/localProviderLogo";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import {
   Box,
   LinearProgress,
@@ -6,15 +8,10 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  useTheme,
+  Tab,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
-import {
-  CustomTab,
-  CustomTabs,
-  TabWrapper,
-} from "src/sections/develop/AddDatasetDrawer/AddDatasetStyle";
 
 import InstructionCodeCopy from "./InstructionCodeCopy";
 
@@ -26,8 +23,6 @@ const ObserveInstruments = ({
   languageTab,
   onLanguageChange,
 }) => {
-  const theme = useTheme();
-
   const tabOptions = [
     { label: "Python", value: "python", disabled: false },
     { label: "TypeScript", value: "typescript", disabled: false },
@@ -53,6 +48,18 @@ const ObserveInstruments = ({
     }
     return item.Python || item.TypeScript;
   };
+
+  // On the TypeScript tab, an entry with no TypeScript block keeps its card
+  // with a "Python only" note and no code (no Python fallback), and entries
+  // with TypeScript come first. The Python tab keeps the API order.
+  const onTypeScript = languageTab === "typescript";
+  const entries = data ? Object.entries(data) : [];
+  const orderedEntries = onTypeScript
+    ? [
+        ...entries.filter(([, item]) => item?.TypeScript),
+        ...entries.filter(([, item]) => !item?.TypeScript),
+      ]
+    : entries;
 
   if (isLoading) {
     return <LinearProgress />;
@@ -84,10 +91,12 @@ const ObserveInstruments = ({
         }}
       >
         <ShowComponent condition={isSuccess}>
-          {data && Object.keys(data).length > 0 ? (
-            Object.entries(data).map(([key, item]) => {
+          {orderedEntries.length > 0 ? (
+            orderedEntries.map(([key, item]) => {
               const availableLanguages = getAvailableLanguages(item);
               const currentLanguageData = getCurrentLanguageData(item);
+              const pythonOnly =
+                onTypeScript && !item?.TypeScript && Boolean(item?.Python);
 
               const filteredTabs = tabOptions.filter((tab) =>
                 availableLanguages.includes(tab.value),
@@ -119,7 +128,9 @@ const ObserveInstruments = ({
                     >
                       <Box display="flex" alignItems="center" gap={2}>
                         <img
-                          src={item?.logo}
+                          src={localProviderLogo(
+                            item?.provider ?? item?.name ?? key,
+                          )}
                           alt={`${item?.name} Logo`}
                           style={{
                             width: "25px",
@@ -128,6 +139,14 @@ const ObserveInstruments = ({
                           }}
                         />
                         <Typography variant="body1">{item?.name}</Typography>
+                        {pythonOnly ? (
+                          <Typography
+                            variant="body2"
+                            sx={{ color: "text.secondary" }}
+                          >
+                            Python only
+                          </Typography>
+                        ) : null}
                       </Box>
                       {currentLanguageData?.github ? (
                         <img
@@ -154,77 +173,78 @@ const ObserveInstruments = ({
                       ) : null}
                     </AccordionSummary>
                     <AccordionDetails sx={{ minWidth: 0 }}>
-                      <Box sx={{ minWidth: 0 }}>
-                        {filteredTabs.length > 0 && (
-                          <TabWrapper sx={{ alignSelf: "flex-start" }}>
-                            <CustomTabs
-                              textColor="primary"
-                              value={effectiveLanguage}
-                              onChange={(event, newValue) =>
-                                onLanguageChange(newValue)
-                              }
-                              TabIndicatorProps={{
-                                style: {
-                                  backgroundColor: theme.palette.primary.main,
-                                  opacity: 0.08,
-                                  height: "100%",
-                                  borderRadius: "8px",
-                                },
-                              }}
-                            >
-                              {filteredTabs.map((tab) => (
-                                <CustomTab
-                                  key={`${key}-${tab.value}`}
-                                  label={tab.label}
-                                  value={tab.value}
-                                  disabled={
-                                    !availableLanguages.includes(tab.value)
-                                  }
-                                />
-                              ))}
-                            </CustomTabs>
-                          </TabWrapper>
-                        )}
-                        <Box
-                          sx={{
-                            overflowX: "auto",
-                            overflowY: "hidden",
-                            width: "100%",
-                            minWidth: 0,
-                            maxWidth: "100%",
-                            "&::-webkit-scrollbar": {
-                              height: "6px",
-                            },
-                            "&::-webkit-scrollbar-track": {
-                              backgroundColor: "transparent",
-                            },
-                            "&::-webkit-scrollbar-thumb": {
-                              backgroundColor: "var(--scrollbar-thumb)",
-                              borderRadius: "3px",
-                            },
-                            "&::-webkit-scrollbar-thumb:hover": {
-                              backgroundColor: "var(--scrollbar-thumb)",
-                            },
-                            "& > *": {
-                              maxWidth: "100%",
-                              boxSizing: "border-box",
-                            },
-                            "& pre, & code": {
-                              whiteSpace: "pre",
-                              overflowWrap: "normal",
-                              wordBreak: "normal",
-                              maxWidth: "100%",
-                              boxSizing: "border-box",
-                            },
-                          }}
+                      {pythonOnly ? (
+                        <Typography
+                          variant="body2"
+                          sx={{ color: "text.secondary" }}
                         >
-                          <InstructionCodeCopy
-                            text={getCurrentLanguageData(item)?.code}
-                            language={effectiveLanguage}
-                            // onCopy={onCopyClick}
-                          />
+                          No TypeScript instrumentor. Switch to Python to see
+                          its setup code.
+                        </Typography>
+                      ) : (
+                        <Box sx={{ minWidth: 0 }}>
+                          {filteredTabs.length > 0 && (
+                            <Box sx={{ mb: 1.5 }}>
+                              <SegmentedTabs
+                                value={effectiveLanguage}
+                                onChange={(event, newValue) =>
+                                  onLanguageChange(newValue)
+                                }
+                              >
+                                {filteredTabs.map((tab) => (
+                                  <Tab
+                                    key={`${key}-${tab.value}`}
+                                    label={tab.label}
+                                    value={tab.value}
+                                    disabled={
+                                      !availableLanguages.includes(tab.value)
+                                    }
+                                  />
+                                ))}
+                              </SegmentedTabs>
+                            </Box>
+                          )}
+                          <Box
+                            sx={{
+                              overflowX: "auto",
+                              overflowY: "hidden",
+                              width: "100%",
+                              minWidth: 0,
+                              maxWidth: "100%",
+                              "&::-webkit-scrollbar": {
+                                height: "6px",
+                              },
+                              "&::-webkit-scrollbar-track": {
+                                backgroundColor: "transparent",
+                              },
+                              "&::-webkit-scrollbar-thumb": {
+                                backgroundColor: "var(--scrollbar-thumb)",
+                                borderRadius: "4px",
+                              },
+                              "&::-webkit-scrollbar-thumb:hover": {
+                                backgroundColor: "var(--scrollbar-thumb)",
+                              },
+                              "& > *": {
+                                maxWidth: "100%",
+                                boxSizing: "border-box",
+                              },
+                              "& pre, & code": {
+                                whiteSpace: "pre-wrap",
+                                overflowWrap: "anywhere",
+                                wordBreak: "normal",
+                                maxWidth: "100%",
+                                boxSizing: "border-box",
+                              },
+                            }}
+                          >
+                            <InstructionCodeCopy
+                              text={getCurrentLanguageData(item)?.code}
+                              language={effectiveLanguage}
+                              // onCopy={onCopyClick}
+                            />
+                          </Box>
                         </Box>
-                      </Box>
+                      )}
                     </AccordionDetails>
                   </Accordion>
                 </Box>

@@ -25,6 +25,22 @@ import { useCompositeChildrenSchemas } from "../hooks/useCompositeChildrenKeys";
 import { canonicalEntries } from "src/utils/utils";
 import CompositeAxisTabs, { axisToLockedFilters } from "./CompositeAxisTabs";
 import { buildCompositeChildRunConfig } from "../Helpers/compositeRuntimeConfig";
+import {
+  AGGREGATION_COPY,
+  VOTE_AGGREGATIONS,
+  VOTE_PASS_LINE,
+  removeRow,
+  rowKeyOf,
+  templateRowsOf,
+  usesWeights,
+} from "src/sections/common/EvalTypes/compositeModel";
+import CompositeChildControls from "../types/CompositeChildControls";
+import CompositeJuryReport from "../types/CompositeJuryReport";
+import CompositeAddCheck from "../types/CompositeAddCheck";
+import CompositeIssues from "../types/CompositeIssues";
+import JuryPanel from "../jury/JuryPanel";
+import { isSurfaceShown } from "src/launch/launchSwitch";
+import { isPrototypeMode } from "src/utils/prototype";
 
 const AGGREGATION_OPTIONS = [
   { value: "weighted_avg", label: "Weighted Average" },
@@ -32,6 +48,8 @@ const AGGREGATION_OPTIONS = [
   { value: "min", label: "Minimum (safety gate)" },
   { value: "max", label: "Maximum" },
   { value: "pass_rate", label: "Pass Rate" },
+  // W7-5: vote rules over the children's verdicts.
+  ...VOTE_AGGREGATIONS,
 ];
 
 const AGGREGATION_DESCRIPTIONS = {
@@ -41,6 +59,7 @@ const AGGREGATION_DESCRIPTIONS = {
   min: "Composite equals the lowest child score — useful as a safety gate.",
   max: "Composite equals the highest child score.",
   pass_rate: "Fraction of children that met their own pass threshold.",
+  ...AGGREGATION_COPY,
 };
 
 /**
@@ -85,12 +104,14 @@ const CompositeDetailPanel = ({
   onCompositeChildAxisChange,
   onChildrenChange,
   onChildWeightsChange,
+  // W7-5: the saved composite's id (its jury report on a run).
+  templateId = null,
 }) => {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pendingAxis, setPendingAxis] = useState(null);
 
   const showWeightInput =
-    aggregationEnabled && aggregationFunction === "weighted_avg";
+    aggregationEnabled && usesWeights(aggregationFunction);
   const weightsInteractive = !disabled && (editable || weightEditable);
 
   const handleAxisRequested = (nextAxis) => {
@@ -164,12 +185,13 @@ const CompositeDetailPanel = ({
     setPickerOpen(false);
   };
 
-  const handleRemoveChild = (childId) => {
-    const next = childrenList
-      .filter((c) => c.child_id !== childId)
-      .map((c, i) => ({ ...c, order: i }));
+  const handleRemoveChild = (childId, row) => {
+    const next = removeRow(childrenList, rowKeyOf(row));
     onChildrenChange?.(next);
-    if (childWeights[childId] != null) {
+    if (
+      childWeights[childId] != null &&
+      !next.some((c) => c.child_id === childId)
+    ) {
       const nextWeights = { ...childWeights };
       delete nextWeights[childId];
       onChildWeightsChange?.(nextWeights);
@@ -187,7 +209,10 @@ const CompositeDetailPanel = ({
   // the child template detail endpoint. Shares the react-query cache
   // with useCompositeChildrenUnionKeys, so the only cost is one request
   // per unique child id across both hooks.
-  const childSchemas = useCompositeChildrenSchemas(childrenList);
+  // W7-5: a task-suite check has no template to read.
+  const childSchemas = useCompositeChildrenSchemas(
+    templateRowsOf(childrenList),
+  );
   const paramsInteractive = !disabled && (editable || weightEditable);
 
   const handleChildParamChange = (childId, paramKey, rawValue) => {
@@ -254,7 +279,7 @@ const CompositeDetailPanel = ({
         <Box>
           <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
             Name
-            <Box component="span" sx={{ color: "error.main", ml: 0.25 }}>
+            <Box component="span" sx={{ color: "status.danger.fg", ml: 0.25 }}>
               *
             </Box>
           </Typography>
@@ -361,7 +386,6 @@ const CompositeDetailPanel = ({
               size="small"
               label={aggregationEnabled ? "ON" : "OFF"}
               color={aggregationEnabled ? "success" : "default"}
-              sx={{ fontWeight: 600 }}
             />
           )}
         </Box>
@@ -380,11 +404,7 @@ const CompositeDetailPanel = ({
                 disabled={disabled}
               >
                 {AGGREGATION_OPTIONS.map((opt) => (
-                  <MenuItem
-                    key={opt.value}
-                    value={opt.value}
-                    sx={{ fontSize: "13px" }}
-                  >
+                  <MenuItem key={opt.value} value={opt.value}>
                     {opt.label}
                   </MenuItem>
                 ))}
@@ -403,6 +423,15 @@ const CompositeDetailPanel = ({
             >
               {AGGREGATION_DESCRIPTIONS[aggregationFunction] || ""}
             </Typography>
+            {VOTE_PASS_LINE[aggregationFunction] ? (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: "block", mt: 0.25, fontWeight: 600 }}
+              >
+                {VOTE_PASS_LINE[aggregationFunction]}
+              </Typography>
+            ) : null}
           </Box>
         )}
       </Box>
@@ -425,7 +454,7 @@ const CompositeDetailPanel = ({
               childSchemas[child.child_id]?.configParamsDesc || {};
             return (
               <Box
-                key={child.child_id}
+                key={rowKeyOf(child)}
                 sx={{
                   display: "flex",
                   flexDirection: "column",
@@ -466,10 +495,18 @@ const CompositeDetailPanel = ({
                       {child.child_name}
                     </Typography>
                     {child.eval_type && (
-                      <Typography variant="caption" color="text.secondary">
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        title={
+                          child.pinned_version_number != null
+                            ? `A child can use saved version configuration, current template settings and child overrides.`
+                            : undefined
+                        }
+                      >
                         {child.eval_type}
                         {child.pinned_version_number != null
-                          ? ` · v${child.pinned_version_number}`
+                          ? ` · recorded v${child.pinned_version_number}`
                           : ""}
                       </Typography>
                     )}
@@ -481,11 +518,24 @@ const CompositeDetailPanel = ({
                       label="Weight"
                       inputProps={{ min: 0, step: 0.1 }}
                       value={
-                        childWeights[child.child_id] ??
+                        (child.seat > 1 || child.kind === "check"
+                          ? child.weight
+                          : childWeights[child.child_id]) ??
                         (child.weight != null ? child.weight : 1.0)
                       }
                       onChange={(e) =>
-                        handleWeightChange(child.child_id, e.target.value)
+                        child.seat > 1 || child.kind === "check"
+                          ? onChildrenChange?.(
+                              childrenList.map((c) =>
+                                rowKeyOf(c) === rowKeyOf(child)
+                                  ? {
+                                      ...c,
+                                      weight: parseFloat(e.target.value) || 0,
+                                    }
+                                  : c,
+                              ),
+                            )
+                          : handleWeightChange(child.child_id, e.target.value)
                       }
                       disabled={!weightsInteractive}
                       sx={{ width: 90 }}
@@ -503,13 +553,22 @@ const CompositeDetailPanel = ({
                   {editable && (
                     <IconButton
                       size="small"
-                      onClick={() => handleRemoveChild(child.child_id)}
+                      onClick={() => handleRemoveChild(child.child_id, child)}
                       disabled={disabled}
                     >
                       <Iconify icon="solar:trash-bin-trash-bold" width={16} />
                     </IconButton>
                   )}
                 </Box>
+                {/* W7-5: the child's judge, level and jury seats */}
+                {isPrototypeMode() && (
+                  <CompositeChildControls
+                    child={child}
+                    rows={childrenList}
+                    onChildrenChange={editable ? onChildrenChange : undefined}
+                    disabled={disabled}
+                  />
+                )}
                 {paramEntries.length > 0 && (
                   <Box
                     sx={{
@@ -562,21 +621,47 @@ const CompositeDetailPanel = ({
             <Button
               variant="outlined"
               size="small"
-              startIcon={<Iconify icon="mingcute:add-line" width={16} />}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
               onClick={() => setPickerOpen(true)}
               disabled={disabled}
               sx={{
                 mt: 0.5,
                 alignSelf: "flex-start",
-                textTransform: "none",
-                fontSize: "12px",
               }}
             >
               Add evaluation
             </Button>
           )}
+          {/* W7-5: a task-suite check as a child */}
+          {isPrototypeMode() && editable && onChildrenChange ? (
+            <CompositeAddCheck
+              rows={childrenList}
+              onChildrenChange={onChildrenChange}
+              disabled={disabled}
+            />
+          ) : null}
+          {/* W7-5: why the composite cannot be saved yet */}
+          <CompositeIssues
+            aggregation={aggregationEnabled ? aggregationFunction : null}
+            rows={childrenList}
+            weights={childWeights}
+          />
         </Stack>
       </Box>
+
+      {/* W7-5: the jury on a run (saved composites) */}
+      {templateId && isPrototypeMode() ? (
+        <CompositeJuryReport templateId={templateId} />
+      ) : null}
+      {templateId && !isPrototypeMode() && isSurfaceShown("evals.jury") ? (
+        <JuryPanel
+          key={templateId}
+          templateId={templateId}
+          childrenList={childrenList}
+          editable={editable}
+          disabled={disabled}
+        />
+      ) : null}
 
       {editable && (
         <EvalPickerDrawer
@@ -600,7 +685,8 @@ const CompositeDetailPanel = ({
       <Dialog
         open={Boolean(pendingAxis)}
         onClose={() => setPendingAxis(null)}
-        maxWidth="xs"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
       >
         <DialogTitle sx={{ fontSize: "16px", fontWeight: 600 }}>
           Change child evaluation type?
@@ -614,11 +700,7 @@ const CompositeDetailPanel = ({
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button
-            size="small"
-            onClick={() => setPendingAxis(null)}
-            sx={{ textTransform: "none" }}
-          >
+          <Button size="small" onClick={() => setPendingAxis(null)}>
             Cancel
           </Button>
           <Button
@@ -626,7 +708,6 @@ const CompositeDetailPanel = ({
             variant="contained"
             color="warning"
             onClick={confirmAxisSwitch}
-            sx={{ textTransform: "none" }}
           >
             Clear &amp; switch
           </Button>
@@ -660,6 +741,7 @@ CompositeDetailPanel.propTypes = {
   onCompositeChildAxisChange: PropTypes.func,
   onChildrenChange: PropTypes.func,
   onChildWeightsChange: PropTypes.func,
+  templateId: PropTypes.string,
 };
 
 export default CompositeDetailPanel;

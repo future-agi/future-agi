@@ -9,6 +9,15 @@ from model_hub.models.column_config import ColumnConfig
 from model_hub.models.metric import Metric
 from model_hub.models.optimize_dataset import OptimizeDataset
 
+RETIRED_TEMPLATE_SENTENCE = (
+    "This legacy optimizer (optimize-dataset PromptTemplate) is no longer "
+    "available. Use Dataset Optimization instead."
+)
+RETIRED_KNOWLEDGE_BASE_SENTENCE = (
+    "This legacy optimizer (knowledge-base optimizer) is no longer "
+    "available. Use Dataset Optimization instead."
+)
+
 
 def assert_unknown_field(response, field_name):
     assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -422,14 +431,14 @@ def test_legacy_optimize_dataset_model_create_scopes_model_and_metrics(
         format="json",
     )
 
-    assert response.status_code == status.HTTP_200_OK
-    created_id = response.json()["data"]["id"]
-    created = OptimizeDataset.no_workspace_objects.get(id=created_id)
-    assert created.model == model
-    assert created.organization == organization
-    assert created.workspace == workspace
-    assert list(created.metrics.values_list("id", flat=True)) == [metric.id]
-    assert dispatched
+    # The prompt-template optimizer is retired: the create is refused with the
+    # retirement sentence before any row is written or any task is started.
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["result"] == RETIRED_TEMPLATE_SENTENCE
+    assert not OptimizeDataset.no_workspace_objects.filter(
+        name="Created legacy optimize run"
+    ).exists()
+    assert not dispatched
 
     mismatch_response = auth_client.post(
         f"/model-hub/optimize-dataset/{model.id}/",
@@ -492,13 +501,14 @@ def test_legacy_optimize_dataset_kb_routes_create_and_scope(
     auth_client, organization, workspace, user, monkeypatch
 ):
     dispatched = []
+    criteria_calls = []
     monkeypatch.setattr(
         "model_hub.views.optimize_dataset.rag_prompt_optimzer.apply_async",
         lambda *args, **kwargs: dispatched.append((args, kwargs)),
     )
     monkeypatch.setattr(
         "model_hub.views.optimize_dataset.create_criteria_text_prompt",
-        lambda metric_text: ["Criterion"],
+        lambda metric_text: criteria_calls.append(metric_text) or ["Criterion"],
     )
 
     other_workspace = make_workspace(organization, user)
@@ -524,14 +534,26 @@ def test_legacy_optimize_dataset_kb_routes_create_and_scope(
         format="json",
     )
 
-    assert response.status_code == status.HTTP_200_OK
-    created_id = response.json()["result"]
-    created = OptimizeDataset.no_workspace_objects.get(id=created_id)
-    assert created.organization == organization
-    assert created.workspace == workspace
-    assert created.environment == OptimizeDataset.EnvTypes.CORPUS
-    assert created.version == ""
-    assert dispatched
+    # The knowledge-base optimizer is retired: the create is refused with the
+    # retirement sentence before any row, model call or task.
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["result"] == RETIRED_KNOWLEDGE_BASE_SENTENCE
+    assert not OptimizeDataset.no_workspace_objects.filter(
+        name="Scoped KB optimization"
+    ).exists()
+    assert not dispatched
+    assert not criteria_calls
+
+    # Rows that already exist stay listed and readable within their scope.
+    created = OptimizeDataset.no_workspace_objects.create(
+        name="Scoped KB optimization",
+        optimize_type=OptimizeDataset.OptimizeType.RAG_TEMPLATE,
+        organization=organization,
+        workspace=workspace,
+        environment=OptimizeDataset.EnvTypes.CORPUS,
+        version="",
+        status=OptimizeDataset.StatusType.COMPLETED,
+    )
 
     list_response = auth_client.get("/model-hub/optimize-dataset/")
     assert list_response.status_code == status.HTTP_200_OK

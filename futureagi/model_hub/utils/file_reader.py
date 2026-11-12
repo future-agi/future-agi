@@ -269,7 +269,12 @@ class FileProcessor:
     def _read_json_file(file_obj: Any, lines: bool = False) -> pd.DataFrame:
         """Read JSON/JSONL file"""
         try:
-            return pd.read_json(file_obj, lines=lines)
+            # Keep JSON string scalars intact, including zero-prefixed IDs and
+            # date-like strings. Native JSON numbers and containers retain
+            # their types; column inference happens after parsing.
+            return pd.read_json(
+                file_obj, lines=lines, dtype=False, convert_dates=False
+            )
         except ValueError as e:
             error_msg = str(e)
 

@@ -1,4 +1,5 @@
-import { Alert, Box, Button, Divider, Typography } from "@mui/material";
+import SelectionBar from "src/components/selection-bar";
+import { Alert, Box, Button, Typography } from "@mui/material";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebounce } from "src/hooks/use-debounce";
@@ -27,10 +28,10 @@ const KnowledgeBaseData = React.forwardRef(
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const { role } = useAuthContext();
-    const [selected, setSelected] = useState([]);
-    const [rowSelection, setRowSelection] = useState({});
+    const [selectedIds, setSelectedIds] = useState([]);
     const [searchQuery, setSearchQuery] = useState("");
     const [openDelete, setOpenDelete] = useState(false);
+    const [deleteTargets, setDeleteTargets] = useState([]);
     const [page, setPage] = useState(0);
     const [pageSize, setPageSize] = useState(25);
 
@@ -86,19 +87,34 @@ const KnowledgeBaseData = React.forwardRef(
       }
     }, [isEntitlementBlocked, setHasData]);
 
-    const selectedItems = useMemo(
-      () =>
-        Object.keys(rowSelection)
-          .filter((k) => rowSelection[k])
-          .map((k) => items[parseInt(k, 10)])
-          .filter(Boolean),
-      [rowSelection, items],
-    );
+    // Own stable KB IDs end to end, including DataTable's controlled selection.
+    // The checkboxes, count and delete payload all use these same current rows.
+    const { selectedItems, rowSelection } = useMemo(() => {
+      const ids = new Set(selectedIds);
+      const nextRowSelection = {};
+      const nextSelectedItems = items.filter((item) => {
+        if (!ids.has(item.id)) return false;
+        nextRowSelection[item.id] = true;
+        return true;
+      });
+      return {
+        selectedItems: nextSelectedItems,
+        rowSelection: nextRowSelection,
+      };
+    }, [items, selectedIds]);
+
+    // A refresh can remove selected KBs. Drop their IDs permanently and require
+    // a new confirmation if the set being deleted has changed.
+    useEffect(() => {
+      if (selectedItems.length !== selectedIds.length) {
+        setSelectedIds(selectedItems.map((item) => item.id));
+        setOpenDelete(false);
+      }
+    }, [selectedItems, selectedIds.length]);
 
     const closeModal = useCallback(() => {
       setOpenDelete(false);
-      setRowSelection({});
-      setSelected([]);
+      setSelectedIds([]);
     }, []);
 
     const refreshGrid = useCallback(() => {
@@ -111,15 +127,10 @@ const KnowledgeBaseData = React.forwardRef(
     }));
 
     const handleRowSelectionChange = useCallback(
-      (newSelection) => {
-        setRowSelection(newSelection);
-        const newSelected = Object.keys(newSelection)
-          .filter((k) => newSelection[k])
-          .map((k) => items[parseInt(k, 10)])
-          .filter(Boolean);
-        setSelected(newSelected);
+      (_selection, selected) => {
+        setSelectedIds(selected.map((item) => item.id));
       },
-      [items],
+      [],
     );
 
     const columns = useMemo(
@@ -143,7 +154,7 @@ const KnowledgeBaseData = React.forwardRef(
           meta: { flex: 1 },
           enableSorting: false,
           cell: ({ getValue }) => (
-            <Typography variant="body2" sx={{ fontSize: 13 }}>
+            <Typography variant="body2" sx={{ fontSize: 12 }}>
               {formatNumberWithCommas(getValue())}
             </Typography>
           ),
@@ -169,7 +180,7 @@ const KnowledgeBaseData = React.forwardRef(
             if (!val) return null;
             try {
               return (
-                <Typography variant="body2" sx={{ fontSize: 13 }}>
+                <Typography variant="body2" sx={{ fontSize: 12 }}>
                   {format(new Date(val), "dd/MM/yyyy, h:mm aaa")}
                 </Typography>
               );
@@ -185,7 +196,7 @@ const KnowledgeBaseData = React.forwardRef(
           meta: { flex: 1 },
           enableSorting: false,
           cell: ({ getValue }) => (
-            <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+            <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
               {getValue() || "-"}
             </Typography>
           ),
@@ -230,75 +241,31 @@ const KnowledgeBaseData = React.forwardRef(
             }}
             searchQuery={searchQuery}
             onChange={(e) => {
+              closeModal();
               setSearchQuery(e.target.value);
               setPage(0);
             }}
           />
           <Box>
             {selectedItems.length > 0 ? (
-              <Box
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 2,
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 1,
-                  px: 2,
-                  py: 0.5,
-                }}
-              >
-                <Typography
-                  typography="s1"
-                  fontWeight="fontWeightMedium"
-                  color="primary.main"
-                >
-                  {selectedItems.length} Selected
-                </Typography>
-                <Divider
-                  orientation="vertical"
-                  flexItem
-                  sx={{ borderRightWidth: 0.25 }}
-                />
-                <Button
-                  size="small"
-                  startIcon={
-                    <SvgColor
-                      src="/assets/icons/ic_delete.svg"
-                      sx={{ width: 20, height: 20, color: "text.disabled" }}
-                    />
-                  }
-                  sx={{ color: "text.secondary" }}
-                  onClick={() => {
-                    if (
-                      RolePermission.KNOWLEDGE_BASE[PERMISSIONS.DELETE][role]
-                    ) {
-                      setOpenDelete(true);
-                    }
-                  }}
-                >
-                  <Typography
-                    typography="s1"
-                    fontWeight="fontWeightRegular"
-                    color="text.primary"
-                  >
-                    Delete
-                  </Typography>
-                </Button>
-                <Button
-                  size="small"
-                  sx={{ color: "text.secondary" }}
-                  onClick={closeModal}
-                >
-                  <Typography
-                    typography="s1"
-                    fontWeight="fontWeightRegular"
-                    color="text.primary"
-                  >
-                    Cancel
-                  </Typography>
-                </Button>
-              </Box>
+              <SelectionBar
+                count={selectedItems.length}
+                onCancel={closeModal}
+                actions={[
+                  {
+                    label: "Delete",
+                    icon: "solar:trash-bin-trash-linear",
+                    onClick: () => {
+                      if (
+                        RolePermission.KNOWLEDGE_BASE[PERMISSIONS.DELETE][role]
+                      ) {
+                        setDeleteTargets(selectedItems.map((item) => ({ ...item })));
+                        setOpenDelete(true);
+                      }
+                    },
+                  },
+                ]}
+              />
             ) : (
               <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
                 <Button
@@ -307,9 +274,6 @@ const KnowledgeBaseData = React.forwardRef(
                   sx={{
                     color: "text.primary",
                     borderColor: "divider",
-                    padding: 1.5,
-                    fontSize: "14px",
-                    height: "38px",
                   }}
                   startIcon={
                     <SvgColor src="/assets/icons/ic_docs_single.svg" />
@@ -349,6 +313,7 @@ const KnowledgeBaseData = React.forwardRef(
           isLoading={isLoading}
           rowCount={total}
           rowSelection={rowSelection}
+          selectionScope={[page, pageSize, searchQuery, debouncedSearchQuery]}
           onRowSelectionChange={handleRowSelectionChange}
           onRowClick={handleRowClick}
           getRowId={(row) => row.id}
@@ -364,18 +329,27 @@ const KnowledgeBaseData = React.forwardRef(
           page={page}
           pageSize={pageSize}
           total={total}
-          onPageChange={setPage}
+          onPageChange={(newPage) => {
+            closeModal();
+            setPage(newPage);
+          }}
           onPageSizeChange={(size) => {
+            closeModal();
             setPageSize(size);
             setPage(0);
           }}
         />
 
         <DeleteKnowledgeBase
-          open={openDelete}
+          open={
+            openDelete &&
+            deleteTargets.every((target) => items.some((item) => item.id === target.id)) &&
+            selectedItems.length > 0 &&
+            selectedItems.length === selectedIds.length
+          }
           onClose={closeModal}
           refreshGrid={refreshGrid}
-          selected={selected}
+          selected={deleteTargets}
         />
       </Box>
     );

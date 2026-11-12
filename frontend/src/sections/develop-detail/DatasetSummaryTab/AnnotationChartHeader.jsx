@@ -17,30 +17,35 @@ const AnnotationChartHeader = ({ chartHeading, item = { type: "" } }) => {
       data = categoricalGraphHeader.map((temp) => ({
         ...temp,
         value: item[temp.valueKey],
+        missing: temp.missing,
       }));
     }
     if (item.type === "numeric") {
       data = numericGraphHeader.map((temp) => ({
         ...temp,
         value: item[temp.valueKey],
+        missing: temp.missing,
       }));
     }
     if (item.type === "text") {
       data = textGraphHeader.map((temp) => ({
         ...temp,
         value: item[temp.valueKey],
+        missing: temp.missing,
       }));
     }
     if (item.type === "thumb") {
       data = thumbsGraphHeader.map((temp) => ({
         ...temp,
         value: item[temp.valueKey],
+        missing: temp.missing,
       }));
     }
     if (item.type === "star") {
       data = starGraphHeader.map((temp) => ({
         ...temp,
         value: item[temp.valueKey],
+        missing: temp.missing,
       }));
     }
     return data;
@@ -55,7 +60,11 @@ const AnnotationChartHeader = ({ chartHeading, item = { type: "" } }) => {
         {headerData.map((item, index) => {
           return (
             <Box key={index} sx={{ width: "calc(50% - 8px)" }}>
-              <AnnotationChartHeaderItem title={item.text} value={item.value} />
+              <AnnotationChartHeaderItem
+                title={item.text}
+                value={item.value}
+                missing={item.missing}
+              />
             </Box>
           );
         })}

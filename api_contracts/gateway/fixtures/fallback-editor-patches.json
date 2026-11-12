@@ -1,0 +1,128 @@
+{
+  "chains": {
+    "primary": ["backup"],
+    "legacy": [
+      "backup-01",
+      "backup-02",
+      "backup-03",
+      "backup-04",
+      "backup-05",
+      "backup-06",
+      "backup-07",
+      "backup-08",
+      "backup-09",
+      "backup-10",
+      "backup-11",
+      "backup-12",
+      "backup-13",
+      "backup-14",
+      "backup-15",
+      "backup-16",
+      "backup-17",
+      "backup-18",
+      "backup-19",
+      "backup-20"
+    ]
+  },
+  "shadowedChains": {
+    "primary": ["shadowed-backup"],
+    "shadowed": ["not-effective"]
+  },
+  "edits": [
+    {
+      "name": "remove one legacy chain",
+      "actions": ["Remove legacy"],
+      "after": { "primary": ["backup"] },
+      "patch": { "routing": { "model_fallbacks": { "legacy": null } } }
+    },
+    {
+      "name": "remove all chains",
+      "actions": ["Remove primary", "Remove legacy"],
+      "after": {},
+      "patch": {
+        "routing": { "model_fallbacks": { "primary": null, "legacy": null } }
+      }
+    },
+    {
+      "name": "rename a primary",
+      "actions": ["Rename primary"],
+      "after": {
+        "renamed": ["backup"],
+        "legacy": [
+          "backup-01",
+          "backup-02",
+          "backup-03",
+          "backup-04",
+          "backup-05",
+          "backup-06",
+          "backup-07",
+          "backup-08",
+          "backup-09",
+          "backup-10",
+          "backup-11",
+          "backup-12",
+          "backup-13",
+          "backup-14",
+          "backup-15",
+          "backup-16",
+          "backup-17",
+          "backup-18",
+          "backup-19",
+          "backup-20"
+        ]
+      },
+      "patch": {
+        "routing": {
+          "model_fallbacks": { "primary": null, "renamed": ["backup"] }
+        }
+      }
+    },
+    {
+      "name": "trim a legacy 20-model chain",
+      "actions": ["Trim legacy"],
+      "after": {
+        "primary": ["backup"],
+        "legacy": [
+          "backup-01",
+          "backup-02",
+          "backup-03",
+          "backup-04",
+          "backup-05",
+          "backup-06",
+          "backup-07",
+          "backup-08",
+          "backup-09",
+          "backup-10",
+          "backup-11",
+          "backup-12",
+          "backup-13",
+          "backup-14",
+          "backup-15"
+        ]
+      },
+      "patch": {
+        "routing": {
+          "model_fallbacks": {
+            "legacy": [
+              "backup-01",
+              "backup-02",
+              "backup-03",
+              "backup-04",
+              "backup-05",
+              "backup-06",
+              "backup-07",
+              "backup-08",
+              "backup-09",
+              "backup-10",
+              "backup-11",
+              "backup-12",
+              "backup-13",
+              "backup-14",
+              "backup-15"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

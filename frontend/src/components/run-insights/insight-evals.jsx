@@ -2,18 +2,11 @@ import React, { useCallback, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
 import Iconify from "../iconify";
-import _ from "lodash";
 import CustomChipRenderer from "./traces-tab/CustomRenderers/CustomChipRenderer";
 import { ShowComponent } from "../show";
 import FailedEvaluationsDialog from "./FailedEvaluationDialog";
 
-const ERROR_MESSAGES = {
-  RATE_LIMIT_MESSAGE:
-    "Rate limit reached. Please try again later or upgrade your plan.",
-  CREDIT_LIMIT_MESSAGE: "Insufficient credits. Please recharge your account.",
-  SUPPORT_MESSAGE:
-    "Required action could not be performed, please validate the input data. In case of query, please reach out to us at support@futureagi.com",
-};
+import { ERROR_MESSAGES } from "src/constants/usageCopy";
 
 const filterMetrics = ["failedLatency", "failedCost"];
 
@@ -22,12 +15,15 @@ function getErrorMessageButton(result) {
     ...result,
     showRateLimitButton:
       result?.errorMessage === ERROR_MESSAGES.RATE_LIMIT_MESSAGE,
-    showCreditLimitMessage:
-      result?.errorMessage === ERROR_MESSAGES.CREDIT_LIMIT_MESSAGE,
+    showCreditLimitMessage: [
+      ERROR_MESSAGES.CREDIT_LIMIT_MESSAGE,
+      ERROR_MESSAGES.LEGACY_CREDIT_LIMIT_MESSAGE,
+    ].includes(result?.errorMessage),
     showReRunButton:
       ![
         ERROR_MESSAGES.RATE_LIMIT_MESSAGE,
         ERROR_MESSAGES.CREDIT_LIMIT_MESSAGE,
+        ERROR_MESSAGES.LEGACY_CREDIT_LIMIT_MESSAGE,
         ERROR_MESSAGES.SUPPORT_MESSAGE,
       ].includes(result?.errorMessage) && !!result?.errorMessage,
   };
@@ -72,7 +68,11 @@ const InsightEvals = ({ evalMetrics }) => {
           >
             {/* Main Key */}
             <Box sx={{ display: "flex", alignItems: "center" }}>
-              <Iconify icon="gg:check-o" width={20} color="green.500" />
+              <Iconify
+                icon="solar:check-circle-linear"
+                width={20}
+                color="status.success.fg"
+              />
               <Typography
                 ml={(theme) => theme.spacing(2)}
                 fontWeight="fontWeightRegular"

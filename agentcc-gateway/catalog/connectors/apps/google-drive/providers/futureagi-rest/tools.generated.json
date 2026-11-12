@@ -1,0 +1,569 @@
+{
+  "schema": "connector-manifest/v1#tools-generated",
+  "spec": {
+    "url": "https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/drive/v3/drive-api.json",
+    "sha256": "5f3972e38acc412206944388e5528a47aeb8779e76303bb6c8a31327c7ba49f9"
+  },
+  "tools": [
+    {
+      "name": "list_files",
+      "title": "List files",
+      "description": "List files explicitly opened with or created by this app. Use q=\"trashed = false\" and pageToken for pagination.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "GET",
+        "path": "/drive/v3/files"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "corpora": {
+            "type": "string",
+            "description": "Specifies a collection of items (files or documents) to which the query applies. Supported items include: * `user` * `domain` * `drive` * `allDrives` Prefer `user` or `drive` to `allDrives` for efficiency. By default, corpora is set to `user`. However, this can change depending on the filter set through the `q` parameter. For more information, see [File organization](https://developers.google.com/workspace/drive/api/guides/about-files#file-organization)."
+          },
+          "corpus": {
+            "type": "string",
+            "enum": ["domain", "user"],
+            "description": "Deprecated: The source of files to list. Use `corpora` instead."
+          },
+          "driveId": {
+            "type": "string",
+            "description": "ID of the shared drive to search."
+          },
+          "includeItemsFromAllDrives": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether both My Drive and shared drive items should be included in results."
+          },
+          "includeLabels": {
+            "type": "string",
+            "description": "A comma-separated list of IDs of labels to include in the `labelInfo` part of the response."
+          },
+          "includePermissionsForView": {
+            "type": "string",
+            "description": "Specifies which additional view's permissions to include in the response. Only `published` is supported."
+          },
+          "includeTeamDriveItems": {
+            "type": "boolean",
+            "default": false,
+            "description": "Deprecated: Use `includeItemsFromAllDrives` instead."
+          },
+          "orderBy": {
+            "type": "string",
+            "description": "A comma-separated list of sort keys. Valid keys are: * `createdTime`: When the file was created. Avoid using this key for queries on large item collections as it might result in timeouts or other issues. For time-related sorting on large item collections, use `modifiedTime desc` instead. * `folder`: The folder ID. This field is sorted using alphabetical ordering. * `modifiedByMeTime`: The last time the file was modified by the user. * `modifiedTime`: The last time the file was modified by anyone. * `name`: The name of the file. This field is sorted using alphabetical ordering, so 1, 12, 2, 22. * `name_natural`: The name of the file. This field is sorted using natural sort ordering, so 1, 2, 12, 22. * `quotaBytesUsed`: The number of storage quota bytes used by the file. * `recency`: The most recent timestamp from the file's date-time fields. * `sharedWithMeTime`: When the file was shared with the user, if applicable. * `starred`: Whether the user has starred the file. * `viewedByMeTime`: The last time the file was viewed by the user. Each key sorts ascending by default, but can be reversed with the `desc` modifier. Example usage: `?orderBy=folder,modifiedTime desc,name`."
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32",
+            "default": 100,
+            "minimum": 1,
+            "maximum": 1000,
+            "description": "The maximum number of files to return. The service may return fewer than this value. If unspecified, at most 100 files will be returned for shared drives, and the entire list of files for non-shared drives. The maximum value is 1000; values above 1000 will be coerced to 1000."
+          },
+          "pageToken": {
+            "type": "string",
+            "description": "The token for continuing a previous list request on the next page. This should be set to the value of `nextPageToken` from the previous response."
+          },
+          "q": {
+            "type": "string",
+            "description": "A query for filtering the file results. For supported syntax, see [Search for files and folders](/workspace/drive/api/guides/search-files)."
+          },
+          "spaces": {
+            "type": "string",
+            "default": "drive",
+            "description": "A comma-separated list of spaces to query within the corpora. Supported values are `drive` and `appDataFolder`. For more information, see [File organization](https://developers.google.com/workspace/drive/api/guides/about-files#file-organization)."
+          },
+          "supportsAllDrives": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the requesting application supports both My Drives and shared drives."
+          },
+          "supportsTeamDrives": {
+            "type": "boolean",
+            "default": false,
+            "description": "Deprecated: Use `supportsAllDrives` instead."
+          },
+          "teamDriveId": {
+            "type": "string",
+            "description": "Deprecated: Use `driveId` instead."
+          }
+        },
+        "additionalProperties": false,
+        "x-origin": "https://www.googleapis.com"
+      }
+    },
+    {
+      "name": "get_file",
+      "title": "Get file",
+      "description": "Read metadata for an app-authorized fileId, for example file-fixture. This tool does not download file content.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "GET",
+        "path": "/drive/v3/files/{fileId}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "description": "The ID of the file."
+          },
+          "acknowledgeAbuse": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the user is acknowledging the risk of downloading known malware or other abusive files. This is only applicable when the `alt` parameter is set to `media` and the user is the owner of the file or an organizer of the shared drive in which the file resides."
+          },
+          "includeLabels": {
+            "type": "string",
+            "description": "A comma-separated list of IDs of labels to include in the `labelInfo` part of the response."
+          },
+          "includePermissionsForView": {
+            "type": "string",
+            "description": "Specifies which additional view's permissions to include in the response. Only `published` is supported."
+          },
+          "supportsAllDrives": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the requesting application supports both My Drives and shared drives."
+          },
+          "supportsTeamDrives": {
+            "type": "boolean",
+            "default": false,
+            "description": "Deprecated: Use `supportsAllDrives` instead."
+          }
+        },
+        "required": ["fileId"],
+        "additionalProperties": false,
+        "x-origin": "https://www.googleapis.com"
+      }
+    },
+    {
+      "name": "copy_file",
+      "title": "Copy file",
+      "description": "Copy an app-authorized file to a new name, for example body.name=\"Quarterly copy\".",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/drive/v3/files/{fileId}/copy"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "description": "The ID of the file."
+          },
+          "copyComments": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether to copy the open (unresolved) comments associated with the file."
+          },
+          "enforceSingleParent": {
+            "type": "boolean",
+            "default": false,
+            "description": "Deprecated: Copying files into multiple folders is no longer supported. Use shortcuts instead."
+          },
+          "ignoreDefaultVisibility": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether to ignore the domain's default visibility settings for the created file. Domain administrators can choose to make all uploaded files visible to the domain by default; this parameter bypasses that behavior for the request. Permissions are still inherited from parent folders."
+          },
+          "includeLabels": {
+            "type": "string",
+            "description": "A comma-separated list of IDs of labels to include in the `labelInfo` part of the response."
+          },
+          "includePermissionsForView": {
+            "type": "string",
+            "description": "Specifies which additional view's permissions to include in the response. Only `published` is supported."
+          },
+          "keepRevisionForever": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether to set the `keepForever` field in the new head revision. This is only applicable to files with binary content in Google Drive. Only 200 revisions for the file can be kept forever. If the limit is reached, try deleting pinned revisions."
+          },
+          "ocrLanguage": {
+            "type": "string",
+            "description": "A language hint for OCR processing during image import (ISO 639-1 code)."
+          },
+          "supportsAllDrives": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the requesting application supports both My Drives and shared drives."
+          },
+          "supportsTeamDrives": {
+            "type": "boolean",
+            "default": false,
+            "description": "Deprecated: Use `supportsAllDrives` instead."
+          },
+          "body": {
+            "type": "object",
+            "description": "Copy an app-authorized file to a new name, for example body.name=\"Quarterly copy\".",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The name of the file. This isn't necessarily unique within a folder. Note that for immutable items such as the top-level folders of shared drives, the My Drive root folder, and the Application Data folder, the name is constant."
+              },
+              "parents": {
+                "type": "array",
+                "description": "The ID of the parent folder containing the file. A file can only have one parent folder; specifying multiple parents isn't supported. If not specified as part of a create request, the file is placed directly in the user's My Drive folder. If not specified as part of a copy request, the file inherits any discoverable parent of the source file. Update requests must use the `addParents` and `removeParents` parameters to modify the parents list.",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": ["name"]
+          }
+        },
+        "required": ["fileId", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://www.googleapis.com"
+      }
+    },
+    {
+      "name": "create_file",
+      "title": "Create file",
+      "description": "Create metadata for a file or folder, for example name=\"Reports\", mimeType=\"application/vnd.google-apps.folder\". Binary uploads are not supported.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/drive/v3/files"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "enforceSingleParent": {
+            "type": "boolean",
+            "default": false,
+            "description": "Deprecated: Creating files in multiple folders is no longer supported."
+          },
+          "ignoreDefaultVisibility": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether to ignore the domain's default visibility settings for the created file. Domain administrators can choose to make all uploaded files visible to the domain by default; this parameter bypasses that behavior for the request. Permissions are still inherited from parent folders."
+          },
+          "includeLabels": {
+            "type": "string",
+            "description": "A comma-separated list of IDs of labels to include in the `labelInfo` part of the response."
+          },
+          "includePermissionsForView": {
+            "type": "string",
+            "description": "Specifies which additional view's permissions to include in the response. Only `published` is supported."
+          },
+          "keepRevisionForever": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether to set the `keepForever` field in the new head revision. This is only applicable to files with binary content in Google Drive. Only 200 revisions for the file can be kept forever. If the limit is reached, try deleting pinned revisions."
+          },
+          "ocrLanguage": {
+            "type": "string",
+            "description": "A language hint for OCR processing during image import (ISO 639-1 code)."
+          },
+          "supportsAllDrives": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the requesting application supports both My Drives and shared drives."
+          },
+          "supportsTeamDrives": {
+            "type": "boolean",
+            "default": false,
+            "description": "Deprecated: Use `supportsAllDrives` instead."
+          },
+          "useContentAsIndexableText": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether to use the uploaded content as indexable text."
+          },
+          "body": {
+            "type": "object",
+            "description": "Create metadata for a file or folder, for example name=\"Reports\", mimeType=\"application/vnd.google-apps.folder\". Binary uploads are not supported.",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The name of the file. This isn't necessarily unique within a folder. Note that for immutable items such as the top-level folders of shared drives, the My Drive root folder, and the Application Data folder, the name is constant."
+              },
+              "mimeType": {
+                "type": "string",
+                "description": "The MIME type of the file. Google Drive attempts to automatically detect an appropriate value from uploaded content, if no value is provided. The value cannot be changed unless a new revision is uploaded. If a file is created with a Google Doc MIME type, the uploaded content is imported, if possible. The supported import formats are published in the [`about`](/workspace/drive/api/reference/rest/v3/about) resource."
+              },
+              "parents": {
+                "type": "array",
+                "description": "The ID of the parent folder containing the file. A file can only have one parent folder; specifying multiple parents isn't supported. If not specified as part of a create request, the file is placed directly in the user's My Drive folder. If not specified as part of a copy request, the file inherits any discoverable parent of the source file. Update requests must use the `addParents` and `removeParents` parameters to modify the parents list.",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "description": {
+                "type": "string",
+                "description": "A short description of the file."
+              }
+            },
+            "additionalProperties": false,
+            "required": ["name"]
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://www.googleapis.com"
+      }
+    },
+    {
+      "name": "rename_file",
+      "title": "Rename file",
+      "description": "Rename an app-authorized file. Set body.name, for example \"Quarterly report\".",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "PATCH",
+        "path": "/drive/v3/files/{fileId}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "description": "The ID of the file."
+          },
+          "addParents": {
+            "type": "string",
+            "description": "A comma-separated list of parent IDs to add."
+          },
+          "enforceSingleParent": {
+            "type": "boolean",
+            "default": false,
+            "description": "Deprecated: Adding files to multiple folders is no longer supported. Use shortcuts instead."
+          },
+          "includeLabels": {
+            "type": "string",
+            "description": "A comma-separated list of IDs of labels to include in the `labelInfo` part of the response."
+          },
+          "includePermissionsForView": {
+            "type": "string",
+            "description": "Specifies which additional view's permissions to include in the response. Only `published` is supported."
+          },
+          "keepRevisionForever": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether to set the `keepForever` field in the new head revision. This is only applicable to files with binary content in Google Drive. Only 200 revisions for the file can be kept forever. If the limit is reached, try deleting pinned revisions."
+          },
+          "ocrLanguage": {
+            "type": "string",
+            "description": "A language hint for OCR processing during image import (ISO 639-1 code)."
+          },
+          "removeParents": {
+            "type": "string",
+            "description": "A comma-separated list of parent IDs to remove."
+          },
+          "supportsAllDrives": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the requesting application supports both My Drives and shared drives."
+          },
+          "supportsTeamDrives": {
+            "type": "boolean",
+            "default": false,
+            "description": "Deprecated: Use `supportsAllDrives` instead."
+          },
+          "useContentAsIndexableText": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether to use the uploaded content as indexable text."
+          },
+          "body": {
+            "type": "object",
+            "description": "Rename an app-authorized file. Set body.name, for example \"Quarterly report\".",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The name of the file. This isn't necessarily unique within a folder. Note that for immutable items such as the top-level folders of shared drives, the My Drive root folder, and the Application Data folder, the name is constant."
+              }
+            },
+            "additionalProperties": false,
+            "required": ["name"]
+          }
+        },
+        "required": ["fileId", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://www.googleapis.com"
+      }
+    },
+    {
+      "name": "delete_file",
+      "title": "Delete file",
+      "description": "Permanently delete the specified app-authorized fileId; this does not move it to trash.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "deny",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "DELETE",
+        "path": "/drive/v3/files/{fileId}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "description": "The ID of the file."
+          },
+          "enforceSingleParent": {
+            "type": "boolean",
+            "default": false,
+            "description": "Deprecated: If an item isn't in a shared drive and its last parent is deleted but the item itself isn't, the item will be placed under its owner's root."
+          },
+          "supportsAllDrives": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the requesting application supports both My Drives and shared drives."
+          },
+          "supportsTeamDrives": {
+            "type": "boolean",
+            "default": false,
+            "description": "Deprecated: Use `supportsAllDrives` instead."
+          }
+        },
+        "required": ["fileId"],
+        "additionalProperties": false,
+        "x-origin": "https://www.googleapis.com"
+      }
+    },
+    {
+      "name": "list_permissions",
+      "title": "List permissions",
+      "description": "List access permissions on an app-authorized fileId; for example file-fixture.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "GET",
+        "path": "/drive/v3/files/{fileId}/permissions"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "description": "The ID of the file or shared drive."
+          },
+          "includePermissionsForView": {
+            "type": "string",
+            "description": "Specifies which additional view's permissions to include in the response. Only `published` is supported."
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "The maximum number of permissions to return. The service may return fewer than this value. If unspecified, at most 100 permissions will be returned for shared drives, and the entire list of permissions for non-shared drives. The maximum value is 100; values above 100 will be coerced to 100."
+          },
+          "pageToken": {
+            "type": "string",
+            "description": "The token for continuing a previous list request on the next page. This should be set to the value of `nextPageToken` from the previous response."
+          },
+          "supportsAllDrives": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the requesting application supports both My Drives and shared drives."
+          },
+          "supportsTeamDrives": {
+            "type": "boolean",
+            "default": false,
+            "description": "Deprecated: Use `supportsAllDrives` instead."
+          },
+          "useDomainAdminAccess": {
+            "type": "boolean",
+            "default": false,
+            "description": "Issue the request as a domain administrator. If set to `true`, and if the following additional conditions are met, the requester is granted access: 1. The file ID parameter refers to a shared drive. 2. The requester is an administrator of the domain to which the shared drive belongs. For more information, see [Manage shared drives as domain administrators](https://developers.google.com/workspace/drive/api/guides/manage-shareddrives#manage-administrators)."
+          }
+        },
+        "required": ["fileId"],
+        "additionalProperties": false,
+        "x-origin": "https://www.googleapis.com"
+      }
+    },
+    {
+      "name": "list_revisions",
+      "title": "List revisions",
+      "description": "List stored revisions of an app-authorized fileId, for example file-fixture. Follow nextPageToken.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "GET",
+        "path": "/drive/v3/files/{fileId}/revisions"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "description": "The ID of the file."
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32",
+            "default": 200,
+            "minimum": 1,
+            "maximum": 1000,
+            "description": "The maximum number of revisions to return. The service may return fewer than this value. If unspecified, at most 200 revisions will be returned. The maximum value is 1000; values above 1000 will be coerced to 1000."
+          },
+          "pageToken": {
+            "type": "string",
+            "description": "The token for continuing a previous list request on the next page. This should be set to the value of 'nextPageToken' from the previous response."
+          }
+        },
+        "required": ["fileId"],
+        "additionalProperties": false,
+        "x-origin": "https://www.googleapis.com"
+      }
+    }
+  ]
+}

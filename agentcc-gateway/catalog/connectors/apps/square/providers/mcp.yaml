@@ -1,0 +1,73 @@
+# Square's remote MCP server (beta) with OAuth from its own authorization
+# server, which registers clients dynamically. The remote server reaches
+# production resources only; Square's Sandbox needs its local server. The
+# protected-resource metadata for /mcp names no scope, so the request carries
+# none. The metadata at the host root lists Square API permissions; which of
+# them a connection is granted is to be checked with a test account before
+# this provider leaves tier listed. EE reads a pre-registered client from its
+# environment and cannot register one, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: square
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: beta
+  source: https://developer.squareup.com/docs/mcp
+transport:
+  kind: http
+  url: https://mcp.squareup.com/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://mcp.squareup.com/authorize
+    tokenUrl: https://mcp.squareup.com/token
+    scopes: []
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://mcp.squareup.com/token
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developer.squareup.com/docs/mcp
+    fetchedAt: 2026-11-11
+  - fact: transport.url
+    url: https://mcp.squareup.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://developer.squareup.com/docs/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp.squareup.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.tokenUrl
+    url: https://mcp.squareup.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.scopes
+    url: https://mcp.squareup.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.pkce
+    url: https://mcp.squareup.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.revocation.url
+    url: https://mcp.squareup.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.registration
+    url: https://mcp.squareup.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+x-omega: { ee: exclude }

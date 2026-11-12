@@ -508,10 +508,10 @@ class TestRealWorldScenarios:
         assert determine_data_type(id_column) == DataTypeChoices.INTEGER.value
 
     def test_csv_with_string_ids_with_leading_zeros(self):
-        """CSV with string numeric IDs with leading zeros are parsed as INTEGER"""
+        """CSV string IDs with significant leading zeros stay TEXT so "001" is not rewritten to 1"""
         id_column = pd.Series(["001", "002", "003"])
-        # Note: Leading zeros are parsed as valid integers by int()
-        assert determine_data_type(id_column) == DataTypeChoices.INTEGER.value
+        # Leading zeros are significant for identifiers; inferring INTEGER would drop them (W3-D-001).
+        assert determine_data_type(id_column) == DataTypeChoices.TEXT.value
 
     def test_csv_with_real_dates(self):
         """CSV with real ISO dates should detect DATETIME"""

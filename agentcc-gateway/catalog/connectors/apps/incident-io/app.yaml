@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: incident-io
+version: 1.0.0
+name: incident.io
+description: "Incidents, alerts, escalations, on-call and post-mortems."
+vendor:
+  name: incident.io
+  domains: [incident.io]
+eeCategory: developer
+group: other
+categories: [developer, incident-management]
+tags: [incidents, on-call, alerts]
+docsUrl: https://docs.incident.io/ai/remote-mcp
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.incident.io/ai/remote-mcp
+    fetchedAt: 2026-11-11

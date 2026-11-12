@@ -1,0 +1,28 @@
+{
+  "vendor": "open_meteo",
+  "capability": "data",
+  "skus": [
+    {
+      "sku": "open_meteo.call",
+      "unit": "request",
+      "usd_per_unit": 0.0,
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "byok_only",
+  "owner_price_pending": true,
+  "resale_terms_ref": "",
+  "terms_url": "https://open-meteo.com/en/terms",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": false,
+  "trains_on_input": "no",
+  "improvement_license": false,
+  "regions": [],
+  "results_retention": "full",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false,
+  "attribution": "Weather data by Open-Meteo.com (CC BY 4.0)"
+}

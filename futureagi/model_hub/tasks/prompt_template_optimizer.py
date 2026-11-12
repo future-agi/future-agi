@@ -26,6 +26,7 @@ from model_hub.models.metric import Metric
 from model_hub.models.optimize_dataset import OptimizeDataset
 from model_hub.serializers.conversation import NodeSerializer
 from model_hub.serializers.metric import MetricSerializer, MetricSerializerWithAIModel
+from model_hub.services import credit_ledger_port as credit_ledger
 from model_hub.tasks.agent import create_criteria, create_criteria_text_prompt
 from model_hub.utils.clickhouse import update_eval_record
 from tfc.telemetry import wrap_for_thread
@@ -534,6 +535,13 @@ def get_topk_prompts(
 
 
 def runner_topk_optimizer(data, eval_prompts, optim_obj_id):
+    # One key (OK-E, R4-17): PromptOptimizer accepts neither criteria_breakdown
+    # nor optimize_rag, so this run cannot start; fail it typed before the
+    # unmetered criteria model call instead of a TypeError after it.
+    OptimizeDataset.objects.filter(id=optim_obj_id).update(
+        status=OptimizeDataset.StatusType.FAILED
+    )
+    credit_ledger.refuse_legacy_optimizer("prompt-template optimizer")
     df_temp = pd.DataFrame(data)
     optimize_dataset = OptimizeDataset.objects.filter(id=optim_obj_id).get()
     if len(optimize_dataset.criteria_breakdown) != 0:

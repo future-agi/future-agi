@@ -9,7 +9,6 @@ from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import (
     PasswordResetTokenGenerator,
-    default_token_generator,
 )
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
@@ -19,16 +18,29 @@ from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import (
+    api_view,
+    authentication_classes,
+    permission_classes,
+)
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
-from accounts.authentication import decrypt_message, generate_encrypted_message
-from accounts.models import OrgApiKey, User
+from accounts.authentication import (
+    allows_no_organization,
+    allows_no_workspace,
+    decrypt_message,
+    generate_encrypted_message,
+)
+from accounts.invitation_authentication import InvitationAuthentication
+from accounts.models import User
 from accounts.models.auth_token import (
     AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES,
+    PASSWORD_RESET_TOKEN_EXPIRATION_TIME_IN_MINUTES,
     AuthToken,
+    AuthTokenOrigin,
     AuthTokenType,
 )
 from accounts.models.organization import Organization
@@ -52,6 +64,19 @@ from accounts.serializers.contracts import (
     UserIdsRequestSerializer,
 )
 from accounts.serializers.user import UpdateUserSerializer
+from accounts.services.auth_cache import (
+    cache_access_token,
+    revoke_cached_access_token,
+)
+from accounts.services.hard_erase_lifecycle import identity_keys, lifecycle_lock
+from accounts.services.identity_issuance import _exists, issue_membership
+from accounts.services.invitation_links import (
+    invitation_matches,
+    make_invitation_token,
+    pending_invitation,
+    read_invitation_token,
+)
+from accounts.services.offboarding import offboard_organization_member
 from accounts.services.token_service import issue_tokens
 from accounts.utils import (
     WorkEmailRequired,
@@ -59,7 +84,6 @@ from accounts.utils import (
     first_signup,
     refresh_pending_invite_expiration,
 )
-from accounts.views.workspace_management import clear_user_redis_cache
 from analytics.utils import (
     MixpanelEvents,
     get_mixpanel_properties,
@@ -76,6 +100,7 @@ from tfc.utils.api_contracts import validated_api_request
 from tfc.utils.email import email_delivery_configured, email_helper
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.install_setup import manage_py_command
+from tfc.utils.tenant_scope import counts_as_member
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -89,16 +114,40 @@ _gm = GeneralMethods()
 
 
 def oss_reset_unavailable_message() -> str:
-    """What a self-hosted install without email delivery answers a reset
-    request with: the recovery command for the setup it runs in."""
-    command = manage_py_command("reset_password --email <address>")
+    """What a self-hosted install without email delivery tells the person who
+    asked for a reset. They are signed out and usually cannot reach the host,
+    so they only learn who can help; the recovery steps go to the server log
+    (``log_oss_reset_unavailable``)."""
     return (
-        "Email delivery is not configured on this deployment, so the reset link "
-        "cannot be sent. An administrator can set a new password from the host "
-        f"with `{command}`, or configure email (MAILGUN_API_KEY). Setting "
-        "OSS_RETURN_PASSWORD_RESET_LINK=true returns reset links in the browser "
-        "instead — only on a network where every caller is already trusted, "
-        "since the link takes over the account it names."
+        "This site can't send email, so we couldn't send a reset link. "
+        "Ask your administrator to reset your password."
+    )
+
+
+def log_oss_reset_unavailable() -> None:
+    """Give the host's administrator the recovery steps for the setup this
+    install runs in. Names no account and carries no token: the same entry is
+    logged whether or not the address has an account here."""
+    logger.warning(
+        "password_reset_email_unavailable",
+        recovery_command=manage_py_command("reset_password --email <address>"),
+        email_setting="MAILGUN_API_KEY",
+        link_in_response_setting="OSS_RETURN_PASSWORD_RESET_LINK",
+        hint=(
+            "A password reset was requested but this deployment cannot send "
+            "email. Set a new password from the host with the command in "
+            "recovery_command, or configure email (MAILGUN_API_KEY). "
+            "OSS_RETURN_PASSWORD_RESET_LINK=true returns reset links in the "
+            "browser instead; use it only on a network where every caller is "
+            "already trusted, since the link takes over the account it names."
+        ),
+    )
+
+
+def _oss_reset_unavailable_response():
+    log_oss_reset_unavailable()
+    return _gm.success_response(
+        {"message": oss_reset_unavailable_message(), "email_unavailable": True}
     )
 
 
@@ -193,6 +242,7 @@ def _login_payload(user):
     request_body=SignupRequestSerializer,
     responses={200: SignupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
+@allows_no_organization
 @api_view(["POST"])
 @validated_api_request(
     request_serializer=SignupRequestSerializer,
@@ -276,7 +326,9 @@ def user_signup(request):
                     organization_id=user.organization_id,
                 )
             except Exception:
-                logger.debug("deployment_telemetry_signup_login_event_failed", exc_info=True)
+                logger.debug(
+                    "deployment_telemetry_signup_login_event_failed", exc_info=True
+                )
             return _gm.success_response(_login_payload(user), status=status.HTTP_200_OK)
 
         return _gm.success_response(
@@ -320,6 +372,7 @@ def user_signup(request):
     request_body=LogoutRequestSerializer,
     responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
+@allows_no_organization
 @api_view(["POST"])
 @validated_api_request(
     request_serializer=LogoutRequestSerializer,
@@ -347,13 +400,14 @@ def user_logout(request):
 
         auth_token_obj.is_active = False
         auth_token_obj.save()
-        cache.delete(f"access_token_{token_id}")
+        revoke_cached_access_token(token_id, cache_backend=cache)
         return _gm.success_response({"message": "User logged out successfully."})
     except Exception:
         logger.exception("Error in user logout")
         return _gm.bad_request("Error in user logout.")
 
 
+@allows_no_organization
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def activate_account(request, uidb64, token):
@@ -380,19 +434,18 @@ def activate_account(request, uidb64, token):
 
         # Check if the token is valid
         if account_activation_token.check_token(user, token):
-            # Use transaction to ensure atomicity of account activation
-            with transaction.atomic():
+            # Allocate the new identity before acquiring the complete entry set.
+            organization = Organization(
+                name=user.email.split("@")[0] + " Org", region=settings.REGION
+            )
+            with lifecycle_lock(
+                keys=identity_keys(organizations=[organization.pk], people=[user.pk])
+            ):
+                _exists(User, user.pk, "default")
                 # Activate the user and save the new status
                 user.is_active = True
 
-                # Extract initials from the email
-                username, domain = user.email.split("@")
-                initials = username + " Org"
-
-                # Create a new organization with the initials
-                organization = Organization.objects.create(
-                    name=initials, region=settings.REGION
-                )
+                organization.save(force_insert=True)
 
                 user.organization = organization
                 user.organization_role = OrganizationRoles.OWNER.value
@@ -404,7 +457,9 @@ def activate_account(request, uidb64, token):
                 )
                 from tfc.constants.levels import Level
 
-                OrganizationMembership.objects.get_or_create(
+                issue_membership(
+                    OrganizationMembership.objects,
+                    "get_or_create",
                     user=user,
                     organization=organization,
                     defaults={
@@ -417,13 +472,6 @@ def activate_account(request, uidb64, token):
                 # create organization subscription (skipped when ee is absent)
                 if create_organization_subscription_if_not_exists is not None:
                     create_organization_subscription_if_not_exists(organization)
-                # Use .exists() for efficiency instead of len()
-                if not OrgApiKey.no_workspace_objects.filter(
-                    organization=organization, type="system", enabled=True
-                ).exists():
-                    OrgApiKey.no_workspace_objects.create(
-                        organization=organization, type="system"
-                    )
 
             return Response(
                 {"message": "Account successfully activated."},
@@ -449,6 +497,7 @@ def activate_account(request, uidb64, token):
         **ACCOUNTS_ERROR_RESPONSES,
     },
 )
+@allows_no_organization
 @api_view(["POST"])
 @validated_api_request(
     request_serializer=PasswordResetInitiateRequestSerializer,
@@ -487,20 +536,18 @@ def initiate_password_reset(request):
                     and not oss_reset_link_in_response()
                     and not email_delivery_configured()
                 ):
-                    return _gm.success_response(
-                        {"message": oss_reset_unavailable_message()}
-                    )
+                    return _oss_reset_unavailable_response()
 
-                # Send reset password email
-                # Generate a token
-                access_token = AuthToken.objects.create(
+                # A reset link is its own token type: no bearer path accepts
+                # it, and reset confirmation accepts nothing else.
+                reset_token = AuthToken.objects.create(
                     user=user,
-                    auth_type=AuthTokenType.ACCESS.value,
+                    auth_type=AuthTokenType.PASSWORD_RESET.value,
                     is_active=True,
                     last_used_at=timezone.now(),
                 )
                 token = generate_encrypted_message(
-                    {"user_id": str(user.id), "id": str(access_token.id)}
+                    {"user_id": str(user.id), "id": str(reset_token.id)}
                 )
 
                 # Generate uidb64
@@ -544,9 +591,7 @@ def initiate_password_reset(request):
                 if oss_reset_link_in_response():
                     return _gm.bad_request(f"No account found for {email}.")
                 if not email_delivery_configured():
-                    return _gm.success_response(
-                        {"message": oss_reset_unavailable_message()}
-                    )
+                    return _oss_reset_unavailable_response()
             # Don't disclose that the user doesn't exist ,we just send a sucess response
             return _gm.success_response(
                 {
@@ -557,11 +602,23 @@ def initiate_password_reset(request):
     return _gm.bad_request("An error occurred, please try again.")
 
 
+INVALID_RESET_LINK_MESSAGE = (
+    "This password reset link is invalid or has expired. Please request a new one."
+)
+
+
+def _invalid_reset_link():
+    # One answer for every refused link (unknown, a login or refresh token,
+    # used, expired, someone else's) so the endpoint tells no one which it saw.
+    return _gm.forbidden_response(INVALID_RESET_LINK_MESSAGE)
+
+
 @swagger_auto_schema(
     method="post",
     request_body=PasswordResetConfirmRequestSerializer,
     responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
+@allows_no_organization
 @api_view(["POST"])
 @validated_api_request(
     request_serializer=PasswordResetConfirmRequestSerializer,
@@ -578,38 +635,35 @@ def reset_password_confirm(request, uidb64, token):
         uid = force_str(urlsafe_base64_decode(uidb64))
         user = User.objects.get(pk=uid)
 
-        # Check if the token is valid
-        decrypted_token_obj = decrypt_message(str(token))
-        user_id = decrypted_token_obj.get("user_id")
-        token_id = decrypted_token_obj.get("id")
-
-        if not user_id or not token_id:
-            return _gm.bad_request("Invalid token.")
-
         try:
-            auth_token_obj = AuthToken.objects.get(
-                id=token_id, auth_type=AuthTokenType.ACCESS.value
+            claims = decrypt_message(str(token))
+        except AuthenticationFailed:
+            return _invalid_reset_link()
+        token_id = claims.get("id")
+        if not token_id or str(claims.get("user_id")) != str(user.id):
+            return _invalid_reset_link()
+
+        # Only a live reset link issued to this very user: the row's type,
+        # owner and age decide, not just what the payload says.
+        reset_token = (
+            AuthToken.objects.filter(
+                id=token_id,
+                user_id=user.id,
+                auth_type=AuthTokenType.PASSWORD_RESET.value,
+                is_active=True,
+                created_at__gte=timezone.now()
+                - timedelta(minutes=PASSWORD_RESET_TOKEN_EXPIRATION_TIME_IN_MINUTES),
             )
-        except AuthToken.DoesNotExist:
-            return _gm.forbidden_response("Invalid token id.")
+            .exclude(auth_origin=AuthTokenOrigin.SAML)
+            .first()
+        )
+        if reset_token is None:
+            return _invalid_reset_link()
 
-        if auth_token_obj.auth_origin == "saml":
-            return _gm.forbidden_response("Invalid token.")
-
+        # The user can correct these, so they leave the link usable.
         if new_password != repeat_password:
             return _gm.bad_request("Passwords do not match.")
 
-        if (
-            not auth_token_obj.is_active
-            or auth_token_obj.last_used_at
-            < timezone.now() - timedelta(minutes=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES)
-        ):
-            return _gm.forbidden_response("Token has expired.")
-
-        if str(user_id) != str(user.id):
-            return _gm.forbidden_response("Invalid token.")
-
-        # Set the new password and save the user object
         try:
             validate_password(new_password)
         except ValidationError as e:
@@ -620,21 +674,49 @@ def reset_password_confirm(request, uidb64, token):
                 "New password cannot be the same as the old password."
             )
 
-        user.password = make_password(new_password)
-        user.is_active = True
-        user.save()
+        with transaction.atomic():
+            # Spend the link before the password changes: of two requests
+            # racing with one link only one updates the row. A failure below
+            # rolls this back, so the link survives a reset that did not happen.
+            if (
+                AuthToken.objects.filter(
+                    id=reset_token.id,
+                    auth_type=AuthTokenType.PASSWORD_RESET.value,
+                    is_active=True,
+                ).update(is_active=False)
+                != 1
+            ):
+                return _invalid_reset_link()
 
-        # invalidate all auth tokens for the user
-        token_ids = AuthToken.objects.filter(
-            user=user, is_active=True, auth_type=AuthTokenType.ACCESS.value
-        ).values_list("id", flat=True)
+            user.password = make_password(new_password)
+            user.is_active = True
+            user.save()
 
-        updated_token_ids = [f"access_token_{str(token_id)}" for token_id in token_ids]
+            # Any other reset link still out for this user dies with this one.
+            AuthToken.objects.filter(
+                user=user,
+                is_active=True,
+                auth_type=AuthTokenType.PASSWORD_RESET.value,
+            ).update(is_active=False)
 
-        for token_id in updated_token_ids:
-            cache.delete(token_id)
+            # Revoke both session credentials so remembered browsers cannot
+            # exchange a pre-reset refresh token for a new access token.
+            token_ids = list(
+                AuthToken.objects.filter(
+                    user=user,
+                    is_active=True,
+                    auth_type__in=[
+                        AuthTokenType.ACCESS.value,
+                        AuthTokenType.REFRESH.value,
+                    ],
+                ).values_list("id", flat=True)
+            )
 
-        AuthToken.objects.filter(id__in=token_ids).update(is_active=False)
+            for token_id in token_ids:
+                revoke_cached_access_token(str(token_id), cache_backend=cache)
+                cache.delete(f"refresh_token_{str(token_id)}")
+
+            AuthToken.objects.filter(id__in=token_ids).update(is_active=False)
 
         return _gm.success_response(
             {"message": "Password has been reset with the new password."}
@@ -653,25 +735,6 @@ def reset_password_confirm(request, uidb64, token):
         return _gm.internal_server_error_response("An unexpected error occurred.")
 
 
-def _activate_memberships(user):
-    """Activate org & workspace memberships for *user* (fallback when invite is
-    missing or expired)."""
-    from accounts.models.organization_membership import OrganizationMembership
-    from accounts.models.workspace import WorkspaceMembership
-
-    OrganizationMembership.all_objects.filter(
-        user=user,
-        organization=user.organization,
-        is_active=False,
-    ).update(is_active=True)
-
-    WorkspaceMembership.no_workspace_objects.filter(
-        user=user,
-        workspace__organization=user.organization,
-        is_active=False,
-    ).update(is_active=True)
-
-
 @swagger_auto_schema(
     method="get",
     responses={
@@ -684,7 +747,9 @@ def _activate_memberships(user):
     request_body=AcceptInvitationRequestSerializer,
     responses={200: AccountsTokenPairResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
+@allows_no_organization
 @api_view(["GET", "POST"])
+@authentication_classes([InvitationAuthentication])
 @validated_api_request(
     request_serializer=AcceptInvitationRequestSerializer,
     responses={200: AccountsTokenPairResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
@@ -697,33 +762,62 @@ def accept_invitation_mail(request, uidb64, token):
 
     GET  — validate the token without consuming it. Returns org info so the
            frontend can render a "Set Password" page.
-    POST — set the user's password, activate the account, accept the invite,
+    POST — accept the invite, set the user's password, activate the account,
            and return JWT tokens for auto-login.
     """
     try:
-        uid = force_str(urlsafe_base64_decode(uidb64))
-        user = User.objects.select_related("organization").get(pk=uid)
+        return _accept_invitation_mail(request, uidb64, token)
+    except (binascii.Error, TypeError, UnicodeDecodeError, ValueError, ValidationError):
+        return _gm.bad_request("Invitation link is invalid or has expired.")
+    except User.DoesNotExist:
+        return _gm.bad_request(
+            "An Error Occured! Please ask your Administrator to Resend Invitation Link"
+        )
+    except Exception:
+        logger.exception("Error processing invitation acceptance")
+        return _gm.internal_server_error_response(
+            "An error occurred while processing the invitation."
+        )
 
-        if not default_token_generator.check_token(user, token):
-            return _gm.bad_request("Invitation link is invalid or has expired.")
 
-        # ------------------------------------------------------------------
-        # Check if invite was cancelled - OrganizationInvite must be pending
-        # ------------------------------------------------------------------
-        from accounts.models.organization_invite import InviteStatus, OrganizationInvite
+def _accept_invitation_mail(request, uidb64, token):
+    # Catch failures OUTSIDE this transaction so accept() cannot partially
+    # activate memberships or consume the password-reset token on refusal.
+    uid = force_str(urlsafe_base64_decode(uidb64))
+    snapshot = User.objects.get(pk=uid)
+    from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 
-        org = user.organization
-        if not org:
-            return _gm.bad_request("Invitation link is invalid or has expired.")
+    try:
+        payload = read_invitation_token(token, uid)
+    except ValueError:
+        return _gm.bad_request("Invitation link is invalid or has expired.")
+    snapshot_invite = OrganizationInvite.objects.filter(
+        pk=payload.get("invite"),
+        organization_id=payload.get("organization"),
+        target_email__iexact=snapshot.email,
+        status=InviteStatus.PENDING,
+    ).first()
+    if not invitation_matches(payload, snapshot_invite, snapshot):
+        return _gm.bad_request("This invitation has been cancelled or expired.")
+    from accounts.services.hard_erase import _refuse
+    from accounts.services.hard_erase_issuance_entry import issuance_entry
 
-        invite_exists = OrganizationInvite.objects.filter(
-            target_email__iexact=user.email,
-            organization=org,
-            status=InviteStatus.PENDING,
-        ).exists()
-
-        if not invite_exists:
+    with issuance_entry(
+        organizations=[snapshot_invite.organization_id],
+        people=[uid, snapshot_invite.invited_by_id],
+    ):
+        users = User.objects.select_related("organization")
+        invites = OrganizationInvite.objects.select_related("organization")
+        if request.method == "POST":
+            users = users.select_for_update(of=("self",))
+            invites = invites.select_for_update(of=("self",))
+        user = users.get(pk=uid)
+        invite = invites.filter(pk=snapshot_invite.pk).first()
+        if invite is not None and invite.invited_by_id != snapshot_invite.invited_by_id:
+            _refuse("invitation identities changed; retry the whole transaction")
+        if not invitation_matches(payload, invite, user):
             return _gm.bad_request("This invitation has been cancelled or expired.")
+        org = invite.organization
 
         # ------------------------------------------------------------------
         # Security check: If another user is logged in, reject the request.
@@ -745,7 +839,11 @@ def accept_invitation_mail(request, uidb64, token):
                 # Token decryption failed - ignore and continue (treat as unauthenticated)
                 pass
 
-        org = user.organization
+        recipient_authenticated = (
+            getattr(request.user, "is_authenticated", False)
+            and getattr(request.user, "pk", None) == user.pk
+            and auth_header.startswith("Bearer ")
+        )
         org_name = org.display_name if org.display_name else org.name
 
         # ------------------------------------------------------------------
@@ -758,6 +856,8 @@ def accept_invitation_mail(request, uidb64, token):
                     "valid": True,
                     "email": user.email,
                     "org_name": org_name,
+                    "requires_password": not user.is_active,
+                    "requires_login": user.is_active and not recipient_authenticated,
                 },
                 status=status.HTTP_200_OK,
             )
@@ -765,42 +865,32 @@ def accept_invitation_mail(request, uidb64, token):
         # ------------------------------------------------------------------
         # POST — set password, activate, accept invite, return JWT tokens.
         # ------------------------------------------------------------------
-        new_password = request.validated_data.get("new_password")
-        repeat_password = request.validated_data.get("repeat_password")
-
-        if not new_password or not repeat_password:
-            return _gm.bad_request("Both password fields are required.")
-
-        if new_password != repeat_password:
-            return _gm.bad_request("Passwords do not match.")
-
-        try:
-            validate_password(new_password)
-        except ValidationError as e:
-            return _gm.bad_request("\n".join(e.messages))
-
-        user.password = make_password(new_password)
-        user.is_active = True
-        user.save()  # this consumes the token
-
-        # Accept the invite — activates OrganizationMembership and
-        # WorkspaceMembership records created during dual-write.
-        from accounts.models.organization_invite import InviteStatus, OrganizationInvite
-
-        invite = OrganizationInvite.objects.filter(
-            target_email__iexact=user.email,
-            organization=org,
-            status=InviteStatus.PENDING,
-        ).first()
-        if invite:
-            try:
-                invite.accept(user)
-            except ValueError:
-                invite.status = InviteStatus.EXPIRED
-                invite.save(update_fields=["status"])
-                _activate_memberships(user)
+        if user.is_active:
+            # A formerly inactive account may have accepted a different invite.
+            # Invitation links must not bypass an active account's login/2FA.
+            if not recipient_authenticated:
+                return _gm.custom_error_response(
+                    status.HTTP_403_FORBIDDEN,
+                    "Sign in as the invited recipient to continue.",
+                    code="invitation_login_required",
+                )
         else:
-            _activate_memberships(user)
+            new_password = request.validated_data.get("new_password")
+            repeat_password = request.validated_data.get("repeat_password")
+            if not new_password or not repeat_password:
+                return _gm.bad_request("Both password fields are required.")
+            if new_password != repeat_password:
+                return _gm.bad_request("Passwords do not match.")
+            try:
+                validate_password(new_password)
+            except ValidationError as e:
+                return _gm.bad_request("\n".join(e.messages))
+
+        invite.accept(user)
+        if not user.is_active:
+            user.password = make_password(new_password)
+            user.is_active = True
+            user.save(update_fields=["password", "is_active"])
 
         # Set selected org so the auth layer picks it up on first request.
         user.config["selected_organization_id"] = str(org.id)
@@ -836,10 +926,12 @@ def accept_invitation_mail(request, uidb64, token):
         access_encrypted = generate_encrypted_message(
             {"user_id": str(user.id), "id": str(access_obj.id)}
         )
-        cache.set(
-            f"access_token_{access_obj.id}",
-            {"token": access_encrypted, "user": user},
+        cache_access_token(
+            access_obj.id,
+            access_encrypted,
+            user,
             timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
+            cache_backend=cache,
         )
 
         # Determine if user has completed onboarding (role questionnaire).
@@ -856,18 +948,6 @@ def accept_invitation_mail(request, uidb64, token):
                 "is_first_login": not onboarding_completed,
             },
             status=status.HTTP_200_OK,
-        )
-
-    except (binascii.Error, TypeError, UnicodeDecodeError, ValueError, ValidationError):
-        return _gm.bad_request("Invitation link is invalid or has expired.")
-    except User.DoesNotExist:
-        return _gm.bad_request(
-            "An Error Occured! Please ask your Administrator to Resend Invitation Link"
-        )
-    except Exception:
-        logger.exception("Error processing invitation acceptance")
-        return _gm.internal_server_error_response(
-            "An error occurred while processing the invitation."
         )
 
 
@@ -903,6 +983,11 @@ def resend_invitation_emails(request):
             user = User.objects.select_related("organization").get(
                 pk=user_id, organization=organization
             )
+            # A member removed from the organization answers as an unknown id,
+            # before any token or email is made; a pending invitation still
+            # counts.
+            if not counts_as_member(user, organization):
+                raise User.DoesNotExist
 
             if user:
                 logger.info(f"Resending invitation email to {user.email}")
@@ -913,7 +998,9 @@ def resend_invitation_emails(request):
                 refresh_pending_invite_expiration(organization, user.email)
 
                 # Generate a token
-                token = default_token_generator.make_token(user)
+                token = make_invitation_token(
+                    user, pending_invitation(user, organization)
+                )
 
                 # Generate uidb64
                 uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
@@ -988,8 +1075,13 @@ def delete_users(request):
 
     for user_id in user_ids:
         try:
-            # Only allow deleting users from the same organization
+            # Only allow deleting users from the same organization: the
+            # legacy organization field alone is not membership, so a member
+            # removed from it answers like an id that does not exist; a
+            # pending invitation still counts.
             user = User.objects.get(pk=user_id, organization=organization)
+            if not counts_as_member(user, organization):
+                raise User.DoesNotExist
 
             # Level check: actor must be strictly above target's level
             # (Owners can delete other Owners)
@@ -1010,10 +1102,7 @@ def delete_users(request):
                 )
                 continue
 
-            # Clear Redis cache for immediate logout before deleting user
-            clear_user_redis_cache(user_id)
-
-            user.delete()
+            offboard_organization_member(user, organization, actor=request.user)
             responses.append(
                 {"user_id": user_id, "message": "User deleted successfully."}
             )
@@ -1049,12 +1138,13 @@ def update_user(request):
     _gm = GeneralMethods()
     data = request.validated_data
 
+    organization = getattr(request, "organization", None) or request.user.organization
     try:
-        user = User.objects.get(
-            pk=data["user_id"],
-            organization=getattr(request, "organization", None)
-            or request.user.organization,
-        )
+        user = User.objects.get(pk=data["user_id"], organization=organization)
+        # The legacy organization field alone is not membership: a member
+        # removed from the organization answers as an unknown id.
+        if not counts_as_member(user, organization):
+            raise User.DoesNotExist
     except User.DoesNotExist:
         return _gm.bad_request("User does not exist.")
 
@@ -1125,6 +1215,7 @@ def update_user(request):
         **ACCOUNTS_ERROR_RESPONSES,
     },
 )
+@allows_no_workspace("POST")
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 @validated_api_request(

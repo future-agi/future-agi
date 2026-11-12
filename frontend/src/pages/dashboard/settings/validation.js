@@ -12,8 +12,8 @@ export const CreateUserFormValidation = z.object({
     })
     .email("Invalid email address"),
   organization_role: z.string({
-    invalid_type_error: "Organization Role is required.",
-    required_error: "Organization Role is required",
+    invalid_type_error: "Organization role is required.",
+    required_error: "Organization role is required",
   }),
 });
 

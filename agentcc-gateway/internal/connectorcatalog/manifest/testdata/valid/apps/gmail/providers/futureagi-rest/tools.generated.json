@@ -1,0 +1,91 @@
+{
+  "schema": "connector-manifest/v1#tools-generated",
+  "spec": {
+    "url": "https://gmail.googleapis.com/$discovery/rest?version=v1",
+    "sha256": "a0408c1f8851c250ba41a627d77ea05d6df63d740ffc8ac4cbd90b57846ead1a"
+  },
+  "tools": [
+    {
+      "name": "search_threads",
+      "title": "Search threads",
+      "description": "Search the user's mail threads with a Gmail query, such as from:alice is:unread. Returns thread ids and snippets.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+      "operation": { "method": "GET", "path": "/gmail/v1/users/me/threads" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string",
+            "description": "A Gmail search query, such as from:alice is:unread."
+          },
+          "maxResults": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20
+          }
+        },
+        "required": ["q"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "threads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "snippet": { "type": ["string", "null"] }
+              }
+            }
+          }
+        }
+      },
+      "response": {
+        "unwrap": "threads",
+        "fields": ["id", "snippet"],
+        "maxBytes": 25000
+      }
+    },
+    {
+      "name": "send_email",
+      "title": "Send email",
+      "description": "Send an email from the user's mailbox. to is a comma-separated list of addresses, such as alice@example.com.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/gmail.compose"],
+      "operation": {
+        "method": "POST",
+        "path": "/gmail/v1/users/me/messages/send"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "to": { "type": "string" },
+          "subject": { "type": "string" },
+          "body": { "type": "string" },
+          "threadId": {
+            "type": "string",
+            "description": "Reply in this thread."
+          }
+        },
+        "required": ["to", "subject", "body"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

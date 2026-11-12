@@ -1,0 +1,49 @@
+# Parallel's Search MCP with a Parallel API key as the bearer, on the
+# /mcp-oauth endpoint. Parallel's /mcp endpoint also takes a bearer key, but
+# it answers anonymous requests on the free tier, so a request that lost its
+# key would still run, unattributed and outside the org's Parallel settings.
+# /mcp-oauth refuses anonymous requests (401): Parallel's "enforced
+# authentication" endpoint.
+schema: "connector-manifest/v1#provider"
+app: parallel-search
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://search.parallel.ai/mcp-oauth
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+      help: "A Parallel API key, sent as a bearer token. Every request is attributed to your Parallel account; there is no anonymous fallback."
+      helpUrl: https://docs.parallel.ai/integrations/mcp/search-mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.parallel.ai/integrations/mcp/search-mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://docs.parallel.ai/integrations/mcp/search-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.parallel.ai/integrations/mcp/search-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://docs.parallel.ai/integrations/mcp/search-mcp
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from opentelemetry.sdk.trace import TracerProvider
 
 
-def _str_to_bool(val: Optional[str]) -> bool:
+def _str_to_bool(val: str | None) -> bool:
     """Convert string to boolean."""
     if val is None:
         return True
@@ -30,7 +30,7 @@ _initialized = False
 _tracer_provider: Optional["TracerProvider"] = None
 
 
-def get_service_name(component: Optional[str] = None) -> str:
+def get_service_name(component: str | None = None) -> str:
     """
     Get the service name for telemetry.
 
@@ -114,35 +114,41 @@ def _create_exporter():
 
     Supports both gRPC and HTTP protocols.
     """
+    from .checkout_output import span_exporter
+
     protocol = get_otlp_protocol()
     endpoint = get_otlp_endpoint()
-
     if protocol == "http/protobuf":
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-            OTLPSpanExporter,
-        )
-
-        # HTTP endpoint typically uses /v1/traces path
         if not endpoint.endswith("/v1/traces"):
             endpoint = f"{endpoint.rstrip('/')}/v1/traces"
+        return span_exporter(protocol, endpoint=endpoint)
+    return span_exporter(protocol, endpoint=endpoint, insecure=True)
 
-        return OTLPSpanExporter(
-            endpoint=endpoint,
-        )
-    else:  # grpc (default)
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
-            OTLPSpanExporter,
-        )
 
-        return OTLPSpanExporter(
-            endpoint=endpoint,
-            insecure=True,  # Use insecure for internal cluster communication
+def build_span_processor(exporter, use_batch_processor: bool = True):
+    """The exporting processor, behind the checkout redaction boundary.
+
+    Every span is redacted before the batch queue or the exporter sees it.
+    """
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
+
+    from .redaction import CheckoutRedactingSpanProcessor
+
+    if use_batch_processor:
+        processor = BatchSpanProcessor(
+            exporter,
+            max_queue_size=2048,
+            max_export_batch_size=512,
+            schedule_delay_millis=5000,
         )
+    else:
+        processor = SimpleSpanProcessor(exporter)
+    return CheckoutRedactingSpanProcessor(processor)
 
 
 def init_telemetry(
-    service_name: Optional[str] = None,
-    component: Optional[str] = None,
+    service_name: str | None = None,
+    component: str | None = None,
     *,
     use_batch_processor: bool = True,
 ) -> Optional["TracerProvider"]:
@@ -196,7 +202,6 @@ def init_telemetry(
     from opentelemetry.propagators.composite import CompositePropagator
     from opentelemetry.sdk.resources import SERVICE_NAME, SERVICE_VERSION, Resource
     from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
     from opentelemetry.trace.propagation.tracecontext import (
         TraceContextTextMapPropagator,
     )
@@ -228,17 +233,9 @@ def init_telemetry(
 
     try:
         exporter = _create_exporter()
-        if use_batch_processor:
-            processor = BatchSpanProcessor(
-                exporter,
-                max_queue_size=2048,
-                max_export_batch_size=512,
-                schedule_delay_millis=5000,
-            )
-        else:
-            processor = SimpleSpanProcessor(exporter)
-
-        _tracer_provider.add_span_processor(processor)
+        _tracer_provider.add_span_processor(
+            build_span_processor(exporter, use_batch_processor)
+        )
         logger.info(
             "otel_exporter_configured",
             endpoint=get_otlp_endpoint(),

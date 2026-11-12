@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import {
@@ -16,6 +17,7 @@ import Iconify from "src/components/iconify";
 import { useQueueItemsForSource } from "src/api/annotation-queues/annotation-queues";
 import { useBulkCreateScores } from "src/api/scores/scores";
 import LabelInput from "src/sections/annotations/queues/annotate/label-input";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const SOURCE_TYPE_LABELS = {
   trace: "Trace",
@@ -35,6 +37,19 @@ const SHORTCUT_ROWS = [
   { keys: ["?"], desc: "Toggle this help" },
 ];
 
+// The app's axios rejects with { ...body, statusCode, transportCode }.
+const TIMEOUT_CODES = new Set(["ECONNABORTED", "ETIMEDOUT"]);
+const queueLoadErrorDetail = (error) => {
+  const code = error?.transportCode || error?.code;
+  if (TIMEOUT_CODES.has(code) || /timeout/i.test(error?.message || "")) {
+    return "The server took too long to answer. Try again in a moment.";
+  }
+  if (error?.statusCode >= 500) {
+    return "The server ran into a problem. Try again in a moment.";
+  }
+  return "Something went wrong. Try again.";
+};
+
 const Kbd = ({ children }) => (
   <Box
     component="kbd"
@@ -45,16 +60,14 @@ const Kbd = ({ children }) => (
       minWidth: 20,
       height: 20,
       px: 0.5,
-      borderRadius: 0.5,
-      bgcolor: (theme) =>
-        theme.palette.mode === "dark" ? "action.hover" : "action.disabled",
+      borderRadius: "4px",
+      bgcolor: "action.hover",
       border: "1px solid",
       borderColor: "divider",
-      fontSize: 11,
+      fontSize: 12,
       fontWeight: 600,
       fontFamily: "inherit",
-      color: (theme) =>
-        theme.palette.mode === "dark" ? "primary.contrastText" : "text.primary",
+      color: "text.primary",
       lineHeight: 1,
     }}
   >
@@ -90,7 +103,6 @@ function ShortcutsHelp({ onClose }) {
           borderRadius: 2,
           p: 2.5,
           width: 280,
-          boxShadow: 8,
         }}
       >
         <Box
@@ -104,15 +116,15 @@ function ShortcutsHelp({ onClose }) {
           <Stack direction="row" spacing={0.75} alignItems="center">
             <Iconify
               icon="solar:keyboard-bold-duotone"
-              width={18}
+              width={20}
               color="primary.main"
             />
-            <Typography variant="subtitle2" fontWeight={700}>
+            <Typography variant="subtitle2" fontWeight={600}>
               Keyboard Shortcuts
             </Typography>
           </Stack>
-          <IconButton size="small" onClick={onClose} sx={{ p: 0.25 }}>
-            <Iconify icon="mingcute:close-line" width={16} />
+          <IconButton size="small" onClick={onClose}>
+            <Iconify icon="solar:close-linear" width={16} />
           </IconButton>
         </Box>
         <Stack spacing={1}>
@@ -166,6 +178,8 @@ export default function AnnotationSidebarContent({
   const {
     data: queueItems,
     isLoading,
+    isError,
+    error,
     isFetching,
     refetch,
   } = useQueueItemsForSource(validSources, { projectId });
@@ -184,7 +198,24 @@ export default function AnnotationSidebarContent({
     if (hideEmpty) return null;
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-        <CircularProgress size={24} />
+        <ContentSkeleton variant="panel" />
+      </Box>
+    );
+  }
+
+  if (isError && !queueItems) {
+    if (hideEmpty) return null;
+    return (
+      <Box sx={{ p: 3, textAlign: "center" }}>
+        <Typography sx={{ typography: "m3", fontWeight: 600, mb: 0.5 }}>
+          Couldn&apos;t load annotation queues
+        </Typography>
+        <Typography sx={{ typography: "s1", color: "text.secondary", mb: 2 }}>
+          {queueLoadErrorDetail(error)}
+        </Typography>
+        <Button size="small" variant="outlined" onClick={() => refetch()}>
+          Retry
+        </Button>
       </Box>
     );
   }
@@ -245,7 +276,7 @@ export default function AnnotationSidebarContent({
                 disabled={isFetching}
                 startIcon={
                   <Iconify
-                    icon="mingcute:refresh-2-line"
+                    icon="solar:refresh-linear"
                     width={16}
                     sx={{
                       animation: isFetching
@@ -258,7 +289,7 @@ export default function AnnotationSidebarContent({
                     }}
                   />
                 }
-                sx={{ fontSize: 12, px: 1, py: 0.5, minWidth: 0 }}
+                sx={{ minWidth: 0 }}
               >
                 Refresh
               </Button>
@@ -282,7 +313,7 @@ export default function AnnotationSidebarContent({
                 <Iconify icon="solar:keyboard-bold-duotone" width={20} />
               </IconButton>
               <IconButton size="small" onClick={onClose}>
-                <Iconify icon="mingcute:close-line" />
+                <Iconify icon="solar:close-linear" />
               </IconButton>
             </Stack>
           </Box>
@@ -294,46 +325,24 @@ export default function AnnotationSidebarContent({
       {/* Content */}
       <Box sx={{ flex: 1, overflowY: "auto", p: showHeader ? 2.5 : 0 }}>
         {!hasQueues ? (
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              py: 8,
-              gap: 1,
-            }}
-          >
-            <Iconify
-              icon="solar:document-text-linear"
-              width={40}
-              color="text.disabled"
-            />
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              textAlign="center"
-            >
-              No labels assigned to you for this item.
-            </Typography>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              textAlign="center"
-            >
-              This item is not part of any annotation queue assigned to you.
-            </Typography>
-            {onAddLabel && (
-              <Button
-                size="small"
-                startIcon={<Iconify icon="mingcute:add-line" width={16} />}
-                onClick={onAddLabel}
-                sx={{ mt: 1 }}
-              >
-                Add Label
-              </Button>
-            )}
-          </Box>
+          <EmptyState
+            icon="solar:document-text-linear"
+            title="No labels assigned yet"
+            description="This item is not part of any annotation queue assigned to you."
+            action={
+              onAddLabel ? (
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="small"
+                  onClick={onAddLabel}
+                >
+                  Add label
+                </Button>
+              ) : undefined
+            }
+            sx={{ pt: 4, pb: 4 }}
+          />
         ) : (
           <Stack spacing={3}>
             {queueItems.map((queueEntry) => (
@@ -351,7 +360,7 @@ export default function AnnotationSidebarContent({
             {onAddLabel && (
               <Button
                 size="small"
-                startIcon={<Iconify icon="mingcute:add-line" width={16} />}
+                startIcon={<Iconify icon="solar:add-linear" width={16} />}
                 onClick={onAddLabel}
                 sx={{ alignSelf: "flex-start" }}
               >
@@ -403,6 +412,8 @@ function QueueAnnotationSection({
   } = queueEntry;
 
   const [values, setValues] = useState({});
+  const valuesRef = useRef({});
+  const textFlushRefs = useRef({});
   const [notes, setNotes] = useState("");
   const [notesTouched, setNotesTouched] = useState(false);
   const [labelNotes, setLabelNotes] = useState({});
@@ -431,7 +442,8 @@ function QueueAnnotationSection({
   useEffect(() => {
     hasInitializedScoresRef.current = false;
     hasInitializedNotesRef.current = false;
-    setValues({});
+    valuesRef.current = {};
+    setValues(valuesRef.current);
     setLabelNotes({});
     setNotes("");
     setNotesTouched(false);
@@ -446,6 +458,7 @@ function QueueAnnotationSection({
       Object.keys(existingScores).length > 0
     ) {
       hasInitializedScoresRef.current = true;
+      valuesRef.current = existingScores;
       setValues(existingScores);
       if (existingLabelNotes && Object.keys(existingLabelNotes).length > 0) {
         setLabelNotes(existingLabelNotes);
@@ -460,7 +473,9 @@ function QueueAnnotationSection({
   }, [existingScores, existingNotes, existingLabelNotes]);
 
   const handleChange = useCallback((labelId, value) => {
-    setValues((prev) => ({ ...prev, [labelId]: value }));
+    // Flush can publish several labels before React processes state updates.
+    valuesRef.current = { ...valuesRef.current, [labelId]: value };
+    setValues(valuesRef.current);
   }, []);
 
   const hasValues = useMemo(
@@ -472,7 +487,8 @@ function QueueAnnotationSection({
   );
 
   const handleSubmit = useCallback(() => {
-    const scores = Object.entries(values)
+    Object.values(textFlushRefs.current).forEach((input) => input?.flush?.());
+    const scores = Object.entries(valuesRef.current)
       .filter(([_, v]) => v !== null && v !== undefined)
       .map(([labelId, value]) => ({
         label_id: labelId,
@@ -508,7 +524,6 @@ function QueueAnnotationSection({
       },
     );
   }, [
-    values,
     notes,
     notesTouched,
     existingNotes,
@@ -641,33 +656,22 @@ function QueueAnnotationSection({
           mb: 2,
           px: 1,
           py: 0.75,
-          borderRadius: 0.75,
+          borderRadius: "4px",
           bgcolor: "background.neutral",
         }}
       >
         <Iconify
           icon="solar:clipboard-list-linear"
-          width={18}
+          width={20}
           color="primary.main"
         />
         <Typography variant="subtitle2" color="text.primary" sx={{ flex: 1 }}>
           {queue.name}
         </Typography>
         {isCompleted && (
-          <Chip
-            label="Submitted"
-            size="small"
-            color="success"
-            variant="soft"
-            sx={{ height: 20, fontSize: 10 }}
-          />
+          <Chip label="Submitted" size="small" color="success" variant="soft" />
         )}
-        <Chip
-          label={sourceLabel}
-          size="small"
-          variant="outlined"
-          sx={{ height: 20, fontSize: 10 }}
-        />
+        <Chip label={sourceLabel} size="small" variant="outlined" />
       </Box>
 
       {queue.instructions && (
@@ -698,6 +702,14 @@ function QueueAnnotationSection({
               }}
               value={values[label.id] || null}
               onChange={(val) => handleChange(label.id, val)}
+              textFlushRef={
+                label.type === "text"
+                  ? (input) => {
+                      if (input) textFlushRefs.current[label.id] = input;
+                      else delete textFlushRefs.current[label.id];
+                    }
+                  : undefined
+              }
               index={i}
               focused={focusedIndex === i}
               labelNotes={labelNotes[label.id] || ""}
@@ -735,25 +747,21 @@ function QueueAnnotationSection({
                 position: "absolute",
                 top: 4,
                 right: 4,
-                p: 0.25,
                 color: "text.disabled",
                 "&:hover": { color: "text.secondary" },
               }}
             >
-              <Iconify icon="mingcute:close-line" width={14} />
+              <Iconify icon="solar:close-linear" width={14} />
             </IconButton>
           </Box>
         ) : (
           <Button
             size="small"
-            startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+            startIcon={<Iconify icon="solar:add-linear" width={14} />}
             onClick={() => setShowNotes(true)}
             sx={{
               alignSelf: "flex-start",
               color: "text.secondary",
-              fontSize: 12,
-              fontWeight: 500,
-              px: 0.5,
               "&:hover": { color: "text.primary", bgcolor: "transparent" },
             }}
           >
@@ -781,7 +789,7 @@ function QueueAnnotationSection({
               alignItems: "center",
               gap: 0.25,
               opacity: 0.7,
-              fontSize: 10,
+              fontSize: 12,
             }}
           >
             <Kbd>{"\u2318"}</Kbd>

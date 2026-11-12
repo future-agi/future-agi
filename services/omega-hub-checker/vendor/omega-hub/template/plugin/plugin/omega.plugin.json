@@ -1,0 +1,15 @@
+{
+  "manifest": "omega-plugin/v1",
+  "id": "community.greeter",
+  "name": "Greeter",
+  "version": "1.0.0",
+  "description": "Greets someone by name.",
+  "publisher": "Community",
+  "engines": { "omega": ">=0.0.1" },
+  "config": [],
+  "contributes": {
+    "mcpServers": [
+      { "name": "greeter", "command": "node", "args": ["${pluginRoot}/server.mjs"], "tools": ["greet"] }
+    ]
+  }
+}

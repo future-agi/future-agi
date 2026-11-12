@@ -1,5 +1,6 @@
-import { Box, Typography } from "@mui/material";
-import React, { useState } from "react";
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
+import { Box, Button, Typography } from "@mui/material";
+import React, { useId, useState } from "react";
 import NewExperiment from "src/sections/project/NewProject/NewExperiment";
 import HeaderContent from "./HeaderContent";
 import VideoContent from "./VideoContent";
@@ -7,8 +8,20 @@ import GetStartedDemoVideo from "../../GetStartedDemoVideo";
 import PropTypes from "prop-types";
 import { runFirstExperimentVideoContent } from "../../constant";
 import { handleOnDocsClicked } from "src/utils/Mixpanel";
+import ModelRoutes from "../../ModelRoutes";
+
+// How an experiment is run, in the words the step's button uses
+// (BottomAction: "Go to Datasets" / "Go to Experiments"); the bar below adds
+// no second copy of these.
+const RUN_EXPERIMENT_STEPS = [
+  "Open a dataset in Datasets, or create one.",
+  "Open its Experiments tab.",
+  "Click New experiment, pick what to run on the dataset, and compare the results.",
+];
 
 const RunFirstExperiment = ({ setCurrentLabel }) => {
+  const stepsHeadingId = useId();
+  const sdkHeadingId = useId();
   const {
     title,
     description,
@@ -29,18 +42,21 @@ const RunFirstExperiment = ({ setCurrentLabel }) => {
       <Box sx={{ display: "flex", justifyContent: "space-between" }}>
         <HeaderContent
           title="Run your first experiment"
-          description="This tour will guide you through the key features and functionalities"
+          description="Run an experiment on a dataset to compare prompts and models side by side and keep the one that works best."
         />
-        <Typography
-          variant="s1"
-          fontWeight={"fontWeightSemiBold"}
-          color="text.disabled"
-          sx={{ cursor: "pointer" }}
+        <Button
+          variant="text"
+          size="small"
+          sx={{ color: "text.secondary" }}
           onClick={() => setCurrentLabel("SetupObsabilityInApplication")}
         >
           Skip
-        </Typography>
+        </Button>
       </Box>
+      <ModelRoutes
+        sentence="Experiments call a model, and your organization has no provider key of its own."
+        onAddProviderKey={() => setCurrentLabel("addKeys")}
+      />
       <Box sx={{ height: "330px", overflowY: "auto" }}>
         <VideoContent
           title={title}
@@ -54,18 +70,69 @@ const RunFirstExperiment = ({ setCurrentLabel }) => {
             handleOnDocsClicked("get_started_run_experiment")
           }
         />
-        <NewExperiment />
+        <Typography
+          id={stepsHeadingId}
+          variant="s1"
+          fontWeight={"fontWeightMedium"}
+          color="text.primary"
+        >
+          Run an experiment
+        </Typography>
+        <Box
+          component="ol"
+          aria-labelledby={stepsHeadingId}
+          sx={{
+            m: 0,
+            mt: "8px",
+            pl: "24px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "8px",
+          }}
+        >
+          {RUN_EXPERIMENT_STEPS.map((step) => (
+            <Typography
+              key={step}
+              component="li"
+              variant="s2"
+              fontWeight={"fontWeightRegular"}
+              color="text.secondary"
+            >
+              {step}
+            </Typography>
+          ))}
+        </Box>
+        <Box
+          component="section"
+          aria-labelledby={sdkHeadingId}
+          sx={{
+            mt: "24px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "12px",
+          }}
+        >
+          <Typography
+            id={sdkHeadingId}
+            variant="s1"
+            fontWeight={"fontWeightMedium"}
+            color="text.primary"
+          >
+            Or run one from your code
+          </Typography>
+          <NewExperiment />
+        </Box>
       </Box>
       <GetStartedDemoVideo
         showDemoModal={showDemoModal}
         handleClose={handleClose}
-        headingTitle={`Demo`}
+        headingTitle={`Video`}
         viewDockAction={() => {
           window.open(viewDocLink);
           handleOnDocsClicked("get_started_run_experiment_demo_modal");
         }}
         viewDocTitle="View docs"
-        buttonTitle="Start experimenting"
+        buttonTitle="Close"
         buttonAction={handleClose}
         videoComponent={
           <div
@@ -76,7 +143,7 @@ const RunFirstExperiment = ({ setCurrentLabel }) => {
               width: "100%",
             }}
           >
-            <iframe
+            <ExternalContentFrame
               src={iframeVideo}
               title="Prototype: Future AGI"
               frameBorder="0"

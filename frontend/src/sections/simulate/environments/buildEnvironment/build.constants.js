@@ -1,4 +1,8 @@
-import { WORKSPACE_TABS } from "../workspace/workspace.constants";
+import {
+  PRIVATE_GITHUB_ENVIRONMENT_MESSAGE,
+  PRIVATE_GITHUB_UNAVAILABLE_CODE,
+  WORKSPACE_TABS,
+} from "../workspace/workspace.constants";
 
 // Build-stage copy for the deriving hero, the building tab rail and the builder
 // console. Strings ported verbatim from the designer's DerivedPanels.jsx
@@ -24,16 +28,30 @@ export const DERIVING_LABEL = {
   readingSource: "reading source…",
 };
 
+// The way out of a failed or canceled build, under its pipeline: one line on
+// what to do next and the action that does it. An infrastructure failure
+// (failure.retryable) was not the agent's fault, so it says so.
+export const ENDED_BUILD_COPY = {
+  startNew: "Start a new build",
+  canceled: "Build canceled. Start a new build to try again.",
+  retryable:
+    "This failure wasn't caused by your agent. Start a new build to try again.",
+  failed: "Check the failed step above, then start a new build.",
+};
+
 // The tab rail on the building pane: the workspace tabs, rendered pointer-dead.
 // Runs, Improvements and Versions are left out — an environment that is still
 // building (or failed to build) has no runs, no fixes and no versions yet.
 const NOT_WHILE_BUILDING = new Set(["runs", "improvements", "versions"]);
-export const BUILDING_TABS = WORKSPACE_TABS.filter((t) => !NOT_WHILE_BUILDING.has(t.id));
+export const BUILDING_TABS = WORKSPACE_TABS.filter(
+  (t) => !NOT_WHILE_BUILDING.has(t.id),
+);
 
 export const CONSOLE_COPY = {
   working: "Working on your last message…",
   idle: "Ask, correct, or steer what it builds",
-  empty: "Answer the questions below to kick things off. You can also just start typing.",
+  empty:
+    "Answer the questions below to kick things off. You can also just start typing.",
   placeholder: "Reply to the builder…",
   attach: "Attach a dataset, CSV or file",
   attachAccept: ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf",
@@ -117,7 +135,7 @@ export const NUDGE_COPY = {
   errors: {
     nudge_closed: "This update was already answered or closed.",
     nudge_not_found: "This update no longer exists.",
-    nudges_disabled: "Rebuild isn't available yet.",
+    nudges_disabled: "Rebuild is turned off.",
     rebuild_running: "An update is running; try again when it finishes",
     environment_building: "The environment is still being built",
   },
@@ -151,6 +169,7 @@ export const NUDGE_COPY = {
       "The environment changed while the update ran, so it wasn't saved.",
     scenario_key_taken:
       "The update added a scenario whose name is already taken.",
+    [PRIVATE_GITHUB_UNAVAILABLE_CODE]: PRIVATE_GITHUB_ENVIRONMENT_MESSAGE,
   },
   failed: "The update failed.",
   nothingChanged: "Nothing changed; your unsaved edits are as they were.",

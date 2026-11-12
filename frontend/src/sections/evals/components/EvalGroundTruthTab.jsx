@@ -1,7 +1,9 @@
 /* eslint-disable react/prop-types */
 import {
+  Alert,
   Box,
   Button,
+  ButtonBase,
   Chip,
   CircularProgress,
   Divider,
@@ -19,26 +21,21 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { useSnackbar } from "notistack";
 import { AgGridReact } from "ag-grid-react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import Iconify from "src/components/iconify";
+import RunStatusBadge from "src/components/status-badge/StatusBadge";
 import { apiPath } from "src/api/contracts/api-surface";
 import axios from "src/utils/axios";
 
 import {
   useDevelopDatasetList,
   useGetDatasetColumns,
-  useGetDatasetDetail,
 } from "src/api/develop/develop-detail";
+import ConfirmDialog from "src/sections/common/ux/ConfirmDialog";
 import { useEvalDetail } from "../hooks/useEvalDetail";
 import {
   useDeleteGroundTruth,
@@ -52,36 +49,54 @@ import {
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import {
   createEmptyGroundTruthDatasetRead,
   readNextGroundTruthDatasetPage,
 } from "./ground_truth_dataset_pagination";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import ContentSkeleton from "src/components/content-skeleton";
+import DataTablePagination from "src/components/data-table/DataTablePagination";
+import { JEV_GROUND_TRUTH_MESSAGE } from "../utils/jevMapping";
+
+// The data endpoint returns at most 100 rows per page, so the preview pages
+// on the server instead of loading every row into the grid.
+const PREVIEW_PAGE_SIZE_OPTIONS = [25, 50, 100];
+const PREVIEW_DEFAULT_PAGE_SIZE = 50;
 
 // ═══════════════════════════════════════════════════════════════
 // Status Badge
 // ═══════════════════════════════════════════════════════════════
 const StatusBadge = ({ status }) => {
   const map = {
-    pending: { label: "Pending", color: "default", icon: "mdi:clock-outline" },
+    pending: {
+      label: "Pending",
+      role: "neutral",
+      icon: "solar:clock-circle-linear",
+    },
     processing: {
       label: "Embedding...",
-      color: "warning",
+      role: "info",
       icon: "mdi:loading",
     },
     completed: {
       label: "Ready",
-      color: "success",
-      icon: "mdi:check-circle-outline",
+      role: "success",
+      icon: "solar:check-circle-linear",
     },
     failed: {
       label: "Failed",
-      color: "error",
-      icon: "mdi:alert-circle-outline",
+      role: "danger",
+      icon: "solar:danger-circle-linear",
     },
   };
   const info = map[status] || map.pending;
   return (
-    <Chip
+    <RunStatusBadge
+      status={status}
+      label={info.label}
+      role={info.role}
       icon={
         <Iconify
           icon={info.icon}
@@ -98,19 +113,6 @@ const StatusBadge = ({ status }) => {
           }
         />
       }
-      label={info.label}
-      size="small"
-      color={info.color}
-      variant="outlined"
-      sx={{
-        fontSize: "11px",
-        height: 22,
-        ...(status === "processing" && {
-          borderColor: "warning.dark",
-          color: "warning.dark",
-          "& .MuiChip-icon": { color: "warning.dark" },
-        }),
-      }}
     />
   );
 };
@@ -137,6 +139,8 @@ const normalizeMapping = (m = {}) =>
       .filter(([, v]) => v !== "" && v != null)
       .sort(([a], [b]) => a.localeCompare(b)),
   );
+
+const formatRowCount = (value) => Number(value).toLocaleString();
 
 const shallowEqual = (a, b) => {
   const aKeys = Object.keys(a);
@@ -202,6 +206,38 @@ const parseCsvText = (text) => {
   return { columns, rows };
 };
 
+// Explain a drop react-dropzone refused. String codes, not its ErrorCode
+// export, so module mocks that only stub useDropzone keep working.
+const describeRejectedDrop = (fileRejections) => {
+  const errorsOf = (rejection) => rejection?.errors || [];
+  const hasCode = (code) =>
+    fileRejections.some((rejection) =>
+      errorsOf(rejection).some((error) => error.code === code),
+    );
+  if (hasCode("file-invalid-type")) {
+    return "Only .csv, .json, .xls or .xlsx files are supported.";
+  }
+  if (hasCode("file-too-large")) {
+    const tooLarge = fileRejections.find((rejection) =>
+      errorsOf(rejection).some((error) => error.code === "file-too-large"),
+    );
+    // Round up so a file just over the limit never reads as "50 MB".
+    const sizeMb = Math.ceil((tooLarge.file.size / (1024 * 1024)) * 10) / 10;
+    return `That file is ${sizeMb} MB. Ground truth files can be up to 50 MB.`;
+  }
+  if (hasCode("too-many-files")) return "Drop one file at a time.";
+  return "That file can't be used. Choose one .csv, .json, .xls or .xlsx file up to 50 MB.";
+};
+
+const invalidJsonMessage = (err) => {
+  const detail = String(err?.message || "")
+    .trim()
+    .replace(/\.$/, "");
+  return detail
+    ? `This file is not valid JSON: ${detail}. Fix the file and choose it again.`
+    : "This file is not valid JSON. Fix the file and choose it again.";
+};
+
 export const UploadDrawer = ({
   open,
   onClose,
@@ -218,17 +254,26 @@ export const UploadDrawer = ({
   const [name, setName] = useState("");
   const [variableMapping, setVariableMapping] = useState({});
   const [parsedColumns, setParsedColumns] = useState([]);
+  const [dropError, setDropError] = useState("");
+  const [jsonError, setJsonError] = useState("");
+  // The file whose preview read may still update state; a later drop,
+  // removal or reset makes an in-flight read stale.
+  const previewFile = useRef(null);
 
   // Dataset selection state
   const [datasetSearch, setDatasetSearch] = useState("");
   const [selectedDataset, setSelectedDataset] = useState(null);
-  const [loadingDatasetData, setLoadingDatasetData] = useState(false);
+  // null | "rows" | "saving". Row loading can be canceled; saving cannot.
+  const [datasetImportPhase, setDatasetImportPhase] = useState(null);
+  const loadingDatasetData = datasetImportPhase !== null;
+  const loadingDatasetRows = datasetImportPhase === "rows";
   const [datasetRead, setDatasetRead] = useState(() =>
     createEmptyGroundTruthDatasetRead(),
   );
   const [datasetReadError, setDatasetReadError] = useState("");
   const [datasetReadBlocked, setDatasetReadBlocked] = useState(false);
   const datasetReadGeneration = useRef(0);
+  const datasetRowsAbort = useRef(null);
 
   // Fetch datasets list
   const { data: datasets = [], isLoading: datasetsLoading } =
@@ -240,20 +285,40 @@ export const UploadDrawer = ({
     enabled: !!_selectedDatasetId,
   });
 
-  const reset = useCallback(() => {
+  // Invalidate any running page loop and cancel its in-flight request. The
+  // rows already loaded stay as an exact prefix that Import resumes from.
+  const stopDatasetRowLoading = useCallback(() => {
     datasetReadGeneration.current += 1;
+    datasetRowsAbort.current?.abort();
+    datasetRowsAbort.current = null;
+    setDatasetImportPhase(null);
+  }, []);
+
+  useEffect(() => {
+    const generation = datasetReadGeneration;
+    const rowsAbort = datasetRowsAbort;
+    return () => {
+      generation.current += 1;
+      rowsAbort.current?.abort();
+    };
+  }, []);
+
+  const reset = useCallback(() => {
+    stopDatasetRowLoading();
     setStep(0);
     setFile(null);
     setName("");
     setVariableMapping({});
     setParsedColumns([]);
+    setDropError("");
+    setJsonError("");
+    previewFile.current = null;
     setDatasetSearch("");
     setSelectedDataset(null);
-    setLoadingDatasetData(false);
     setDatasetRead(createEmptyGroundTruthDatasetRead());
     setDatasetReadError("");
     setDatasetReadBlocked(false);
-  }, []);
+  }, [stopDatasetRowLoading]);
 
   const handleClose = useCallback(() => {
     reset();
@@ -261,9 +326,18 @@ export const UploadDrawer = ({
   }, [reset, onClose]);
 
   // ── File upload flow ──
-  const onDrop = useCallback((accepted) => {
-    if (!accepted.length) return;
+  const onDrop = useCallback((accepted, fileRejections = []) => {
+    if (!accepted.length) {
+      if (fileRejections.length) {
+        setDropError(describeRejectedDrop(fileRejections));
+      }
+      return;
+    }
     const f = accepted[0];
+    previewFile.current = f;
+    setDropError("");
+    setJsonError("");
+    setParsedColumns([]);
     setFile(f);
     setName(f.name.replace(/\.(csv|xlsx?|json)$/i, ""));
     setStep(1);
@@ -281,24 +355,34 @@ export const UploadDrawer = ({
     } else if (f.name.endsWith(".json")) {
       const reader = new FileReader();
       reader.onload = (e) => {
+        if (previewFile.current !== f) return;
+        let parsed;
         try {
-          const parsed = JSON.parse(e.target.result);
+          parsed = JSON.parse(e.target.result);
+        } catch (err) {
+          setJsonError(invalidJsonMessage(err));
+          return;
+        }
+        try {
           const arr = Array.isArray(parsed) ? parsed : parsed.data || [parsed];
           if (arr.length > 0) setParsedColumns(Object.keys(arr[0]));
         } catch {
-          /* preview-only; non-JSON files just skip column detection */
+          /* preview-only; a shape without row objects skips column detection */
         }
       };
-      reader.readAsText(f.slice(0, 65536));
+      // Read the whole file: a prefix of valid JSON does not parse, so a
+      // partial read cannot tell a large file from a malformed one.
+      reader.readAsText(f);
     }
   }, []);
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: ACCEPTED_TYPES,
-    multiple: false,
-    maxSize: 50 * 1024 * 1024,
-  });
+  const { getRootProps, getInputProps, isDragActive, isDragReject } =
+    useDropzone({
+      onDrop,
+      accept: ACCEPTED_TYPES,
+      multiple: false,
+      maxSize: 50 * 1024 * 1024,
+    });
 
   const handleFileUpload = useCallback(async () => {
     if (!file || !name) return;
@@ -319,7 +403,15 @@ export const UploadDrawer = ({
           columns = parsed.columns;
           data = parsed.rows;
         } else {
-          const parsed = JSON.parse(text);
+          let parsed;
+          try {
+            parsed = JSON.parse(text);
+          } catch (parseErr) {
+            const message = invalidJsonMessage(parseErr);
+            setJsonError(message);
+            enqueueSnackbar(message, { variant: "error" });
+            return;
+          }
           const arr = Array.isArray(parsed) ? parsed : parsed.data || [parsed];
           columns = arr.length > 0 ? Object.keys(arr[0]) : [];
           data = arr;
@@ -339,9 +431,13 @@ export const UploadDrawer = ({
       enqueueSnackbar("Dataset uploaded successfully", { variant: "success" });
       handleClose();
     } catch (err) {
-      enqueueSnackbar(err?.response?.data?.message || "Upload failed", {
-        variant: "error",
-      });
+      // The axios interceptor rejects with the API error body ({ message,
+      // result, code, statusCode }), so there is no err.response here. The
+      // upload hook opts out of the global toast; this is the only one.
+      enqueueSnackbar(
+        getSafeActionErrorMessage(err, "Upload failed. Try again."),
+        { variant: "error" },
+      );
     }
   }, [file, name, variableMapping, upload, enqueueSnackbar, handleClose]);
 
@@ -354,7 +450,7 @@ export const UploadDrawer = ({
     setDatasetRead(createEmptyGroundTruthDatasetRead());
     setDatasetReadError("");
     setDatasetReadBlocked(false);
-    setLoadingDatasetData(false);
+    setDatasetImportPhase(null);
     setStep(3);
   }, []);
 
@@ -385,43 +481,147 @@ export const UploadDrawer = ({
     );
   }, [datasetRead.columns]);
 
-  const handleLoadDatasetRows = useCallback(async () => {
-    if (
-      !selectedDataset ||
-      loadingDatasetData ||
-      datasetRead.complete ||
-      datasetReadBlocked
-    )
+  // Uploads a completely loaded exact read. The page loop below passes its
+  // own final read, because component state is not re-rendered between the
+  // last page and this call.
+  const handleDatasetUpload = useCallback(
+    async (read) => {
+      setDatasetImportPhase("saving");
+      try {
+        if (!selectedDataset || !name || !read?.complete) return;
+        const tableRows = read.rows;
+
+        // Build the map from the exact paginated response rather than the
+        // independently cached column query. Every page is required to carry
+        // the same ordered column identity before it can be accumulated.
+        const colMap = {};
+        (read.columns || []).forEach((col) => {
+          const colId = String(col.id || col.column_id);
+          colMap[colId] = col.name || col.label || colId;
+        });
+
+        const colNames = Object.values(colMap);
+        if (
+          colNames.some((columnName) => !String(columnName).trim()) ||
+          new Set(colNames).size !== colNames.length
+        ) {
+          enqueueSnackbar(
+            "Dataset column names must be non-empty and unique before importing.",
+            { variant: "error" },
+          );
+          return;
+        }
+
+        const invalidMappings = Object.entries(variableMapping).filter(
+          ([, columnName]) => columnName && !colNames.includes(columnName),
+        );
+        if (invalidMappings.length > 0) {
+          enqueueSnackbar(
+            "Variable mappings no longer match the exact dataset columns. Review them before importing.",
+            { variant: "error" },
+          );
+          return;
+        }
+        let flatRows = [];
+
+        // table rows are: {column_uuid: {cell_value, ...}, row_id: "..."}
+        if (tableRows.length > 0) {
+          flatRows = tableRows.map((row) => {
+            const obj = {};
+            Object.entries(row).forEach(([colId, cellData]) => {
+              if (colId === "row_id") return;
+              const colName = colMap[colId];
+              if (colName && cellData) {
+                obj[colName] =
+                  typeof cellData === "object"
+                    ? cellData.cell_value ?? cellData.value ?? ""
+                    : cellData;
+              }
+            });
+            return obj;
+          });
+        }
+
+        if (flatRows.length === 0) {
+          enqueueSnackbar("Dataset has no rows", { variant: "warning" });
+          return;
+        }
+
+        // Upload as JSON body
+        const payload = {
+          name,
+          file_name: `${selectedDataset.name}.json`,
+          columns: colNames,
+          data: flatRows,
+        };
+        if (Object.keys(variableMapping).length > 0) {
+          payload.variable_mapping = variableMapping;
+        }
+
+        await upload.mutateAsync(payload);
+        enqueueSnackbar(
+          `Imported ${flatRows.length} rows from "${selectedDataset.name}"`,
+          { variant: "success" },
+        );
+        handleClose();
+      } catch (err) {
+        enqueueSnackbar(
+          getSafeActionErrorMessage(err, "Import failed. Try again."),
+          { variant: "error" },
+        );
+      } finally {
+        setDatasetImportPhase(null);
+      }
+    },
+    [
+      selectedDataset,
+      name,
+      variableMapping,
+      enqueueSnackbar,
+      handleClose,
+      upload,
+    ],
+  );
+
+  // One Import click loads every remaining page in sequence, then imports.
+  // Each page is still one bounded request with the exact per-page checks.
+  // The first failure stops the loop and keeps the loaded rows, so the next
+  // click resumes from the first row that is not loaded yet.
+  const handleDatasetImport = useCallback(async () => {
+    if (!selectedDataset || !name || loadingDatasetData || datasetReadBlocked)
       return;
     const datasetId = selectedDataset.dataset_id || selectedDataset.id;
+    datasetReadGeneration.current += 1;
     const readGeneration = datasetReadGeneration.current;
-    setLoadingDatasetData(true);
+    const rowsAbort = new AbortController();
+    datasetRowsAbort.current = rowsAbort;
+    let read = datasetRead;
+    setDatasetImportPhase("rows");
     setDatasetReadError("");
-    setDatasetReadBlocked(false);
     try {
-      const nextRead = await readNextGroundTruthDatasetPage({
-        previous: datasetRead,
-        requestPage: ({ pageIndex, pageSize, cursor, signal, timeout }) =>
-          axios.get(
-            apiPath("/model-hub/develops/{dataset_id}/get-dataset-table/", {
-              dataset_id: datasetId,
-            }),
-            {
-              params: {
-                current_page_index: pageIndex,
-                page_size: pageSize,
-                exact_snapshot: true,
-                ...(cursor ? { cursor } : {}),
+      while (!read.complete) {
+        read = await readNextGroundTruthDatasetPage({
+          previous: read,
+          signal: rowsAbort.signal,
+          requestPage: ({ pageIndex, pageSize, cursor, signal, timeout }) =>
+            axios.get(
+              apiPath("/model-hub/develops/{dataset_id}/get-dataset-table/", {
+                dataset_id: datasetId,
+              }),
+              {
+                params: {
+                  current_page_index: pageIndex,
+                  page_size: pageSize,
+                  exact_snapshot: true,
+                  ...(cursor ? { cursor } : {}),
+                },
+                signal,
+                timeout,
               },
-              signal,
-              timeout,
-            },
-          ),
-      });
-      if (datasetReadGeneration.current !== readGeneration) return;
-      setDatasetRead(nextRead);
-      if (nextRead.complete && nextRead.totalRows === 0) {
-        enqueueSnackbar("Dataset has no rows", { variant: "warning" });
+            ),
+        });
+        if (datasetReadGeneration.current !== readGeneration) return;
+        setDatasetRead(read);
       }
     } catch (err) {
       if (datasetReadGeneration.current !== readGeneration) return;
@@ -434,139 +634,66 @@ export const UploadDrawer = ({
         err?.code === "dataset_exact_limit_exceeded" ||
           err?.response?.data?.code === "dataset_exact_limit_exceeded",
       );
+      setDatasetImportPhase(null);
       enqueueSnackbar(message, { variant: "error" });
+      return;
     } finally {
-      if (datasetReadGeneration.current === readGeneration) {
-        setLoadingDatasetData(false);
+      if (datasetRowsAbort.current === rowsAbort) {
+        datasetRowsAbort.current = null;
       }
     }
+    if (read.totalRows === 0) {
+      setDatasetImportPhase(null);
+      enqueueSnackbar("Dataset has no rows", { variant: "warning" });
+      return;
+    }
+    await handleDatasetUpload(read);
   }, [
     datasetRead,
     datasetReadBlocked,
     enqueueSnackbar,
+    handleDatasetUpload,
     loadingDatasetData,
-    selectedDataset,
-  ]);
-
-  const handleDatasetUpload = useCallback(async () => {
-    if (!selectedDataset || !name) return;
-    if (!datasetRead.complete) {
-      enqueueSnackbar("Load every dataset row before importing.", {
-        variant: "warning",
-      });
-      return;
-    }
-    setLoadingDatasetData(true);
-    try {
-      const tableRows = datasetRead.rows;
-
-      // Build the map from the exact paginated response rather than the
-      // independently cached column query. Every page is required to carry
-      // the same ordered column identity before it can be accumulated.
-      const colMap = {};
-      (datasetRead.columns || []).forEach((col) => {
-        const colId = String(col.id || col.column_id);
-        colMap[colId] = col.name || col.label || colId;
-      });
-
-      const colNames = Object.values(colMap);
-      if (
-        colNames.some((columnName) => !String(columnName).trim()) ||
-        new Set(colNames).size !== colNames.length
-      ) {
-        enqueueSnackbar(
-          "Dataset column names must be non-empty and unique before importing.",
-          { variant: "error" },
-        );
-        setLoadingDatasetData(false);
-        return;
-      }
-
-      const invalidMappings = Object.entries(variableMapping).filter(
-        ([, columnName]) => columnName && !colNames.includes(columnName),
-      );
-      if (invalidMappings.length > 0) {
-        enqueueSnackbar(
-          "Variable mappings no longer match the exact dataset columns. Review them before importing.",
-          { variant: "error" },
-        );
-        setLoadingDatasetData(false);
-        return;
-      }
-      let flatRows = [];
-
-      // table rows are: {column_uuid: {cell_value, ...}, row_id: "..."}
-      if (tableRows.length > 0) {
-        flatRows = tableRows.map((row) => {
-          const obj = {};
-          Object.entries(row).forEach(([colId, cellData]) => {
-            if (colId === "row_id") return;
-            const colName = colMap[colId];
-            if (colName && cellData) {
-              obj[colName] =
-                typeof cellData === "object"
-                  ? cellData.cell_value ?? cellData.value ?? ""
-                  : cellData;
-            }
-          });
-          return obj;
-        });
-      }
-
-      if (flatRows.length === 0) {
-        enqueueSnackbar("Dataset has no rows", { variant: "warning" });
-        setLoadingDatasetData(false);
-        return;
-      }
-
-      // Upload as JSON body
-      const payload = {
-        name,
-        file_name: `${selectedDataset.name}.json`,
-        columns: colNames,
-        data: flatRows,
-      };
-      if (Object.keys(variableMapping).length > 0) {
-        payload.variable_mapping = variableMapping;
-      }
-
-      await upload.mutateAsync(payload);
-      enqueueSnackbar(
-        `Imported ${flatRows.length} rows from "${selectedDataset.name}"`,
-        { variant: "success" },
-      );
-      handleClose();
-    } catch (err) {
-      enqueueSnackbar(
-        err?.response?.data?.message || "Failed to import dataset",
-        { variant: "error" },
-      );
-    } finally {
-      setLoadingDatasetData(false);
-    }
-  }, [
-    selectedDataset,
     name,
-    datasetRead,
-    variableMapping,
-    enqueueSnackbar,
-    handleClose,
-    upload,
+    selectedDataset,
   ]);
 
   // Columns for the mapping step (from file or from dataset)
   const activeColumns = step === 1 ? parsedColumns : datasetColumnNames;
   const isConfigStep = step === 1 || step === 3;
   const isSubmitting = upload.isPending || loadingDatasetData;
+  const covered = useDrawerCovered(open);
+
+  const datasetRowsProgress =
+    datasetRead.totalRows === null
+      ? null
+      : `${formatRowCount(datasetRead.rows.length)} of ${formatRowCount(
+          datasetRead.totalRows,
+        )} rows`;
+  const datasetRowsCaption =
+    datasetRowsProgress === null
+      ? loadingDatasetRows
+        ? "Loading rows..."
+        : "Import loads every row in this dataset."
+      : loadingDatasetRows
+        ? `Loading ${datasetRowsProgress}...`
+        : `${datasetRowsProgress} loaded`;
+  const datasetImportLabel =
+    datasetReadError && !datasetReadBlocked && !datasetRead.complete
+      ? datasetRead.rows.length > 0
+        ? `Retry from row ${formatRowCount(datasetRead.rows.length + 1)}`
+        : "Retry"
+      : "Import";
 
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={handleClose}
       PaperProps={{
         sx: {
-          width: 520,
+          width: 480,
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
@@ -602,8 +729,8 @@ export const UploadDrawer = ({
                 ? "Choose Dataset"
                 : "Configure Dataset"}
           </Typography>
-          <IconButton size="small" onClick={handleClose}>
-            <Iconify icon="mdi:close" width={18} />
+          <IconButton size="small" aria-label="Close" onClick={handleClose}>
+            <Iconify icon="solar:close-linear" width={20} />
           </IconButton>
         </Box>
 
@@ -611,7 +738,7 @@ export const UploadDrawer = ({
         <Stepper
           activeStep={step === 2 ? 0 : isConfigStep ? 1 : 0}
           alternativeLabel
-          sx={{ mb: 3, "& .MuiStepLabel-label": { fontSize: "11px" } }}
+          sx={{ mb: 3, "& .MuiStepLabel-label": { fontSize: "12px" } }}
         >
           <Step>
             <StepLabel>Choose Source</StepLabel>
@@ -631,8 +758,13 @@ export const UploadDrawer = ({
               {...getRootProps()}
               sx={{
                 border: "2px dashed",
-                borderColor: isDragActive ? "primary.main" : "divider",
-                borderRadius: "10px",
+                borderColor:
+                  isDragReject || (dropError && !isDragActive)
+                    ? "error.main"
+                    : isDragActive
+                      ? "primary.main"
+                      : "divider",
+                borderRadius: "8px",
                 p: 4,
                 display: "flex",
                 flexDirection: "column",
@@ -640,18 +772,10 @@ export const UploadDrawer = ({
                 gap: 1.5,
                 cursor: "pointer",
                 transition: "all 0.2s",
-                bgcolor: isDragActive
-                  ? (t) =>
-                      t.palette.mode === "dark"
-                        ? "rgba(124,77,255,0.08)"
-                        : "rgba(124,77,255,0.04)"
-                  : "transparent",
+                bgcolor: isDragActive ? "status.discovery.bg" : "transparent",
                 "&:hover": {
                   borderColor: "primary.main",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.03)"
-                      : "rgba(0,0,0,0.02)",
+                  bgcolor: "background.neutral",
                 },
               }}
             >
@@ -660,18 +784,15 @@ export const UploadDrawer = ({
                 sx={{
                   width: 48,
                   height: 48,
-                  borderRadius: "10px",
+                  borderRadius: "8px",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(124,77,255,0.12)"
-                      : "rgba(124,77,255,0.08)",
+                  bgcolor: "status.discovery.bg",
                 }}
               >
                 <Iconify
-                  icon="mdi:cloud-upload-outline"
+                  icon="solar:cloud-upload-linear"
                   width={24}
                   sx={{ color: "primary.main" }}
                 />
@@ -693,8 +814,6 @@ export const UploadDrawer = ({
                 size="small"
                 sx={{
                   mt: 0.5,
-                  px: 3,
-                  borderRadius: "8px",
                   borderColor: "divider",
                   color: "text.primary",
                 }}
@@ -702,6 +821,15 @@ export const UploadDrawer = ({
                 Browse files
               </Button>
             </Box>
+            {dropError && (
+              <Typography
+                role="alert"
+                variant="caption"
+                color="status.danger.fg"
+              >
+                {dropError}
+              </Typography>
+            )}
 
             <Divider sx={{ my: 0.5 }}>
               <Typography variant="caption" color="text.disabled">
@@ -710,24 +838,25 @@ export const UploadDrawer = ({
             </Divider>
 
             {/* From existing dataset */}
-            <Box
+            <ButtonBase
+              component="div"
               onClick={() => setStep(2)}
               sx={{
                 border: "1px solid",
                 borderColor: "divider",
-                borderRadius: "10px",
+                borderRadius: "8px",
                 p: 2.5,
+                width: "100%",
                 display: "flex",
+                justifyContent: "flex-start",
                 alignItems: "center",
+                textAlign: "left",
                 gap: 2,
                 cursor: "pointer",
                 transition: "all 0.2s",
                 "&:hover": {
                   borderColor: "primary.main",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.03)"
-                      : "rgba(0,0,0,0.02)",
+                  bgcolor: "background.neutral",
                 },
               }}
             >
@@ -739,14 +868,11 @@ export const UploadDrawer = ({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.06)"
-                      : "background.neutral",
+                  bgcolor: "background.neutral",
                 }}
               >
                 <Iconify
-                  icon="mdi:database-outline"
+                  icon="solar:database-linear"
                   width={20}
                   sx={{ color: "text.secondary" }}
                 />
@@ -760,11 +886,11 @@ export const UploadDrawer = ({
                 </Typography>
               </Box>
               <Iconify
-                icon="mdi:chevron-right"
+                icon="solar:alt-arrow-right-linear"
                 width={20}
                 sx={{ color: "text.disabled" }}
               />
-            </Box>
+            </ButtonBase>
           </Box>
         )}
 
@@ -787,13 +913,13 @@ export const UploadDrawer = ({
               InputProps={{
                 startAdornment: (
                   <Iconify
-                    icon="mdi:magnify"
-                    width={18}
+                    icon="solar:magnifier-linear"
+                    width={16}
                     sx={{ mr: 0.5, color: "text.disabled" }}
                   />
                 ),
               }}
-              sx={{ "& .MuiInputBase-input": { fontSize: "13px" } }}
+              sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
             />
 
             <Box
@@ -823,7 +949,8 @@ export const UploadDrawer = ({
               )}
 
               {datasets.map((ds) => (
-                <Box
+                <ButtonBase
+                  component="div"
                   key={ds.dataset_id || ds.id}
                   onClick={() => handleDatasetSelect(ds)}
                   sx={{
@@ -832,22 +959,22 @@ export const UploadDrawer = ({
                     border: "1px solid",
                     borderColor: "divider",
                     cursor: "pointer",
+                    width: "100%",
                     display: "flex",
+                    justifyContent: "flex-start",
                     alignItems: "center",
+                    textAlign: "left",
                     gap: 1.5,
                     transition: "all 0.15s",
                     "&:hover": {
                       borderColor: "primary.main",
-                      bgcolor: (t) =>
-                        t.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.03)"
-                          : "rgba(0,0,0,0.015)",
+                      bgcolor: "background.neutral",
                     },
                   }}
                 >
                   <Iconify
-                    icon="mdi:table"
-                    width={18}
+                    icon="solar:table-linear"
+                    width={20}
                     sx={{ color: "primary.main", flexShrink: 0 }}
                   />
                   <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -861,11 +988,11 @@ export const UploadDrawer = ({
                     )}
                   </Box>
                   <Iconify
-                    icon="mdi:chevron-right"
-                    width={18}
+                    icon="solar:alt-arrow-right-linear"
+                    width={20}
                     sx={{ color: "text.disabled", flexShrink: 0 }}
                   />
-                </Box>
+                </ButtonBase>
               ))}
             </Box>
 
@@ -906,7 +1033,7 @@ export const UploadDrawer = ({
                   p: 1.5,
                   borderRadius: "8px",
                   border: "1px solid",
-                  borderColor: "divider",
+                  borderColor: jsonError ? "error.main" : "divider",
                 }}
               >
                 <Iconify
@@ -914,7 +1041,7 @@ export const UploadDrawer = ({
                     file.name.endsWith(".csv")
                       ? "mdi:file-delimited-outline"
                       : file.name.endsWith(".json")
-                        ? "mdi:code-json"
+                        ? "solar:code-linear"
                         : "mdi:file-excel-outline"
                   }
                   width={20}
@@ -930,15 +1057,27 @@ export const UploadDrawer = ({
                 </Box>
                 <IconButton
                   size="small"
+                  aria-label="Remove file"
                   onClick={() => {
+                    previewFile.current = null;
                     setFile(null);
                     setStep(0);
                     setParsedColumns([]);
+                    setJsonError("");
                   }}
                 >
-                  <Iconify icon="mdi:close" width={16} />
+                  <Iconify icon="solar:close-linear" width={16} />
                 </IconButton>
               </Box>
+            )}
+            {step === 1 && jsonError && (
+              <Typography
+                role="alert"
+                variant="caption"
+                color="status.danger.fg"
+              >
+                {jsonError}
+              </Typography>
             )}
 
             {step === 3 && selectedDataset && (
@@ -954,7 +1093,7 @@ export const UploadDrawer = ({
                 }}
               >
                 <Iconify
-                  icon="mdi:table"
+                  icon="solar:table-linear"
                   width={20}
                   sx={{ color: "primary.main", flexShrink: 0 }}
                 />
@@ -970,17 +1109,17 @@ export const UploadDrawer = ({
                 </Box>
                 <IconButton
                   size="small"
+                  aria-label="Choose a different dataset"
                   onClick={() => {
-                    datasetReadGeneration.current += 1;
+                    stopDatasetRowLoading();
                     setSelectedDataset(null);
                     setDatasetRead(createEmptyGroundTruthDatasetRead());
                     setDatasetReadError("");
                     setDatasetReadBlocked(false);
-                    setLoadingDatasetData(false);
                     setStep(2);
                   }}
                 >
-                  <Iconify icon="mdi:close" width={16} />
+                  <Iconify icon="solar:close-linear" width={16} />
                 </IconButton>
               </Box>
             )}
@@ -1010,21 +1149,20 @@ export const UploadDrawer = ({
                       Dataset rows
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
-                      {datasetRead.totalRows === null
-                        ? "Load one exact page at a time before importing."
-                        : `${datasetRead.rows.length} of ${datasetRead.totalRows} rows loaded`}
+                      {datasetRowsCaption}
                     </Typography>
                   </Box>
                   {datasetRead.complete && (
-                    <Chip
+                    <RunStatusBadge
+                      status="completed"
                       label="Complete"
-                      size="small"
-                      color="success"
-                      variant="outlined"
-                      sx={{ height: 22, fontSize: "10px", flexShrink: 0 }}
+                      role="success"
                     />
                   )}
                 </Box>
+                {datasetRead.totalRows === null && loadingDatasetRows && (
+                  <LinearProgress />
+                )}
                 {datasetRead.totalRows !== null &&
                   datasetRead.totalRows > 0 && (
                     <LinearProgress
@@ -1036,7 +1174,7 @@ export const UploadDrawer = ({
                     />
                   )}
                 {datasetReadError && (
-                  <Typography variant="caption" color="error.main">
+                  <Typography variant="caption" color="status.danger.fg">
                     {datasetReadError}
                   </Typography>
                 )}
@@ -1068,8 +1206,9 @@ export const UploadDrawer = ({
               label="Ground truth name"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              disabled={step === 3 && loadingDatasetData}
               fullWidth
-              sx={{ "& .MuiInputBase-input": { fontSize: "13px" } }}
+              sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
             />
 
             {/* Variable mapping */}
@@ -1103,8 +1242,6 @@ export const UploadDrawer = ({
                           size="small"
                           variant="outlined"
                           sx={{
-                            fontSize: "11px",
-                            height: 24,
                             minWidth: 100,
                             maxWidth: 200,
                             flexShrink: 0,
@@ -1113,7 +1250,7 @@ export const UploadDrawer = ({
                         />
                       </Tooltip>
                       <Iconify
-                        icon="mdi:arrow-right"
+                        icon="solar:arrow-right-linear"
                         width={14}
                         sx={{ color: "text.disabled", flexShrink: 0 }}
                       />
@@ -1122,6 +1259,7 @@ export const UploadDrawer = ({
                         size="small"
                         fullWidth
                         value={variableMapping[varName] || ""}
+                        disabled={step === 3 && loadingDatasetData}
                         onChange={(e) =>
                           setVariableMapping((prev) => ({
                             ...prev,
@@ -1134,11 +1272,7 @@ export const UploadDrawer = ({
                           <em>Skip</em>
                         </MenuItem>
                         {activeColumns.map((col) => (
-                          <MenuItem
-                            key={col}
-                            value={col}
-                            sx={{ fontSize: "12px" }}
-                          >
+                          <MenuItem key={col} value={col}>
                             {col}
                           </MenuItem>
                         ))}
@@ -1167,7 +1301,6 @@ export const UploadDrawer = ({
                       label={col}
                       size="small"
                       variant="outlined"
-                      sx={{ fontSize: "10px", height: 20 }}
                     />
                   ))}
                 </Box>
@@ -1191,24 +1324,23 @@ export const UploadDrawer = ({
             <Button
               variant="outlined"
               size="small"
-              onClick={() => setStep(step === 3 ? 2 : 0)}
+              onClick={
+                loadingDatasetRows
+                  ? stopDatasetRowLoading
+                  : () => setStep(step === 3 ? 2 : 0)
+              }
               sx={{ flex: 1 }}
             >
-              Back
+              {loadingDatasetRows ? "Cancel" : "Back"}
             </Button>
             <Button
               variant="contained"
               size="small"
-              onClick={
-                step === 1
-                  ? handleFileUpload
-                  : datasetRead.complete
-                    ? handleDatasetUpload
-                    : handleLoadDatasetRows
-              }
+              onClick={step === 1 ? handleFileUpload : handleDatasetImport}
               disabled={
                 !canEdit ||
                 (step === 1 && (!file || !name)) ||
+                (step === 1 && Boolean(jsonError)) ||
                 (step === 3 && (!selectedDataset || !name)) ||
                 (step === 3 &&
                   datasetRead.complete &&
@@ -1221,13 +1353,7 @@ export const UploadDrawer = ({
               {isSubmitting ? (
                 <CircularProgress size={16} sx={{ color: "inherit" }} />
               ) : step === 3 ? (
-                datasetRead.complete ? (
-                  "Import"
-                ) : datasetRead.rows.length > 0 ? (
-                  "Load more"
-                ) : (
-                  "Load rows"
-                )
+                datasetImportLabel
               ) : (
                 "Upload"
               )}
@@ -1261,10 +1387,7 @@ const EmptyState = ({ onUpload, canEdit = true }) => (
       transition: "all 0.2s",
       "&:hover": {
         borderColor: "primary.main",
-        bgcolor: (t) =>
-          t.palette.mode === "dark"
-            ? "rgba(255,255,255,0.02)"
-            : "rgba(0,0,0,0.01)",
+        bgcolor: "background.neutral",
       },
     }}
   >
@@ -1276,14 +1399,11 @@ const EmptyState = ({ onUpload, canEdit = true }) => (
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        bgcolor: (t) =>
-          t.palette.mode === "dark"
-            ? "rgba(255,255,255,0.06)"
-            : "background.neutral",
+        bgcolor: "background.neutral",
       }}
     >
       <Iconify
-        icon="mdi:database-plus-outline"
+        icon="solar:add-folder-linear"
         width={28}
         sx={{ color: "text.disabled" }}
       />
@@ -1300,8 +1420,20 @@ const EmptyState = ({ onUpload, canEdit = true }) => (
       Upload annotated data to calibrate evaluations with human-scored reference
       examples.
     </Typography>
+    <Button
+      variant="contained"
+      size="small"
+      disabled={!canEdit}
+      onClick={(event) => {
+        // The surrounding area opens the same drawer; open it only once.
+        event.stopPropagation();
+        onUpload();
+      }}
+    >
+      Add ground truth
+    </Button>
     <Typography variant="caption" color="text.secondary">
-      Click anywhere to upload
+      Upload a file or choose a dataset
     </Typography>
   </Box>
 );
@@ -1363,6 +1495,7 @@ const GroundTruthSetupForm = ({
   embedPending,
   embeddingStatus,
   embeddingsStale,
+  isJevModel = false,
   canEdit = true,
 }) => {
   // Always derive Jinja variables from the live rule prompt so removing
@@ -1441,7 +1574,9 @@ const GroundTruthSetupForm = ({
 
   const hasMapping = Object.keys(normalizeMapping(varMapping)).length > 0;
   const canSave =
-    Boolean(outputColumn) && (!enabled || hasMapping) && !save.isPending;
+    Boolean(outputColumn) &&
+    (!enabled || (hasMapping && !isJevModel)) &&
+    !save.isPending;
   const embedActive =
     embedChainRunning ||
     embedPending ||
@@ -1475,6 +1610,7 @@ const GroundTruthSetupForm = ({
   };
 
   const handleCtaClick = async () => {
+    if (enabled && isJevModel) return;
     try {
       if (configDirty) await save.mutateAsync(buildPayload());
       if (
@@ -1565,19 +1701,22 @@ const GroundTruthSetupForm = ({
             variant="caption"
             sx={{
               color: "text.secondary",
-              fontSize: "11px",
+              fontSize: "12px",
               lineHeight: 1.3,
               wordBreak: "break-word",
             }}
           >
-            {enabled
-              ? "On. Retrieved examples are injected into the evaluator prompt."
-              : "Off. The evaluator runs without ground truth context."}
+            {isJevModel
+              ? "Jev cannot use these examples. Turn off ground truth to save and run."
+              : enabled
+                ? "On. Retrieved examples are injected into the evaluator prompt."
+                : "Off. The evaluator runs without ground truth context."}
           </Typography>
         </Box>
         <Switch
           size="small"
           checked={enabled}
+          disabled={isJevModel && !enabled}
           onChange={(_, v) => setEnabled(v)}
           sx={{ flexShrink: 0, ml: 1 }}
         />
@@ -1588,14 +1727,14 @@ const GroundTruthSetupForm = ({
         <Typography sx={sectionTitleSx}>Inputs</Typography>
         <Typography
           variant="caption"
-          sx={{ color: "text.secondary", fontSize: "11px", mt: -0.5 }}
+          sx={{ color: "text.secondary", fontSize: "12px", mt: -0.5 }}
         >
           Map each template variable to a ground truth column.
         </Typography>
         {enabled && !hasMapping && liveVariables.length > 0 ? (
           <Typography
             variant="caption"
-            sx={{ color: "error.main", fontSize: "11px", mt: 0.25 }}
+            sx={{ color: "status.danger.fg", fontSize: "12px", mt: 0.25 }}
           >
             Map at least one input variable before saving with ground truth
             enabled.
@@ -1616,8 +1755,6 @@ const GroundTruthSetupForm = ({
                 size="small"
                 variant="outlined"
                 sx={{
-                  fontSize: "11px",
-                  height: 24,
                   maxWidth: 160,
                   "& .MuiChip-label": {
                     overflow: "hidden",
@@ -1626,7 +1763,7 @@ const GroundTruthSetupForm = ({
                 }}
               />
               <Iconify
-                icon="mdi:arrow-right"
+                icon="solar:arrow-right-linear"
                 width={14}
                 sx={{ color: "text.disabled", flexShrink: 0 }}
               />
@@ -1647,7 +1784,7 @@ const GroundTruthSetupForm = ({
                   <em>None</em>
                 </MenuItem>
                 {columns.map((col) => (
-                  <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
+                  <MenuItem key={col} value={col}>
                     {col}
                   </MenuItem>
                 ))}
@@ -1662,7 +1799,7 @@ const GroundTruthSetupForm = ({
         <Typography sx={sectionTitleSx}>Reference output</Typography>
         <Typography
           variant="caption"
-          sx={{ color: "text.secondary", fontSize: "11px", mt: -0.5 }}
+          sx={{ color: "text.secondary", fontSize: "12px", mt: -0.5 }}
         >
           The expected answer the evaluator should converge toward for each
           example.
@@ -1670,7 +1807,7 @@ const GroundTruthSetupForm = ({
         {referenceHint && (
           <Typography
             variant="caption"
-            sx={{ color: "warning.dark", fontSize: "11px", mt: -0.25 }}
+            sx={{ color: "status.warning.fg", fontSize: "12px", mt: -0.25 }}
           >
             Values in this column must match the eval&apos;s output type.{" "}
             {referenceHint}
@@ -1681,7 +1818,7 @@ const GroundTruthSetupForm = ({
             Output column *
           </Typography>
           <Iconify
-            icon="mdi:arrow-right"
+            icon="solar:arrow-right-linear"
             width={14}
             sx={{ color: "text.disabled", flexShrink: 0 }}
           />
@@ -1698,7 +1835,7 @@ const GroundTruthSetupForm = ({
               <em>Pick a column</em>
             </MenuItem>
             {columns.map((col) => (
-              <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
+              <MenuItem key={col} value={col}>
                 {col}
               </MenuItem>
             ))}
@@ -1710,7 +1847,7 @@ const GroundTruthSetupForm = ({
             Explanation (optional)
           </Typography>
           <Iconify
-            icon="mdi:arrow-right"
+            icon="solar:arrow-right-linear"
             width={14}
             sx={{ color: "text.disabled", flexShrink: 0 }}
           />
@@ -1726,7 +1863,7 @@ const GroundTruthSetupForm = ({
               <em>None (optional)</em>
             </MenuItem>
             {columns.map((col) => (
-              <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
+              <MenuItem key={col} value={col}>
                 {col}
               </MenuItem>
             ))}
@@ -1739,7 +1876,7 @@ const GroundTruthSetupForm = ({
         <Typography sx={sectionTitleSx}>Retrieval</Typography>
         <Typography
           variant="caption"
-          sx={{ color: "text.secondary", fontSize: "11px", mt: -0.5 }}
+          sx={{ color: "text.secondary", fontSize: "12px", mt: -0.5 }}
         >
           On each eval run, the rows most similar to the input are attached to
           the judge prompt as calibration examples.
@@ -1765,11 +1902,7 @@ const GroundTruthSetupForm = ({
             valueLabelDisplay="auto"
             sx={{ flex: 1 }}
           />
-          <Chip
-            size="small"
-            label={maxExamples}
-            sx={{ minWidth: 36, height: 22, fontSize: "11px" }}
-          />
+          <Chip size="small" label={maxExamples} sx={{ minWidth: 36 }} />
         </Box>
       </Box>
 
@@ -1785,13 +1918,13 @@ const GroundTruthSetupForm = ({
           <Typography
             variant="caption"
             sx={{
-              color: "error.main",
+              color: "status.danger.fg",
               display: "flex",
               alignItems: "center",
               gap: 0.5,
             }}
           >
-            <Iconify icon="mdi:alert-circle-outline" width={14} />
+            <Iconify icon="solar:danger-circle-linear" width={14} />
             Pick the column that holds the reference output.
           </Typography>
         )}
@@ -1804,9 +1937,9 @@ const GroundTruthSetupForm = ({
               ctaPending ? (
                 <CircularProgress size={14} />
               ) : hasWork ? (
-                <Iconify icon="mdi:content-save-outline" width={16} />
+                <Iconify icon="solar:diskette-linear" width={16} />
               ) : (
-                <Iconify icon="mdi:check" width={16} />
+                <Iconify icon="solar:check-linear" width={16} />
               )
             }
             sx={{ flex: 1, minWidth: 0 }}
@@ -1826,8 +1959,8 @@ const GroundTruthSetupForm = ({
               <Button
                 variant="text"
                 onClick={onTest}
-                endIcon={<Iconify icon="mdi:arrow-right" width={16} />}
-                disabled={!onTest}
+                endIcon={<Iconify icon="solar:arrow-right-linear" width={16} />}
+                disabled={!onTest || (isJevModel && persistedEnabled)}
                 sx={{ whiteSpace: "nowrap", flexShrink: 0 }}
               >
                 Test eval
@@ -1843,13 +1976,19 @@ const GroundTruthSetupForm = ({
 // ═══════════════════════════════════════════════════════════════
 // MAIN TAB
 // ═══════════════════════════════════════════════════════════════
-const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
+const EvalGroundTruthTab = ({
+  templateId,
+  onSwitchToDetails,
+  isJevModel = false,
+}) => {
   const { enqueueSnackbar } = useSnackbar();
   const { role } = useAuthContext();
   const canEdit = Boolean(
     RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role],
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const deleteInFlight = useRef(false);
 
   // Eval data - to get required_keys (variables)
   const { data: evalData } = useEvalDetail(templateId);
@@ -1867,10 +2006,28 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
   const datasets = listData?.items || [];
   const activeDataset = datasets[0];
 
-  const { data: previewData } = useGroundTruthData(activeDataset?.id, {
-    page: 1,
-    pageSize: 500,
+  // A confirmation applies only to the dataset and permissions it opened with.
+  useEffect(() => {
+    setDeleteTarget(null);
+  }, [templateId, activeDataset?.id, canEdit]);
+
+  // A newly active dataset always opens on its first preview page.
+  const [previewPaging, setPreviewPaging] = useState({
+    datasetId: null,
+    page: 0,
   });
+  const [previewPageSize, setPreviewPageSize] = useState(
+    PREVIEW_DEFAULT_PAGE_SIZE,
+  );
+  const previewPage =
+    previewPaging.datasetId === activeDataset?.id ? previewPaging.page : 0;
+  const { data: previewData, isFetching: previewFetching } = useGroundTruthData(
+    activeDataset?.id,
+    {
+      page: previewPage + 1,
+      pageSize: previewPageSize,
+    },
+  );
   const { data: statusData } = useGroundTruthStatus(activeDataset?.id, {
     // Poll while the embed job is still in flight. The trigger view
     // sets `pending` synchronously and the Temporal activity flips
@@ -1892,14 +2049,26 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
   const totalRows = activeDataset?.row_count || 0;
 
   const handleDelete = useCallback(async () => {
-    if (!activeDataset) return;
+    if (
+      !deleteTarget ||
+      deleteTarget.id !== activeDataset?.id ||
+      !canEdit ||
+      deleteGt.isPending ||
+      deleteInFlight.current
+    )
+      return;
+    // Block repeated clicks even before the mutation's pending state renders.
+    deleteInFlight.current = true;
     try {
-      await deleteGt.mutateAsync(activeDataset.id);
+      await deleteGt.mutateAsync(deleteTarget.id);
+      setDeleteTarget(null);
       enqueueSnackbar("Dataset deleted", { variant: "success" });
     } catch {
       enqueueSnackbar("Failed to delete", { variant: "error" });
+    } finally {
+      deleteInFlight.current = false;
     }
-  }, [activeDataset, deleteGt, enqueueSnackbar]);
+  }, [activeDataset?.id, canEdit, deleteGt, deleteTarget, enqueueSnackbar]);
 
   const handleTriggerEmbed = useCallback(async () => {
     if (!activeDataset) return;
@@ -1908,7 +2077,7 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
       enqueueSnackbar("Embedding generation started", { variant: "info" });
     } catch (err) {
       enqueueSnackbar(
-        err?.response?.data?.message || "Failed to trigger embedding",
+        getSafeActionErrorMessage(err, "Embedding didn't start. Try again."),
         { variant: "error" },
       );
       throw err;
@@ -1956,7 +2125,7 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
           height: "100%",
         }}
       >
-        <CircularProgress size={24} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -1972,6 +2141,9 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
         pb: 2,
       }}
     >
+      {isJevModel && (
+        <Alert severity="warning">{JEV_GROUND_TRUTH_MESSAGE}</Alert>
+      )}
       {/* Upload drawer */}
       <UploadDrawer
         open={drawerOpen}
@@ -1979,6 +2151,21 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
         templateId={templateId}
         evalVariables={evalVariables}
         canEdit={canEdit}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Delete dataset"
+        body="This action cannot be undone."
+        items={deleteTarget ? [deleteTarget.name] : []}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        danger
+        busy={deleteGt.isPending}
+        onConfirm={handleDelete}
+        onClose={() => {
+          if (!deleteInFlight.current) setDeleteTarget(null);
+        }}
       />
 
       {/* Empty state - clicks opens drawer */}
@@ -1998,20 +2185,23 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
             }}
           >
             <Iconify
-              icon="mdi:database-outline"
-              width={18}
+              icon="solar:database-linear"
+              width={20}
               sx={{ color: "primary.main" }}
             />
             <Typography variant="body2" fontWeight={600}>
               {activeDataset.name}
             </Typography>
-            <Chip
-              label={`${totalRows} rows`}
-              size="small"
-              variant="outlined"
-              sx={{ fontSize: "11px", height: 20 }}
-            />
-            <StatusBadge status={embeddingStatus} />
+            <Chip label={`${totalRows} rows`} size="small" variant="outlined" />
+            {isJevModel ? (
+              <Chip
+                label="Not supported with Jev"
+                size="small"
+                variant="outlined"
+              />
+            ) : (
+              <StatusBadge status={embeddingStatus} />
+            )}
 
             {(embeddingStatus === "processing" ||
               (embeddingStatus === "pending" && triggerEmbed.isPending)) && (
@@ -2051,10 +2241,11 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
               <span>
                 <IconButton
                   size="small"
+                  aria-label="Upload new dataset"
                   onClick={() => setDrawerOpen(true)}
                   disabled={!canEdit}
                 >
-                  <Iconify icon="mdi:upload" width={16} />
+                  <Iconify icon="solar:upload-minimalistic-linear" width={16} />
                 </IconButton>
               </span>
             </Tooltip>
@@ -2063,10 +2254,11 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
                 <IconButton
                   size="small"
                   color="error"
-                  onClick={handleDelete}
+                  aria-label="Delete dataset"
+                  onClick={() => setDeleteTarget(activeDataset)}
                   disabled={deleteGt.isPending || !canEdit}
                 >
-                  <Iconify icon="mdi:delete-outline" width={16} />
+                  <Iconify icon="solar:trash-bin-trash-linear" width={16} />
                 </IconButton>
               </span>
             </Tooltip>
@@ -2089,6 +2281,7 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
               <GroundTruthSetupForm
                 gt={activeDataset}
                 template={evalData}
+                isJevModel={isJevModel}
                 evalVariables={evalVariables}
                 rulePrompt={rulePrompt}
                 onEmbed={handleTriggerEmbed}
@@ -2135,10 +2328,6 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
                 sx={{
                   flex: 1,
                   minHeight: 200,
-                  borderRadius: "8px",
-                  overflow: "hidden",
-                  border: "1px solid",
-                  borderColor: "divider",
                 }}
               >
                 <AgGridReact
@@ -2147,19 +2336,30 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
                   rowData={previewData?.rows || []}
                   defaultColDef={defaultColDef}
                   headerHeight={34}
-                  rowHeight={32}
+                  rowHeight={ROW_HEIGHT.default}
                   animateRows={false}
                   suppressCellFocus
                   enableCellTextSelection
                   ensureDomOrder
-                  pagination
-                  paginationPageSize={50}
-                  paginationPageSizeSelector={[25, 50, 100]}
                   overlayNoRowsTemplate="<span style='font-size:13px;opacity:0.5'>No data</span>"
                   overlayLoadingTemplate="<span style='font-size:13px;opacity:0.5'>Loading...</span>"
                   loading={!previewData}
                 />
               </Box>
+              <DataTablePagination
+                page={previewPage}
+                pageSize={previewPageSize}
+                total={previewData?.total_rows ?? totalRows}
+                pageSizeOptions={PREVIEW_PAGE_SIZE_OPTIONS}
+                loading={Boolean(previewFetching)}
+                onPageChange={(page) =>
+                  setPreviewPaging({ datasetId: activeDataset.id, page })
+                }
+                onPageSizeChange={(size) => {
+                  setPreviewPageSize(size);
+                  setPreviewPaging({ datasetId: activeDataset.id, page: 0 });
+                }}
+              />
             </Box>
           </Box>
         </>
@@ -2170,6 +2370,7 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
 
 EvalGroundTruthTab.propTypes = {
   templateId: PropTypes.string.isRequired,
+  isJevModel: PropTypes.bool,
 };
 
 export default EvalGroundTruthTab;

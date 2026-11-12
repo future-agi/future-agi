@@ -1,0 +1,20 @@
+# H-MCP adapts the CN30a fixture, not a vendor or a production catalogue app.
+schema: "connector-manifest/v1#app"
+id: e2e-echo
+version: 1.0.0
+name: E2E Echo
+description: "Local MCP fixture with read-only and destructive tools."
+vendor:
+  name: E2E fixture
+  domains: [mcp.e2e-public.test]
+eeCategory: productivity
+group: other
+categories: [productivity]
+tags: [test]
+docsUrl: https://mcp.e2e-public.test:8443/mcp
+defaultProvider: key
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://mcp.e2e-public.test:8443/mcp
+    fetchedAt: 2026-10-24

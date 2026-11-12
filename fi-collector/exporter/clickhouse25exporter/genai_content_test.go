@@ -298,12 +298,21 @@ func TestSpanContentPrecedence(t *testing.T) {
 			wantOutput: `[{"n":1,"role":"assistant"}]`,
 		},
 		{
-			name: "indexed message keys are not read",
+			name: "indexed OpenLLMetry messages fill empty content",
 			fill: func(m pcommon.Map) {
+				m.PutStr("llm.request.type", "chat")
 				m.PutStr("gen_ai.prompt.0.role", "user")
 				m.PutStr("gen_ai.prompt.0.content", "hi")
-				m.PutStr("gen_ai.input.messages.0.message.content", "hi")
+				m.PutStr("gen_ai.completion.0.role", "assistant")
 				m.PutStr("gen_ai.completion.0.content", "hello")
+			},
+			wantInput:  `[{"content":"hi","role":"user"}]`,
+			wantOutput: `[{"content":"hello","role":"assistant"}]`,
+		},
+		{
+			name: "indexed current GenAI messages are not read",
+			fill: func(m pcommon.Map) {
+				m.PutStr("gen_ai.input.messages.0.message.content", "hi")
 				m.PutStr("gen_ai.output.messages.0.message.content", "hello")
 			},
 			wantInput: "", wantOutput: "",
@@ -324,6 +333,84 @@ func TestSpanContentPrecedence(t *testing.T) {
 				t.Errorf("output = %q, want %q", r["output"], c.wantOutput)
 			}
 		})
+	}
+}
+
+// An OTel GenAI execute_tool span (the gateway's MCP tools/call span is one)
+// carries its arguments and result only as gen_ai.tool.call.arguments /
+// gen_ai.tool.call.result. They fill the input / output columns, after every
+// other content key.
+func TestToolSpanArgumentsAndResultFillContent(t *testing.T) {
+	const (
+		args   = `{"city":"Paris"}`
+		result = `{"temp":15}`
+	)
+	toolSpan := func(m pcommon.Map) {
+		m.PutStr("gen_ai.operation.name", "execute_tool")
+		m.PutStr("gen_ai.span.kind", "tool")
+		m.PutStr("gen_ai.tool.name", "get_weather")
+		m.PutStr("gen_ai.tool.call.arguments", args)
+		m.PutStr("gen_ai.tool.call.result", result)
+	}
+	cases := []struct {
+		name       string
+		fill       func(pcommon.Map)
+		wantInput  string
+		wantOutput string
+	}{
+		{
+			name:      "arguments and result fill input and output",
+			fill:      toolSpan,
+			wantInput: args, wantOutput: result,
+		},
+		{
+			name: "map-valued arguments and result are JSON-encoded",
+			fill: func(m pcommon.Map) {
+				m.PutStr("gen_ai.operation.name", "execute_tool")
+				m.PutEmptyMap("gen_ai.tool.call.arguments").PutStr("city", "Paris")
+				m.PutEmptyMap("gen_ai.tool.call.result").PutInt("temp", 15)
+			},
+			wantInput: args, wantOutput: result,
+		},
+		{
+			name: "input.value and output.value still win",
+			fill: func(m pcommon.Map) {
+				toolSpan(m)
+				m.PutStr("input.value", "iv")
+				m.PutStr("output.value", "ov")
+			},
+			wantInput: "iv", wantOutput: "ov",
+		},
+		{
+			name: "GenAI message keys win over tool keys",
+			fill: func(m pcommon.Map) {
+				toolSpan(m)
+				m.PutStr("gen_ai.input.messages", "gim")
+				m.PutStr("gen_ai.output.messages", "gom")
+			},
+			wantInput: "gim", wantOutput: "gom",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := convertOne(t, contentSpan(c.fill))
+			if r["observation_type"] != "tool" {
+				t.Errorf("observation_type = %v, want tool", r["observation_type"])
+			}
+			if r["input"] != c.wantInput {
+				t.Errorf("input = %q, want %q", r["input"], c.wantInput)
+			}
+			if r["output"] != c.wantOutput {
+				t.Errorf("output = %q, want %q", r["output"], c.wantOutput)
+			}
+		})
+	}
+
+	// The source attributes stay where adapter.Split put them.
+	as := convertOne(t, contentSpan(toolSpan))["attrs_string"].(map[string]string)
+	if as["gen_ai.tool.call.arguments"] != args || as["gen_ai.tool.call.result"] != result {
+		t.Errorf("attrs_string tool keys = %q/%q, want %q/%q",
+			as["gen_ai.tool.call.arguments"], as["gen_ai.tool.call.result"], args, result)
 	}
 }
 

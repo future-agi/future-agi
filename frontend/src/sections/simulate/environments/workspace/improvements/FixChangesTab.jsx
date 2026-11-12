@@ -10,7 +10,7 @@ import {
 } from "src/api/simulate-environments/fixRuns";
 
 import { downloadText } from "./downloadText";
-import { winnerOf } from "./fixRunView";
+import { reviewTrialOf } from "./fixRunView";
 import { parseDiff } from "./parseDiff";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
@@ -68,21 +68,47 @@ export default function FixChangesTab({ fix, candidateId }) {
   const trials = [...(fix.candidates || [])].sort(
     (a, b) => a.attempt - b.attempt,
   );
-  // The trial "Review Trial N" asked for, else the winner.
-  const picked = candidateId || winnerOf(fix)?.id || trials[0]?.id;
+  // The trial "Review Trial N" or the trial picker asked for, else the winner,
+  // else the trial that did best on its targets.
+  const picked = candidateId || reviewTrialOf(fix)?.id;
   const candidate = trials.find((c) => c.id === picked);
-  const { data: patch, isLoading } = useQuery({
+  // A failure shows here, with a way to read it again, not as a global error.
+  const {
+    data: patch,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+  } = useQuery({
     queryKey: ["agent-fix-run-patch", fix.id, picked],
     queryFn: () => fetchCandidatePatch(fix.id, picked),
     enabled: !!picked,
     staleTime: Infinity,
+    meta: { errorHandled: true },
   });
   if (!candidate) return null;
   const files = parseDiff(patch);
+  const trial = `Trial ${candidate.attempt}`;
+  const base = fix.agent?.version_number;
+  // An empty patch is a trial that changed no file; a binary-only one still
+  // has a patch to download, though it has no lines to show.
+  const hasPatch = typeof patch === "string" && patch.trim() !== "";
+  const empty = !isLoading && !isError && !hasPatch;
   return (
     <Box>
-      <Stack direction="row" justifyContent="flex-end" sx={{ mb: 1.5 }}>
-        {patch && (
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="space-between"
+        spacing={1}
+        sx={{ mb: 1.5 }}
+      >
+        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+          {base != null
+            ? `${trial}'s change against agent v${base}`
+            : `${trial}'s change`}
+        </Typography>
+        {hasPatch && (
           <Button
             size="small"
             startIcon={<Iconify icon="solar:download-linear" width={16} />}
@@ -97,6 +123,21 @@ export default function FixChangesTab({ fix, candidateId }) {
       {isLoading && (
         <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
           Loading the change…
+        </Typography>
+      )}
+      {isError && (
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+            {`Could not load ${trial}'s change.`}
+          </Typography>
+          <Button size="small" disabled={isFetching} onClick={() => refetch()}>
+            Try again
+          </Button>
+        </Stack>
+      )}
+      {empty && (
+        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+          {`${trial} made no file changes.`}
         </Typography>
       )}
       <Stack spacing={1.5}>

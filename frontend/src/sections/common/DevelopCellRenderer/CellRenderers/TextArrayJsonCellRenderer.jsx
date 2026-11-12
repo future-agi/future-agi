@@ -9,6 +9,10 @@ import { ShowComponent } from "src/components/show";
 import CellMarkdown from "../../CellMarkdown";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
 import { isJsonValue } from "src/utils/utils";
+import GridValueSummary from "src/sections/common/Values/GridValueSummary";
+import EmptyDash, { isEmptyCellValue } from "./EmptyDash";
+
+const GENERATED = new Set(["run_prompt", "evaluation_reason", "evaluation"]);
 
 function truncateContent(content, indices = [], maxLength = 100) {
   const numIndices = indices.length || 1; // Avoid divide by zero
@@ -68,7 +72,7 @@ const TextArrayJsonCellRenderer = ({
       content.push(
         <span
           key={`highlight-${i}`}
-          style={{ backgroundColor: "var(--score-yellow)", fontWeight: "bold" }}
+          style={{ backgroundColor: "var(--score-yellow)", fontWeight: "600" }}
         >
           {value.slice(start, end)}
         </span>,
@@ -116,11 +120,14 @@ const TextArrayJsonCellRenderer = ({
           flexDirection: "column",
           height: "100%",
           minHeight: 0,
-          justifyContent: metadata?.responseTimeMs ? "space-between" : "start",
+          justifyContent: metadata?.response_time_ms
+            ? "space-between"
+            : "start",
           padding: "4px 8px",
         }}
       >
-        {value && (
+        {value && isEmptyCellValue(value) && <EmptyDash />}
+        {value && !isEmptyCellValue(value) && (
           <Box
             sx={{
               whiteSpace: "pre-wrap",
@@ -132,13 +139,23 @@ const TextArrayJsonCellRenderer = ({
           >
             {isValueArray ? (
               <GenerateDiffText cellText={value} />
-            ) : cellData?.keyExists ? (
+            ) : cellData?.key_exists ? (
               renderSearchValue()
             ) : originType === "run_prompt" && isJsonValue(value) ? (
               <CustomJsonViewer object={parsedJson} clickToExpandNode />
             ) : originType === "evaluation_reason" ||
               originType === "run_prompt" ? (
               <CellMarkdown text={value} />
+            ) : typeof value === "string" && !GENERATED.has(originType) ? (
+              // R2 (P6): typed summaries, YAML hint, size badge, View as.
+              <GridValueSummary
+                value={value}
+                dataType="text"
+                bare
+                fallback={
+                  value.length > 4000 ? `${value.slice(0, 4000)}…` : value
+                }
+              />
             ) : (
               renderValueDirectly(value)
             )}

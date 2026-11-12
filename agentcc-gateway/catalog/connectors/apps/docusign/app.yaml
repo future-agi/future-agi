@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: docusign
+version: 1.0.0
+name: Docusign
+description: "Envelopes, templates, agreements and Workflow Builder workflows."
+vendor:
+  name: Docusign
+  domains: [docusign.com]
+eeCategory: productivity
+group: other
+categories: [productivity, e-signature]
+tags: [signatures, agreements]
+docsUrl: https://developers.docusign.com/platform/mcp-server/
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developers.docusign.com/page-data/platform/mcp-server/page-data.json
+    fetchedAt: 2026-10-21

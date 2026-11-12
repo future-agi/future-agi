@@ -1,0 +1,195 @@
+{{- /*
+The Omega gateway (services/omega-gateway): browsers call /omega/api on the UI
+host; the gateway admits only route-manifest routes, proves the caller,
+rate-limits in Redis and forwards one-use keys to Omega EE over HTTPS.
+*/ -}}
+{{- if include "futureagi.omega.enabled" . }}
+{{- $g := .Values.omega.gateway -}}
+{{- $ctx := dict "root" . "component" "omega-gateway" -}}
+{{- $jwks := $g.jwks -}}
+{{- $ca := $g.upstreamCa -}}
+{{- if ($g.serviceAccount | default dict).create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "futureagi.omega.gateway.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  {{- with $g.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+automountServiceAccountToken: false
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  {{- include "futureagi.block" (dict "text" (include "futureagi.workloadAnnotations" $) "indent" 2) }}
+spec:
+  {{- if not $g.autoscaling.enabled }}
+  replicas: {{ $g.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.componentLabels" $ctx | nindent 8 }}
+        {{- with $g.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $g.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "futureagi.omega.gateway.serviceAccountName" . }}
+      # The gateway calls no Kubernetes API: its token is never mounted.
+      automountServiceAccountToken: false
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      # The preStop sleep, then the drain (open streams end at once, other
+      # requests get drainMs), then the last span flush.
+      terminationGracePeriodSeconds: {{ $g.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "root" $ "uid" 1000 "overrides" $g.podSecurityContext) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $g "spread" true "component" "omega-gateway" "multi" (include "futureagi.multiReplica" $g))) "indent" 6) }}
+      containers:
+        - name: omega-gateway
+          image: {{ include "futureagi.image" (dict "root" . "image" $g.image) }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $g.image) }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            {{- if $g.console.enabled }}
+            - name: console
+              containerPort: 8081
+              protocol: TCP
+            {{- end }}
+          {{- include "futureagi.block" (dict "text" (include "futureagi.preStop" (dict "root" . "seconds" $g.preStopSleepSeconds "native" true)) "indent" 10) }}
+          env:
+            {{- include "futureagi.omega.gateway.env" . | trim | nindent 12 }}
+          # Ready only while EE answers its readiness path and the session
+          # exchange answers below 500; Redis is left out on purpose (an outage
+          # stops writes, not reads). Liveness is the process alone.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml $g.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict "root" $ "overrides" $g.containerSecurityContext) | nindent 12 }}
+          volumeMounts:
+            - name: jwks
+              mountPath: /etc/omega-gateway/jwks
+              readOnly: true
+            {{- if include "futureagi.omega.gateway.ca" . }}
+            - name: upstream-ca
+              mountPath: /etc/omega-gateway/ca
+              readOnly: true
+            {{- end }}
+            {{- if and $g.otlp.tracesUrl $g.otlp.credentials.existingSecret }}
+            - name: otlp-credentials
+              mountPath: /var/run/secrets/futureagi/omega-otlp
+              readOnly: true
+            {{- end }}
+            {{- include "futureagi.block" (dict "text" (include "futureagi.caBundle.volumeMount" $) "indent" 12) }}
+      volumes:
+        - name: jwks
+          {{- if $jwks.existingSecret }}
+          secret:
+            secretName: {{ $jwks.existingSecret }}
+            defaultMode: 0440
+          {{- else }}
+          configMap:
+            name: {{ $jwks.existingConfigMap }}
+            defaultMode: 0444
+          {{- end }}
+            items:
+              - key: {{ $jwks.key }}
+                path: jwks.json
+        {{- if include "futureagi.omega.gateway.ca" . }}
+        - name: upstream-ca
+          {{- if $ca.existingSecret }}
+          secret:
+            secretName: {{ $ca.existingSecret }}
+            defaultMode: 0440
+          {{- else }}
+          configMap:
+            name: {{ $ca.existingConfigMap }}
+            defaultMode: 0444
+          {{- end }}
+            items:
+              - key: {{ $ca.key }}
+                path: ca.crt
+        {{- end }}
+        {{- if and $g.otlp.tracesUrl $g.otlp.credentials.existingSecret }}
+        - name: otlp-credentials
+          secret:
+            secretName: {{ $g.otlp.credentials.existingSecret }}
+            defaultMode: 0440
+            items:
+              - key: {{ $g.otlp.credentials.key }}
+                path: credentials.json
+        {{- end }}
+        {{- include "futureagi.block" (dict "text" (include "futureagi.caBundle.volume" $) "indent" 8) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  {{- with $g.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $g.service.type }}
+  selector:
+    {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $g.service.port }}
+      targetPort: http
+      protocol: TCP
+    {{- if $g.console.enabled }}
+    - name: console
+      port: {{ $g.service.consolePort }}
+      targetPort: console
+      protocol: TCP
+    {{- end }}
+{{- if $g.autoscaling.enabled }}
+---
+{{ include "futureagi.hpa" (dict "root" . "component" "omega-gateway" "name" (include "futureagi.component" $ctx) "autoscaling" $g.autoscaling) }}
+{{- end }}
+{{- if $g.pdb.enabled }}
+---
+{{ include "futureagi.pdb" (dict "root" . "component" "omega-gateway" "name" (include "futureagi.component" $ctx) "pdb" $g.pdb) }}
+{{- end }}
+{{- end }}

@@ -201,6 +201,60 @@ def test_the_compose_files_are_listed_and_interpolate_something() -> None:
     assert not {"topic", "error_feed", "server_pid", "attempt"} & set(variables)
 
 
+@pytest.mark.parametrize(
+    "filename", ["docker-compose.yml", "docker-compose.distributed.yml"]
+)
+def test_api_secret_verifiers_share_current_and_retired_peppers(filename) -> None:
+    services = yaml.safe_load((ROOT / filename).read_text())["services"]
+    expected = (
+        {"app"}
+        if filename == "docker-compose.yml"
+        else {
+            "backend",
+            "worker",
+            "worker-default",
+            "worker-tasks-s",
+            "worker-tasks-l",
+            "worker-tasks-xl",
+            "worker-exact-aggregation",
+            "worker-trace-ingestion",
+            "worker-agent-compass",
+            "worker-simulation-runner",
+            "serving",
+            "fi-collector",
+            "postgres-schema-bootstrap",
+            "clickhouse-native-bootstrap",
+            "clickhouse-cdc-bootstrap",
+            "peerdb-temporal-init",
+            "peerdb-init",
+        }
+    )
+    assert expected <= services.keys()
+    # safe_load resolves backend-env / queue-worker anchors too. Include every
+    # Django service and any new reader of the current pepper, not just this list.
+    readers = expected | {
+        name
+        for name, service in services.items()
+        if "FI_API_SECRET_PEPPER" in service.get("environment", {})
+        or service.get("environment", {}).get("DJANGO_SETTINGS_MODULE")
+    }
+    for name in sorted(readers):
+        environment = services[name]["environment"]
+        assert environment.get("FI_API_SECRET_PEPPER") == (
+            "${FI_API_SECRET_PEPPER:-local-dev-only-api-secret-pepper-replace-me}"
+        ), name
+        assert environment.get("FI_API_SECRET_PEPPERS_RETIRED") == (
+            "${FI_API_SECRET_PEPPERS_RETIRED:-}"
+        ), name
+    if filename == "docker-compose.yml":
+        # The standalone API, embedded worker and collector inherit app's env;
+        # supervisor overrides only process-specific variables, not either pepper.
+        supervisor = (ROOT / "deploy/standalone/supervisord.conf").read_text()
+        assert "after-bootstrap fi-collector" in supervisor
+        assert "FI_EMBEDDED_TEMPORAL_WORKER" in supervisor
+        assert "FI_API_SECRET_PEPPER" not in supervisor
+
+
 def test_every_compose_variable_is_documented() -> None:
     missing = {
         name: files
@@ -256,8 +310,9 @@ def test_env_example_assigns_each_key_once() -> None:
 
 
 def test_env_example_values_carry_no_inline_comments() -> None:
-    # bin/install reads a value as everything after '=', so a trailing
-    # "# comment" would become part of it (and a secret would look set).
+    # Compose and bin/install end an unquoted value only at " #" (a space,
+    # then #); any other "#comment" becomes part of it (and a secret would
+    # look set).
     assigned, _ = env_example()
     offenders = sorted(key for key, value in assigned if "#" in value)
     assert not offenders, f"move these comments to their own line: {offenders}"

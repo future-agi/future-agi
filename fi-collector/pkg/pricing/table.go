@@ -4,8 +4,8 @@
 //
 // model_prices.json is vendored from
 // BerriAI/litellm model_prices_and_context_window.json (MIT license),
-// snapshot 2026-07-16. Tiered `*_above_128k_tokens` rates are ported (see
-// Cost). Known deviations that were never applied by EITHER implementation —
+// snapshot 2026-07-16. Ordinary long-context token tiers are selected by
+// prompt length (see Cost). Known deviations never applied by EITHER implementation —
 // Django's calculate_cost_from_tokens passed only prompt/completion token
 // counts into litellm's cost_per_token, so none of these ever priced live
 // rows: cache-read/cache-creation token costs, reasoning-token costs, and
@@ -23,15 +23,22 @@ import (
 //go:embed model_prices.json
 var embeddedPrices []byte
 
-// above128kThreshold mirrors litellm's generic_cost_per_token tier boundary.
-const above128kThreshold = 128_000
-
 type modelPrice struct {
 	InputCostPerToken  float64 `json:"input_cost_per_token"`
 	OutputCostPerToken float64 `json:"output_cost_per_token"`
 
+	InputCostPerTokenAbove100k  float64 `json:"input_cost_per_token_above_100k_tokens"`
+	OutputCostPerTokenAbove100k float64 `json:"output_cost_per_token_above_100k_tokens"`
 	InputCostPerTokenAbove128k  float64 `json:"input_cost_per_token_above_128k_tokens"`
 	OutputCostPerTokenAbove128k float64 `json:"output_cost_per_token_above_128k_tokens"`
+	InputCostPerTokenAbove200k  float64 `json:"input_cost_per_token_above_200k_tokens"`
+	OutputCostPerTokenAbove200k float64 `json:"output_cost_per_token_above_200k_tokens"`
+	InputCostPerTokenAbove256k  float64 `json:"input_cost_per_token_above_256k_tokens"`
+	OutputCostPerTokenAbove256k float64 `json:"output_cost_per_token_above_256k_tokens"`
+	InputCostPerTokenAbove272k  float64 `json:"input_cost_per_token_above_272k_tokens"`
+	OutputCostPerTokenAbove272k float64 `json:"output_cost_per_token_above_272k_tokens"`
+	InputCostPerTokenAbove512k  float64 `json:"input_cost_per_token_above_512k_tokens"`
+	OutputCostPerTokenAbove512k float64 `json:"output_cost_per_token_above_512k_tokens"`
 }
 
 // Table is an immutable model→price map (litellm's
@@ -105,11 +112,10 @@ func LoadTable(path string) (*Table, error) {
 // match if the SDK sent them that way. ok=false → caller may try custom
 // per-org pricing.
 //
-// Tiered rates mirror litellm's generic_cost_per_token semantics: the tier
-// is selected by PROMPT token count. When promptTokens exceeds 128k AND the
-// side's above-128k rate is non-zero, ALL tokens on that side price at the
-// above-rate (not just the marginal tokens past the threshold); a zero or
-// absent above-rate falls back to the base rate.
+// Ordinary tiered rates are selected by PROMPT token count, using strict
+// above-threshold boundaries. Each side uses its highest applicable non-zero
+// tier rate for ALL tokens, not just tokens past the threshold. A zero or
+// absent tier rate retains that side's lower-tier rate (or the base rate).
 func (t *Table) Cost(model string, promptTokens, completionTokens int32) (float64, bool) {
 	p, ok := t.prices[model]
 	if !ok {
@@ -118,12 +124,26 @@ func (t *Table) Cost(model string, promptTokens, completionTokens int32) (float6
 
 	inRate := p.InputCostPerToken
 	outRate := p.OutputCostPerToken
-	if promptTokens > above128kThreshold {
-		if p.InputCostPerTokenAbove128k != 0 {
-			inRate = p.InputCostPerTokenAbove128k
+	// Ascending thresholds let the highest applicable tier win on each side.
+	for _, tier := range [...]struct {
+		threshold     int32
+		input, output float64
+	}{
+		{100_000, p.InputCostPerTokenAbove100k, p.OutputCostPerTokenAbove100k},
+		{128_000, p.InputCostPerTokenAbove128k, p.OutputCostPerTokenAbove128k},
+		{200_000, p.InputCostPerTokenAbove200k, p.OutputCostPerTokenAbove200k},
+		{256_000, p.InputCostPerTokenAbove256k, p.OutputCostPerTokenAbove256k},
+		{272_000, p.InputCostPerTokenAbove272k, p.OutputCostPerTokenAbove272k},
+		{512_000, p.InputCostPerTokenAbove512k, p.OutputCostPerTokenAbove512k},
+	} {
+		if promptTokens <= tier.threshold {
+			break
 		}
-		if p.OutputCostPerTokenAbove128k != 0 {
-			outRate = p.OutputCostPerTokenAbove128k
+		if tier.input != 0 {
+			inRate = tier.input
+		}
+		if tier.output != 0 {
+			outRate = tier.output
 		}
 	}
 

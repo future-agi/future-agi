@@ -1,5 +1,7 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
+import SelectionBar from "src/components/selection-bar";
 /* eslint-disable react/prop-types */
-import { Box, Button, Divider, Stack, Typography } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
 import React, { useCallback, useMemo, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,7 +27,7 @@ import {
 } from "src/utils/Mixpanel";
 import { camelCaseToTitleCase } from "src/utils/utils";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
-
+import PageHeader from "src/components/page-header";
 // ── Cell renderers (inlined, MUI-native) ──
 
 function AgentNameCell({ row }) {
@@ -58,7 +60,7 @@ function AgentTypeCell({ row }) {
         gap: 0.5,
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.25,
+        borderRadius: "4px",
         px: 1.5,
         py: 0.25,
       }}
@@ -85,7 +87,7 @@ function LanguagesCell({ getValue }) {
     .map((lang) => languageMap[lang] || lang);
   const remaining = value.length - maxVisible;
   return (
-    <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+    <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
       {visible.join(", ")}
       {remaining > 0 ? `, +${remaining}` : ""}
     </Typography>
@@ -104,6 +106,7 @@ function AgentDefinitions() {
   const [pageSize, setPageSize] = useState(25);
   const [rowSelection, setRowSelection] = useState({});
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteTargets, setDeleteTargets] = useState([]);
 
   const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
 
@@ -129,13 +132,9 @@ function AgentDefinitions() {
   const showEmptyScreen =
     !isLoading && data && total === 0 && debouncedSearchQuery === "";
 
-  // Selected items — derived from rowSelection index map.
+  // Selected items — matched by stable record ID.
   const selectedItems = useMemo(
-    () =>
-      Object.keys(rowSelection)
-        .filter((k) => rowSelection[k])
-        .map((k) => items[parseInt(k, 10)])
-        .filter(Boolean),
+    () => items.filter((item) => rowSelection[item.id]),
     [rowSelection, items],
   );
 
@@ -165,7 +164,7 @@ function AgentDefinitions() {
         size: 140,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" sx={{ fontSize: 12 }}>
             {getValue() ? camelCaseToTitleCase(getValue()) : "-"}
           </Typography>
         ),
@@ -179,7 +178,7 @@ function AgentDefinitions() {
         cell: ({ row, getValue }) => {
           const isChat = row.original.agent_type === AGENT_TYPES.CHAT;
           return (
-            <Typography variant="body2" sx={{ fontSize: 13 }}>
+            <Typography variant="body2" sx={{ fontSize: 12 }}>
               {isChat ? "NA" : getValue() || "-"}
             </Typography>
           );
@@ -200,7 +199,7 @@ function AgentDefinitions() {
         size: 100,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" sx={{ fontSize: 12 }}>
             {getValue() ? `v${getValue()}` : "-"}
           </Typography>
         ),
@@ -254,73 +253,46 @@ function AgentDefinitions() {
           <SimulationAgentEmptyScreen />
         ) : (
           <>
-            {/* Header */}
-            <Box
-              sx={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 2,
-              }}
-            >
-              <Stack spacing={0.25}>
-                <Typography
-                  color="text.primary"
-                  typography="m2"
-                  fontWeight="fontWeightSemiBold"
-                >
-                  Agent Definitions
-                </Typography>
-                <Typography
-                  typography="s1"
-                  color="text.primary"
-                  fontWeight="fontWeightRegular"
-                >
-                  Specifies how your AI agent behaves during voice conversations
-                </Typography>
-              </Stack>
-              <Box sx={{ display: "flex", gap: 2 }}>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  sx={{ borderRadius: "4px", height: 38, px: 1 }}
-                  onClick={() => {
-                    handleOnDocsClicked("agent-definition");
-                    window.open(
-                      "https://docs.futureagi.com/docs/simulation/concepts/agent-definition",
-                      "_blank",
-                    );
-                  }}
-                >
-                  <SvgColor
-                    src="/assets/icons/agent/docs.svg"
-                    sx={{ height: 20, width: 20, mr: 1 }}
-                  />
-                  <Typography typography="s1" fontWeight="fontWeightMedium">
-                    View Docs
-                  </Typography>
-                </Button>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  sx={{ px: 3, borderRadius: "4px", height: 38 }}
-                  startIcon={
-                    <Iconify
-                      icon="octicon:plus-24"
-                      sx={{ width: 20, height: 20 }}
+            <PageHeader
+              title="Agent definitions"
+              description="Specifies how your AI agent behaves during voice conversations"
+              actions={
+                <>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => {
+                      handleOnDocsClicked("agent-definition");
+                      window.open(
+                        "https://docs.futureagi.com/docs/simulation/concepts/agent-definition",
+                        "_blank",
+                      );
+                    }}
+                  >
+                    <SvgColor
+                      src="/assets/icons/agent/docs.svg"
+                      sx={{ height: 16, width: 16, mr: 1 }}
                     />
-                  }
-                  disabled={
-                    !RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role]
-                  }
-                  onClick={handleAddAgent}
-                >
-                  <Typography typography="s1" fontWeight="fontWeightMedium">
-                    Create agent definition
-                  </Typography>
-                </Button>
-              </Box>
-            </Box>
+                    <Typography typography="s1" fontWeight="fontWeightMedium">
+                      View Docs
+                    </Typography>
+                  </Button>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    startIcon={<Iconify icon="solar:add-linear" width={16} />}
+                    disabled={
+                      !RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role]
+                    }
+                    onClick={handleAddAgent}
+                  >
+                    <Typography typography="s1" fontWeight="fontWeightMedium">
+                      Create agent definition
+                    </Typography>
+                  </Button>
+                </>
+              }
+            />
 
             {/* Search + bulk bar */}
             <Box
@@ -345,70 +317,24 @@ function AgentDefinitions() {
                 }}
               />
               {selectedItems.length > 0 ? (
-                <Box
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 2,
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: 1,
-                    px: 2,
-                    py: 0.5,
-                  }}
-                >
-                  <Typography
-                    typography="s1"
-                    fontWeight="fontWeightMedium"
-                    color="primary.main"
-                  >
-                    {selectedItems.length} Selected
-                  </Typography>
-                  <Divider
-                    orientation="vertical"
-                    flexItem
-                    sx={{ borderRightWidth: 0.25 }}
-                  />
-                  <Button
-                    size="small"
-                    startIcon={
-                      <SvgColor
-                        src="/assets/icons/ic_delete.svg"
-                        sx={{
-                          width: 20,
-                          height: 20,
-                          color: "text.disabled",
-                        }}
-                      />
-                    }
-                    sx={{ color: "text.secondary" }}
-                    onClick={() => setDeleteDialogOpen(true)}
-                    disabled={
-                      !RolePermission.SIMULATION_AGENT[PERMISSIONS.DELETE][role]
-                    }
-                  >
-                    <Typography
-                      typography="s1"
-                      fontWeight="fontWeightRegular"
-                      color="text.primary"
-                    >
-                      Delete
-                    </Typography>
-                  </Button>
-                  <Button
-                    size="small"
-                    sx={{ color: "text.secondary" }}
-                    onClick={handleCancelSelection}
-                  >
-                    <Typography
-                      typography="s1"
-                      fontWeight="fontWeightRegular"
-                      color="text.primary"
-                    >
-                      Cancel
-                    </Typography>
-                  </Button>
-                </Box>
+                <SelectionBar
+                  count={selectedItems.length}
+                  onCancel={handleCancelSelection}
+                  actions={[
+                    {
+                      label: "Delete",
+                      icon: "solar:trash-bin-trash-linear",
+                      onClick: () => {
+                        setDeleteTargets(selectedItems.map((item) => ({ ...item })));
+                        setDeleteDialogOpen(true);
+                      },
+                      disabled:
+                        !RolePermission.SIMULATION_AGENT[PERMISSIONS.DELETE][
+                          role
+                        ],
+                    },
+                  ]}
+                />
               ) : null}
             </Box>
 
@@ -419,11 +345,12 @@ function AgentDefinitions() {
               isLoading={isLoading}
               rowCount={total}
               rowSelection={rowSelection}
+              selectionScope={[page, pageSize, searchQuery, debouncedSearchQuery]}
               onRowSelectionChange={setRowSelection}
               onRowClick={handleRowClick}
               getRowId={(row) => row.id}
               enableSelection
-              rowHeight={44}
+              rowHeight={ROW_HEIGHT.default}
               emptyMessage="No agent definitions found"
             />
 
@@ -445,7 +372,7 @@ function AgentDefinitions() {
       <DeleteAgentDefinitionDialog
         open={deleteDialogOpen}
         onClose={() => setDeleteDialogOpen(false)}
-        agents={selectedItems.map((a) => ({
+        agents={deleteTargets.map((a) => ({
           id: a.id,
           agentName: a.agent_name,
         }))}

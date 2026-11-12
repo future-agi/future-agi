@@ -1,14 +1,16 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import ComingSoonChip from "../components/ComingSoonChip";
+import NotInReleaseChip from "src/components/NotInRelease/NotInReleaseChip";
+import { dimExceptLine } from "src/components/NotInRelease/notInRelease";
 import { activateOnKey } from "../helpers/activateOnKey";
 import { OPTION_STATUS } from "../environmentOptions";
 
 export default function OptionCard({ option, selected, onClick }) {
+  // An option not built in this release stays visible but inert: no click, no
+  // keyboard target, dimmed, with the shared line under its title.
   const comingSoon = option?.status === OPTION_STATUS.COMING_SOON;
-  const card = (
+  return (
     <Stack
       onClick={comingSoon ? undefined : (e) => onClick?.(e)}
       role="button"
@@ -20,39 +22,49 @@ export default function OptionCard({ option, selected, onClick }) {
       sx={{
         position: "relative",
         p: 2,
-        borderRadius: 1.5,
+        borderRadius: "8px",
         cursor: comingSoon ? "default" : "pointer",
-        opacity: comingSoon ? 0.72 : 1,
+        ...(comingSoon && dimExceptLine),
         border: "1px solid",
         minHeight: 180,
-        borderColor: (th) => selected
-          ? (th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.5) : th.palette.text.primary)
-          : th.palette.divider,
-        bgcolor: (th) => selected
-          ? alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.06 : 0.03)
-          : "background.paper",
+        borderColor: selected ? "text.primary" : "divider",
+        bgcolor: selected ? "action.selected" : "background.paper",
         transition: "border-color .12s ease, background-color .12s ease",
         "&:hover": {
-          borderColor: (th) => (comingSoon || selected) ? undefined : (th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.32) : th.palette.text.disabled),
+          borderColor: comingSoon || selected ? undefined : "text.disabled",
         },
       }}
     >
       <Stack direction="row" alignItems="center" spacing={1.25}>
         <Box
           sx={{
-            width: 32, height: 32, borderRadius: 1,
-            display: "grid", placeItems: "center", flexShrink: 0,
-            bgcolor: (th) => alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.1 : 0.06),
+            width: 32,
+            height: 32,
+            borderRadius: "6px",
+            display: "grid",
+            placeItems: "center",
+            flexShrink: 0,
+            bgcolor: "background.neutral",
             color: "text.primary",
           }}
         >
           <Iconify icon={option?.icon} width={16} />
         </Box>
-        <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold", lineHeight: 1.2 }}>
+        <Typography
+          sx={{ typography: "s1_2", fontWeight: 500, lineHeight: 1.2 }}
+        >
           {option?.title}
         </Typography>
       </Stack>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", lineHeight: 1.45, flex: 1 }}>
+      {comingSoon && <NotInReleaseChip sx={{ alignSelf: "flex-start" }} />}
+      <Typography
+        sx={{
+          typography: "s3",
+          color: "text.subtitle",
+          lineHeight: 1.45,
+          flex: 1,
+        }}
+      >
         {option?.blurb}
       </Typography>
       {option?.preview && (
@@ -69,12 +81,14 @@ export default function OptionCard({ option, selected, onClick }) {
                 key={item}
                 sx={{
                   typography: "s3",
-                  fontWeight: "fontWeightSemiBold",
-                  color: "text.subtitle",
+                  fontWeight: 500,
+                  color: "text.secondary",
                   px: 0.75,
-                  py: 0.25,
-                  borderRadius: 0.5,
-                  bgcolor: (th) => alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.06 : 0.04),
+                  height: 18,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  borderRadius: "4px",
+                  bgcolor: "action.selected",
                 }}
               >
                 {item}
@@ -87,20 +101,16 @@ export default function OptionCard({ option, selected, onClick }) {
         <Iconify
           icon="solar:check-circle-bold"
           width={15}
-          sx={{ position: "absolute", top: 10, right: 10, color: "text.primary" }}
+          sx={{
+            position: "absolute",
+            top: 10,
+            right: 10,
+            color: "text.primary",
+          }}
         />
       )}
     </Stack>
   );
-  if (comingSoon) {
-    return (
-      <Box sx={{ position: "relative", display: "grid" }}>
-        {card}
-        <ComingSoonChip sx={{ position: "absolute", top: 12, right: 12, zIndex: 1 }} />
-      </Box>
-    );
-  }
-  return card;
 }
 OptionCard.propTypes = {
   option: PropTypes.shape({

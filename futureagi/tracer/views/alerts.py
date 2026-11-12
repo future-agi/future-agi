@@ -10,7 +10,7 @@ from tfc.ee_gating import EEResource, check_ee_can_create
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tracer.models.feed_alert import FeedAlertTrigger
-from tracer.models.monitor import UserAlertMonitor
+from tracer.models.monitor import ThresholdRuleChoices, UserAlertMonitor
 from tracer.models.project import Project
 from tracer.serializers.monitor import UserAlertMonitorSerializer
 from tracer.services.feed_alerts.rules import (
@@ -101,7 +101,7 @@ def _metric_write(request, organization, workspace, monitor=None):
         data["workspace"] = workspace.id
         data["created_by"] = request.user.id
     serializer = UserAlertMonitorSerializer(
-        monitor, data=data, partial=monitor is not None
+        monitor, data=data, partial=monitor is not None, context={"request": request}
     )
     if not serializer.is_valid():
         raise FeedAlertError(serializer.errors)
@@ -209,6 +209,11 @@ class AlertItemSerializer(serializers.Serializer):
     warning_threshold_value = serializers.FloatField(required=False, allow_null=True)
     alert_frequency = serializers.IntegerField(required=False)
     auto_threshold_time_window = serializers.IntegerField(required=False)
+    threshold_rule = serializers.ChoiceField(
+        choices=ThresholdRuleChoices.choices,
+        required=False,
+        help_text="How the saved thresholds are judged: earlier for monitors saved before the threshold update and not edited since, current otherwise.",
+    )
     last_checked_at = serializers.DateTimeField(required=False, allow_null=True)
     slack_webhook_url = serializers.URLField(
         required=False, allow_null=True, allow_blank=True

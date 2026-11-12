@@ -20,7 +20,7 @@ def add_transcripts_to_eval_attributes(apps, schema_editor):
     ObservationSpan = apps.get_model("tracer", "ObservationSpan")
 
     ## Gets all spans from voice observability projects
-    spans_qs = (ObservationSpan.objects.filter(
+    spans_qs = (ObservationSpan.objects.using(schema_editor.connection.alias).filter(
                     parent_span_id__isnull=True,
                     project__source = 'simulator',
                 )
@@ -99,7 +99,7 @@ def add_transcripts_to_eval_attributes(apps, schema_editor):
                 # Try execept block for bulk update
             if spans_to_update:
                 try:
-                    ObservationSpan.objects.bulk_update(
+                    ObservationSpan.objects.using(schema_editor.connection.alias).bulk_update(
                         spans_to_update,
                         ['eval_attributes'],
                         batch_size=BATCH_SIZE
@@ -115,7 +115,7 @@ def add_transcripts_to_eval_attributes(apps, schema_editor):
                     # Fallback: try updating individually
                     for span in spans_to_update:
                         try:
-                            span.save(update_fields=["eval_attributes"])
+                            span.save(using=schema_editor.connection.alias, update_fields=["eval_attributes"])
                         except Exception as individual_error:
                             failed_spans.append({
                                 "span_id": str(span.id),

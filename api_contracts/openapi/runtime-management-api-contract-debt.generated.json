@@ -19,19 +19,84 @@
     "futureagi/saml2_auth/views.py"
   ],
   "summary": {
-    "runtime_backed_validated_request_decorators": 422,
-    "direct_swagger_auto_schema_decorators": 135,
-    "doc_only_input_contract_decorators": 0,
+    "runtime_backed_validated_request_decorators": 517,
+    "direct_swagger_auto_schema_decorators": 138,
+    "doc_only_input_contract_decorators": 3,
     "broad_request_contract_decorators": 0
   },
   "app_wide_summary": {
-    "runtime_backed_validated_request_decorators": 611,
-    "direct_swagger_auto_schema_decorators": 262,
-    "doc_only_input_contract_decorators": 0,
+    "runtime_backed_validated_request_decorators": 779,
+    "direct_swagger_auto_schema_decorators": 280,
+    "doc_only_input_contract_decorators": 4,
     "broad_request_contract_decorators": 0
   },
-  "doc_only_input_contract_decorators": [],
+  "doc_only_input_contract_decorators": [
+    {
+      "path": "futureagi/accounts/views/handoff_exchange.py",
+      "line": 84,
+      "class": "HandoffRedeemView",
+      "function": "post",
+      "serializers": [
+        "HandoffRedeemRequestSerializer"
+      ]
+    },
+    {
+      "path": "futureagi/accounts/views/handoff_exchange.py",
+      "line": 155,
+      "class": "WebSocketTicketView",
+      "function": "post",
+      "serializers": [
+        "WebSocketTicketRequestSerializer"
+      ]
+    },
+    {
+      "path": "futureagi/tracer/views/observation_span.py",
+      "line": 1821,
+      "class": "ObservationSpanView",
+      "function": "submit_feedback_action_type",
+      "serializers": [
+        "SubmitFeedbackActionTypeSerializer"
+      ]
+    }
+  ],
   "broad_request_contract_decorators": [],
-  "app_wide_doc_only_input_contract_decorators": [],
+  "app_wide_doc_only_input_contract_decorators": [
+    {
+      "path": "futureagi/accounts/views/handoff_exchange.py",
+      "line": 84,
+      "class": "HandoffRedeemView",
+      "function": "post",
+      "serializers": [
+        "HandoffRedeemRequestSerializer"
+      ]
+    },
+    {
+      "path": "futureagi/accounts/views/handoff_exchange.py",
+      "line": 155,
+      "class": "WebSocketTicketView",
+      "function": "post",
+      "serializers": [
+        "WebSocketTicketRequestSerializer"
+      ]
+    },
+    {
+      "path": "futureagi/agentcc/views/mcp_approvals.py",
+      "line": 117,
+      "class": "MCPApprovalDecisionView",
+      "function": "post",
+      "serializers": [
+        "MCPApprovalDecisionSerializer"
+      ]
+    },
+    {
+      "path": "futureagi/tracer/views/observation_span.py",
+      "line": 1821,
+      "class": "ObservationSpanView",
+      "function": "submit_feedback_action_type",
+      "serializers": [
+        "SubmitFeedbackActionTypeSerializer"
+      ]
+    }
+  ],
   "app_wide_broad_request_contract_decorators": []
 }

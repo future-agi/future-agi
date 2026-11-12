@@ -5,6 +5,7 @@ import React from "react";
 import ModelOptionsItems from "src/components/custom-model-options/ModelOptionsItems.jsx";
 import axios, { endpoints } from "../../../utils/axios";
 import _ from "lodash";
+
 export default function ModelParamsPopover({
   anchorEl,
   setAnchorEl,
@@ -24,12 +25,17 @@ export default function ModelParamsPopover({
       open={Boolean(anchorEl)}
       anchorEl={anchorEl}
       onClose={() => setAnchorEl(null)}
+      // options-truth L1 G5: stays inside the viewport.
       anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+      transformOrigin={{ vertical: "top", horizontal: "right" }}
+      marginThreshold={16}
       PaperProps={{
         sx: {
           p: 1,
-          width: 584,
-          borderRadius: 0.5,
+          width: "min(584px, calc(100vw - 32px))",
+          maxHeight: "calc(100vh - 32px)",
+          overflowY: "auto",
+          borderRadius: "4px",
         },
       }}
     >
@@ -40,15 +46,26 @@ export default function ModelParamsPopover({
         responseSchema={responseSchema}
         responseFormat={modelParams?.responseFormat ?? []}
         items={
-          modelParams?.sliders?.map((item) => ({
-            ...item,
-            label: _.startCase(item?.label),
-            id: _.camelCase(item?.label),
-          })) ?? []
+          // The worker now resolves all sampling params, not only temperature
+          // and max tokens. Show the values the request actually sends.
+          modelParams?.sliders?.map((item) => {
+            const id = _.camelCase(item?.label);
+            // Max tokens moves in steps of 50 (never 1 at a time).
+            const tokens = /tokens/i.test(id);
+            return {
+              ...item,
+              label: _.startCase(item?.label),
+              id,
+              ...(tokens
+                ? { step: Math.max(50, Number(item?.step) || 0) }
+                : {}),
+            };
+          }) ?? []
         }
         booleans={modelParams?.booleans}
         dropdowns={modelParams?.dropdowns}
-        reasoning={modelParams?.reasoning}
+        // L5 G1: no reasoning toggle on an experiment card. The run engine
+        // has no reasoning span, so the toggle would change nothing.
       />
     </Popover>
   );

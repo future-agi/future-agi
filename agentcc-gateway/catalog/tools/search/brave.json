@@ -1,0 +1,27 @@
+{
+  "vendor": "brave",
+  "capability": "search",
+  "skus": [
+    {
+      "sku": "brave.search.web",
+      "unit": "request",
+      "usd_per_unit": 0.005,
+      "tier": "standard",
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "byok_only",
+  "resale_terms_ref": "",
+  "terms_url": "https://api-dashboard.search.brave.com/terms-of-service",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": true,
+  "trains_on_input": "no",
+  "improvement_license": false,
+  "regions": [],
+  "results_retention": "metadata",
+  "cacheable": "none",
+  "eval_export": "forbidden",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": true
+}

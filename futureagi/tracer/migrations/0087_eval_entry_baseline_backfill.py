@@ -14,7 +14,7 @@ from django.db import migrations
 def _forward(apps, schema_editor):
     from tracer.services.eval_tasks.backfill import backfill_config_hash_and_status
 
-    backfill_config_hash_and_status()
+    backfill_config_hash_and_status(db_connection=schema_editor.connection)
 
 
 def _reverse(apps, schema_editor):

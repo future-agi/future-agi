@@ -1,0 +1,23 @@
+{
+  "http": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": false,
+    "type": "validation_error",
+    "code": "idempotency_key_invalid",
+    "detail": "Send an Idempotency-Key header: a UUIDv7 that EE stores before the mint and sends again when it retries the same mint.",
+    "message": "Send an Idempotency-Key header: a UUIDv7 that EE stores before the mint and sends again when it retries the same mint.",
+    "error": "Send an Idempotency-Key header: a UUIDv7 that EE stores before the mint and sends again when it retries the same mint.",
+    "result": "Send an Idempotency-Key header: a UUIDv7 that EE stores before the mint and sends again when it retries the same mint.",
+    "attr": "Idempotency-Key",
+    "details": {
+      "Idempotency-Key": [
+        "Send an Idempotency-Key header: a UUIDv7 that EE stores before the mint and sends again when it retries the same mint."
+      ]
+    }
+  }
+}

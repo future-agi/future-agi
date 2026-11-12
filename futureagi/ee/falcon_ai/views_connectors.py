@@ -7,9 +7,18 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from agentcc.services.credential_manager import encrypt_token
+from ee.falcon_ai.credential_responses import (
+    FalconCredentialAPIView,
+    credential_auth_required_response,
+)
+from ee.falcon_ai.credentials import (
+    AUTH_REQUIRED,
+    FalconCredentialError,
+    encrypt_falcon_token,
+)
 from ee.falcon_ai.mcp_proxy import MCPConnectorProxy
 from ee.falcon_ai.models import MCPConnector
+from ee.falcon_ai.oauth_registration import create_connector, save_connector
 from ee.falcon_ai.serializers_connectors import (
     MCPConnectorCreateSerializer,
     MCPConnectorDetailSerializer,
@@ -53,7 +62,7 @@ def _get_connector_for_request(request, connector_id):
         return None, _gm.not_found("Connector not found")
 
 
-class MCPConnectorListView(APIView):
+class MCPConnectorListView(FalconCredentialAPIView):
     """List and create MCP connectors."""
 
     permission_classes = [IsAuthenticated]
@@ -108,7 +117,7 @@ class MCPConnectorListView(APIView):
                 f"Connector with name '{data['name']}' already exists",
             )
 
-        connector = MCPConnector.objects.create(
+        connector = create_connector(
             organization=organization,
             workspace=workspace,
             name=data["name"],
@@ -116,7 +125,7 @@ class MCPConnectorListView(APIView):
             transport=data["transport"],
             auth_type=data["auth_type"],
             auth_header_name=data.get("auth_header_name", "Authorization"),
-            auth_header_value=encrypt_token(data.get("auth_header_value", "")),
+            auth_header_value=encrypt_falcon_token(data.get("auth_header_value", "")),
             created_by=request.user,
         )
 
@@ -127,7 +136,7 @@ class MCPConnectorListView(APIView):
         )
 
 
-class MCPConnectorDetailView(APIView):
+class MCPConnectorDetailView(FalconCredentialAPIView):
     """Get, update, or delete an MCP connector."""
 
     permission_classes = [IsAuthenticated]
@@ -156,6 +165,7 @@ class MCPConnectorDetailView(APIView):
             200: MCPConnectorDetailResponseSerializer,
             403: FalconErrorResponseSerializer,
             404: FalconErrorResponseSerializer,
+            409: FalconErrorResponseSerializer,
         },
     )
     def patch(self, request, connector_id):
@@ -172,18 +182,16 @@ class MCPConnectorDetailView(APIView):
             "auth_header_value",
             "is_active",
         ]
-        update_fields = []
+        changes = {}
         for field in updatable_fields:
             if field in request.validated_data:
                 value = request.validated_data[field]
                 if field == "auth_header_value":
-                    value = encrypt_token(value)
-                setattr(connector, field, value)
-                update_fields.append(field)
+                    value = encrypt_falcon_token(value)
+                changes[field] = value
 
-        if update_fields:
-            update_fields.append("updated_at")
-            connector.save(update_fields=update_fields)
+        if changes:
+            save_connector(connector, changes)
 
         serializer = MCPConnectorDetailSerializer(connector)
         return Response({"status": True, "result": serializer.data})
@@ -200,8 +208,9 @@ class MCPConnectorDetailView(APIView):
         if error:
             return error
 
-        # Soft delete via BaseModel.delete()
-        connector.delete()
+        from ee.falcon_ai.disconnect import disconnect_mcp
+
+        disconnect_mcp(connector)
         return Response({"status": True}, status=status.HTTP_204_NO_CONTENT)
 
 
@@ -216,6 +225,7 @@ class MCPConnectorDiscoverView(APIView):
             200: MCPConnectorDiscoverResponseSerializer,
             403: FalconErrorResponseSerializer,
             404: FalconErrorResponseSerializer,
+            409: FalconErrorResponseSerializer,
             502: FalconErrorResponseSerializer,
         },
     )
@@ -226,6 +236,8 @@ class MCPConnectorDiscoverView(APIView):
 
         proxy = MCPConnectorProxy()
         result = proxy.discover_tools_sync(connector)
+        if result.get("code") == AUTH_REQUIRED:
+            return credential_auth_required_response()
 
         if result["success"]:
             connector.refresh_from_db()
@@ -255,6 +267,7 @@ class MCPConnectorTestView(APIView):
             200: MCPConnectorTestResponseSerializer,
             403: FalconErrorResponseSerializer,
             404: FalconErrorResponseSerializer,
+            409: FalconErrorResponseSerializer,
             502: FalconErrorResponseSerializer,
         },
     )
@@ -265,6 +278,8 @@ class MCPConnectorTestView(APIView):
 
         proxy = MCPConnectorProxy()
         result = proxy.test_connection_sync(connector)
+        if result.get("code") == AUTH_REQUIRED:
+            return credential_auth_required_response()
 
         if result["success"]:
             return Response({"status": True, "result": result})
@@ -275,7 +290,7 @@ class MCPConnectorTestView(APIView):
             )
 
 
-class MCPConnectorAuthenticateView(APIView):
+class MCPConnectorAuthenticateView(FalconCredentialAPIView):
     """Initiate or re-initiate authentication for a connector.
 
     For OAuth connectors, returns the authorization URL to open in a browser.
@@ -290,6 +305,7 @@ class MCPConnectorAuthenticateView(APIView):
             200: MCPConnectorAuthenticateResponseSerializer,
             403: FalconErrorResponseSerializer,
             404: FalconErrorResponseSerializer,
+            409: FalconErrorResponseSerializer,
             502: FalconErrorResponseSerializer,
         },
     )
@@ -311,13 +327,14 @@ class MCPConnectorAuthenticateView(APIView):
                 )
                 if resp.status_code == 401:
                     # Server requires auth — check if it supports OAuth
-                    connector.auth_type = "oauth"
-                    connector.save(update_fields=["auth_type", "updated_at"])
+                    save_connector(connector, {"auth_type": "oauth"})
                     logger.info(
                         "oauth_auto_detected",
                         connector=connector.name,
                         url=connector.server_url,
                     )
+            except FalconCredentialError:
+                return credential_auth_required_response()
             except Exception:
                 pass  # Will fall through to test below
 
@@ -339,35 +356,40 @@ class MCPConnectorAuthenticateView(APIView):
                         "message": "Open the authorization URL to authenticate.",
                     }
                 )
-            except Exception as e:
+            except FalconCredentialError:
+                return credential_auth_required_response()
+            except Exception:
                 logger.error(
                     "oauth_auth_url_error",
                     connector=str(connector_id),
-                    error=str(e),
+                    error="OAuth request failed",
                 )
                 return _gm.custom_error_response(
                     status.HTTP_502_BAD_GATEWAY,
-                    f"OAuth setup failed: {e}",
+                    "OAuth setup failed",
                 )
 
         # Non-OAuth: test the connection and discover tools
         proxy = MCPConnectorProxy()
         test_result = proxy.test_connection_sync(connector)
+        if test_result.get("code") == AUTH_REQUIRED:
+            return credential_auth_required_response()
 
         if test_result.get("success"):
-            connector.is_verified = True
-            connector.last_error = ""
-            connector.save(update_fields=["is_verified", "last_error", "updated_at"])
+            save_connector(connector, {"is_verified": True, "last_error": ""})
 
             # Also discover tools on successful auth
             discover_result = proxy.discover_tools_sync(connector)
+            if discover_result.get("code") == AUTH_REQUIRED:
+                return credential_auth_required_response()
             if discover_result.get("success"):
-                connector.discovered_tools = discover_result.get("tools", [])
-                connector.save(update_fields=["discovered_tools", "updated_at"])
+                save_connector(
+                    connector, {"discovered_tools": discover_result.get("tools", [])}
+                )
         else:
-            connector.is_verified = False
-            connector.last_error = test_result.get("error", "Connection failed")
-            connector.save(update_fields=["is_verified", "last_error", "updated_at"])
+            save_connector(
+                connector, {"is_verified": False, "last_error": "Connection failed"}
+            )
 
         serializer = MCPConnectorDetailSerializer(connector)
         return Response(
@@ -383,7 +405,7 @@ class MCPConnectorAuthenticateView(APIView):
         )
 
 
-class MCPConnectorToolsView(APIView):
+class MCPConnectorToolsView(FalconCredentialAPIView):
     """Enable or disable specific tools on a connector."""
 
     permission_classes = [IsAuthenticated]
@@ -413,12 +435,9 @@ class MCPConnectorToolsView(APIView):
         invalid_names = requested_names - discovered_names
 
         if invalid_names:
-            return _gm.bad_request(
-                f"Unknown tools: {', '.join(sorted(invalid_names))}"
-            )
+            return _gm.bad_request(f"Unknown tools: {', '.join(sorted(invalid_names))}")
 
-        connector.enabled_tool_names = list(requested_names)
-        connector.save(update_fields=["enabled_tool_names", "updated_at"])
+        save_connector(connector, {"enabled_tool_names": list(requested_names)})
 
         result_serializer = MCPConnectorDetailSerializer(connector)
         return Response({"status": True, "result": result_serializer.data})
@@ -448,6 +467,10 @@ class MCPConnectorOAuthCallbackView(APIView):
                 description="HTML page that posts OAuth failure to opener.",
                 schema=openapi.Schema(type=openapi.TYPE_STRING),
             ),
+            409: openapi.Response(
+                description="HTML page that posts CONNECTOR_AUTH_REQUIRED to opener.",
+                schema=openapi.Schema(type=openapi.TYPE_STRING),
+            ),
             502: openapi.Response(
                 description="HTML page that posts OAuth token exchange failure to opener.",
                 schema=openapi.Schema(type=openapi.TYPE_STRING),
@@ -458,21 +481,16 @@ class MCPConnectorOAuthCallbackView(APIView):
         code = request.query_params.get("code")
         state = request.query_params.get("state")
         error = request.query_params.get("error")
-        error_description = request.query_params.get(
-            "error_description", "Authorization denied"
-        )
 
         # Handle error from authorization server
         if error:
             logger.warning(
                 "oauth_callback_error",
                 connector=str(connector_id),
-                error=error,
-                description=error_description,
             )
             return self._close_window_response(
                 success=False,
-                message=error_description,
+                message="Authorization denied",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -493,7 +511,6 @@ class MCPConnectorOAuthCallbackView(APIView):
             logger.warning(
                 "oauth_callback_invalid_state",
                 connector=str(connector_id),
-                state=state,
             )
             return self._close_window_response(
                 success=False,
@@ -510,17 +527,28 @@ class MCPConnectorOAuthCallbackView(APIView):
 
         try:
             exchange_code_for_tokens(connector, code, redirect_uri)
-        except Exception as e:
+        except FalconCredentialError as error:
+            # Registration mismatch is a static sentinel, not exception text.
+            # A superseded callback must not even overwrite the current error.
+            if error.args != (AUTH_REQUIRED,):
+                MCPConnectorProxy()._save_error(connector, AUTH_REQUIRED)
+            return self._close_window_response(
+                success=False,
+                message=AUTH_REQUIRED,
+                status_code=status.HTTP_409_CONFLICT,
+            )
+        except Exception:
             logger.error(
                 "oauth_token_exchange_error",
                 connector=connector.name,
-                error=str(e),
+                error="OAuth request failed",
             )
-            connector.last_error = str(e)[:500]
-            connector.save(update_fields=["last_error", "updated_at"])
+            save_connector(
+                connector, {"last_error": "OAuth request failed"}, discard_stale=True
+            )
             return self._close_window_response(
                 success=False,
-                message=f"Token exchange failed: {e}",
+                message="Token exchange failed",
                 status_code=status.HTTP_502_BAD_GATEWAY,
             )
 
@@ -530,6 +558,12 @@ class MCPConnectorOAuthCallbackView(APIView):
         try:
             proxy = MCPConnectorProxy()
             result = proxy.discover_tools_sync(connector)
+            if result.get("code") == AUTH_REQUIRED:
+                return self._close_window_response(
+                    success=False,
+                    message=AUTH_REQUIRED,
+                    status_code=status.HTTP_409_CONFLICT,
+                )
             if result.get("success"):
                 logger.info(
                     "oauth_callback_tools_discovered",
@@ -543,21 +577,21 @@ class MCPConnectorOAuthCallbackView(APIView):
                     error=result.get("error"),
                 )
                 # Keep is_verified=True since tokens are valid
-                connector.is_verified = True
-                connector.last_error = ""
-                connector.save(
-                    update_fields=["is_verified", "last_error", "updated_at"]
+                save_connector(
+                    connector,
+                    {"is_verified": True, "last_error": ""},
+                    discard_stale=True,
                 )
-        except Exception as e:
+        except Exception:
             logger.warning(
                 "oauth_callback_discovery_error",
                 connector=connector.name,
-                error=str(e),
+                error="OAuth request failed",
             )
-            # Keep is_verified=True since tokens are valid
-            connector.is_verified = True
-            connector.last_error = ""
-            connector.save(update_fields=["is_verified", "last_error", "updated_at"])
+            # Preserve verification only if this is still the same live grant.
+            save_connector(
+                connector, {"is_verified": True, "last_error": ""}, discard_stale=True
+            )
 
         logger.info("oauth_callback_success", connector=connector.name)
         return self._close_window_response(

@@ -1,10 +1,12 @@
 import {
   Box,
+  Checkbox,
   Divider,
   FormControlLabel,
   IconButton,
   Popover,
   Skeleton,
+  Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
@@ -35,6 +37,117 @@ import {
 import { useDebounce } from "src/hooks/use-debounce";
 import FormSearchField from "../FormSearchField/FormSearchField";
 
+/**
+ * Grouped list (optional `groups` prop): a header per group with a tri-state
+ * checkbox, then its columns. Used by the dataset Data grid to group columns
+ * by role (Input, Expected, Metadata, Generated outputs, Evals, …, System).
+ */
+const GroupedColumnList = ({
+  groups,
+  columns,
+  nameKey,
+  query,
+  onColumnVisibilityChange,
+}) => {
+  const byId = new Map(columns.map((c) => [c.id, c]));
+  const q = (query ?? "").toLowerCase();
+  const rendered = groups
+    .map((g) => {
+      const items = g.ids
+        .map((id) => byId.get(id))
+        .filter(Boolean)
+        .filter(
+          (c) =>
+            !q ||
+            String(c?.[nameKey] ?? "")
+              .toLowerCase()
+              .includes(q),
+        );
+      return { ...g, items };
+    })
+    .filter((g) => g.items.length);
+  if (!rendered.length) {
+    return (
+      <Box sx={{ p: 2, color: "text.disabled", textAlign: "center" }}>
+        No matching columns
+      </Box>
+    );
+  }
+  return (
+    <Box sx={{ py: 0.5 }}>
+      {rendered.map((g) => {
+        const visible = g.items.filter((c) => c.isVisible !== false).length;
+        const all = visible === g.items.length;
+        const some = visible > 0 && !all;
+        return (
+          <Box key={g.key ?? g.label} sx={{ pb: 0.5 }}>
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                px: 1.5,
+                py: 0.5,
+              }}
+            >
+              <Checkbox
+                size="small"
+                checked={all}
+                indeterminate={some}
+                onChange={() =>
+                  g.items
+                    .filter((c) => (c.isVisible !== false) === all)
+                    .forEach((c) => onColumnVisibilityChange(c.id))
+                }
+                sx={{ p: 0 }}
+                inputProps={{ "aria-label": `Show all ${g.label}` }}
+              />
+              <Typography
+                typography="s3"
+                fontWeight="fontWeightSemiBold"
+                color="text.secondary"
+                sx={{ textTransform: "uppercase", letterSpacing: "0.04em" }}
+              >
+                {g.label}
+              </Typography>
+              <Typography typography="s3" color="text.disabled">
+                {visible}/{g.items.length}
+              </Typography>
+            </Box>
+            {g.items.map((c) => (
+              <FormControlLabel
+                key={c.id}
+                sx={{ display: "flex", mx: 0, pl: 4.5, pr: 1.5, py: 0.25 }}
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={c.isVisible !== false}
+                    onChange={() => onColumnVisibilityChange(c.id)}
+                    sx={{ p: 0, mr: 1 }}
+                  />
+                }
+                label={
+                  <Typography typography="s2" noWrap sx={{ maxWidth: 220 }}>
+                    {c?.[nameKey]}
+                  </Typography>
+                }
+              />
+            ))}
+          </Box>
+        );
+      })}
+    </Box>
+  );
+};
+
+GroupedColumnList.propTypes = {
+  groups: PropTypes.array,
+  columns: PropTypes.array,
+  nameKey: PropTypes.string,
+  query: PropTypes.string,
+  onColumnVisibilityChange: PropTypes.func,
+};
+
 const DraggableDropdownItem = (props) => {
   const { id, checked, onChange, parent, ...rest } = props;
   const {
@@ -61,19 +174,7 @@ const DraggableDropdownItem = (props) => {
           <LightCheckbox
             checked={checked}
             onChange={onChange}
-            sx={{
-              padding: "0px",
-              "&.Mui-checked": { color: "primary.light" },
-            }}
-            checkedIcon={<Iconify icon="mdi:checkbox-marked" />}
-            icon={
-              <Iconify
-                icon="carbon:checkbox"
-                sx={{
-                  color: "divider",
-                }}
-              />
-            }
+            sx={{ p: 0 }}
             inputProps={{
               "aria-label": "controlled",
             }}
@@ -82,10 +183,7 @@ const DraggableDropdownItem = (props) => {
             {...attributes}
             {...listeners}
             sx={{
-              borderRadius: "8px",
               display: "inline-block",
-              px: "4px",
-              py: "2px",
               ":hover": {
                 cursor: "grab",
               },
@@ -128,6 +226,7 @@ const ColumnDropdown = ({
   setColumns,
   onColumnVisibilityChange,
   nameKey = "name",
+  groups,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
@@ -200,7 +299,7 @@ const ColumnDropdown = ({
           maxHeight: "400px",
           overflowY: "auto",
           padding: 0,
-          minWidth: "250px",
+          minWidth: "320px",
         },
       }}
     >
@@ -231,6 +330,14 @@ const ColumnDropdown = ({
             <Skeleton key={i} height={24} sx={{ my: 1 }} />
           ))}
         </Box>
+      ) : groups?.length ? (
+        <GroupedColumnList
+          groups={groups}
+          columns={columnData}
+          nameKey={nameKey}
+          query={debouncedSearchQuery}
+          onColumnVisibilityChange={onColumnVisibilityChange}
+        />
       ) : (
         <DndContext
           sensors={sensors}
@@ -290,7 +397,7 @@ const ColumnDropdown = ({
                         expandIcon={
                           column?.children ? (
                             <Iconify
-                              icon="gg:chevron-right"
+                              icon="solar:alt-arrow-right-linear"
                               sx={{ color: "text.disabled" }}
                               width={16}
                             />
@@ -379,6 +486,14 @@ ColumnDropdown.propTypes = {
   setColumns: PropTypes.func,
   nameKey: PropTypes.string,
   onColumnVisibilityChange: PropTypes.func,
+  // Optional: [{key, label, ids}] renders a grouped list (Observe passes none).
+  groups: PropTypes.arrayOf(
+    PropTypes.shape({
+      key: PropTypes.string,
+      label: PropTypes.string.isRequired,
+      ids: PropTypes.arrayOf(PropTypes.string).isRequired,
+    }),
+  ),
 };
 
 export default ColumnDropdown;

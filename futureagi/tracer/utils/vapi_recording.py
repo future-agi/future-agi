@@ -5,12 +5,11 @@ from __future__ import annotations
 import gzip
 import io
 import json
-import logging
 import os
 import uuid
-from datetime import datetime
-from datetime import timezone as dt_timezone
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 import requests
@@ -75,23 +74,24 @@ class VapiRecordingService:
         ).split(",")
         if b.strip()
     )
+
     @classmethod
     def build_artifact_url(cls, call_id: str, artifact_type: VapiArtifactType) -> str:
         """Build the authenticated endpoint URL for a call artifact."""
         return f"{VAPI_API_BASE_URL}/call/{call_id}/{artifact_type}"
 
     @classmethod
-    def artifact_for_url_type(cls, url_type: str) -> Optional[str]:
+    def artifact_for_url_type(cls, url_type: str) -> str | None:
         """Map url_type to Vapi artifact path; None if unknown."""
         return _URL_TYPE_TO_ARTIFACT.get(url_type)
 
     @classmethod
     def is_authenticated_download(
         cls,
-        provider: Optional[str],
-        api_key: Optional[str],
-        call_id: Optional[str],
-        artifact_type: Optional[str],
+        provider: str | None,
+        api_key: str | None,
+        call_id: str | None,
+        artifact_type: str | None,
     ) -> bool:
         """True when provider is Vapi and all download-context kwargs are present."""
         if not (api_key and call_id and artifact_type):
@@ -101,7 +101,7 @@ class VapiRecordingService:
         return provider == ProviderChoices.VAPI
 
     @classmethod
-    def is_fagi_s3_url(cls, url: Optional[str]) -> bool:
+    def is_fagi_s3_url(cls, url: str | None) -> bool:
         """True if ``url`` is an S3/MinIO URL owned by FutureAGI.
 
         Delegates to :func:`tfc.utils.storage.is_own_storage_url` which
@@ -112,12 +112,10 @@ class VapiRecordingService:
 
         if not url:
             return False
-        return any(
-            is_own_storage_url(url, bucket) for bucket in cls._FAGI_S3_BUCKETS
-        )
+        return any(is_own_storage_url(url, bucket) for bucket in cls._FAGI_S3_BUCKETS)
 
     @classmethod
-    def get_api_key_for_project(cls, project_id: Any) -> Optional[str]:
+    def get_api_key_for_project(cls, project_id: Any) -> str | None:
         """Resolve the Vapi api_key for a project; None on failure."""
         if project_id is None:
             return None
@@ -148,7 +146,7 @@ class VapiRecordingService:
             return None
 
     @classmethod
-    def get_api_key_for_agent_definition(cls, agent_definition_id: Any) -> Optional[str]:
+    def get_api_key_for_agent_definition(cls, agent_definition_id: Any) -> str | None:
         """Resolve the Vapi api_key for an AgentDefinition by id; None on failure."""
         if agent_definition_id is None:
             return None
@@ -167,6 +165,7 @@ class VapiRecordingService:
                 agent_definition_id=str(agent_definition_id),
             )
             return None
+
     @classmethod
     def _get_vapi_provider_for_project(cls, project_id: Any):
         from tracer.models.observability_provider import (
@@ -174,17 +173,14 @@ class VapiRecordingService:
             ProviderChoices,
         )
 
-        return (
-            ObservabilityProvider.objects.filter(
-                project_id=project_id,
-                provider=ProviderChoices.VAPI,
-                enabled=True,
-            )
-            .first()
-        )
+        return ObservabilityProvider.objects.filter(
+            project_id=project_id,
+            provider=ProviderChoices.VAPI,
+            enabled=True,
+        ).first()
 
     @classmethod
-    def _api_key_from_provider_row(cls, provider) -> Optional[str]:
+    def _api_key_from_provider_row(cls, provider) -> str | None:
         agent_def = None
         try:
             agent_def = provider.agent_definition
@@ -196,8 +192,8 @@ class VapiRecordingService:
 
     @classmethod
     def _api_key_from_any_agent_on_project(
-        cls, project_id: Any, org_id: Optional[Any] = None
-    ) -> Optional[str]:
+        cls, project_id: Any, org_id: Any | None = None
+    ) -> str | None:
         try:
             from simulate.models.agent_definition import AgentDefinition
             from tracer.models.observability_provider import ProviderChoices
@@ -210,9 +206,9 @@ class VapiRecordingService:
                 provider=ProviderChoices.VAPI,
                 organization_id=org_id,
             )
-            .exclude(api_key__isnull=True)
-            .exclude(api_key="")
-            .only("id", "api_key")
+            .exclude(encrypted_api_key__isnull=True)
+            .exclude(encrypted_api_key="")
+            .only("id", "encrypted_api_key")
             .first()
         )
         if agent_def is None:
@@ -220,7 +216,7 @@ class VapiRecordingService:
         return cls._api_key_from_agent_definition(agent_def)
 
     @classmethod
-    def _api_key_from_agent_definition(cls, agent_def) -> Optional[str]:
+    def _api_key_from_agent_definition(cls, agent_def) -> str | None:
         """Resolve Vapi api_key through the canonical ProviderCredentials chain."""
         from simulate.services.agent_definition import resolve_api_key_for_version
 
@@ -273,9 +269,7 @@ class VapiRecordingService:
         url = cls.build_artifact_url(call_id, artifact_type)
         headers = {"Authorization": f"Bearer {api_key}"}
 
-        with httpx.Client(
-            follow_redirects=True, timeout=timeout_seconds
-        ) as client:
+        with httpx.Client(follow_redirects=True, timeout=timeout_seconds) as client:
             try:
                 with client.stream("GET", url, headers=headers) as response:
                     cls._raise_for_artifact_response(response, call_id, artifact_type)
@@ -290,9 +284,7 @@ class VapiRecordingService:
                 raise
 
     @staticmethod
-    def _require_download_args(
-        call_id: str, artifact_type: str, api_key: str
-    ) -> None:
+    def _require_download_args(call_id: str, artifact_type: str, api_key: str) -> None:
         if not call_id:
             raise ValueError("call_id is required")
         if not artifact_type:
@@ -301,7 +293,9 @@ class VapiRecordingService:
             raise ValueError("api_key is required")
 
     @staticmethod
-    def _raise_for_artifact_response(response, call_id: str, artifact_type: str) -> None:
+    def _raise_for_artifact_response(
+        response, call_id: str, artifact_type: str
+    ) -> None:
         status = response.status_code
         if status in (401, 403):
             logger.warning(
@@ -355,7 +349,7 @@ class VapiRecordingService:
     def mirror_s3_url_to_consumer_fields(
         cls,
         *,
-        attrs: Optional[dict[str, Any]],
+        attrs: dict[str, Any] | None,
         call_id: str,
         s3_url_by_url_type: dict[str, str],
     ) -> dict[str, Any]:
@@ -380,8 +374,8 @@ class VapiRecordingService:
     def _mirror_to_call_execution(
         cls,
         call_id: str,
-        mono_s3: Optional[str],
-        stereo_s3: Optional[str],
+        mono_s3: str | None,
+        stereo_s3: str | None,
     ) -> None:
         try:
             from simulate.models.test_execution import CallExecution
@@ -411,8 +405,8 @@ class VapiRecordingService:
     def _mirror_to_call_execution_snapshot(
         cls,
         call_id: str,
-        mono_s3: Optional[str],
-        stereo_s3: Optional[str],
+        mono_s3: str | None,
+        stereo_s3: str | None,
     ) -> None:
         try:
             from simulate.models.test_execution import CallExecutionSnapshot
@@ -421,8 +415,9 @@ class VapiRecordingService:
 
         # Multiple historical snapshots may share a provider call ID; update all.
         rows = list(
-            CallExecutionSnapshot.objects.filter(service_provider_call_id=call_id)
-            .only("id", "recording_url", "stereo_recording_url")
+            CallExecutionSnapshot.objects.filter(service_provider_call_id=call_id).only(
+                "id", "recording_url", "stereo_recording_url"
+            )
         )
         for row in rows:
             update_fields: list[str] = []
@@ -435,17 +430,16 @@ class VapiRecordingService:
             if update_fields:
                 row.save(update_fields=update_fields)
 
-
     @classmethod
     def fetch_and_parse_call_logs(
         cls,
-        call_id: Optional[str],
-        api_key: Optional[str],
+        call_id: str | None,
+        api_key: str | None,
         *,
-        legacy_url: Optional[str] = None,
+        legacy_url: str | None = None,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         verify_ssl: bool = True,
-    ) -> Optional[list[dict[str, Any]]]:
+    ) -> list[dict[str, Any]] | None:
         """Fetch and parse gzip-JSONL call logs (Tier 1 auth then Tier 2 legacy fallback)."""
         content = cls._fetch_call_logs_content(
             call_id=call_id,
@@ -467,13 +461,13 @@ class VapiRecordingService:
     @classmethod
     def fetch_call_logs_content(
         cls,
-        call_id: Optional[str],
-        api_key: Optional[str],
+        call_id: str | None,
+        api_key: str | None,
         *,
-        legacy_url: Optional[str] = None,
+        legacy_url: str | None = None,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         verify_ssl: bool = True,
-    ) -> Optional[bytes]:
+    ) -> bytes | None:
         """Fetch raw gzip-JSONL call-log bytes (Tier 1 auth then Tier 2 legacy fallback)."""
         return cls._fetch_call_logs_content(
             call_id=call_id,
@@ -486,17 +480,15 @@ class VapiRecordingService:
     @classmethod
     def _fetch_call_logs_content(
         cls,
-        call_id: Optional[str],
-        api_key: Optional[str],
-        legacy_url: Optional[str],
+        call_id: str | None,
+        api_key: str | None,
+        legacy_url: str | None,
         timeout_seconds: float,
         verify_ssl: bool,
-    ) -> Optional[bytes]:
+    ) -> bytes | None:
         if call_id and api_key:
             try:
-                url = cls.build_artifact_url(
-                    call_id, VapiArtifactType.CALL_LOGS
-                )
+                url = cls.build_artifact_url(call_id, VapiArtifactType.CALL_LOGS)
                 headers = {"Authorization": f"Bearer {api_key}"}
                 response = requests.get(
                     url,
@@ -566,10 +558,10 @@ class VapiRecordingService:
     @classmethod
     def iter_parsed_call_log_records(
         cls,
-        call_id: Optional[str],
-        api_key: Optional[str],
+        call_id: str | None,
+        api_key: str | None,
         *,
-        legacy_url: Optional[str] = None,
+        legacy_url: str | None = None,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         verify_ssl: bool = True,
     ) -> Iterable[dict[str, Any]]:
@@ -631,13 +623,11 @@ class VapiRecordingService:
         }
 
     @staticmethod
-    def _coerce_log_datetime(payload: dict[str, Any]) -> Optional[str]:
+    def _coerce_log_datetime(payload: dict[str, Any]) -> str | None:
         ts = payload.get("timestamp") or payload.get("time")
         if isinstance(ts, (int, float)):
             try:
-                return datetime.fromtimestamp(
-                    ts / 1_000_000_000, tz=dt_timezone.utc
-                ).isoformat()
+                return datetime.fromtimestamp(ts / 1_000_000_000, tz=UTC).isoformat()
             except (OverflowError, OSError, ValueError):
                 return None
         iso_value = payload.get("ts")

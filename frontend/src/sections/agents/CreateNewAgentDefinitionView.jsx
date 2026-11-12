@@ -4,7 +4,7 @@ import {
   Divider,
   Grid,
   Typography,
-  useTheme,
+  ButtonBase,
 } from "@mui/material";
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -18,6 +18,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import axios, { endpoints } from "src/utils/axios";
 import logger from "src/utils/logger";
+import { getAgentDefinitionCreationErrorMessage } from "src/api/agent-definition/agent-definition-version";
 import { useNavigate } from "react-router";
 import { paths } from "src/routes/paths";
 import { useSnackbar } from "notistack";
@@ -32,7 +33,11 @@ import AgentBehaviourStepRightSection from "./CreateNewAgent/AgentBehaviourStep/
 import AgentBehaviourStep from "./CreateNewAgent/AgentBehaviourStep/AgentBehaviourStep";
 import Iconify from "src/components/iconify";
 import { LoadingButton } from "@mui/lab";
-import { AGENT_TYPES, isLiveKitProvider, supportsConcurrency } from "./constants";
+import {
+  AGENT_TYPES,
+  isLiveKitProvider,
+  supportsConcurrency,
+} from "./constants";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
@@ -40,7 +45,6 @@ const CreateNewAgentDefinitionView = () => {
   const { role } = useAuthContext();
   const { currentStep, reset, nextStep, prevStep, setStepValidated } =
     useCreateNewAgentStore();
-  const theme = useTheme();
   const methods = useForm({
     mode: "onSubmit",
     resolver: zodResolver(createAgentDefinitionSchema(), undefined, {
@@ -61,6 +65,9 @@ const CreateNewAgentDefinitionView = () => {
   const { enqueueSnackbar } = useSnackbar();
   const [_, setError] = useState("");
   const livekitValidated = watch("_livekitCredentialsValid");
+  // On Future AGI Cloud the check is skipped (never verified); that must not
+  // block creating the agent.
+  const livekitSkipped = watch("_livekitCredentialsSkipped");
 
   const watchedValues = watch();
   const canProceed = useMemo(() => {
@@ -109,13 +116,19 @@ const CreateNewAgentDefinitionView = () => {
 
     const hasErrors = currentRequired.some((field) => !!errors[field]);
 
-    // LiveKit credentials must be validated on step 1
-    if (currentStep === 1 && isLiveKitProvider(provider) && !livekitValidated) {
+    // LiveKit credentials must be validated on step 1, unless the server
+    // skipped the check (Future AGI Cloud), which never blocks the step.
+    if (
+      currentStep === 1 &&
+      isLiveKitProvider(provider) &&
+      !livekitValidated &&
+      !livekitSkipped
+    ) {
       return false;
     }
 
     return allFilled && !hasErrors;
-  }, [watchedValues, errors, currentStep, livekitValidated]); // 👈 dependencies
+  }, [watchedValues, errors, currentStep, livekitValidated, livekitSkipped]); // 👈 dependencies
 
   const handleNext = async () => {
     // @ts-ignore
@@ -276,23 +289,7 @@ const CreateNewAgentDefinitionView = () => {
         },
       });
     } catch (err) {
-      const apiError = err.response?.data;
-      let message = "Failed to create agent definition. Please try again.";
-      if (apiError) {
-        if (apiError.error) {
-          message = apiError.error;
-        }
-
-        if (apiError.details) {
-          // Flatten all field errors into a single string
-          const fieldErrors = Object.values(apiError.details).flat().join(" ");
-          if (fieldErrors) message = fieldErrors;
-        }
-
-        if (apiError.details?.non_field_errors?.length) {
-          message = apiError.details.non_field_errors.join(" ");
-        }
-      }
+      const message = getAgentDefinitionCreationErrorMessage(err);
 
       setError(message);
       enqueueSnackbar(message, { variant: "error" });
@@ -316,17 +313,18 @@ const CreateNewAgentDefinitionView = () => {
               gap: "12px",
             }}
           >
-            <Typography
-              typography="m3"
-              fontWeight="fontWeightMedium"
-              color="text.disabled"
+            <ButtonBase
               onClick={() => {
                 navigate(paths.dashboard.simulate.agentDefinition);
               }}
-              sx={{ cursor: "pointer" }}
+              sx={{
+                typography: "m3",
+                fontWeight: "fontWeightMedium",
+                color: "text.disabled",
+              }}
             >
               All Agent Definitions
-            </Typography>
+            </ButtonBase>
             <SvgColor src="/assets/icons/custom/lucide--chevron-right.svg" />
             <Typography typography="m3" fontWeight="fontWeightMedium">
               Create new agent definition
@@ -370,8 +368,8 @@ const CreateNewAgentDefinitionView = () => {
                 overflow: "auto",
                 "&::-webkit-scrollbar": { width: "6px" },
                 "&::-webkit-scrollbar-thumb": {
-                  backgroundColor: "rgba(0, 0, 0, 0.3)",
-                  borderRadius: "3px",
+                  backgroundColor: "border.strong",
+                  borderRadius: "4px",
                 },
                 "&::-webkit-scrollbar-track": {
                   backgroundColor: "transparent",
@@ -409,7 +407,7 @@ const CreateNewAgentDefinitionView = () => {
               <Button
                 startIcon={
                   <Iconify
-                    icon="line-md:chevron-left"
+                    icon="solar:alt-arrow-left-linear"
                     width={16}
                     height={16}
                     color={"text.primary"}
@@ -420,10 +418,6 @@ const CreateNewAgentDefinitionView = () => {
                 variant="outlined"
                 sx={{
                   color: "text.primary",
-                  padding: theme.spacing(0.125, 1.5),
-                  height: 32,
-                  fontWeight: "fontWeightMedium",
-                  borderRadius: theme.spacing(0.5),
                   borderColor: "action.selected",
                 }}
               >
@@ -434,7 +428,7 @@ const CreateNewAgentDefinitionView = () => {
                 <Button
                   endIcon={
                     <Iconify
-                      icon="line-md:chevron-right"
+                      icon="solar:alt-arrow-right-linear"
                       width={16}
                       height={16}
                     />
@@ -443,13 +437,6 @@ const CreateNewAgentDefinitionView = () => {
                   disabled={!canProceed}
                   variant="contained"
                   color="primary"
-                  sx={{
-                    padding: theme.spacing(0.125, 1.5),
-                    height: 32,
-                    fontWeight: "fontWeightMedium",
-                    borderRadius: theme.spacing(0.5),
-                    borderColor: "action.selected",
-                  }}
                 >
                   Next
                 </Button>
@@ -457,7 +444,7 @@ const CreateNewAgentDefinitionView = () => {
                 <LoadingButton
                   endIcon={
                     <Iconify
-                      icon="line-md:chevron-right"
+                      icon="solar:alt-arrow-right-linear"
                       width={16}
                       height={16}
                     />
@@ -469,13 +456,6 @@ const CreateNewAgentDefinitionView = () => {
                     !RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role]
                   }
                   color="primary"
-                  sx={{
-                    padding: theme.spacing(0.125, 1.5),
-                    height: 32,
-                    fontWeight: "fontWeightMedium",
-                    borderRadius: theme.spacing(0.5),
-                    borderColor: "action.selected",
-                  }}
                 >
                   Create agent definition
                 </LoadingButton>

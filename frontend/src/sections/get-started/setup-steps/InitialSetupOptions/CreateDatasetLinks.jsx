@@ -1,3 +1,4 @@
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
 import { Box, Button, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
@@ -9,6 +10,8 @@ const CreateDatasetLinks = ({
   descriptions,
   buttonTitle,
   buttonAction = () => {},
+  // The walkthrough frame's height as a share of its width.
+  videoPaddingBottom = "47.400%",
 }) => {
   const [showDemoModal, setShowDemoModal] = useState(null);
 
@@ -70,23 +73,22 @@ const CreateDatasetLinks = ({
         >
           {links.map((item, index) => {
             return (
-              <Typography
-                variant="s2"
-                fontWeight={"fontWeightMedium"}
-                color="primary.main"
+              <Button
+                variant="text"
+                size="small"
                 key={index}
                 onClick={() => setShowDemoModal(item)}
-                sx={{ textDecoration: "underline", cursor: "pointer" }}
+                sx={{ alignSelf: "flex-start" }}
               >
                 {item.title}
-              </Typography>
+              </Button>
             );
           })}
         </Box>
         <Button
           color="primary"
           variant="contained"
-          sx={{ maxWidth: "max-content", height: "38px", padding: "8px 24px" }}
+          sx={{ maxWidth: "max-content" }}
           onClick={buttonAction}
         >
           {buttonTitle}
@@ -101,12 +103,12 @@ const CreateDatasetLinks = ({
           <div
             style={{
               position: "relative",
-              paddingBottom: `calc(${heading.includes("dataset") ? "45.000%" : "47.400%"} + 41px)`,
+              paddingBottom: `calc(${videoPaddingBottom} + 41px)`,
               height: 0,
               width: "100%",
             }}
           >
-            <iframe
+            <ExternalContentFrame
               src={showDemoModal?.link.replace("share", "embed")}
               title={showDemoModal?.title}
               frameBorder="0"
@@ -137,4 +139,5 @@ CreateDatasetLinks.propTypes = {
   descriptions: PropTypes.array,
   buttonTitle: PropTypes.string,
   buttonAction: PropTypes.func,
+  videoPaddingBottom: PropTypes.string,
 };

@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 /* eslint-disable react/prop-types */
 import {
   Box,
@@ -114,8 +115,6 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
             sx={{
               backgroundColor: "transparent",
               color: "text.primary",
-              borderRadius: 0.5,
-              fontWeight: 600,
               border: "1px solid",
               borderColor: "divider",
               ":hover": {
@@ -127,7 +126,7 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
             icon={
               <Image
                 ratio="1/1"
-                src={providerLogo}
+                src={localProviderLogo(optimization)}
                 alt={model}
                 style={{ width: "16px", height: "16px" }}
               />
@@ -136,13 +135,13 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
           />
           <ShowComponent condition={optimization?.parameters?.length > 0}>
             <Button
-              sx={{ px: "8px" }}
               variant="outlined"
               size="small"
               startIcon={
                 <SvgColor
+                  width={16}
                   src="/assets/prompt/slider-options.svg"
-                  sx={{ height: "16px", width: "16px", color: "text.primary" }}
+                  sx={{ color: "text.primary" }}
                 />
               }
               onClick={(e) => setAnchorRef(e.currentTarget)}
@@ -202,7 +201,7 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
             backgroundColor: "background.neutral",
             borderColor: "divider",
             padding: 2,
-            borderRadius: 0.5,
+            borderRadius: "4px",
           }}
         >
           <FormTextFieldV2
@@ -262,11 +261,11 @@ const OptimizeAgentHeaderComponent = ({ optimization, isLoading }) => {
             </Typography>
             <Link
               href={getDocsLinkBasedOnOptimizer(optimiserType)}
-              color="blue.500"
+              color="status.info.fg"
               target="_blank"
               rel="noopener noreferrer"
               fontWeight="fontWeightMedium"
-              fontSize="14px"
+              fontSize="13px"
               sx={{
                 textDecoration: "underline",
                 fontSize: "13px",

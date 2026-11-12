@@ -9,15 +9,19 @@ import (
 	"strconv"
 
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
+	"github.com/futureagi/agentcc-gateway/internal/modeldb/orgdb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
 // Plugin validates requests against model capabilities and limits
-// before they reach the provider.
+// before they reach the provider: the gateway's model database, with the
+// request's org's Model Database overrides on top (SetTenantStore).
 type Plugin struct {
-	modelDB func() *modeldb.ModelDB
-	enabled bool
+	modelDB     func() *modeldb.ModelDB
+	enabled     bool
+	tenantStore *tenant.Store
 }
 
 // New creates a new validation plugin.
@@ -29,12 +33,21 @@ func New(enabled bool, modelDBGetter func() *modeldb.ModelDB) *Plugin {
 }
 
 func (p *Plugin) Name() string  { return "validation" }
-func (p *Plugin) Priority() int { return 70 } // After auth (20) + guardrails (50), before rate limit (80) and cache (200).
+func (p *Plugin) Priority() int { return 70 } // After auth (20) + guardrails (34), before rate limit (80).
 
 // ProcessRequest validates the request against model capabilities.
 func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
 	if !p.enabled {
 		return pipeline.ResultContinue()
+	}
+
+	// The org's own limits and capability switches come first: they
+	// apply whether or not the model database knows the model.
+	ov := p.orgOverride(rc)
+	if ov != nil && rc.Request != nil {
+		if apiErr := checkOrgOverride(rc, ov); apiErr != nil {
+			return pipeline.ResultError(apiErr)
+		}
 	}
 
 	db := p.modelDB()
@@ -46,6 +59,13 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	if !ok {
 		// Unknown model — let the provider handle it.
 		return pipeline.ResultContinue()
+	}
+	orgInputLimit := false
+	if ov != nil {
+		// The org's switches and limits replace the database's for its calls:
+		// a switch it turned on lets through what the database would refuse.
+		info = orgdb.Apply(info, info.ID, ov)
+		orgInputLimit = orgdb.MaxInputTokens(ov) > 0
 	}
 
 	// Check deprecation — warn but don't block.
@@ -72,8 +92,9 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		})
 	}
 
-	// Estimate input tokens for sanity check.
-	if info.MaxInputTokens > 0 && rc.Request != nil {
+	// Estimate input tokens for sanity check. An org's own input limit was
+	// checked exactly (checkOrgOverride), not with this margin.
+	if info.MaxInputTokens > 0 && rc.Request != nil && !orgInputLimit {
 		estimated := estimateTokens(rc.Request)
 		if estimated > 0 {
 			// Only block on clear violations (1.5x over limit).

@@ -1,0 +1,42 @@
+E2E: new OBS-E2E-061
+
+Execution status: owed on 708j compose. The flow is authored, not runtime-proven.
+No managed browser pass, fallibility pass or unreachable-collector exemption is claimed.
+
+Spec: e2e/flows/observe/collector-personal-key-lifecycle.spec.ts
+Goal: a session-created personal key accepts OTLP and its trace appears in Observe;
+retained synthetic system and retired credentials are refused; a deleted personal
+key is refused within 30 seconds measured from BEFORE the deleting request.
+The earlier monotonic boundary conservatively bounds latency from the later DB
+commit. Primary Postgres confirms deletion before export attempts. A still-eligible
+control proves collector liveness. Exact identities are compared in Observe,
+the real span-list API and spans/traces FINAL, with a full 15-second exclusion
+window after a positive storage barrier. Attachments contain IDs/status/timing only.
+
+The split harness extension provides an E2E-image-only retained-state fixture,
+valid synthetic hashes and independent primary readback, plus bounded OTLP HTTP
+results without response-body/header logging. It is not a production issuer.
+Actor provisioning is the session-personal dependency from L1; the lane does not
+fall back to GET /accounts/keys/ or an automatically created credential.
+
+Owed on the composed personal-provisioning head: attach iteration, built-image
+managed run, one-sided fallibility for all four backend checks, restored managed
+green, and the final catalog/typecheck. The owned runner and exact plan are recorded
+in the lane result; static success does not constitute browser coverage acceptance.
+
+Independent remaining obligations: sandbox/platform issuance -> collector ->
+correctly scoped storage/Observe; publication-loss, replica-lag and reconnect are
+backend controls, not prerequisites for the reachable browser journey.
+
+Existing backend coverage (fi-collector/pkg/auth), not a browser substitute:
+- TestEligibilityOnlyPersonalMembers: eligible personal control accepted; system,
+  mcp, ingest, ownerless and retired keys refused.
+- TestEligibilityUsesPrimaryAfterCommittedChange: primary versus lagging read pool
+  after key/person/membership changes, delivered and missed publications.
+- TestEligibilityElapsedRevocationBound: real-time HTTP middleware 204 -> 401,
+  personal key/grant/org-membership/workspace-membership changes; delivered,
+  missed, absent Redis and reconnect; <=30 seconds from before SQL autocommit.
+- TestGrantOrganizationMigratedSchema: real Organization migration operations.
+- TestFreshnessRedisReconnectFlushesCredentialEntries: reconnect and fencing.
+- TestSharedCollectorEnvelopeVectors and TestGrantColumnsMatchPinnedIssuerMigration:
+  envelope and issuer-schema dependency contracts.

@@ -1,14 +1,21 @@
+// SELECTOR_RECHECK_AFTER_FE(FE-GW-ANALYTICS-POLICY, FE-GW-OPS): WHOLE_FILE, not only conflict regions.
+// Recheck every selector, imported grid/picker helper, declaration and repeated use,
+// including all auto-merged hunks; change dependent references together after FE lands.
 import { request } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
 import { POLL } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
+import { GatewayGridReader, GRID_VIEWPORT } from '../../lib/gateway-grid';
 
 // Pinned off the running system: the endpoint the gateway flushes its request
 // logs to and the secret it signs them with (FormatLogsWebhookURL in
 // agentcc-gateway/internal/plugins/logging/flusher.go, GatewayWebhookView), the
 // list endpoint the Request Logs table calls, the picker's placeholder, and the
-// Application column's place in that table (RequestTable.jsx COLUMNS).
+// Application column: a built-in the default view lists in Columns but hides
+// (logs/columns/columnModel.js DEFAULT_CONFIG), id `builtin:application` in
+// the gateway grid (logs/RequestTable.jsx toColDef colId), read in display
+// order through lib/gateway-grid.ts.
 //
 // The traffic is delivered on that webhook rather than by calling the gateway
 // itself: a key minted by an org may only use providers the org configured
@@ -20,8 +27,7 @@ const LOGS_WEBHOOK_PATH = '/agentcc/webhook/logs/';
 const WEBHOOK_SECRET =
   process.env.AGENTCC_WEBHOOK_SECRET || 'e2e-agentcc-webhook-secret';
 const REQUEST_LOGS_PATH = '/agentcc/request-logs/';
-const APPLICATION_PLACEHOLDER = 'Select applications...';
-const APPLICATION_CELL = 'tbody tr td:nth-child(4)';
+const APPLICATION_COLUMN = 'builtin:application';
 // Ingestion is synchronous, but the poll keeps a slow runner from flaking.
 const LOG_VISIBLE = POLL.ASYNC_JOB;
 // Browser-side waits, sized like the other flows: the local stack slows
@@ -54,6 +60,7 @@ test(
         'mint a gateway API key from the app',
         'deliver three gateway requests on the logs webhook, each tagged with an application, a service and a team',
         'open Request Logs',
+        'show the Application column from Columns',
         'pick one application in the Filters panel and apply it',
         'read the filtered table',
       ],
@@ -69,6 +76,7 @@ test(
     }),
   },
   async ({ page, actor, probe }, testInfo) => {
+    await page.setViewportSize(GRID_VIEWPORT);
     // Ingestion, then navigation and two UI waits: past the config's 120s
     // default, so a slow run ends on the assertion that ran out rather than a
     // bare timeout.
@@ -162,10 +170,18 @@ test(
       expect(totals).toEqual({ [checkout]: 2, [search]: 1 });
     });
 
-    const applicationCells = page.locator(APPLICATION_CELL);
+    const grid = GatewayGridReader.in(page);
+    const applicationCells = grid.cells(APPLICATION_COLUMN);
+    const applicationTexts = () => grid.column(APPLICATION_COLUMN);
 
     await test.step('UI: filter Request Logs down to one application', async () => {
       await page.goto('/dashboard/gateway/logs', { waitUntil: 'domcontentloaded' });
+      await expect(grid.rows).toHaveCount(3, { timeout: UI_READY });
+      await page.getByRole('button', { name: 'Columns', exact: true }).click();
+      const picker = page.getByRole('dialog', { name: 'Choose columns' });
+      await picker.getByRole('checkbox', { name: 'Application', exact: true }).check();
+      await page.keyboard.press('Escape');
+      await expect(picker).toBeHidden({ timeout: UI_READY });
       await expect(applicationCells).toHaveCount(3, { timeout: UI_READY });
 
       const filtered = page.waitForResponse(
@@ -175,20 +191,26 @@ test(
           r.url().includes(`application=${checkout}`),
         { timeout: UI_READY },
       );
-      await page.getByRole('button', { name: 'Filters' }).click();
-      // The picker's options are the metadata-values endpoint's answer.
-      await page.getByPlaceholder(APPLICATION_PLACEHOLDER).click();
-      await page.getByRole('option', { name: checkout, exact: true }).click();
+      // SELECTOR_RECHECK_AFTER_FE(FE-GW-OPS, FE-GW-ANALYTICS-POLICY): dev shared Filter panel; candidate hunk: logs/FilterPanel.jsx 'Filters' button + 'Select applications...' picker + 'Apply'; FE-GW-OPS rejects dev deletion of logs/FilterPanel.jsx
+      // The shared Filter panel applies as values change; there is no Apply.
+      await page.getByRole('button', { name: 'Filter', exact: true }).click();
+      await page.getByRole('button', { name: 'Property', exact: true }).click();
+      await page.getByPlaceholder('Search properties...').fill('Application');
+      await page.locator('[data-filter-property-option="application"]').click();
+      await page.locator('[data-filter-value-trigger="application"]').click();
+      // The value options are the metadata-values endpoint's answer.
+      await page.getByPlaceholder('Search values...').fill(checkout);
+      await page.locator(`[data-filter-value-option="${checkout}"][role="checkbox"]`).click();
       await page.keyboard.press('Escape');
-      await page.getByRole('button', { name: 'Apply' }).click();
+      await page.keyboard.press('Escape');
       await filtered;
 
-      await expect(applicationCells).toHaveText([checkout, checkout], { timeout: UI_READY });
+      await expect.poll(applicationTexts, { timeout: UI_READY }).toEqual([checkout, checkout]);
     });
 
     await test.step('API: the same filter returns the same rows the table shows', async () => {
       const rows = (await listFor({ application: checkout })).results;
-      expect(await applicationCells.allInnerTexts()).toEqual(
+      expect(await applicationTexts()).toEqual(
         rows.map((row) => row.metadata.application),
       );
     });

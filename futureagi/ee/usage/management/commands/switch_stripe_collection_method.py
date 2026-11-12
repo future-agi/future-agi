@@ -6,6 +6,8 @@ has no default payment method are skipped and keep send_invoice."""
 import stripe
 from django.core.management.base import BaseCommand
 
+from tfc.stripe_client import configure_stripe_module
+
 
 class Command(BaseCommand):
     help = (
@@ -21,6 +23,7 @@ class Command(BaseCommand):
         from ee.cloud.billing.stripe_service import StripeService
         from ee.usage.models.usage import OrganizationSubscription
 
+        configure_stripe_module()
         qs = (
             OrganizationSubscription.objects.filter(deleted=False)
             .exclude(stripe_subscription_id__isnull=True)

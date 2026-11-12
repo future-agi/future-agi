@@ -26,6 +26,20 @@ from tfc.utils.base_model import BaseModel as ModelBaseModel
 
 logger = structlog.get_logger(__name__)
 
+# Evaluator type whose scores the caller (the SDK) computes and uploads as run
+# score_refs. The server never executes it (SRV-5).
+EXTERNAL_EVAL_TYPE = "external"
+# Metric statuses that queue or mark a server-side execution.
+EXECUTING_METRIC_STATUSES = frozenset(
+    {
+        StatusType.NOT_STARTED.value,
+        StatusType.QUEUED.value,
+        StatusType.RUNNING.value,
+        StatusType.EXPERIMENT_EVALUATION.value,
+        StatusType.OPTIMIZATION_EVALUATION.value,
+    }
+)
+
 
 def validate_eval_name(value):
     cleaned_name = value.strip()
@@ -149,9 +163,19 @@ class EvalTemplate(ModelBaseModel):
     # --- Eval Type ---
     eval_type = models.CharField(
         max_length=10,
-        choices=[("agent", "Agent"), ("llm", "LLM"), ("code", "Code")],
+        choices=[
+            ("agent", "Agent"),
+            ("llm", "LLM"),
+            ("code", "Code"),
+            (EXTERNAL_EVAL_TYPE, "External"),
+            ("dag", "Decision tree"),
+        ],
         default="llm",
-        help_text="Evaluator type: agent (Falcon AI powered), llm (LLM-as-a-judge), code (custom code)",
+        help_text=(
+            "Evaluator type: agent (Falcon AI powered), llm (LLM-as-a-judge), "
+            "code (custom code), dag (decision tree), external (scored by the "
+            "caller, e.g. the SDK; never executed by the server)"
+        ),
     )
 
     # --- Permissions ---
@@ -412,12 +436,45 @@ class UserEvalMetric(ModelBaseModel):
         help_text="Pin to a specific template version for runtime.",
     )
 
+    # Dataset evals preselected in the dataset's new experiments ("Use in new
+    # experiments"). Written only by model_hub.services.experiment_defaults.
+    is_experiment_default = models.BooleanField(
+        default=False,
+        help_text="Preselect this dataset eval in the dataset's new experiments.",
+    )
+
     def clean(self):
         super().clean()
+        # An external metric is scored by the caller; refuse every save that
+        # would queue or mark it as executing on the server (SRV-5).
+        if (
+            self.status in EXECUTING_METRIC_STATUSES
+            and self.template_id
+            and self._template_is_external()
+        ):
+            raise DjangoValidationError(
+                {
+                    "status": (
+                        f"External metric {self.name!r} is scored by the caller "
+                        "and is never executed by the server."
+                    )
+                }
+            )
         # try:
         #     UserEvalConfigModel(**self.config)
         # except ValidationError as e:
         #     raise DjangoValidationError(f"Invalid config format: {str(e)}")
+
+    def _template_is_external(self) -> bool:
+        # Use the loaded template when it is the current one (EvaluationRunner
+        # and the workers select_related it); query only when it is not.
+        if UserEvalMetric.template.is_cached(self):
+            template = self.template
+            if template is not None and template.pk == self.template_id:
+                return template.eval_type == EXTERNAL_EVAL_TYPE
+        return EvalTemplate.all_objects.filter(
+            id=self.template_id, eval_type=EXTERNAL_EVAL_TYPE
+        ).exists()
 
     def save(self, *args, **kwargs):
         self.full_clean()
@@ -582,6 +639,7 @@ class EvalTemplateVersionManager(models.Manager):
         choice_scores=_UNSET,
         error_localizer_enabled=_UNSET,
         eval_tags=_UNSET,
+        restore=False,
     ):
         """
         Create a new version for an eval template.
@@ -592,8 +650,10 @@ class EvalTemplateVersionManager(models.Manager):
         error_localizer_enabled, eval_tags) default to capturing the current
         template value at version-creation time. Pass an explicit value to
         override (e.g. composite versions that don't carry these fields).
+
+        ``restore=True`` marks ``config_snapshot`` as a saved version's
+        snapshot copied by a restore: it is stored as given.
         """
-        from django.db import transaction
 
         # Resolve snapshot columns from template defaults when caller didn't
         # pass them. Done outside the atomic block — these are just attribute
@@ -632,10 +692,14 @@ class EvalTemplateVersionManager(models.Manager):
             )
             next_version = (last_version or 0) + 1
 
-            self.filter(
-                eval_template=eval_template, is_default=True
-            ).update(is_default=False)
+            self.filter(eval_template=eval_template, is_default=True).update(
+                is_default=False
+            )
 
+            # hook(F68): retain the jury definition with each composite version.
+            from model_hub.services.jury_versions import snapshot_jury
+
+            config_snapshot = snapshot_jury(eval_template, config_snapshot, restore)
             version = self.create(
                 eval_template=eval_template,
                 version_number=next_version,

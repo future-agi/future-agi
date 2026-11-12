@@ -1,0 +1,26 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.futureagi/gmail",
+  "title": "Gmail",
+  "description": "Read, search and send email.",
+  "version": "1.0.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://{connectorsHost}/gmail/mcp",
+      "variables": {
+        "connectorsHost": {
+          "description": "The host of an agentcc-connectors deployment, FutureAGI's connector runtime.",
+          "isRequired": true
+        }
+      }
+    }
+  ],
+  "_meta": {
+    "com.futureagi/connector": {
+      "kind": "rest",
+      "provider": "futureagi-rest",
+      "tier": "listed"
+    }
+  }
+}

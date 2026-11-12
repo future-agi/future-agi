@@ -8,6 +8,9 @@ from tfc.utils.base_model import BaseModel
 class AuthTokenType(models.TextChoices):
     ACCESS = "access"
     REFRESH = "refresh"
+    # A mailed password-reset link. Never a session: every bearer path
+    # requires ACCESS, and reset confirmation accepts only this type.
+    PASSWORD_RESET = "password_reset"
 
 
 class AuthTokenOrigin(models.TextChoices):
@@ -52,4 +55,6 @@ class AuthToken(BaseModel):
 
 
 AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES = 2 * 24 * 60  # 2 days
+# From created_at; reset_password.html tells the user the link lasts 1 hour.
+PASSWORD_RESET_TOKEN_EXPIRATION_TIME_IN_MINUTES = 60
 REFRESH_TOKEN_EXPIRATION_TIME_IN_SECONDS = 7 * 24 * 60 * 60  # 7 days

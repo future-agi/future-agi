@@ -1,0 +1,76 @@
+# Amplitude's MCP server (US region) with OAuth from its own authorization
+# server, which registers clients dynamically or by a client ID metadata
+# document. A connection acts as the person who signs in, with that person's
+# role in each project; the Use MCP (read) and Use MCP (write) role actions
+# narrow it per project. Sign in to one Amplitude organization only during
+# the flow. Organizations whose data is in Amplitude's EU region use
+# mcp.eu.amplitude.com, which this record does not cover. The scopes are the
+# ones the server advertises for /mcp. EE reads a pre-registered client from
+# its environment and cannot register one, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: amplitude
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.amplitude.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://mcp.amplitude.com/authorize
+    tokenUrl: https://mcp.amplitude.com/token
+    scopes: ["all:read", "all:write"]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://mcp.amplitude.com/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [cimd, dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://amplitude.com/docs/amplitude-ai/amplitude-mcp
+    fetchedAt: 2026-11-11
+  - fact: transport.url
+    url: https://mcp.amplitude.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: transport.variant
+    url: https://amplitude.com/docs/amplitude-ai/amplitude-mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://amplitude.com/docs/amplitude-ai/amplitude-mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp.amplitude.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.tokenUrl
+    url: https://mcp.amplitude.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.scopes
+    url: https://mcp.amplitude.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.pkce
+    url: https://mcp.amplitude.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.revocation.url
+    url: https://mcp.amplitude.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.registration
+    url: https://mcp.amplitude.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+x-omega: { ee: exclude }

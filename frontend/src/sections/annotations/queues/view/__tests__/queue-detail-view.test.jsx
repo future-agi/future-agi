@@ -1,10 +1,17 @@
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, userEvent } from "src/utils/test-utils";
+import {
+  render,
+  screen,
+  userEvent,
+  waitFor,
+  within,
+} from "src/utils/test-utils";
 import QueueDetailView from "../queue-detail-view";
 
 const mocks = vi.hoisted(() => ({
   assignItems: vi.fn(),
+  bulkRemove: vi.fn(),
   navigate: vi.fn(),
   queryClient: {
     removeQueries: vi.fn(),
@@ -99,8 +106,15 @@ vi.mock("src/api/annotation-queues/annotation-queues", () => ({
           source_type: "trace",
           created_at: "2026-01-01T00:00:00Z",
         },
+        {
+          id: "item-2",
+          status: "completed",
+          review_status: "approved",
+          source_type: "trace",
+          created_at: "2026-01-02T00:00:00Z",
+        },
       ],
-      count: 1,
+      count: 2,
     },
     isLoading: false,
     fetchNextPage: vi.fn(),
@@ -111,7 +125,10 @@ vi.mock("src/api/annotation-queues/annotation-queues", () => ({
     data: { total: 1, skipped: 0 },
   }),
   useRemoveQueueItem: () => ({ mutate: vi.fn() }),
-  useBulkRemoveQueueItems: () => ({ mutate: vi.fn(), isPending: false }),
+  useBulkRemoveQueueItems: () => ({
+    mutate: mocks.bulkRemove,
+    isPending: false,
+  }),
   useBulkReviewItems: () => ({ mutate: vi.fn(), isPending: false }),
   useAssignQueueItems: () => ({
     mutate: mocks.assignItems,
@@ -125,14 +142,24 @@ vi.mock("src/api/annotation-queues/annotation-queues", () => ({
 }));
 
 vi.mock("../../items/queue-items-table", () => ({
-  default: ({ onSelectToggle }) => (
+  default: ({ data = [], onSelectToggle, onSelectAll }) => (
     <div>
-      <label htmlFor="select-item-1">Item 1</label>
+      <label htmlFor="select-all-items">Select all items</label>
       <input
-        id="select-item-1"
+        id="select-all-items"
         type="checkbox"
-        onChange={() => onSelectToggle("item-1")}
+        onChange={() => onSelectAll()}
       />
+      {data.map((item, index) => (
+        <div key={item.id}>
+          <label htmlFor={`select-${item.id}`}>{`Item ${index + 1}`}</label>
+          <input
+            id={`select-${item.id}`}
+            type="checkbox"
+            onChange={() => onSelectToggle(item.id)}
+          />
+        </div>
+      ))}
     </div>
   ),
 }));
@@ -218,5 +245,64 @@ describe("QueueDetailView bulk assignment", () => {
 
     expect(screen.getByLabelText("Item 1")).toBeVisible();
     expect(mocks.navigate).not.toHaveBeenCalled();
+  });
+});
+
+describe("QueueDetailView bulk remove", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.bulkRemove.mockImplementation((_payload, options) => {
+      options?.onSuccess?.();
+    });
+  });
+
+  it("asks for confirmation and states the cost before removing selected items", async () => {
+    const user = userEvent.setup();
+    render(<QueueDetailView />);
+
+    await user.click(screen.getByLabelText("Select all items"));
+    await user.click(
+      screen.getByRole("button", { name: /remove selected \(2\)/i }),
+    );
+
+    // W10-ANNOTATIONS-U01: one click must not delete items and their annotations.
+    expect(mocks.bulkRemove).not.toHaveBeenCalled();
+
+    const dialog = screen.getByRole("dialog", {
+      name: /remove 2 items from this queue\?/i,
+    });
+    expect(
+      within(dialog).getByText(
+        /their annotations, notes and review comments are deleted too\. this can't be undone\./i,
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: /^cancel$/i }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(mocks.bulkRemove).not.toHaveBeenCalled();
+
+    await user.click(
+      screen.getByRole("button", { name: /remove selected \(2\)/i }),
+    );
+    const confirmDialog = screen.getByRole("dialog", {
+      name: /remove 2 items from this queue\?/i,
+    });
+    await user.click(
+      within(confirmDialog).getByRole("button", { name: /^remove 2 items$/i }),
+    );
+
+    expect(mocks.bulkRemove).toHaveBeenCalledTimes(1);
+    expect(mocks.bulkRemove).toHaveBeenCalledWith(
+      { queueId: "queue-1", itemIds: ["item-1", "item-2"] },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("button", { name: /remove selected/i }),
+    ).not.toBeInTheDocument();
   });
 });

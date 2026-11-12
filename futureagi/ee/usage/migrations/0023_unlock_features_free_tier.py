@@ -61,10 +61,11 @@ def _bust_redis_cache(features):
 
 def _apply(apps, schema_editor):
     PlanEntitlement = apps.get_model("usage", "PlanEntitlement")
+    entitlements = PlanEntitlement.objects.using(schema_editor.connection.alias)
 
     for feature in _BOOL_FEATURES:
         for plan in _PLANS:
-            PlanEntitlement.objects.update_or_create(
+            entitlements.update_or_create(
                 feature=feature,
                 plan=plan,
                 organization=None,
@@ -73,7 +74,7 @@ def _apply(apps, schema_editor):
 
     for feature, value in _INT_FEATURES.items():
         for plan in _PLANS:
-            PlanEntitlement.objects.update_or_create(
+            entitlements.update_or_create(
                 feature=feature,
                 plan=plan,
                 organization=None,

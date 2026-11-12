@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: clickup
+version: 1.0.0
+name: ClickUp
+description: "Tasks, lists, docs and chat in ClickUp."
+vendor:
+  name: ClickUp
+  domains: [clickup.com]
+eeCategory: productivity
+group: other
+categories: [productivity, project-management]
+tags: [tasks, docs]
+docsUrl: https://developer.clickup.com/docs/connect-an-ai-assistant-to-clickups-mcp-server
+archetype: issue-tracker
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://developer.clickup.com/docs/connect-an-ai-assistant-to-clickups-mcp-server
+    fetchedAt: 2026-10-21

@@ -1,0 +1,81 @@
+# Postman's remote MCP server (US) with OAuth from its own authorization
+# server: dynamic client registration, a client ID metadata document and
+# PKCE. This record uses the Minimal tool configuration, which Postman's
+# page marks as the default; /code, /mcp (Full), /learn and /context-graph
+# are the other paths on the same host. The server advertises no scope, so
+# the request carries none. The EU server takes only an API key (see
+# api-key). EE reads a pre-registered client from its environment and cannot
+# register one, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: postman
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.postman.com/minimal
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://mcp.postman.com/authorize
+    tokenUrl: https://mcp.postman.com/token
+    scopes: []
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://mcp.postman.com/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [cimd, dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server
+    fetchedAt: 2026-11-11
+  - fact: transport.url
+    url: https://mcp.postman.com/.well-known/oauth-protected-resource/minimal
+    fetchedAt: 2026-11-11
+  - fact: transport.variant
+    url: https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp.postman.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.tokenUrl
+    url: https://mcp.postman.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.scopes
+    url: https://mcp.postman.com/.well-known/oauth-protected-resource/minimal
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.pkce
+    url: https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.pkce
+    url: https://mcp.postman.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.revocation.url
+    url: https://mcp.postman.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.registration
+    url: https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.registration
+    url: https://mcp.postman.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+x-omega: { ee: exclude }

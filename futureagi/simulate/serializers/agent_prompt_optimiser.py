@@ -145,8 +145,22 @@ class AgentPromptOptimiserRunCreateSerializer(serializers.ModelSerializer):
 
 
 class AgentPromptOptimiserRunSerializer(serializers.ModelSerializer):
+    # These links are selected together by CreateSerializer.create, not editable
+    # optimizer parameters. Repointing breaks the meaning of all saved trials.
+    def to_internal_value(self, data):
+        if self.instance is not None:
+            for field in ("test_execution", "agent_optimiser_run", "agent_optimiser"):
+                if field in data and str(data[field]) != str(
+                    getattr(self.instance, field + "_id")
+                ):
+                    raise serializers.ValidationError(
+                        {field: "Optimizer lineage is read-only."}
+                    )
+        return super().to_internal_value(data)
+
     class Meta:
         model = AgentPromptOptimiserRun
+        read_only_fields = ("test_execution", "agent_optimiser_run", "agent_optimiser")
         fields = [
             "id",
             "agent_optimiser",

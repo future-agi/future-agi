@@ -18,8 +18,8 @@ export const FEATURE_LABELS = {
   has_synthetic_data: "Synthetic Data Generation",
   has_agentic_eval: "Agentic Evaluation",
   has_optimization: "Optimization",
-  has_scim: "SCIM Provisioning",
-  has_project_rbac: "Project RBAC",
+  // has_scim and has_project_rbac have no label on purpose: neither capability
+  // is built, so neither is offered (see planFormatters).
   has_custom_roles: "Custom Roles",
   has_data_masking: "Data Masking",
   has_oauth_sso: "OAuth SSO",
@@ -39,36 +39,77 @@ export const FEATURE_LABELS = {
 // ── Add-on Icons ────────────────────────────────────────────────────────
 
 export const ADDON_ICONS = {
-  boost: "mdi:flash",
-  scale: "mdi:speedometer",
-  enterprise: "mdi:office-building",
+  boost: "solar:bolt-linear",
+  scale: "solar:speedometer-middle-linear",
+  enterprise: "solar:buildings-linear",
 };
 
 // ── Add-on Descriptions (incremental value over previous tier) ──────────
+// Each card bullet names the entitlement it stands for, so a card never offers
+// what the Feature comparison crosses out for that add-on, nor something the
+// plan it builds on already has. Numbers come from the add-on's own values.
+// Bullets without a key are about the service, not a plan entitlement.
+
+// The plan each add-on is bought on top of (one rank below on this page).
+export const ADDON_BASE_PLAN = {
+  boost: "payg",
+  scale: "boost",
+  enterprise: "scale",
+};
+
+const monitorsBullet = (v) =>
+  v === -1
+    ? "Unlimited monitors & alerts"
+    : `${v.toLocaleString("en-US")} monitors & alerts`;
+
+const retentionBullet = (v) => {
+  if (v < 0) return null;
+  return v >= 365
+    ? `${Math.round(v / 365)}-year data retention`
+    : `${v}-day data retention`;
+};
 
 export const ADDON_DESCRIPTIONS = {
   boost: [
-    "Knowledge bases",
-    "Review workflows",
-    "15 monitors & alerts",
-    "90-day data retention",
+    { key: "has_knowledge_base", label: "Knowledge bases" },
+    { key: "has_review_workflow", label: "Review workflows" },
+    { key: "monitors", format: monitorsBullet },
+    { key: "retention_traces_days", format: retentionBullet },
   ],
   scale: [
-    "Everything in Boost",
-    "Unlimited resources",
-    "SCIM provisioning",
-    "Custom roles",
-    "Optimization",
-    "1-year data retention",
+    { label: "Everything in Boost" },
+    { key: "monitors", format: monitorsBullet },
+    { key: "has_custom_roles", label: "Custom roles" },
+    { key: "has_optimization", label: "Optimization" },
+    { key: "retention_traces_days", format: retentionBullet },
   ],
   enterprise: [
-    "Everything in Scale",
-    "Data masking",
-    "Dedicated support",
-    "7-year data retention",
-    "Custom pricing",
+    { label: "Everything in Scale" },
+    { key: "has_data_masking", label: "Data masking" },
+    { label: "Dedicated support" },
+    { key: "retention_traces_days", format: retentionBullet },
+    { label: "Custom pricing" },
   ],
 };
+
+// The card bullets for one add-on: a flag bullet when the add-on has the flag
+// and its base plan does not; a number bullet when the add-on has a value
+// (Unlimited is -1) that differs from its base plan's.
+export function getAddonBullets(addonKey, features, baseFeatures) {
+  return (ADDON_DESCRIPTIONS[addonKey] || []).flatMap(
+    ({ key, label, format }) => {
+      if (!key) return [label];
+      const value = features?.[key];
+      const baseValue = baseFeatures?.[key];
+      if (!format) return value === true && baseValue !== true ? [label] : [];
+      if (typeof value !== "number" || value === 0 || value === baseValue) {
+        return [];
+      }
+      const text = format(value);
+      return text ? [text] : [];
+    },
+  );
+}
 
 // ── Feature Groups (for the comparison matrix) ──────────────────────────
 // Keys must be camelCase (matching middleware conversion).
@@ -121,9 +162,7 @@ export function getFeatureGroups(formatCompact) {
           type: "bool",
         },
         { label: "Required Labels", key: "has_required_labels", type: "bool" },
-        { label: "Project RBAC", key: "has_project_rbac", type: "bool" },
         { label: "Custom Roles", key: "has_custom_roles", type: "bool" },
-        { label: "SCIM Provisioning", key: "has_scim", type: "bool" },
         { label: "Audit Logs", key: "has_audit_logs", type: "bool" },
         { label: "Data Masking", key: "has_data_masking", type: "bool" },
         { label: "Optimization", key: "has_optimization", type: "bool" },

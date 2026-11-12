@@ -11,25 +11,27 @@ from functools import wraps
 from io import BytesIO
 
 import numpy as np
-from django.db import close_old_connections
+import structlog
 from PIL import Image
-from tfc.telemetry import wrap_for_thread
 
-from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+from agentic_eval.core.database.ch_vector import (
+    ClickHouseVectorDB,
+    sanitize_sql_value,
+)
 from agentic_eval.core.embeddings.serving_client import (
     get_serving_client,
     serving_available,
 )
 from agentic_eval.core.utils.functions import detect_input_type
-import structlog
+from tfc.telemetry import wrap_for_thread
 
 logger = structlog.get_logger(__name__)
 
-from analytics.utils import mixpanel_slack_notfy
-from model_hub.models.choices import DataTypeChoices
-from model_hub.models.develop_dataset import Cell
-from model_hub.utils.eval_input_validation import is_empty_value
-from tfc.utils.storage import (
+from analytics.utils import mixpanel_slack_notfy  # noqa: E402
+from model_hub.models.choices import DataTypeChoices  # noqa: E402
+from model_hub.models.develop_dataset import Cell  # noqa: E402
+from model_hub.utils.eval_input_validation import is_empty_value  # noqa: E402
+from tfc.utils.storage import (  # noqa: E402
     image_bytes_from_url_or_base64,
     open_image_from_url,
     upload_image_to_s3,
@@ -41,8 +43,41 @@ FEEDBACK_TABLE_NAME = "feedbacks"
 GROUND_TRUTH_TABLE_NAME = "ground_truths"
 _TENANT_SCOPED_TABLES = (FEEDBACK_TABLE_NAME, GROUND_TRUTH_TABLE_NAME)
 
+# Feedback vectors this build writes with no workspace carry this metadata key.
+# Vectors saved before the release cutoff never have it, so a read can tell a
+# pre-cutoff no-workspace row from one written afterwards.
+FEEDBACK_NO_WORKSPACE_AFTER_CUTOFF_KEY = "written_without_workspace"
+
+
+def _feedback_scope_sql(organization_id, workspace_id):
+    """WHERE clause and parameters for the feedback rows one run may read.
+
+    Same organization only. Within it: rows of the run's workspace, and rows
+    saved with no workspace before the release cutoff (production stored
+    playground feedback, and feedback on datasets made before workspaces,
+    without one). Rows of any other workspace, rows of any other
+    organization, and no-workspace rows written after the cutoff are never
+    read. Values are sanitized the way stored metadata is.
+    """
+    sql = (
+        "has(metadata.key, 'organization_id') "
+        "AND metadata.value[indexOf(metadata.key, 'organization_id')] "
+        "= %(feedback_organization_id)s "
+        "AND ((has(metadata.key, 'workspace_id') "
+        "AND metadata.value[indexOf(metadata.key, 'workspace_id')] "
+        "= %(feedback_workspace_id)s) "
+        "OR (NOT has(metadata.key, 'workspace_id') "
+        f"AND NOT has(metadata.key, '{FEEDBACK_NO_WORKSPACE_AFTER_CUTOFF_KEY}')))"
+    )
+    params = {
+        "feedback_organization_id": sanitize_sql_value(str(organization_id)),
+        "feedback_workspace_id": sanitize_sql_value(str(workspace_id)),
+    }
+    return sql, params
+
 # Default DB-layer cosine-distance cap for tenant tables when caller passes none.
 _TENANT_DEFAULT_COLUMN_THRESHOLD = 0.35
+
 
 def log_performance(func):
     @wraps(func)
@@ -113,7 +148,9 @@ class ModelManager:
         # Created on first use, not here: this singleton is built at import
         # time and serving is optional, so importing must not touch the network.
         self._serving_client = None
-        self._use_serving = True  # Flag to control whether to use serving or local models
+        self._use_serving = (
+            True  # Flag to control whether to use serving or local models
+        )
 
         # Local models as fallback
         self._image_model = None
@@ -124,7 +161,6 @@ class ModelManager:
         self._syn_data_model = None
 
         logger.info("ModelManager initialization complete")
-
 
     @property
     def serving_client(self):
@@ -138,8 +174,12 @@ class ModelManager:
                     mixpanel_slack_notfy("ALERT: Serving service not available.")
             except Exception as e:
                 traceback.print_exc()
-                mixpanel_slack_notfy(f"Failed to initialize serving client: {e}, falling back to local models")
-                logger.exception(f"Failed to initialize serving client: {e}, falling back to local models")
+                mixpanel_slack_notfy(
+                    f"Failed to initialize serving client: {e}, falling back to local models"
+                )
+                logger.exception(
+                    f"Failed to initialize serving client: {e}, falling back to local models"
+                )
                 # self._use_serving = False
         return self._serving_client
 
@@ -148,11 +188,13 @@ class ModelManager:
         logger.info("Accessing synthetic data model")
         if self._use_serving and self.serving_client:
             logger.info("Using serving client for synthetic data embeddings")
+
             # Return a function that uses the serving client
             def syn_data_embedding(text, to_list=False):
                 logger.info("Getting synthetic data embedding from serving client")
                 embeddings = self.serving_client.get_syn_data_embedding(text)
                 return embeddings
+
             return syn_data_embedding
         else:
             # Fallback to local model
@@ -165,11 +207,13 @@ class ModelManager:
         logger.info("Accessing text model")
         if self._use_serving and self.serving_client:
             logger.info("Using serving client for text embeddings")
+
             # Return a function that uses the serving client
             def text_embedding(text, to_list=False):
                 logger.info("Getting text embedding from serving client")
                 embeddings = self.serving_client.embed_text(text)
                 return embeddings
+
             return text_embedding
         else:
             mixpanel_slack_notfy("ALERT: Text embeddings are not available")
@@ -181,10 +225,12 @@ class ModelManager:
         logger.info("Accessing image model")
         if self._use_serving and self.serving_client:
             logger.info("Using serving client for image embeddings")
+
             # Return a function that uses the serving client
             def image_embedding(image):
                 logger.info("Getting image embedding from serving client")
                 return self.serving_client.embed_image(image)
+
             return image_embedding
         else:
             mixpanel_slack_notfy("ALERT: Image embeddings are not available")
@@ -196,9 +242,11 @@ class ModelManager:
         logger.info("Accessing audio model")
         if self._use_serving and self.serving_client:
             logger.info("Using serving client for audio embeddings")
+
             def audio_embedding(audio_data):
                 logger.info("Getting audio embedding from serving client")
                 return self.serving_client.embed_audio(audio_data)
+
             return audio_embedding
         else:
             mixpanel_slack_notfy("ALERT: Audio embeddings are not available")
@@ -210,10 +258,12 @@ class ModelManager:
         logger.info("Accessing image-text model")
         if self._use_serving and self.serving_client:
             logger.info("Using serving client for image-text embeddings")
+
             # Return a function that uses the serving client
             def image_text_embedding(content):
                 logger.info("Getting image-text embedding from serving client")
                 return self.serving_client.embed_image_text(content)
+
             return image_text_embedding
         else:
             mixpanel_slack_notfy("ALERT: Image-text embeddings are not available")
@@ -226,10 +276,14 @@ class ModelManager:
         return self._image_processor
 
     def get_embeddings(self, text, model_provider, model_name, model_params=None):
-        return self.serving_client.get_embeddings(text, model_provider, model_name, model_params)
+        return self.serving_client.get_embeddings(
+            text, model_provider, model_name, model_params
+        )
+
 
 # Create a single instance of ModelManager
 model_manager = ModelManager()
+
 
 class EmbeddingManager:
     def __init__(self):
@@ -248,21 +302,20 @@ class EmbeddingManager:
         except Exception as e:
             logger.exception(f"Error closing RAG: {e}")
 
-    def get_feedback_count(self, eval_id: str, organization_id: str = None, workspace_id: str = None) -> int:
-        """Return the number of non-deleted feedback rows for a given eval_id."""
+    def get_feedback_count(
+        self, eval_id: str, organization_id: str = None, workspace_id: str = None
+    ) -> int:
+        """Count non-deleted feedback the run's scope may read (_feedback_scope_sql)."""
+        if not organization_id:
+            logger.warning("feedback_retrieval_missing_organization")
+            return 0
+        if not workspace_id:
+            logger.warning("feedback_retrieval_missing_workspace")
+            return 0
         try:
-            where = ["eval_id = %(eval_id)s", "deleted = 0"]
-            params = {"eval_id": eval_id}
-            if organization_id:
-                where.append(
-                    "arrayElement(metadata.value, indexOf(metadata.key, 'organization_id')) = %(organization_id)s"
-                )
-                params["organization_id"] = organization_id
-            if workspace_id:
-                where.append(
-                    "arrayElement(metadata.value, indexOf(metadata.key, 'workspace_id')) = %(workspace_id)s"
-                )
-                params["workspace_id"] = workspace_id
+            scope_sql, scope_params = _feedback_scope_sql(organization_id, workspace_id)
+            where = ["eval_id = %(eval_id)s", "deleted = 0", scope_sql]
+            params = {"eval_id": eval_id, **scope_params}
             sql = f"SELECT COUNT(*) FROM feedbacks WHERE {' AND '.join(where)}"
             result = self.db_client.client.execute(sql, params)
             return result[0][0] if result else 0
@@ -317,14 +370,20 @@ class EmbeddingManager:
                 else:
                     # Process as image
                     if isinstance(query, str) and "http" in query:
-                        query = open_image_from_url(query, save_as="downloaded_image.jpg")
+                        query = open_image_from_url(
+                            query, save_as="downloaded_image.jpg"
+                        )
 
                     inputs = processor(images=query, return_tensors="pt")
                     embedding_vector = model.get_image_features(**inputs)
 
                 # Convert tensor to numpy array and then to list
                 embedding_list = (
-                    embedding_vector.detach().numpy().flatten().astype(np.float32).tolist()
+                    embedding_vector.detach()
+                    .numpy()
+                    .flatten()
+                    .astype(np.float32)
+                    .tolist()
                 )
                 return embedding_list
 
@@ -338,11 +397,11 @@ class EmbeddingManager:
                     pass
 
                 else:
-                    logger.info("Audio query should be a string with http",query)
+                    logger.info("Audio query should be a string with http", query)
                     return []
 
             else:
-                logger.info("Audio query should be a string with http",query)
+                logger.info("Audio query should be a string with http", query)
                 return []
 
             if model_manager._use_serving:
@@ -513,12 +572,10 @@ class EmbeddingManager:
             metadata_list = []
 
             for n, inp in enumerate(inputs_formater):
-
                 if inp not in row_dict:
                     continue
 
                 if input_dict[inp] == "image":
-
                     # Process image input
                     img_bytes = image_bytes_from_url_or_base64(row_dict[inp])
                     if img_bytes is None:
@@ -552,6 +609,10 @@ class EmbeddingManager:
                         row_dict["organization_id"] = str(organization_id)
                     if workspace_id:
                         row_dict["workspace_id"] = str(workspace_id)
+                    elif table_name == FEEDBACK_TABLE_NAME:
+                        # Written after the cutoff with no workspace: never
+                        # read across workspaces (_feedback_scope_sql).
+                        row_dict[FEEDBACK_NO_WORKSPACE_AFTER_CUTOFF_KEY] = "1"
 
                 mod_dict = row_dict.copy()
 
@@ -600,9 +661,7 @@ class EmbeddingManager:
                     metadata_list.append(mod_dict)
 
                 except IndexError:
-                    logger.exception(
-                        f"IndexError: index_col_type[{n}] does not exist"
-                    )
+                    logger.exception(f"IndexError: index_col_type[{n}] does not exist")
                     raise
                 except Exception as e:
                     traceback.print_exc()
@@ -772,7 +831,8 @@ class EmbeddingManager:
 
             # Split metadatas into batches
             batches = [
-                metadatas[i : i + batch_size] for i in range(0, len(metadatas), batch_size)
+                metadatas[i : i + batch_size]
+                for i in range(0, len(metadatas), batch_size)
             ]
 
             all_item_ids = []
@@ -781,9 +841,12 @@ class EmbeddingManager:
             # Wrap function with OTel context propagation for thread safety
             wrapped_process_batch = wrap_for_thread(process_batch)
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=max_workers
+            ) as executor:
                 future_to_batch = {
-                    executor.submit(wrapped_process_batch, batch): batch for batch in batches
+                    executor.submit(wrapped_process_batch, batch): batch
+                    for batch in batches
                 }
 
                 for future in concurrent.futures.as_completed(future_to_batch):
@@ -795,7 +858,9 @@ class EmbeddingManager:
                         logger.error(f"Batch processing error: {e}")
 
             if errors:
-                raise RuntimeError(f"Errors occurred during processing:  {''.join(errors)}")
+                raise RuntimeError(
+                    f"Errors occurred during processing:  {''.join(errors)}"
+                )
 
             return all_item_ids
 
@@ -957,8 +1022,13 @@ class EmbeddingManager:
         Returns:
             list: List of similar items for the query.
         """
-        if filter_by is None:
-            filter_by = {}
+        if table_name in _TENANT_SCOPED_TABLES and not organization_id:
+            logger.warning("feedback_retrieval_missing_organization")
+            return []
+        if table_name == FEEDBACK_TABLE_NAME and not workspace_id:
+            logger.warning("feedback_retrieval_missing_workspace")
+            return []
+        filter_by = dict(filter_by or {})
         results = []
         try:
             if rag_type != "normal":
@@ -976,9 +1046,7 @@ class EmbeddingManager:
                         "image-text", query
                     )
                 elif input_type == "audio":
-                    query_embedding = self.get_audio_query_embedding(
-                        "audio", query
-                    )
+                    query_embedding = self.get_audio_query_embedding("audio", query)
                 else:
                     model = model_manager.text_model
                     if model_manager._use_serving:
@@ -990,10 +1058,22 @@ class EmbeddingManager:
             db_client = self.db_client
             filter_by["input_type"] = input_type
 
+            if table_name == FEEDBACK_TABLE_NAME:
+                results = self._feedback_similarity_search(
+                    query_embedding,
+                    eval_id=eval_id,
+                    meta_data_col=meta_data_col,
+                    filter_by=filter_by,
+                    top_k=top_k,
+                    threshold=threshold,
+                    organization_id=organization_id,
+                    workspace_id=workspace_id,
+                )
+                return results
+
             if table_name in _TENANT_SCOPED_TABLES:
-                if organization_id:
-                    filter_by["organization_id"] = str(organization_id)
-                if workspace_id:
+                filter_by["organization_id"] = str(organization_id)
+                if workspace_id is not None:
                     filter_by["workspace_id"] = str(workspace_id)
             # print(f"[FEEDBACK QUERY] retrieve_rag_based_examples: eval_id={eval_id} meta_data_col={meta_data_col} input_type={input_type} filter_by={filter_by} query={str(query)[:100]} top_k={top_k}", flush=True)
             try:
@@ -1004,9 +1084,9 @@ class EmbeddingManager:
                         filter_by,
                         meta_data_col,
                         eval_id,
-                    top_k,
-                    threshold
-                )
+                        top_k,
+                        threshold,
+                    )
                 else:
                     results = db_client.vector_similarity_search(
                         table_name,
@@ -1014,9 +1094,9 @@ class EmbeddingManager:
                         filter_by,
                         meta_data_col,
                         eval_id,
-                    top_k,
-                    syn_data_flag,
-                )
+                        top_k,
+                        syn_data_flag,
+                    )
             except Exception:
                 traceback.print_exc()
             # print(f"[FEEDBACK QUERY] retrieve_rag_based_examples: returned {len(results)} results", flush=True)
@@ -1024,6 +1104,68 @@ class EmbeddingManager:
         except Exception as e:
             traceback.print_exc()
             logger.exception(f"Error in retrieve_rag_based_examples: {e}")
+        return results
+
+    def _feedback_similarity_search(
+        self,
+        query_embedding,
+        *,
+        eval_id,
+        meta_data_col,
+        filter_by,
+        top_k,
+        threshold,
+        organization_id,
+        workspace_id,
+    ):
+        """Nearest feedback rows inside the run's scope (_feedback_scope_sql).
+
+        The scope is part of the SQL WHERE, before ORDER BY and LIMIT, so rows
+        outside it are never read. Returns ``(id, vector, metadata, distance)``
+        tuples like ClickHouseVectorDB.vector_similarity_search. A threshold
+        caps the distance after the read, as tenant tables already do.
+        """
+        scope_sql, params = _feedback_scope_sql(organization_id, workspace_id)
+        clauses = ["deleted = 0", scope_sql]
+        if eval_id:
+            clauses.append("eval_id = %(feedback_eval_id)s")
+            params["feedback_eval_id"] = str(eval_id)
+        if meta_data_col:
+            clauses.append(
+                "has(metadata.key, %(feedback_column)s) "
+                "AND isNotNull(metadata.value[indexOf(metadata.key, "
+                "%(feedback_column)s)])"
+            )
+            params["feedback_column"] = str(meta_data_col)
+        for n, (key, value) in enumerate(filter_by.items()):
+            if key in ("organization_id", "workspace_id"):
+                continue
+            clauses.append(
+                f"has(metadata.key, %(feedback_filter_key_{n})s) "
+                f"AND metadata.value[indexOf(metadata.key, "
+                f"%(feedback_filter_key_{n})s)] = %(feedback_filter_value_{n})s"
+            )
+            params[f"feedback_filter_key_{n}"] = sanitize_sql_value(key)
+            params[f"feedback_filter_value_{n}"] = sanitize_sql_value(value)
+        vector_sql = "[" + ",".join(str(float(v)) for v in query_embedding) + "]"
+        query = (
+            "SELECT id, vector, metadata.key, metadata.value, "
+            f"cosineDistance(vector, {vector_sql}) AS distance "
+            f"FROM {FEEDBACK_TABLE_NAME} WHERE {' AND '.join(clauses)} "
+            f"ORDER BY distance ASC LIMIT {int(top_k)}"
+        )
+        rows = []
+        try:
+            rows = self.db_client.execute_read(query, params) or []
+        except Exception:
+            logger.exception("feedback_similarity_search_failed")
+            return []
+        results = []
+        for row_id, vector, keys, values, distance in rows:
+            if threshold is not None and distance > threshold:
+                continue
+            metadata = dict(zip(keys, values, strict=False))
+            results.append((row_id, vector, metadata, distance))
         return results
 
     def retrieve_avg_rag_based_examples(
@@ -1040,18 +1182,26 @@ class EmbeddingManager:
         organization_id=None,
         workspace_id=None,
     ):
-        # get input types
-        # row_dict
+        # Refuse before count queries, embedding inference or vector reads.
+        if table_name in _TENANT_SCOPED_TABLES and not organization_id:
+            logger.warning("feedback_retrieval_missing_organization")
+            return []
+        if table_name == FEEDBACK_TABLE_NAME and not workspace_id:
+            logger.warning("feedback_retrieval_missing_workspace")
+            return []
         if filter_by is None:
             filter_by = {}
 
         # Skip the embed loop when there are no rows to match against.
         if table_name == FEEDBACK_TABLE_NAME and eval_id:
-            if self.get_feedback_count(
-                eval_id=str(eval_id),
-                organization_id=organization_id,
-                workspace_id=workspace_id,
-            ) == 0:
+            if (
+                self.get_feedback_count(
+                    eval_id=str(eval_id),
+                    organization_id=organization_id,
+                    workspace_id=workspace_id,
+                )
+                == 0
+            ):
                 logger.info(
                     "retrieve_avg_rag_based_examples skipped: no feedback rows",
                     eval_id=str(eval_id),
@@ -1082,7 +1232,9 @@ class EmbeddingManager:
         for n, inp in enumerate(inputs):
             try:
                 if n >= len(input_cols) or n >= len(self.input_types):
-                    logger.warning(f"Skipping input {n} due to mismatch in column names or types")
+                    logger.warning(
+                        f"Skipping input {n} due to mismatch in column names or types"
+                    )
                     continue
                 # Stored feedback embeds text as str(value) (data_formatter); match it.
                 if self.input_types[n] == "text" and not isinstance(inp, str):
@@ -1116,20 +1268,30 @@ class EmbeddingManager:
                     workspace_id=workspace_id,
                 )
                 if tenant_scoped and x and effective_threshold is not None:
-                    x = [i for i in x if (i[-1] if not isinstance(i, dict) else i["similarity"]) <= effective_threshold]
+                    x = [
+                        i
+                        for i in x
+                        if (i[-1] if not isinstance(i, dict) else i["similarity"])
+                        <= effective_threshold
+                    ]
                 if not x:
                     continue
                 if tenant_scoped:
                     results[inp] = {i[-2]["item_id"]: i for i in x}
                 elif effective_threshold:
                     results[inp] = [
-                        {"similarity": i["similarity"], "chunk_text": i["metadata"]["chunk_text"]}
+                        {
+                            "similarity": i["similarity"],
+                            "chunk_text": i["metadata"]["chunk_text"],
+                        }
                         for i in x
                     ]
                 else:
                     results[inp] = {i[-2]["item_id"]: i for i in x}
             except Exception as exc:
-                logger.exception("retrieve_rag_based_examples_per_input_failed", error=str(exc))
+                logger.exception(
+                    "retrieve_rag_based_examples_per_input_failed", error=str(exc)
+                )
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()
         logger.info(
@@ -1143,7 +1305,9 @@ class EmbeddingManager:
             all_items = []
             for _input_key, items in results.items():
                 all_items.extend(items)
-            top_results = sorted(all_items, key=lambda x: x["similarity"], reverse=True)[:top_k]
+            top_results = sorted(
+                all_items, key=lambda x: x["similarity"], reverse=True
+            )[:top_k]
         else:
             top_results = self.get_top_union_items(results, top_k)
         end_time = datetime.now()
@@ -1163,7 +1327,7 @@ class EmbeddingManager:
         rag_type="normal",
         filter_by=None,
         top_k=5000,
-        metadata_data = False
+        metadata_data=False,
     ):
         """
         Retrieves relevant chunks from a vector database based on a query.
@@ -1334,10 +1498,11 @@ class EmbeddingManager:
             content.append({"type": "text", "text": FEEDBACK_FEWSHOT_PROMPT})
 
             for example_idx, example in enumerate(dpp_examples):
-
                 for input_idx, input_type in enumerate(self.input_types):
                     if input_idx >= len(inputs):
-                        logger.warning(f"Skipping input_idx {input_idx} in process_examples due to input length mismatch")
+                        logger.warning(
+                            f"Skipping input_idx {input_idx} in process_examples due to input length mismatch"
+                        )
                         continue
                     column_name = inputs[input_idx]
 
@@ -1346,14 +1511,16 @@ class EmbeddingManager:
                         formatted_str = self.decode_path(input_string)
                         fewshot_image_url = upload_image_to_s3(
                             formatted_str,
-                            bucket_name=os.environ.get("S3_CUSTOMER_DATA_BUCKET", "fi-customer-data-dev"),
+                            bucket_name=os.environ.get(
+                                "S3_CUSTOMER_DATA_BUCKET", "fi-customer-data-dev"
+                            ),
                             object_key=f"tempcust/{uuid.uuid4()}",
                         )
 
                         content.append(
                             {
                                 "type": "text",
-                                "text": f"<example_image_{example_idx+1}_{input_idx+1}>",
+                                "text": f"<example_image_{example_idx + 1}_{input_idx + 1}>",
                             }
                         )
                         content.append(
@@ -1365,7 +1532,7 @@ class EmbeddingManager:
                         content.append(
                             {
                                 "type": "text",
-                                "text": f"</example_image_{example_idx+1}_{input_idx+1}>",
+                                "text": f"</example_image_{example_idx + 1}_{input_idx + 1}>",
                             }
                         )
 
@@ -1410,10 +1577,12 @@ class EmbeddingManager:
         """Mark vectors as deleted. Waits for the mutation to settle on the
         local replica so a re-embed (insert-after-delete) does not race the
         soft-delete and leave the prior rows readable.
+
+        ``workspace_id=None`` scopes the delete to vectors written without a
+        workspace (``data_formatter`` omits the key), never to every
+        workspace in the organization.
         """
-        table_exists = self.db_client.client.execute(
-            f"EXISTS TABLE {table_name}"
-        )[0][0]
+        table_exists = self.db_client.client.execute(f"EXISTS TABLE {table_name}")[0][0]
         if not table_exists:
             logger.info(
                 "vectors_soft_delete_skipped_table_missing",
@@ -1437,6 +1606,8 @@ class EmbeddingManager:
                 "metadata.value[indexOf(metadata.key, 'workspace_id')] = %(workspace_id)s"
             )
             params["workspace_id"] = str(workspace_id)
+        else:
+            clauses.append("NOT has(metadata.key, 'workspace_id')")
         where = " AND ".join(clauses)
         self.db_client.client.execute(
             f"ALTER TABLE {table_name} UPDATE deleted = 1 WHERE {where} "
@@ -1592,7 +1763,6 @@ class EmbeddingManager:
                     model = model_manager.text_model
                     if model_manager._use_serving:
                         embedding_vector = model(cell_value)
-
 
                 else:
                     logger.warning(

@@ -22,7 +22,8 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from accounts.models import Organization, User
-from accounts.models.workspace import Workspace
+from accounts.models.organization_membership import OrganizationMembership
+from accounts.models.workspace import Workspace, WorkspaceMembership
 from model_hub.models.choices import (
     CellStatus,
     DatasetSourceChoices,
@@ -37,6 +38,9 @@ from model_hub.models.evals_metric import (
     EvalTemplate,
     UserEvalMetric,
 )
+from model_hub.tests.network_isolation import no_external_lookups  # noqa: F401
+from tfc.constants.levels import Level
+from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
 
 
@@ -47,22 +51,44 @@ def organization(db):
 
 @pytest.fixture
 def user(db, organization):
-    return User.objects.create_user(
+    user = User.objects.create_user(
         email="test@example.com",
         password="testpassword123",
         name="Test User",
         organization=organization,
     )
+    # Experiment-scoped lookups re-check live membership (scope_to_caller ->
+    # can_access_workspace), so the test user is an active owner, as a real
+    # account is.
+    OrganizationMembership.no_workspace_objects.create(
+        user=user,
+        organization=organization,
+        role=OrganizationRoles.OWNER,
+        level=Level.OWNER,
+        is_active=True,
+    )
+    return user
 
 
 @pytest.fixture
 def workspace(db, organization, user):
-    return Workspace.objects.create(
+    workspace = Workspace.objects.create(
         name="Default Workspace",
         organization=organization,
         is_default=True,
         created_by=user,
     )
+    WorkspaceMembership.no_workspace_objects.create(
+        user=user,
+        workspace=workspace,
+        role="Workspace Owner",
+        level=Level.OWNER,
+        is_active=True,
+        organization_membership=OrganizationMembership.no_workspace_objects.get(
+            user=user, organization=organization
+        ),
+    )
+    return workspace
 
 
 @pytest.fixture
@@ -229,6 +255,27 @@ class TestAddUserEvalView:
 
         assert response.status_code == status.HTTP_200_OK
 
+    def test_add_user_eval_accepts_blank_model(
+        self, auth_client, dataset, output_column, valid_eval_config, eval_template
+    ):
+        """A code eval added from the dataset eval picker sends model "" when no
+        judge model applies (OSS has no Turing models); that must not be a 400."""
+        payload = {
+            "name": "code-eval-blank-model",
+            "template_id": str(eval_template.id),
+            "config": valid_eval_config,
+            "model": "",
+            "run": False,
+        }
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/add_user_eval/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.data
+
     def test_add_user_eval_with_template(
         self, auth_client, dataset, output_column, eval_template
     ):
@@ -262,9 +309,7 @@ class TestAddUserEvalView:
             "run": True,
         }
 
-        with patch(
-            "model_hub.views.develop_dataset.run_evaluation_task.apply_async"
-        ) as mock_task:
+        with patch("model_hub.views.develop_dataset.run_evaluation_task.apply_async"):
             response = auth_client.post(
                 f"/model-hub/develops/{dataset.id}/add_user_eval/",
                 payload,
@@ -412,7 +457,9 @@ class TestAddUserEvalView:
             choice_scores=choice_scores,
             pass_threshold=pass_threshold,
             config={
-                "output": "Pass/Fail" if output_type_normalized == "pass_fail" else "choices",
+                "output": "Pass/Fail"
+                if output_type_normalized == "pass_fail"
+                else "choices",
                 "required_keys": ["output"],
                 "eval_type_id": "AgentEvaluator",
             },
@@ -452,9 +499,7 @@ class TestStartEvalsProcess:
             "user_eval_ids": [str(user_eval_metric.id)],
         }
 
-        with patch(
-            "model_hub.views.develop_dataset.run_evaluation_task.apply_async"
-        ) as mock_task:
+        with patch("model_hub.views.develop_dataset.run_evaluation_task.apply_async"):
             response = auth_client.post(
                 f"/model-hub/develops/{dataset.id}/start_evals_process/",
                 payload,
@@ -496,9 +541,7 @@ class TestStartEvalsProcess:
             "user_eval_ids": [str(eval1.id), str(eval2.id)],
         }
 
-        with patch(
-            "model_hub.views.develop_dataset.run_evaluation_task.apply_async"
-        ) as mock_task:
+        with patch("model_hub.views.develop_dataset.run_evaluation_task.apply_async"):
             response = auth_client.post(
                 f"/model-hub/develops/{dataset.id}/start_evals_process/",
                 payload,
@@ -682,9 +725,7 @@ class TestEvalConfigContracts:
             multi_choice=True,
         )
 
-        response = auth_client.get(
-            f"/model-hub/get-eval-config?eval_id={template.id}"
-        )
+        response = auth_client.get(f"/model-hub/get-eval-config?eval_id={template.id}")
 
         assert response.status_code == status.HTTP_200_OK, response.json()
         payload = response.json()["result"]["eval"]
@@ -702,13 +743,174 @@ class TestEvalConfigContracts:
             choices=["A", "B"],
         )
 
-        response = auth_client.get(
-            f"/model-hub/get-eval-config?eval_id={template.id}"
-        )
+        response = auth_client.get(f"/model-hub/get-eval-config?eval_id={template.id}")
 
         assert response.status_code == status.HTTP_200_OK, response.json()
         payload = response.json()["result"]["eval"]
         assert payload["multi_choice"] is False
+
+    def test_instance_description_create_edit_clear_round_trip(
+        self, auth_client, dataset, eval_template
+    ):
+        eval_template.description = "Shared template instructions"
+        eval_template.config = {
+            "required_keys": [],
+            "eval_type_id": "TestEval",
+            "config": {},
+        }
+        eval_template.save()
+        description = "Support dataset notes.\nEscalated cases only."
+        config = {
+            "mapping": {},
+            "config": {},
+            "reason_column": False,
+            "description": description,
+        }
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/add_user_eval/",
+            {
+                "name": "described-eval",
+                "template_id": str(eval_template.id),
+                "config": config,
+                "run": False,
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK, response.data
+        metric = UserEvalMetric.objects.get(dataset=dataset, name="described-eval")
+        assert metric.config["description"] == description
+        structure_url = (
+            f"/model-hub/develops/{dataset.id}/get_eval_structure/{metric.id}/"
+            "?eval_type=user"
+        )
+        response = auth_client.get(structure_url)
+        assert response.status_code == status.HTTP_200_OK, response.data
+        assert response.data["result"]["eval"]["instance_description"] == description
+        assert response.data["result"]["eval"]["description"] == eval_template.description
+
+        for notes in ["Updated notes.\nSecond line.", ""]:
+            config["description"] = notes
+            response = auth_client.post(
+                f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{metric.id}/",
+                {"config": config, "run": False},
+                format="json",
+            )
+            assert response.status_code == status.HTTP_200_OK, response.data
+            metric.refresh_from_db()
+            assert metric.config == config
+            response = auth_client.get(structure_url)
+            assert response.status_code == status.HTTP_200_OK, response.data
+            assert response.data["result"]["eval"]["instance_description"] == notes
+
+        eval_template.refresh_from_db()
+        assert eval_template.description == "Shared template instructions"
+
+    @pytest.mark.parametrize("run", [False, True], ids=["save", "save-and-run"])
+    @pytest.mark.parametrize(
+        "description",
+        ["Compare dataset notes.\nEscalated cases only.", "", None],
+        ids=["multiline", "empty", "omitted"],
+    )
+    def test_compare_instance_description_persists_and_reopens(
+        self, auth_client, dataset, output_column, eval_template, run, description
+    ):
+        eval_template.description = "Shared template instructions"
+        eval_template.config = {
+            "required_keys": ["output"],
+            "eval_type_id": "TestEval",
+            "config": {"enabled": {"type": "boolean", "default": True}},
+        }
+        eval_template.save()
+        other_dataset = Dataset.objects.create(
+            name="Compared Dataset",
+            organization=dataset.organization,
+            workspace=dataset.workspace,
+            source=DatasetSourceChoices.BUILD.value,
+            column_order=[],
+        )
+        other_output = Column.objects.create(
+            name=output_column.name,
+            dataset=other_dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
+        )
+        other_dataset.column_order = [str(other_output.id)]
+        other_dataset.save()
+        config = {
+            "mapping": {"output": output_column.name},
+            "config": {"enabled": False},
+            "reason_column": True,
+        }
+        if description is not None:
+            config["description"] = description
+        response = auth_client.post(
+            f"/model-hub/datasets/{dataset.id}/compare-datasets/add-eval/",
+            {
+                "name": "described-compare-eval",
+                "template_id": str(eval_template.id),
+                "dataset_ids": [str(other_dataset.id)],
+                "config": config,
+                "save_as_template": False,
+                "run": run,
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK, response.data
+        assert UserEvalMetric.objects.filter(name="described-compare-eval").count() == 2
+        for target, output in [(dataset, output_column), (other_dataset, other_output)]:
+            metric = UserEvalMetric.objects.get(
+                dataset=target, name="described-compare-eval"
+            )
+            assert metric.config == {
+                **config,
+                "mapping": {"output": str(output.id)},
+            }
+            assert metric.status == (
+                StatusType.NOT_STARTED.value if run else StatusType.INACTIVE.value
+            )
+            response = auth_client.get(
+                f"/model-hub/develops/{target.id}/get_eval_structure/{metric.id}/"
+                "?eval_type=user"
+            )
+            assert response.status_code == status.HTTP_200_OK, response.data
+            reopened = response.data["result"]["eval"]
+            assert reopened["instance_description"] == (description or "")
+            assert reopened["description"] == "Shared template instructions"
+            assert reopened["mapping"] == {"output": str(output.id)}
+            assert reopened["config"]["enabled"]["default"] is False
+        eval_template.refresh_from_db()
+        assert eval_template.description == "Shared template instructions"
+        assert eval_template.config["config"]["enabled"]["default"] is True
+
+    def test_instance_description_is_blank_for_legacy_config(
+        self, auth_client, dataset, user_eval_metric
+    ):
+        original_config = dict(user_eval_metric.config)
+        response = auth_client.get(
+            f"/model-hub/develops/{dataset.id}/get_eval_structure/{user_eval_metric.id}/"
+            "?eval_type=user"
+        )
+        assert response.status_code == status.HTTP_200_OK, response.data
+        assert response.data["result"]["eval"]["instance_description"] == ""
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.config == original_config
+
+    def test_instance_description_is_preserved_when_older_client_omits_it(
+        self, auth_client, dataset, user_eval_metric
+    ):
+        user_eval_metric.config = {
+            "mapping": {}, "config": {}, "reason_column": False,
+            "description": "Keep these instance notes",
+        }
+        user_eval_metric.save()
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
+            {"config": {"mapping": {}, "config": {}, "reason_column": False}, "run": False},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK, response.data
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.config["description"] == "Keep these instance notes"
 
     def test_get_eval_structure_rejects_legacy_eval_type_alias(
         self, auth_client, dataset
@@ -812,11 +1014,12 @@ class TestDeleteEvalsView:
         user_eval_metric.status = StatusType.RUNNING.value
         user_eval_metric.save(update_fields=["status"])
 
-        with patch(
-            "tfc.utils.distributed_state.evaluation_tracker"
-        ) as mock_tracker, patch(
-            "model_hub.utils.eval_cell_status.mark_eval_cells_stopped"
-        ) as mock_mark_stopped:
+        with (
+            patch("tfc.utils.distributed_state.evaluation_tracker") as mock_tracker,
+            patch(
+                "model_hub.utils.eval_cell_status.mark_eval_cells_stopped"
+            ) as mock_mark_stopped,
+        ):
             response = auth_client.delete(
                 f"/model-hub/develops/{dataset.id}/delete_user_eval/{user_eval_metric.id}/",
                 {"delete_column": True},
@@ -950,11 +1153,12 @@ class TestDeleteEvalsView:
         dataset.column_order.append(str(eval_col.id))
         dataset.save()
 
-        with patch(
-            "tfc.utils.distributed_state.evaluation_tracker"
-        ) as mock_tracker, patch(
-            "model_hub.utils.eval_cell_status.mark_eval_cells_stopped"
-        ) as mock_mark_stopped:
+        with (
+            patch("tfc.utils.distributed_state.evaluation_tracker") as mock_tracker,
+            patch(
+                "model_hub.utils.eval_cell_status.mark_eval_cells_stopped"
+            ) as mock_mark_stopped,
+        ):
             response = auth_client.delete(
                 f"/model-hub/develops/{dataset.id}/delete_column/{eval_col.id}/",
             )
@@ -1044,16 +1248,28 @@ class TestDeleteEvalsView:
         # Create rows + cells
         row = Row.objects.create(dataset=dataset, order=0)
         eval_cell = Cell.objects.create(
-            dataset=dataset, row=row, column=eval_col, value="Pass",
+            dataset=dataset,
+            row=row,
+            column=eval_col,
+            value="Pass",
         )
         reason_cell = Cell.objects.create(
-            dataset=dataset, row=row, column=reason_col, value="Looks good",
+            dataset=dataset,
+            row=row,
+            column=reason_col,
+            value="Looks good",
         )
         input_cell = Cell.objects.create(
-            dataset=dataset, row=row, column=input_col, value="Hello world",
+            dataset=dataset,
+            row=row,
+            column=input_col,
+            value="Hello world",
         )
         other_eval_cell = Cell.objects.create(
-            dataset=dataset, row=row, column=other_eval_col, value="Fail",
+            dataset=dataset,
+            row=row,
+            column=other_eval_col,
+            value="Fail",
         )
 
         # ── Act ──
@@ -1253,7 +1469,8 @@ class TestDeleteEvalsView:
         # filter against a non-existent table would always yield an empty
         # list and the loop below would silently pass.
         cell_sql = [
-            q["sql"] for q in ctx.captured_queries
+            q["sql"]
+            for q in ctx.captured_queries
             if "model_hub_cell" in q["sql"].lower()
         ]
         # Positive assert: the cell delete must have actually run. Absence-only
@@ -1520,7 +1737,9 @@ class TestDeleteEvalsView:
         assert cell.deleted is False, "Cell must not be soft-deleted after rollback"
 
         eval_col.refresh_from_db()
-        assert eval_col.deleted is False, "Column must not be soft-deleted after rollback"
+        assert eval_col.deleted is False, (
+            "Column must not be soft-deleted after rollback"
+        )
 
         dataset.refresh_from_db()
         assert str(eval_col.id) in dataset.column_order, (
@@ -1686,9 +1905,7 @@ class TestEditAndRunUserEvalView:
             },
         }
 
-        with patch(
-            "model_hub.views.develop_dataset.run_evaluation_task.apply_async"
-        ) as mock_task:
+        with patch("model_hub.views.develop_dataset.run_evaluation_task.apply_async"):
             response = auth_client.post(
                 f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
                 payload,
@@ -1708,9 +1925,7 @@ class TestEditAndRunUserEvalView:
             },
         }
 
-        with patch(
-            "model_hub.views.develop_dataset.run_evaluation_task.apply_async"
-        ) as mock_task:
+        with patch("model_hub.views.develop_dataset.run_evaluation_task.apply_async"):
             response = auth_client.post(
                 f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
                 payload,
@@ -1852,6 +2067,7 @@ class TestPreviewRunEvalView:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     @pytest.mark.django_db(transaction=True)
+    @pytest.mark.usefixtures("no_external_lookups")
     def test_preview_code_eval_passes_function_params(
         self,
         auth_client,
@@ -1864,8 +2080,8 @@ class TestPreviewRunEvalView:
         settings,
     ):
         """Preview should pass function params to code eval kwargs."""
-        # No code-executor runs under pytest; let the eval use the local runner.
-        settings.CODE_EXECUTOR_LOCAL_FALLBACK = True
+        # The code executor service runs eval code; the worker never runs it
+        # locally. Model a working executor and check what it is sent.
         settings.CLOUD_DEPLOYMENT = ""
         template = EvalTemplate.objects.create(
             name="word_count_preview_test",
@@ -1905,6 +2121,13 @@ def evaluate(input, output, expected, context, **kwargs):
 
         with (
             patch(
+                "agentic_eval.core_evals.fi_utils.sandbox._call_executor_service",
+                return_value={
+                    "status": "success",
+                    "data": {"score": 1.0, "reason": "count=3, min=2"},
+                },
+            ) as executor,
+            patch(
                 "model_hub.views.utils.evals.EvaluationRunner._handle_api_call",
                 return_value=fake_api_call,
             ),
@@ -1926,6 +2149,9 @@ def evaluate(input, output, expected, context, **kwargs):
         preview = response.data["result"]["responses"][0]
         assert preview["output"] == "Passed"
         assert preview["reason"] == "count=3, min=2"
+        executor.assert_called_once()
+        assert executor.call_args.args[1]["min_words"] == 2
+        assert executor.call_args.args[2] == "python"
 
     def test_preview_run_eval_unauthenticated(self, dataset):
         """Test that unauthenticated users cannot preview evaluations."""
@@ -2174,16 +2400,19 @@ class TestSingleRowEvaluationView:
 
         usage_check = SimpleNamespace(allowed=True)
 
-        with patch(
-            "ee.usage.services.metering.check_usage", return_value=usage_check
-        ) as mock_check_usage, patch(
-            "model_hub.views.develop_dataset.get_mixpanel_properties",
-            return_value={},
-        ), patch(
-            "model_hub.views.develop_dataset.track_mixpanel_event"
-        ), patch(
-            "model_hub.views.develop_dataset.EvaluationRunner"
-        ) as mock_runner_class:
+        with (
+            patch(
+                "ee.usage.services.metering.check_usage", return_value=usage_check
+            ) as mock_check_usage,
+            patch(
+                "model_hub.views.develop_dataset.get_mixpanel_properties",
+                return_value={},
+            ),
+            patch("model_hub.views.develop_dataset.track_mixpanel_event"),
+            patch(
+                "model_hub.views.develop_dataset.EvaluationRunner"
+            ) as mock_runner_class,
+        ):
             mock_runner = MagicMock()
             mock_runner_class.return_value = mock_runner
 
@@ -2199,7 +2428,9 @@ class TestSingleRowEvaluationView:
         _, kwargs = mock_runner_class.call_args
         assert kwargs["source"] == "dataset_evaluation"
         assert kwargs["source_id"] == user_eval_metric.template.id
-        assert kwargs["source_configs"]["dataset_id"] == str(user_eval_metric.dataset_id)
+        assert kwargs["source_configs"]["dataset_id"] == str(
+            user_eval_metric.dataset_id
+        )
         assert kwargs["source_configs"]["source"] == "dataset"
         mock_runner.run_evaluation_for_row.assert_called_once_with(str(row.id))
 
@@ -2220,13 +2451,15 @@ class TestSingleRowEvaluationView:
             upgrade_cta=None,
         )
 
-        with patch(
-            "ee.usage.services.metering.check_usage", return_value=usage_check
-        ), patch(
-            "model_hub.tasks.user_evaluation._mark_cells_usage_limit_error"
-        ) as mock_mark_limit, patch(
-            "model_hub.views.develop_dataset.EvaluationRunner"
-        ) as mock_runner_class:
+        with (
+            patch("ee.usage.services.metering.check_usage", return_value=usage_check),
+            patch(
+                "model_hub.tasks.user_evaluation._mark_cells_usage_limit_error"
+            ) as mock_mark_limit,
+            patch(
+                "model_hub.views.develop_dataset.EvaluationRunner"
+            ) as mock_runner_class,
+        ):
             run_evaluation_task._original_func(
                 {
                     "metric_ids": [str(user_eval_metric.id)],

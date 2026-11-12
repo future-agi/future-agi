@@ -5,7 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Box, useTheme, Typography } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import useUsersStore from "./Store/usersStore";
@@ -18,15 +18,16 @@ import {
 import { mergeCellStyle } from "../LLMTracing/common";
 import { readQuery, endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
+import { useSearchParams } from "react-router-dom";
 import { useDebounce } from "src/hooks/use-debounce";
 import PropTypes from "prop-types";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
+import EmptyState from "src/components/empty-state";
 import { APP_CONSTANTS } from "src/utils/constants";
 import {
   createListCursorPagination,
   isListCursorContinuationLimitError,
   LIST_CURSOR_CONTINUATION_NOTICE,
-  LIST_CURSOR_MODES,
   loadExactListPage,
   retryServerSideCursorLoad,
   resumePendingListPage,
@@ -55,24 +56,27 @@ import {
   dispatchObservePageChanged,
   OBSERVE_LIST_REFRESH_EVENT,
 } from "../observeEvents";
+import { getDefaultObserveListDateRangeForMode } from "../dateRangeDefaults";
 
 const getUsersGridThemeParams = (theme) => ({
   columnBorder: false,
   headerColumnBorder: false,
   wrapperBorder: { width: 0 },
   wrapperBorderRadius: 0,
-  rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+  rowBorder: { width: 1, color: theme.palette.border.subtle },
   headerFontSize: "13px",
   headerFontWeight: theme.typography.fontWeightMedium,
   headerBackgroundColor: "transparent",
   headerTextColor: theme.palette.text.primary,
-  rowHoverColor: "rgba(120,87,252,0.04)",
+  rowHoverColor: theme.palette.action.hover,
 });
 
 const userRowIdentity = (row) => {
   const id = row?.end_user_id || row?.user_id || row?.id;
   return id ? `${row?.project_id || ""}:${id}` : null;
 };
+
+const USERS_DOCS_URL = "https://docs.futureagi.com/docs/observe/features/users";
 
 const UsersGrid = React.memo(
   ({
@@ -81,6 +85,7 @@ const UsersGrid = React.memo(
     setIsLoading,
     setSearchState,
     cellHeight,
+    dateLabel = "the selected date range",
   }) => {
     const theme = useTheme();
     const gridThemeParams = useMemo(
@@ -159,6 +164,7 @@ const UsersGrid = React.memo(
     );
 
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
 
     useEffect(() => {
       const refreshRows = () => {
@@ -511,12 +517,17 @@ const UsersGrid = React.memo(
               res?.total_count_is_lower_bound === true;
             const exactTotal = countIsLowerBound ? null : total;
             const lowerBoundTotal = countIsLowerBound ? total : null;
+            // AG Grid's pager prints this row count as "of N". Before the last
+            // page, pass only an exact total from the API that reaches past
+            // this page. Otherwise leave it unset: the pager then reads "1 to
+            // 25 of more" and keeps Next, instead of printing a guessed total.
+            // A page that is not the last arrives full (loadExactListPage
+            // fills it), so AG Grid does not take it for the end of the list.
             const gridRowCount = isLastPage
               ? request.startRow + userData.length
-              : useCursorPagination &&
-                  cursorPagination.current.mode() === LIST_CURSOR_MODES.CURSOR
-                ? request.endRow + 1
-                : Math.max(total, request.endRow + 1);
+              : exactTotal !== null && exactTotal > request.endRow
+                ? exactTotal
+                : undefined;
 
             setReadError(null);
             setContinuationNotice(null);
@@ -648,7 +659,7 @@ const UsersGrid = React.memo(
         suppressHeaderContextMenu: true,
         cellStyle: {
           padding: "0px 20px",
-          fontSize: "14px",
+          fontSize: "13px",
           height: "100%",
           display: "flex",
           alignItems: "center",
@@ -672,10 +683,21 @@ const UsersGrid = React.memo(
 
         // All user-detail navigation goes through the cross-project page.
         // It accepts a single user id and shows that user's traces +
-        // sessions across every project in the org.
-        navigate(`/dashboard/users/${encodeURIComponent(userId)}`);
+        // sessions across every project in the org. It defaults to Today,
+        // so carry this list's date window to both of its tabs; otherwise
+        // a user listed as active this week can open on empty grids.
+        const dateWindow =
+          searchParams.get("userDateFilter") ||
+          JSON.stringify(getDefaultObserveListDateRangeForMode(false));
+        const detailParams = new URLSearchParams({
+          sessionDateFilter: dateWindow,
+          primaryTraceDateFilter: dateWindow,
+        });
+        navigate(
+          `/dashboard/users/${encodeURIComponent(userId)}?${detailParams.toString()}`,
+        );
       },
-      [navigate],
+      [navigate, searchParams],
     );
 
     const onColumnHeaderClicked = useCallback(
@@ -767,6 +789,17 @@ const UsersGrid = React.memo(
           display: "flex",
           alignItems: "center",
         },
+        // AG Grid passes clicks through its no-rows overlay; the empty
+        // state's docs link must still take them.
+        "& .ag-overlay-no-rows-wrapper a": {
+          pointerEvents: "auto",
+        },
+        // clean-data-table.css draws the header's bottom rule on the
+        // scrolling header viewport only, so it stopped where the pinned
+        // Actions column starts. Draw the same rule under pinned headers.
+        "& .ag-pinned-left-header, & .ag-pinned-right-header": {
+          borderBottom: "1px solid var(--border-light)",
+        },
       }),
       [],
     );
@@ -844,7 +877,7 @@ const UsersGrid = React.memo(
               serverSideDatasource={dataSource}
               getLocaleText={getGridLocaleText}
               getRowId={({ data }) => userRowIdentity(data)}
-              headerHeight={40}
+              headerHeight={32}
               rowHeight={userTraceRowHeightMapping[cellHeight]?.height ?? 40}
               theme={agTheme}
               rowSelection={{ mode: "multiRow", enableClickSelection: false }}
@@ -876,20 +909,33 @@ const UsersGrid = React.memo(
                   dispatchObservePageChanged(page);
                 }
               }}
-              noRowsOverlayComponent={() =>
-                continuationNotice
-                  ? null
-                  : NoRowsOverlay(
-                      <Typography
-                        role={readError ? "alert" : undefined}
-                        typography="m3"
-                        color="text.primary"
-                        fontWeight="fontWeightMedium"
-                      >
-                        {readError || "No active users for current filters"}
-                      </Typography>,
-                    )
-              }
+              noRowsOverlayComponent={() => {
+                if (continuationNotice) return null;
+                if (readError) {
+                  return NoRowsOverlay(<span role="alert">{readError}</span>);
+                }
+                // An empty page covers only the toolbar's date range (and
+                // any search or filter). It is not proof that user IDs were
+                // never sent, so name the range and say how to see more.
+                if (hasActiveFilter || debouncedSearchQuery) {
+                  return (
+                    <EmptyState
+                      variant="no-results"
+                      title={`No matching users for ${dateLabel}`}
+                      description="Change the search or filters, or widen the date range."
+                    />
+                  );
+                }
+                return (
+                  <EmptyState
+                    variant="no-results"
+                    title={`No users for ${dateLabel}`}
+                    description="Widen the date range to see users active earlier."
+                    docsHref={USERS_DOCS_URL}
+                    docsLabel="Set up user tracking"
+                  />
+                );
+              }}
             />
           </Box>
         </Box>
@@ -906,6 +952,7 @@ UsersGrid.propTypes = {
   setIsLoading: PropTypes.func,
   setSearchState: PropTypes.func,
   cellHeight: PropTypes.string,
+  dateLabel: PropTypes.string,
 };
 
 export default UsersGrid;

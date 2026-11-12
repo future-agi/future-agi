@@ -8,7 +8,6 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.choices import SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.serializers.contracts import (
@@ -18,17 +17,18 @@ from model_hub.serializers.contracts import (
 from model_hub.serializers.develop_dataset_contracts import (
     DatasetRowsImportMessageResponseSerializer,
 )
+from model_hub.services.huggingface_revision import import_revision
 from model_hub.utils.utils import (
     get_data_type_huggingface,
     load_hf_dataset_with_retries,
 )
 from model_hub.views.datasets.create.huggingface import CreateDatasetFromHuggingFaceView
-from model_hub.views.utils.hugginface import process_huggingface_dataset
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.middleware.workspace_context import get_current_workspace
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import (
         ROW_LIMIT_REACHED_MESSAGE,
@@ -39,6 +39,9 @@ except ImportError:
     log_and_deduct_cost_for_resource_request = None
 
 
+logger = structlog.get_logger(__name__)
+
+
 def _request_organization(request):
     return getattr(request, "organization", None) or request.user.organization
 
@@ -46,7 +49,9 @@ def _request_organization(request):
 def _request_workspace_filter(request, field_name="workspace"):
     workspace = getattr(request, "workspace", None) or get_current_workspace()
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
     if getattr(workspace, "is_default", False):
         return (
             Q(**{field_name: workspace})
@@ -89,6 +94,7 @@ class AddRowsFromHuggingFaceView(APIView):
             dataset_name = data.get("huggingface_dataset_name")
             config_name = data.get("huggingface_dataset_config")
             split = data.get("huggingface_dataset_split")
+            revision = data.get("revision")
 
             # Validate required fields (matching UI Zod schema)
             if not config_name or not str(config_name).strip():
@@ -102,12 +108,22 @@ class AddRowsFromHuggingFaceView(APIView):
             organization = _request_organization(request)
 
             try:
+                if revision:
+                    revision, config_name, num_rows = import_revision(
+                        dataset_name,
+                        config_name,
+                        split,
+                        organization.id,
+                        revision,
+                        num_rows,
+                    )
                 first_row = load_hf_dataset_with_retries(
                     dataset_name,
                     config_name,
                     split,
                     str(organization.id),
                     streaming=False,
+                    **({"revision": revision} if revision else {}),
                 )
                 if not first_row:
                     return self._gm.bad_request(
@@ -226,7 +242,9 @@ class AddRowsFromHuggingFaceView(APIView):
 
             # columns = Column.objects.filter(dataset=dataset)
 
-            last_row = Row.all_objects.filter(dataset=dataset).order_by("-order").first()
+            last_row = (
+                Row.all_objects.filter(dataset=dataset).order_by("-order").first()
+            )
             if last_row:
                 max_order = last_row.order
             else:
@@ -254,6 +272,7 @@ class AddRowsFromHuggingFaceView(APIView):
                     new_rows_count,
                     column_order,
                     rows,
+                    *([revision] if revision else []),
                 ),
                 queue="tasks_l",
             )

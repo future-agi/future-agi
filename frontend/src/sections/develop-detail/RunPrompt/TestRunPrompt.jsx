@@ -1,4 +1,4 @@
-import { Box, Tab, Tabs, Typography, useTheme } from "@mui/material";
+import { Box, Tab, Tabs, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 import CellMarkdown from "src/sections/common/CellMarkdown";
@@ -8,6 +8,22 @@ import { MODEL_TYPES } from "./common";
 import { parseThinkingContent } from "src/sections/workbench/createPrompt/Playground/OutputSection/thinkingUtils";
 import ThinkingBlock from "src/sections/workbench/createPrompt/Playground/OutputSection/ThinkingBlock";
 import { PROMPT_RESULT_TYPES } from "src/sections/workbench/createPrompt/Playground/common";
+import { testRowsOf } from "./testRows";
+
+// v2.1 g8 (knob:run-prompt:test-preview): Test shows the rows in grid order,
+// each labelled `Row N`, so a card reads against the same row of the
+// column Apply and Run fills.
+const RowLabel = ({ label }) => (
+  <Typography
+    typography="s3"
+    color="text.secondary"
+    fontWeight="fontWeightMedium"
+    sx={{ display: "block", mb: 0.5 }}
+  >
+    {label}
+  </Typography>
+);
+RowLabel.propTypes = { label: PropTypes.string };
 
 const TestRunPrompt = ({ previewData, modelType }) => {
   const [selectedTab, setSelectedTab] = useState("markdown");
@@ -15,8 +31,6 @@ const TestRunPrompt = ({ previewData, modelType }) => {
   const handleChange = (event, newValue) => {
     setSelectedTab(newValue);
   };
-
-  const theme = useTheme();
 
   const memoisedPreviewData = useMemo(() => {
     switch (selectedTab) {
@@ -70,16 +84,11 @@ const TestRunPrompt = ({ previewData, modelType }) => {
             backgroundColor: "background.paper",
           }}
         >
-          <Tabs
+          <Tabs sx={{ boxShadow: "none" }}
             value={selectedTab}
             onChange={handleChange}
             aria-label="basic tabs example"
             textColor="primary"
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-              },
-            }}
           >
             <Tab label="Markdown" value="markdown" />
             <Tab label="Raw" value="raw" />
@@ -101,46 +110,45 @@ const RawPreview = ({ previewData }) => {
         gap: 2,
       }}
     >
-      {previewData?.data?.result?.responses
-        ?.slice()
-        .reverse()
-        .map((response, index) => {
-          const { thinking, content: displayText } =
-            parseThinkingContent(response);
-          const text = thinking !== null ? displayText : response;
+      {testRowsOf(previewData).map(({ response, rowLabel }, index) => {
+        const { thinking, content: displayText } =
+          parseThinkingContent(response);
+        const text = thinking !== null ? displayText : response;
 
-          return (
-            <Box
-              key={index}
+        return (
+          <Box
+            key={index}
+            data-testid="run-prompt-test-row"
+            sx={{
+              border: "2px solid",
+              borderColor: "background.neutral",
+              borderRadius: "8px",
+              padding: "12px 16px",
+              wordWrap: "break-word",
+              overflow: "hidden",
+            }}
+          >
+            <RowLabel label={rowLabel} />
+            {thinking !== null && (
+              <ThinkingBlock
+                content={thinking}
+                isThinking={false}
+                outputType={PROMPT_RESULT_TYPES.RAW}
+              />
+            )}
+            <Typography
               sx={{
-                border: "2px solid",
-                borderColor: "background.neutral",
-                borderRadius: "8px",
-                padding: "12px 16px",
-                wordWrap: "break-word",
-                overflow: "hidden",
+                overflowWrap: "break-word",
+                wordBreak: "break-word",
+                whiteSpace: "pre-wrap",
               }}
+              variant="body2"
             >
-              {thinking !== null && (
-                <ThinkingBlock
-                  content={thinking}
-                  isThinking={false}
-                  outputType={PROMPT_RESULT_TYPES.RAW}
-                />
-              )}
-              <Typography
-                sx={{
-                  overflowWrap: "break-word",
-                  wordBreak: "break-word",
-                  whiteSpace: "pre-wrap",
-                }}
-                variant="body2"
-              >
-                {text}
-              </Typography>
-            </Box>
-          );
-        })}
+              {text}
+            </Typography>
+          </Box>
+        );
+      })}
     </Box>
   );
 };
@@ -158,60 +166,59 @@ const MarkdownPreview = ({ previewData, modelType }) => {
         gap: 2,
       }}
     >
-      {previewData?.data?.result?.responses
-        ?.slice()
-        .reverse()
-        ?.map((response, index) => {
-          const markdownText = Array.isArray(response)
-            ? response.join("")
-            : response ?? "";
+      {testRowsOf(previewData).map(({ response, rowLabel }, index) => {
+        const markdownText = Array.isArray(response)
+          ? response.join("")
+          : response ?? "";
 
-          const { thinking, content: displayText } =
-            parseThinkingContent(markdownText);
-          const text = thinking !== null ? displayText : markdownText;
+        const { thinking, content: displayText } =
+          parseThinkingContent(markdownText);
+        const text = thinking !== null ? displayText : markdownText;
 
-          return (
-            <Box
-              key={index}
-              sx={{
-                border: "2px solid",
-                borderColor: "background.neutral",
-                borderRadius: "8px",
-                padding: "12px 16px",
-                wordWrap: "break-word",
-                overflow: "hidden",
-              }}
-            >
-              {thinking !== null && (
-                <ThinkingBlock
-                  content={thinking}
-                  isThinking={false}
-                  outputType={PROMPT_RESULT_TYPES.MARKDOWN}
-                />
-              )}
-              {isImage ? (
-                <ImageOutputRenderer src={text} alt="Generated image" />
-              ) : isAudio ? (
-                <TestAudioPlayer
-                  audioData={{
-                    url: text,
-                  }}
-                />
-              ) : (
-                <Typography
-                  variant="body2"
-                  sx={{
-                    overflowWrap: "break-word",
-                    wordBreak: "break-word",
-                    whiteSpace: "pre-wrap",
-                  }}
-                >
-                  <CellMarkdown spacing={0} text={text} />
-                </Typography>
-              )}
-            </Box>
-          );
-        })}
+        return (
+          <Box
+            key={index}
+            data-testid="run-prompt-test-row"
+            sx={{
+              border: "2px solid",
+              borderColor: "background.neutral",
+              borderRadius: "8px",
+              padding: "12px 16px",
+              wordWrap: "break-word",
+              overflow: "hidden",
+            }}
+          >
+            <RowLabel label={rowLabel} />
+            {thinking !== null && (
+              <ThinkingBlock
+                content={thinking}
+                isThinking={false}
+                outputType={PROMPT_RESULT_TYPES.MARKDOWN}
+              />
+            )}
+            {isImage ? (
+              <ImageOutputRenderer src={text} alt="Generated image" />
+            ) : isAudio ? (
+              <TestAudioPlayer
+                audioData={{
+                  url: text,
+                }}
+              />
+            ) : (
+              <Typography
+                variant="body2"
+                sx={{
+                  overflowWrap: "break-word",
+                  wordBreak: "break-word",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                <CellMarkdown spacing={0} text={text} />
+              </Typography>
+            )}
+          </Box>
+        );
+      })}
     </Box>
   );
 };

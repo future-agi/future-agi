@@ -4,8 +4,9 @@ import { draftToPreflightPayload } from "src/api/simulate-environments/preflight
 
 /**
  * Submit the source and write-only credential values for hosted preflight.
- * The response carries readiness and a credential report (requirements,
- * alternatives, and live probes), not a checks/state array.
+ * The response carries readiness, the checks run (each with a label, status,
+ * detail and fix), and a credential report (requirements, alternatives, and
+ * live probes).
  *
  * `credentialValues` is the raw `{ ALIAS: value }` map (from prepareSourceForBuild)
  * for the write-only `credential_values` preflight field: it drives the live

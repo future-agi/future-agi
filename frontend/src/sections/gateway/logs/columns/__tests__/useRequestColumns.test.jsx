@@ -1,7 +1,19 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import useRequestColumns from "../useRequestColumns";
-import { DEFAULT_CONFIG, MAX_COLUMN_ENTRIES } from "../columnModel";
+import {
+  BUILTIN_COLUMNS,
+  DEFAULT_CONFIG,
+  MAX_COLUMN_ENTRIES,
+} from "../columnModel";
+
+// Every built-in shown, in the canonical order: a plain config for the
+// mechanics below (the default view hides three, see DEFAULT_CONFIG).
+const PLAIN = Object.freeze({
+  v: 1,
+  columns: BUILTIN_COLUMNS.map((col) => ({ id: col.id })),
+  hidden: [],
+});
 
 const authState = { user: { id: "user-a" } };
 const orgState = { currentOrganizationId: "org-1", isReady: true };
@@ -56,7 +68,8 @@ function createMemoryStorage() {
 
 const labels = (result) => result.current.columns.map((c) => c.label);
 
-const DEFAULT_LABELS = [
+// Every built-in, in the canonical order (a stored PLAIN config).
+const ALL_LABELS = [
   "Timestamp",
   "Model",
   "Provider",
@@ -67,6 +80,17 @@ const DEFAULT_LABELS = [
   "Cost",
   "Tokens",
   "Session ID",
+];
+// The default view: Status next to Timestamp, the often-empty Application,
+// Service and Session ID hidden.
+const DEFAULT_LABELS = [
+  "Timestamp",
+  "Status",
+  "Model",
+  "Provider",
+  "Latency",
+  "Cost",
+  "Tokens",
 ];
 
 describe("useRequestColumns", () => {
@@ -92,20 +116,9 @@ describe("useRequestColumns", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders the ten default columns with no stored config", () => {
+  it("renders the default columns with no stored config", () => {
     const { result } = renderHook(() => useRequestColumns());
-    expect(labels(result)).toEqual([
-      "Timestamp",
-      "Model",
-      "Provider",
-      "Application",
-      "Service",
-      "Status",
-      "Latency",
-      "Cost",
-      "Tokens",
-      "Session ID",
-    ]);
+    expect(labels(result)).toEqual(DEFAULT_LABELS);
     expect(result.current.storageKey).toBe(KEY_A);
     expect(mockEnqueueSnackbar).not.toHaveBeenCalled();
     expect(storage.setItem).not.toHaveBeenCalled();
@@ -140,22 +153,25 @@ describe("useRequestColumns", () => {
     expect(labels(result)).not.toContain("Provider");
 
     // Hidden Provider keeps its slot, so one step passes it and a second
-    // step passes Application.
+    // step passes Latency.
     act(() => result.current.move("builtin:model", 1));
-    expect(result.current.config.columns.slice(0, 3).map((c) => c.id)).toEqual([
+    expect(result.current.config.columns.slice(0, 4).map((c) => c.id)).toEqual([
       "builtin:startedAt",
+      "builtin:statusCode",
       "builtin:provider",
       "builtin:model",
     ]);
-    expect(labels(result).slice(0, 3)).toEqual([
+    expect(labels(result).slice(0, 4)).toEqual([
       "Timestamp",
+      "Status",
       "Model",
-      "Application",
+      "Latency",
     ]);
     act(() => result.current.move("builtin:model", 1));
-    expect(labels(result).slice(0, 3)).toEqual([
+    expect(labels(result).slice(0, 4)).toEqual([
       "Timestamp",
-      "Application",
+      "Status",
+      "Latency",
       "Model",
     ]);
 
@@ -169,7 +185,7 @@ describe("useRequestColumns", () => {
     act(() => result.current.toggle("builtin:provider"));
     const otherTab = JSON.stringify({
       v: 1,
-      columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+      columns: [...PLAIN.columns, { id: "metadata:tenant" }],
       hidden: [],
     });
     const saveInOtherTab = (key, value) => {
@@ -186,11 +202,11 @@ describe("useRequestColumns", () => {
     expect(labels(result)).not.toContain("Provider");
 
     saveInOtherTab(KEY_A, otherTab);
-    expect(labels(result)).toEqual([...DEFAULT_LABELS, "tenant"]);
+    expect(labels(result)).toEqual([...ALL_LABELS, "tenant"]);
     act(() => result.current.toggle("builtin:service"));
     expect(JSON.parse(storage.getItem(KEY_A))).toEqual({
       v: 1,
-      columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+      columns: [...PLAIN.columns, { id: "metadata:tenant" }],
       hidden: ["builtin:service"],
     });
 
@@ -203,7 +219,7 @@ describe("useRequestColumns", () => {
       KEY_A,
       JSON.stringify({
         v: 1,
-        columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+        columns: [...PLAIN.columns, { id: "metadata:tenant" }],
         hidden: ["builtin:service"],
       }),
     );
@@ -227,7 +243,7 @@ describe("useRequestColumns", () => {
       KEY_A,
       JSON.stringify({
         v: 1,
-        columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+        columns: [...PLAIN.columns, { id: "metadata:tenant" }],
         hidden: [],
       }),
     );
@@ -279,7 +295,7 @@ describe("useRequestColumns", () => {
       JSON.stringify({
         v: 1,
         columns: [
-          ...DEFAULT_CONFIG.columns,
+          ...PLAIN.columns,
           ...Array.from({ length: MAX_COLUMN_ENTRIES - 10 }, (_, i) => ({
             id: `metadata:p${i}`,
           })),
@@ -297,7 +313,7 @@ describe("useRequestColumns", () => {
     orgState.isReady = false;
     const { result } = renderHook(() => useRequestColumns());
     expect(result.current.storageKey).toBeNull();
-    expect(labels(result)).toHaveLength(10);
+    expect(labels(result)).toEqual(DEFAULT_LABELS);
     expect(storage.getItem).not.toHaveBeenCalled();
     act(() => result.current.toggle("builtin:provider"));
     expect(labels(result)).not.toContain("Provider");
@@ -307,7 +323,7 @@ describe("useRequestColumns", () => {
   it("falls back to defaults on a corrupt record without rewriting it", () => {
     storage.setItem(KEY_A, "{corrupt");
     const { result } = renderHook(() => useRequestColumns());
-    expect(labels(result)).toHaveLength(10);
+    expect(labels(result)).toEqual(DEFAULT_LABELS);
     expect(mockEnqueueSnackbar).not.toHaveBeenCalled();
     expect(storage.getItem(KEY_A)).toBe("{corrupt");
   });
@@ -317,7 +333,7 @@ describe("useRequestColumns", () => {
       "duplicate hidden ids",
       {
         v: 1,
-        columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+        columns: [...PLAIN.columns, { id: "metadata:tenant" }],
         hidden: ["builtin:provider", "builtin:provider"],
       },
     ],
@@ -326,7 +342,7 @@ describe("useRequestColumns", () => {
       {
         v: 1,
         columns: [
-          ...DEFAULT_CONFIG.columns.slice(0, -1),
+          ...PLAIN.columns.slice(0, -1),
           { id: "metadata:tenant" },
           ...Array.from({ length: MAX_COLUMN_ENTRIES - 10 }, (_, i) => ({
             id: `metadata:p${i}`,
@@ -380,7 +396,7 @@ describe("useRequestColumns", () => {
       KEY_A,
       JSON.stringify({
         v: 1,
-        columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+        columns: [...PLAIN.columns, { id: "metadata:tenant" }],
         hidden: [],
       }),
     );
@@ -447,8 +463,8 @@ describe("useRequestColumns", () => {
     storage.setItem(
       KEY_A,
       JSON.stringify({
-        ...DEFAULT_CONFIG,
-        columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+        ...PLAIN,
+        columns: [...PLAIN.columns, { id: "metadata:tenant" }],
       }),
     );
     declarationsState.data = [];
@@ -457,15 +473,15 @@ describe("useRequestColumns", () => {
     expect(result.current.declarationsAvailable).toBe(true);
     expect(result.current.unavailableCustomCount).toBe(0);
     expect(result.current.stale).toEqual(["metadata:tenant"]);
-    expect(labels(result)).toEqual(DEFAULT_LABELS);
+    expect(labels(result)).toEqual(ALL_LABELS);
   });
 
   it("does not use placeholder declarations or declarations before organization readiness", () => {
     storage.setItem(
       KEY_A,
       JSON.stringify({
-        ...DEFAULT_CONFIG,
-        columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+        ...PLAIN,
+        columns: [...PLAIN.columns, { id: "metadata:tenant" }],
       }),
     );
     declarationsState.isPlaceholderData = true;
@@ -486,7 +502,7 @@ describe("useRequestColumns", () => {
     const record = JSON.stringify({
       v: 1,
       columns: [
-        ...DEFAULT_CONFIG.columns,
+        ...PLAIN.columns,
         { id: "metadata:a" },
         { id: "metadata:deleted" },
         { id: "metadata:b" },
@@ -558,7 +574,7 @@ describe("useRequestColumns", () => {
       KEY_A,
       JSON.stringify({
         v: 1,
-        columns: [...DEFAULT_CONFIG.columns, { id: "metadata:old" }],
+        columns: [...PLAIN.columns, { id: "metadata:old" }],
         hidden: [],
       }),
     );

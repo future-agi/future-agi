@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import PropTypes from "prop-types";
+import { useState } from "react";
 import { act, fireEvent, render, waitFor } from "src/utils/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import TraceFilterPanel, {
@@ -464,31 +465,62 @@ describe("TraceFilterPanel Query tab", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    const el = (open) => (
+    function QueryPanelHarness() {
+      const [open, setOpen] = useState(true);
+      const [currentFilters, setCurrentFilters] = useState([]);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Reopen filters
+          </button>
+          <button type="button" onClick={() => setOpen(false)}>
+            Dismiss filters
+          </button>
+          <TraceFilterPanel
+            anchorEl={anchorEl}
+            open={open}
+            onClose={() => setOpen(false)}
+            onApply={(filters) => {
+              onApply(filters);
+              setCurrentFilters(filters || []);
+            }}
+            currentFilters={currentFilters}
+            properties={[STRING_PROP]}
+            showQueryTab
+          />
+        </>
+      );
+    }
+    const utils = render(
       <QueryClientProvider client={queryClient}>
-        <TraceFilterPanel
-          anchorEl={anchorEl}
-          open={open}
-          onClose={vi.fn()}
-          onApply={onApply}
-          currentFilters={[]}
-          properties={[STRING_PROP]}
-          showQueryTab
-        />
-      </QueryClientProvider>
+        <QueryPanelHarness />
+      </QueryClientProvider>,
     );
-    const utils = render(el(true));
-    return { onApply, utils, close: () => utils.rerender(el(false)) };
+    return {
+      onApply,
+      utils,
+      close: () => fireEvent.click(utils.getByText("Dismiss filters")),
+      reopen: () => fireEvent.click(utils.getByText("Reopen filters")),
+      dispose: () => {
+        utils.unmount();
+        queryClient.clear();
+        anchorEl.remove();
+      },
+    };
   };
 
   // Drive the phase machine: field -> operator, syncing on the placeholder
   // change so we don't race the dropdown-reopen timeout between phases.
-  const selectFromDropdown = async (utils, typed, nextPlaceholder) => {
+  const selectFromDropdown = async (
+    utils,
+    typed,
+    nextPlaceholder,
+    optionName = typed,
+  ) => {
     const input = utils.getByRole("combobox");
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: typed } });
-    fireEvent.keyDown(input, { key: "ArrowDown" });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(await utils.findByRole("option", { name: optionName }));
     await waitFor(() =>
       expect(utils.getByRole("combobox")).toHaveAttribute(
         "placeholder",
@@ -499,7 +531,7 @@ describe("TraceFilterPanel Query tab", () => {
 
   const buildStatusContains = async (utils, value) => {
     fireEvent.click(utils.getByText("Query"));
-    await selectFromDropdown(utils, "Status", "pick operator...");
+    await selectFromDropdown(utils, "Status", "pick operator...", /^Status\b/);
     await selectFromDropdown(utils, "contains", "type or pick value...");
     const input = utils.getByRole("combobox");
     fireEvent.focus(input);
@@ -514,6 +546,53 @@ describe("TraceFilterPanel Query tab", () => {
     await waitFor(() => expect(onApply).toHaveBeenCalled());
     expect(serializeFilterSet(onApply.mock.calls.at(-1)[0])).toContain("prod");
   });
+
+  it.each([false, true])(
+    "W10-FILTERS-L02: Clear all discards the draft (existing filter: %s)",
+    async (withExistingFilter) => {
+      const { onApply, utils, close, reopen, dispose } = renderQueryPanel();
+      try {
+        if (withExistingFilter) {
+          const input = await buildStatusContains(utils, "prod");
+          fireEvent.keyDown(input, { key: "Enter" });
+          await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
+          expect(onApply).toHaveBeenLastCalledWith([
+            expect.objectContaining({ field: "status", value: ["prod"] }),
+          ]);
+          onApply.mockClear();
+        }
+
+        await buildStatusContains(utils, "discard-me");
+        expect(onApply).not.toHaveBeenCalled();
+        // The controlled parent updates filters and closes in the same event.
+        // A separate close render would hide the stale child-ref regression.
+        fireEvent.click(utils.getByRole("button", { name: "Clear all" }));
+        expect(onApply.mock.calls).toEqual([[null]]);
+
+        // Reopen before the Popover's exit transition can discard its child.
+        reopen();
+        expect(utils.getByRole("combobox")).toHaveValue("");
+        expect(
+          utils.queryByText("Status contains prod"),
+        ).not.toBeInTheDocument();
+        expect(onApply.mock.calls).toEqual([[null]]);
+
+        // The bypass is one-shot: an ordinary close must still commit a new draft.
+        await buildStatusContains(utils, "keep-me");
+        close();
+        expect(onApply).toHaveBeenCalledTimes(2);
+        expect(onApply).toHaveBeenLastCalledWith([
+          expect.objectContaining({
+            field: "status",
+            operator: "contains",
+            value: ["keep-me"],
+          }),
+        ]);
+      } finally {
+        dispose();
+      }
+    },
+  );
 
   it("flushes a typed-but-uncommitted query token on close (Blocking 2)", async () => {
     const { onApply, utils, close } = renderQueryPanel();

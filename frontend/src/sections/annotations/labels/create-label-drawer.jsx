@@ -11,6 +11,7 @@ import {
   Radio,
   RadioGroup,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from "@mui/material";
@@ -25,6 +26,7 @@ import NumericSettings from "./settings/numeric-settings";
 import TextSettings from "./settings/text-settings";
 import StarSettings from "./settings/star-settings";
 import LabelInput from "../queues/annotate/label-input";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const LABEL_TYPES = [
   {
@@ -183,15 +185,18 @@ export default function CreateLabelDrawer({
     settings: buildPreviewSettings(selectedType, watchedSettings),
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       PaperProps={{
         sx: {
           width: { xs: "100%", md: "60vw" },
-          minWidth: 850,
+          minWidth: 960,
           height: "100vh",
           borderRadius: "0 !important",
         },
@@ -221,7 +226,7 @@ export default function CreateLabelDrawer({
             {isEdit ? "Edit Label" : "Create Label"}
           </Typography>
           <IconButton onClick={onClose} size="small">
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
 
@@ -375,6 +380,40 @@ export default function CreateLabelDrawer({
                 <Typography variant="body2" color="text.secondary">
                   No additional configuration needed.
                 </Typography>
+              )}
+
+              {/* Direction (§3.15): ordered labels say which way is better,
+                  so Summary cards and win rates read them like evals. */}
+              {["numeric", "star", "thumbs_up_down"].includes(selectedType) && (
+                <Controller
+                  name="settings.higher_is_better"
+                  control={control}
+                  render={({ field }) => (
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={field.value !== false}
+                          onChange={(e) => field.onChange(e.target.checked)}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2">
+                            Higher is better
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {selectedType === "thumbs_up_down"
+                              ? "👍 counts as better when comparing runs"
+                              : field.value === false
+                                ? "Lower values count as better when comparing runs"
+                                : "Higher values count as better when comparing runs"}
+                          </Typography>
+                        </Box>
+                      }
+                      sx={{ alignItems: "flex-start", ml: 0 }}
+                    />
+                  )}
+                />
               )}
 
               {/* Allow Notes */}

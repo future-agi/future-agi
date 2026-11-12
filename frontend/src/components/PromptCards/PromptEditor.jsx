@@ -417,6 +417,14 @@ const PromptEditor = React.forwardRef(
             ],
           },
           mention: {
+            // RS-13: `aria-owns` names the mention list only while the list
+            // is in the page (quill-mention sets it before the list exists).
+            onOpen: () =>
+              quillRef.current?.root?.setAttribute(
+                "aria-owns",
+                "quill-mention-list",
+              ),
+            onClose: () => quillRef.current?.root?.removeAttribute("aria-owns"),
             // Include . [ ] and digits for JSON path support (e.g., input.config.items[0].name)
             allowedChars: /^[A-Za-z0-9_.[[\]\sÅÄÖåäö]*$/,
             mentionDenotationChars: mentionDenotationChars || ["{{"],
@@ -521,6 +529,7 @@ const PromptEditor = React.forwardRef(
         placeholder: placeholder,
       });
       quill.root.setAttribute("spellcheck", false);
+      quill.root.removeAttribute("aria-owns");
 
       quillRef.current = quill;
       setEmbedCallbacks(quill, embedCallbacksRef.current);
@@ -700,10 +709,12 @@ PromptEditor.propTypes = {
   mentionDenotationChars: PropTypes.array,
   onMentionSelect: PropTypes.func,
   allowVariables: PropTypes.bool,
-  inputRef: PropTypes.object,
+  // A ref object or a callback ref (both handled in the effect).
+  inputRef: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
   disabled: PropTypes.bool,
   expandable: PropTypes.bool,
-  label: PropTypes.string,
+  // true renders the plain "Prompt" label.
+  label: PropTypes.oneOfType([PropTypes.string, PropTypes.bool]),
   sx: PropTypes.object,
   allVariablesValid: PropTypes.bool,
   variableValidator: PropTypes.func,

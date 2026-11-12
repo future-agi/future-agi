@@ -10,12 +10,14 @@ from django.db import close_old_connections, connection, models
 from django.db.models import F
 from django.db.models.functions import TruncDay, TruncHour, TruncMonth
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
 from tfc.utils.functions import calculate_eval_average
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger, ObservationSpan
+from tracer.utils.eval import eval_quality_counts, eval_quality_value, score_evals
+
+logger = structlog.get_logger(__name__)
 
 
 class GraphEngine:
@@ -381,7 +383,6 @@ class GraphEngine:
         filtered_objects = []
 
         for i in range(len(count)):
-
             if req_objects is not None and len(req_objects) > 0:
                 filtered_objects = [
                     req_object
@@ -501,7 +502,13 @@ class GraphEngine:
                     str(config_id): {
                         "name": config_map.get(str(config_id), "Unknown"),
                         "data": [
-                            {"timestamp": ts["start"], "value": 0}
+                            {
+                                "timestamp": ts["start"],
+                                "value": 0
+                                if self.property.lower() == "count"
+                                else None,
+                                **eval_quality_counts([]),
+                            }
                             for ts in self.timestamps
                         ],
                     }
@@ -561,7 +568,12 @@ class GraphEngine:
 
         # Prepare data structure
         data = [
-            {"timestamp": ts, "value": 0, **({"primary_traffic": 0} if metric else {})}
+            {
+                "timestamp": ts,
+                "value": 0 if self.property.lower() == "count" else None,
+                **eval_quality_counts([]),
+                **({"primary_traffic": 0} if metric else {}),
+            }
             for ts in self.timestamps
         ]
 
@@ -579,13 +591,19 @@ class GraphEngine:
                 if data_point["timestamp"]["start"] <= interval.replace(
                     tzinfo=None
                 ) and data_point["timestamp"]["end"] > interval.replace(tzinfo=None):
-                    data_point["value"] = eval_response_data.get("value", 0)
+                    data_point.update(
+                        {
+                            key: value
+                            for key, value in eval_response_data.items()
+                            if key != "eval_response_data"
+                        }
+                    )
 
         # Format final data
         formatted_data = [
             {
                 "timestamp": d["timestamp"]["start"],
-                "value": d["value"],
+                **{key: value for key, value in d.items() if key != "timestamp"},
             }
             for d in data
         ]
@@ -596,137 +614,37 @@ class GraphEngine:
         }
 
     def _score_evals_property(self, evals):
-        """
-        Optimized method to calculate evaluation scores
-        """
-        if not evals:
-            return {"value": 0, "eval_response_data": {}}
+        """Compute statistics on valid quality scores, not attempted executions."""
+        import numpy as np
 
-        total_count = len(evals)
-        valid_scores = []
-        eval_response_data = {}
-        empty_count = 0
-
-        # Process all evals in a single pass
-        for eval_log in evals:
-            eval_id = eval_log.custom_eval_config.id
-
-            # Initialize eval_response_data if needed
-            if eval_id not in eval_response_data:
-                eval_response_data[eval_id] = {
-                    "passed_count": 0,
-                    "failed_count": 0,
-                    "count": 0,
-                    "failed_traces_count": 0,
-                    "failed_traces_ids": set(),  # Using set for faster lookups
-                    "name": f"Low {eval_log.custom_eval_config.name}",
-                }
-
-            current_data = eval_response_data[eval_id]
-            current_data["count"] += 1
-
-            # Check for empty outputs
-            if all(
-                getattr(eval_log, field) in (None, "", [])
-                for field in [
-                    "output_bool",
-                    "output_float",
-                    "output_str",
-                    "output_str_list",
-                ]
-            ):
-                empty_count += 1
-                continue
-
-            # Process different output types
-            if eval_log.output_bool is not None:
-                self._process_boolean_output(eval_log, current_data, valid_scores)
-            elif eval_log.output_float is not None:
-                self._process_float_output(eval_log, current_data, valid_scores)
-            elif eval_log.output_str:
-                self._process_string_output(eval_log, current_data, valid_scores)
-
-        # Convert sets back to lists for JSON serialization
-        for data in eval_response_data.values():
-            data["failed_traces_ids"] = list(data["failed_traces_ids"])
-
-        return self._calculate_final_score(
-            valid_scores, total_count, empty_count, eval_response_data
-        )
-
-    def _process_boolean_output(self, eval_log, current_data, valid_scores):
-        """Helper method for processing boolean outputs"""
-        if eval_log.output_bool:
-            valid_scores.append(100)
-            current_data["passed_count"] += 1
-        else:
-            valid_scores.append(0)
-            current_data["failed_count"] += 1
-            if eval_log.trace.id not in current_data["failed_traces_ids"]:
-                current_data["failed_traces_count"] += 1
-                current_data["failed_traces_ids"].add(eval_log.trace.id)
-
-    def _process_float_output(self, eval_log, current_data, valid_scores):
-        """Helper method for processing float outputs"""
-        score = min(max(eval_log.output_float * 100, 0), 100)
-        valid_scores.append(score)
-        if score >= 30:
-            current_data["passed_count"] += 1
-        else:
-            current_data["failed_count"] += 1
-            if eval_log.trace.id not in current_data["failed_traces_ids"]:
-                current_data["failed_traces_count"] += 1
-                current_data["failed_traces_ids"].add(eval_log.trace.id)
-
-    def _process_string_output(self, eval_log, current_data, valid_scores):
-        """Helper method for processing string outputs"""
-        output_lower = eval_log.output_str.lower()
-        if output_lower == "passed":
-            valid_scores.append(100)
-            current_data["passed_count"] += 1
-        elif output_lower in ["failed", "error"]:
-            valid_scores.append(0)
-            current_data["failed_count"] += 1
-            if eval_log.trace.id not in current_data["failed_traces_ids"]:
-                current_data["failed_traces_count"] += 1
-                current_data["failed_traces_ids"].add(eval_log.trace.id)
-        else:
-            valid_scores.append(100)
-            current_data["passed_count"] += 1
-
-    def _calculate_final_score(
-        self, valid_scores, total_count, empty_count, eval_response_data
-    ):
-        """Helper method to calculate final scores based on property type"""
-        if not valid_scores:
-            return {"value": 0, "eval_response_data": eval_response_data}
-
-        try:
-            import numpy as np
-
-            property_calculations = {
-                "count": lambda: total_count,
-                "percentile_empty": lambda: (
-                    (empty_count / total_count * 100) if total_count > 0 else 0
-                ),
-                "average": lambda: round(sum(valid_scores) / total_count, 2),
-                "standard_deviation": lambda: np.std(valid_scores),
-                "p50": lambda: np.median(valid_scores),
-                "p75": lambda: np.quantile(valid_scores, q=0.75),
-                "p95": lambda: np.quantile(valid_scores, q=0.95),
+        evals = list(evals)
+        summary = score_evals(evals)
+        values = [eval_quality_value(log) for log in evals]
+        scores = [v for v in values if v is not None and not isinstance(v, list)]
+        counts = eval_quality_counts(evals)
+        counts["scored_count"] = len(scores)
+        counts["unscored_count"] = len(evals) - len(scores)
+        prop = self.property.lower()
+        value = None
+        if prop == "count":
+            value = len(evals)
+        elif prop == "percentile_empty":
+            value = counts["unscored_count"] * 100 / len(evals) if evals else None
+        elif scores:
+            calculations = {
+                "average": lambda: round(sum(scores) / len(scores), 2),
+                "standard_deviation": lambda: float(np.std(scores)),
+                "p50": lambda: float(np.median(scores)),
+                "p75": lambda: float(np.quantile(scores, q=0.75)),
+                "p95": lambda: float(np.quantile(scores, q=0.95)),
             }
-
-            calculation = property_calculations.get(self.property.lower())
-            if calculation:
-                return {
-                    "value": calculation(),
-                    "eval_response_data": eval_response_data,
-                }
-
-        except Exception:
-            traceback.print_exc()
-
-        return {"value": 0, "eval_response_data": eval_response_data}
+            if prop in calculations:
+                value = calculations[prop]()
+        return {
+            "value": value,
+            "eval_response_data": summary["eval_response_data"],
+            **counts,
+        }
 
     def get_primary_traffic(self, observe_type=None, req_data_config=None):
         """
@@ -802,7 +720,7 @@ class GraphEngine:
 
     def get_eval_metric_data(self, eval_template):
         count_data = [{"timestamp": ts, "value": 0} for ts in self.timestamps]
-        avg_data = [{"timestamp": ts, "value": 0} for ts in self.timestamps]
+        avg_data = [{"timestamp": ts, "value": None} for ts in self.timestamps]
 
         try:
             # print("self.objects", self.objects)
@@ -813,7 +731,7 @@ class GraphEngine:
                 )
                 count = len(objs)
                 average = calculate_eval_average(
-                    eval_template=eval_template, api_logs=objs
+                    eval_template=eval_template, api_logs=objs, empty_value=None
                 )
 
                 # print("checking timestamped data",avg_data[i]['timestamp']['start'], avg_data[i]['value'], average)
@@ -855,7 +773,12 @@ class GraphEngine:
                 return {
                     "name": "Unknown",
                     "data": [
-                        {"timestamp": ts["start"], "value": 0} for ts in self.timestamps
+                        {
+                            "timestamp": ts["start"],
+                            "value": None,
+                            **eval_quality_counts([]),
+                        }
+                        for ts in self.timestamps
                     ],
                 }
 
@@ -871,7 +794,12 @@ class GraphEngine:
                 return {
                     "name": "Unknown",
                     "data": [
-                        {"timestamp": ts["start"], "value": 0} for ts in self.timestamps
+                        {
+                            "timestamp": ts["start"],
+                            "value": None,
+                            **eval_quality_counts([]),
+                        }
+                        for ts in self.timestamps
                     ],
                 }
 
@@ -900,10 +828,16 @@ class GraphEngine:
         Helper method to process individual eval configs
         """
 
+        is_eval = (req_data_config or {}).get("type") == "EVAL"
         logger_objects = loggers
         # Prepare data structure
         data = [
-            {"timestamp": ts, "value": 0, **({"primary_traffic": 0} if metric else {})}
+            {
+                "timestamp": ts,
+                "value": None if is_eval else 0,
+                **(eval_quality_counts([]) if is_eval else {}),
+                **({"primary_traffic": 0} if metric else {}),
+            }
             for ts in self.timestamps
         ]
 
@@ -924,6 +858,12 @@ class GraphEngine:
                     tzinfo=None
                 ) and data_point["timestamp"]["end"] > interval.replace(tzinfo=None):
                     data_point["value"] = avg_score
+                    if is_eval:
+                        data_point.update(
+                            eval_quality_counts(
+                                logs, req_data_config.get("output_type", "float")
+                            )
+                        )
                     if metric:
                         data_point["primary_traffic"] = (
                             len(self.primary_traffic.get(interval, []))
@@ -935,7 +875,11 @@ class GraphEngine:
         formatted_data = [
             {
                 "timestamp": d["timestamp"]["start"],
-                "value": d["value"],
+                **{
+                    key: value
+                    for key, value in d.items()
+                    if key not in {"timestamp", "primary_traffic"}
+                },
                 **({"primary_traffic": d["primary_traffic"]} if metric else {}),
             }
             for d in data
@@ -947,7 +891,7 @@ class GraphEngine:
         Optimized method to calculate evaluation scores
         """
         if not loggers:
-            return 0
+            return None if (req_data_config or {}).get("type") == "EVAL" else 0
 
         output_type = req_data_config.get("output_type", "float")
 
@@ -978,7 +922,9 @@ class GraphEngine:
         type = req_data_config.get("type", None)
 
         if type == "EVAL":
-            matching_loggers = [log for log in loggers if log.output_bool is not None]
+            matching_loggers = [
+                log for log in loggers if eval_quality_value(log, "bool") is not None
+            ]
             total_score = sum(
                 100 if log.output_bool == value else 0 for log in matching_loggers
             )
@@ -998,7 +944,7 @@ class GraphEngine:
             raise Exception("Invalid type specified in req_data_config")
 
         if not matching_loggers:
-            return 0
+            return None if type == "EVAL" else 0
 
         return round(total_score / len(matching_loggers), 2)
 
@@ -1011,11 +957,12 @@ class GraphEngine:
         type = req_data_config.get("type", None)
 
         if type == "EVAL":
-            matching_loggers = [
+            loggers = [
                 log
                 for log in loggers
-                if log.output_str_list and value in log.output_str_list
+                if eval_quality_value(log, "str_list") is not None
             ]
+            matching_loggers = [log for log in loggers if value in log.output_str_list]
         elif type == "ANNOTATION":
             # Score stores categorical as {"selected": ["choice1", ...]}
             matching_loggers = [
@@ -1030,7 +977,7 @@ class GraphEngine:
 
         total_loggers = len(loggers)
         if total_loggers == 0:
-            return 0
+            return None if type == "EVAL" else 0
 
         # Calculate percentage of matching loggers
         return round((len(matching_loggers) / total_loggers) * 100, 2)
@@ -1061,7 +1008,9 @@ class GraphEngine:
         type = req_data_config.get("type", None)
 
         if type == "EVAL":
-            valid_loggers = [log for log in loggers if log.output_float is not None]
+            valid_loggers = [
+                log for log in loggers if eval_quality_value(log, "float") is not None
+            ]
             total = sum(log.output_float for log in valid_loggers)
         elif type == "ANNOTATION":
             # Score stores NUMERIC as {"value": float} and STAR as {"rating": float}
@@ -1072,7 +1021,7 @@ class GraphEngine:
             raise Exception("Invalid type specified in req_data_config")
 
         if not valid_loggers:
-            return 0
+            return None if type == "EVAL" else 0
 
         if type == "ANNOTATION":
             return round((total / len(valid_loggers)), 2)

@@ -1,3 +1,5 @@
+from accounts.services.auth_cache import revoke_cached_access_token
+
 import getpass
 
 from django.contrib.auth.hashers import make_password
@@ -47,7 +49,7 @@ class Command(BaseCommand):
         )
         try:
             for token_id in token_ids:
-                cache.delete(f"access_token_{token_id}")
+                revoke_cached_access_token(token_id, cache_backend=cache)
         except Exception:
             pass
         AuthToken.objects.filter(id__in=token_ids).update(is_active=False)

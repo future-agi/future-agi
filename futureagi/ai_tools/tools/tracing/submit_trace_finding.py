@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -44,15 +43,15 @@ class SubmitTraceFindingInput(PydanticBaseModel):
         default="HIGH",
         description="Urgency: IMMEDIATE, HIGH, MEDIUM, or LOW",
     )
-    immediate_fix: Optional[str] = Field(
+    immediate_fix: str | None = Field(
         default=None,
         description="Quick fix suggestion if applicable",
     )
-    trace_impact: Optional[str] = Field(
+    trace_impact: str | None = Field(
         default=None,
         description="How this error affects the overall trace execution",
     )
-    analysis_id: Optional[UUID] = Field(
+    analysis_id: UUID | None = Field(
         default=None,
         description=(
             "The analysis_id returned by a previous submit_trace_finding call "
@@ -75,7 +74,66 @@ class SubmitTraceFindingTool(BaseTool):
     category = "error_feed"
     input_model = SubmitTraceFindingInput
 
+    def run(self, raw_params, context):
+        if getattr(context, "background_analysis", None) is not None:
+            from ee.agenthub.traceerroragent.background_payload_tools import (
+                run_background_tool,
+            )
+
+            return run_background_tool(self, raw_params, context)
+        return super().run(raw_params, context)
+
     def execute(
+        self, params: SubmitTraceFindingInput, context: ToolContext
+    ) -> ToolResult:
+        from tracer.services.analysis_result_binding import (
+            ResultOwnershipError,
+            current_attempt,
+            legacy_attempt,
+        )
+
+        guard = getattr(context, "background_analysis", None)
+        if guard is not None:
+            from ee.agenthub.traceerroragent.background_payload_tools import (
+                require_tool_parameters,
+            )
+
+            require_tool_parameters(params, guard, "submit_trace_finding")
+        if current_attempt() is not None:
+            return self._execute_owned(params, context)
+        if guard is not None:
+            from ee.agenthub.traceerroragent.background_tools import reject_chauffeur
+
+            reject_chauffeur(guard)
+        from tracer.models.project import Project
+        from tracer.services.clickhouse.v2 import get_reader
+
+        with get_reader() as reader:
+            root = reader.root_ids_by_trace_ids([str(params.trace_id)]).get(
+                str(params.trace_id)
+            )
+        project = (
+            Project.objects.filter(
+                id=root[1], organization=context.organization
+            ).first()
+            if root
+            else None
+        )
+        if project is None:
+            return ToolResult.not_found("Trace", str(params.trace_id))
+        try:
+            with legacy_attempt(project.pk, params.trace_id):
+                result = self._execute_owned(params, context)
+                if result.is_error:
+                    raise ResultOwnershipError("analysis_failed")
+            result.data.pop("analysis_status", None)
+            return result
+        except ResultOwnershipError:
+            return ToolResult.validation_error(
+                "A generation-owned analysis task is required."
+            )
+
+    def _execute_owned(
         self, params: SubmitTraceFindingInput, context: ToolContext
     ) -> ToolResult:
         from django.db import transaction
@@ -86,8 +144,35 @@ class SubmitTraceFindingTool(BaseTool):
             TraceErrorDetail,
         )
 
+        guard = getattr(context, "background_analysis", None)
+        if guard is not None:
+            from ee.agenthub.traceerroragent.background_payload_tools import (
+                require_tool_parameters,
+            )
+
+            require_tool_parameters(params, guard, "submit_trace_finding")
+
+        def checkpoint():
+            if guard is not None:
+                guard.check()
+
+        from tracer.services.analysis_result_binding import current_attempt
+
+        checkpoint()
+        if guard is not None:
+            from ee.agenthub.traceerroragent.background_tool_validation import (
+                validate_submission,
+            )
+
+            validate_submission(params, guard)
         # Validate confidence threshold
         if params.confidence < 0.7:
+            if guard is not None:
+                from ee.agenthub.traceerroragent.background_tools import (
+                    reject_chauffeur,
+                )
+
+                reject_chauffeur(guard)
             return ToolResult(
                 content=section(
                     "Finding Rejected",
@@ -102,6 +187,12 @@ class SubmitTraceFindingTool(BaseTool):
         # Validate impact
         impact_upper = params.impact.upper()
         if impact_upper not in ("HIGH", "MEDIUM", "LOW"):
+            if guard is not None:
+                from ee.agenthub.traceerroragent.background_tools import (
+                    reject_chauffeur,
+                )
+
+                reject_chauffeur(guard)
             return ToolResult.validation_error(
                 f"Invalid impact '{params.impact}'. Must be HIGH, MEDIUM, or LOW."
             )
@@ -113,25 +204,42 @@ class SubmitTraceFindingTool(BaseTool):
                 project__organization=context.organization,
             )
         except Trace.DoesNotExist:
+            if guard is not None:
+                from ee.agenthub.traceerroragent.background_tools import (
+                    reject_chauffeur,
+                )
+
+                reject_chauffeur(guard)
             return ToolResult.not_found("Trace", str(params.trace_id))
 
+        checkpoint()
         with transaction.atomic():
+            checkpoint()
             analysis = None
 
             # If analysis_id provided, reuse that specific analysis
             if params.analysis_id:
                 try:
-                    analysis = TraceErrorAnalysis.objects.get(
+                    analysis = TraceErrorAnalysis.drafts.get(
                         id=params.analysis_id,
                         trace=trace,
                     )
                 except TraceErrorAnalysis.DoesNotExist:
-                    # Invalid analysis_id — create a new one
+                    if guard is not None:
+                        from ee.agenthub.traceerroragent.background_tools import (
+                            reject_chauffeur,
+                        )
+
+                        reject_chauffeur(guard)
+                    # Invalid analysis_id — create a new one (foreground only)
                     analysis = None
 
+            checkpoint()
             # Create a new analysis record (same as the old agent did)
+            if analysis is None and current_attempt() is not None:
+                analysis = TraceErrorAnalysis.drafts.filter(trace=trace).first()
             if analysis is None:
-                analysis = TraceErrorAnalysis.objects.create(
+                analysis = TraceErrorAnalysis.drafts.create(
                     trace=trace,
                     project=trace.project,
                     overall_score=None,
@@ -143,12 +251,14 @@ class SubmitTraceFindingTool(BaseTool):
                     agent_version="falcon-skill-1.0",
                 )
 
+            checkpoint()
             # Generate error_id based on existing count in THIS analysis
-            existing_count = TraceErrorDetail.objects.filter(analysis=analysis).count()
+            existing_count = TraceErrorDetail.drafts.filter(analysis=analysis).count()
             error_id = f"E{existing_count + 1:03d}"
 
+            checkpoint()
             # Create the error detail
-            TraceErrorDetail.objects.create(
+            TraceErrorDetail.drafts.create(
                 analysis=analysis,
                 error_id=error_id,
                 category=params.category,
@@ -167,13 +277,13 @@ class SubmitTraceFindingTool(BaseTool):
 
             # Update analysis counters
             analysis.total_errors = existing_count + 1
-            impact_field = {
-                "HIGH": "high_impact_errors",
-                "MEDIUM": "medium_impact_errors",
-                "LOW": "low_impact_errors",
-            }.get(impact_upper)
-            if impact_field:
-                setattr(analysis, impact_field, getattr(analysis, impact_field) + 1)
+            # Keep background-reachable code free of dynamic attribute access.
+            if impact_upper == "HIGH":
+                analysis.high_impact_errors += 1
+            elif impact_upper == "MEDIUM":
+                analysis.medium_impact_errors += 1
+            elif impact_upper == "LOW":
+                analysis.low_impact_errors += 1
 
             # Update priority based on highest impact seen
             if impact_upper == "HIGH":
@@ -181,6 +291,7 @@ class SubmitTraceFindingTool(BaseTool):
             elif impact_upper == "MEDIUM" and analysis.recommended_priority == "LOW":
                 analysis.recommended_priority = "MEDIUM"
 
+            checkpoint()
             analysis.save(
                 update_fields=[
                     "total_errors",
@@ -190,7 +301,11 @@ class SubmitTraceFindingTool(BaseTool):
                     "recommended_priority",
                 ]
             )
+            # Roll back the native transaction if access/deadline changed in
+            # the write itself, before committing and returning success.
+            checkpoint()
 
+        checkpoint()
         # Format response
         info = key_value_block(
             [
@@ -208,6 +323,7 @@ class SubmitTraceFindingTool(BaseTool):
             content=section("Finding Submitted", info),
             data={
                 "status": "accepted",
+                "analysis_status": "running",
                 "error_id": error_id,
                 "analysis_id": str(analysis.id),
                 "total_errors": analysis.total_errors,

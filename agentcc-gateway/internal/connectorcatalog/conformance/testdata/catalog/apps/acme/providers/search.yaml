@@ -1,0 +1,70 @@
+# Fixture for the L3 conformance harness tests, not catalog data. A K1
+# provider pinned to 2025-03-26 whose credential has parts this base cannot
+# place (a query parameter, a secret URL variable, a constant header), with
+# an org URL variable that takes its default and a per-user one.
+schema: "connector-manifest/v1#provider"
+app: acme
+id: search
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: beta, source: https://acme.example/docs/mcp }
+transport:
+  kind: http
+  url: "https://search.acme.example/{region}/{account}/mcp/{tenantToken}"
+  urlVariables:
+    region:
+      description: The Acme region the account lives in.
+      pattern: "^(us|eu)$"
+      default: eu
+      scope: org
+    account:
+      description: The person's Acme account.
+      pattern: "^[a-z0-9]{4,32}$"
+      scope: user
+  era: 2025-03-26
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: query
+      name: sig
+      secret: true
+      label: Signing key
+    - in: url_variable
+      name: tenantToken
+      secret: true
+      label: Tenant token
+    - in: header
+      name: X-Acme-Client
+      secret: false
+      value: futureagi
+      label: Client name
+tools:
+  source: upstream_mcp
+  defaultPosture: deny
+  items:
+    - name: search_all
+      title: Search everything
+      description: "Search documents, notes and spaces at once, such as for launch."
+      annotations:
+        readOnlyHint: true
+        destructiveHint: false
+        idempotentHint: true
+        openWorldHint: false
+      posture: auto
+      inputSchema:
+        type: object
+        properties:
+          q: { type: string, minLength: 1 }
+        required: [q]
+pricing: { model: vendor_plan }
+quality: { tier: listed }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://acme.example/docs/mcp
+    fetchedAt: 2026-10-19
+x-omega: { ee: exclude, oss: exclude }

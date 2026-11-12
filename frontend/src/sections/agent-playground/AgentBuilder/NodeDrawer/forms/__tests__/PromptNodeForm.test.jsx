@@ -85,10 +85,12 @@ vi.mock("../../../hooks/usePartialNodeUpdate", () => ({
   default: () => ({ partialUpdate: mockPartialUpdate, isPending: false }),
 }));
 
+// Read lazily so a test can give the form its own validator.
+let mockValidateVariable = vi.fn();
 vi.mock("../../../../hooks/useConnectedNodeVariables", () => ({
   default: () => ({
     dropdownOptions: [],
-    validateVariable: vi.fn(),
+    validateVariable: mockValidateVariable,
     isLoading: false,
   }),
 }));
@@ -110,7 +112,18 @@ function FormWrapper({ children, defaultValues }) {
   );
 }
 
-function renderForm() {
+const DEFAULT_MESSAGES = [
+  {
+    id: "source-message",
+    role: "user",
+    content: [{ type: "text", text: "Hello" }],
+  },
+];
+
+function renderForm({
+  messages = DEFAULT_MESSAGES,
+  templateFormat = "mustache",
+} = {}) {
   return render(
     <FormWrapper
       defaultValues={{
@@ -118,15 +131,9 @@ function renderForm() {
         version: "prompt-version",
         prompt_version_id: "prompt-version-id",
         prompt_template_id: "prompt-template-id",
-        templateFormat: "mustache",
+        templateFormat,
         modelConfig: { model: "gpt-4o-mini", responseFormat: "text" },
-        messages: [
-          {
-            id: "source-message",
-            role: "user",
-            content: [{ type: "text", text: "Hello" }],
-          },
-        ],
+        messages,
       }}
     >
       <PromptNodeForm nodeId="source-node" />
@@ -200,6 +207,7 @@ function getTargetMessageText() {
 describe("PromptNodeForm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockValidateVariable = vi.fn();
     seedGraph();
   });
 
@@ -264,5 +272,117 @@ describe("PromptNodeForm", () => {
 
     expect(getNode("source-node").data.label).toBe("Source");
     expect(getTargetMessageText()).toBe("Use {{Source.response}}");
+  });
+});
+
+// FA-PLAYGROUND-VARIABLE-RED: a plain variable with no value source is not
+// an error. The editor leaves it plain (validator returns null) and the form
+// says, in words, what it is and what to do.
+describe("PromptNodeForm variables with no value source", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockValidateVariable = vi.fn();
+    seedGraph();
+  });
+
+  it("names the variable, says it is an agent input and what to do", () => {
+    mockValidateVariable = vi.fn((name) => (name === "question" ? null : true));
+
+    renderForm({
+      messages: [
+        {
+          id: "m-user",
+          role: "user",
+          content: [
+            { type: "text", text: "Answer the question: {{question}}" },
+          ],
+        },
+      ],
+    });
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "{{question}} is an input to this agent. You'll be asked for its value when you run. To use another node's output instead, connect that node to this one.",
+    );
+  });
+
+  it("lists each one once, in prompt order, and leaves out the others", () => {
+    mockValidateVariable = vi.fn((name) => {
+      if (name === "question" || name === "context") return null;
+      if (name === "Source.response.answer") return false;
+      return true;
+    });
+
+    renderForm({
+      messages: [
+        {
+          id: "m-system",
+          role: "system",
+          content: [
+            {
+              type: "text",
+              text: "Use {{context}}, {{Source.response}} and {{Source.response.answer}}.",
+            },
+          ],
+        },
+        {
+          id: "m-user",
+          role: "user",
+          content: [{ type: "text", text: "{{question}} {{ context }}" }],
+        },
+      ],
+    });
+
+    const note = screen.getByRole("status");
+    expect(note).toHaveTextContent(
+      "{{context}} and {{question}} are inputs to this agent. You'll be asked for their values when you run. To use another node's output instead, connect that node to this one.",
+    );
+    expect(note).not.toHaveTextContent("Source.response");
+  });
+
+  it("follows Jinja scoping: a loop variable is not an input", () => {
+    mockValidateVariable = vi.fn(() => null);
+
+    renderForm({
+      templateFormat: "jinja",
+      messages: [
+        {
+          id: "m-user",
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "{% for item in items %}{{ item }}{% endfor %}",
+            },
+          ],
+        },
+      ],
+    });
+
+    const note = screen.getByRole("status");
+    expect(note).toHaveTextContent("{{items}} is an input to this agent.");
+    expect(note).not.toHaveTextContent("{{item}}");
+  });
+
+  it("control: says nothing when every variable has a source", () => {
+    mockValidateVariable = vi.fn((name) =>
+      name === "Source.response.answer" ? false : true,
+    );
+
+    renderForm({
+      messages: [
+        {
+          id: "m-user",
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Use {{Source.response}} and {{Source.response.answer}}",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 });

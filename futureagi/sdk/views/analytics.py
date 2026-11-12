@@ -1,11 +1,13 @@
 import structlog
 from django.db import connection
+from rest_framework.exceptions import APIException
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
 
 from accounts.authentication import APIKeyAuthentication
+from common.utils.page_limits import enforce_page_size
 from sdk.serializers.analytics import (
     AnalyticsResponseSerializer,
     CallMetricsSerializer,
@@ -99,6 +101,7 @@ class SimulationMetricsView(APIView):
     )
     def get(self, request, *args, **kwargs):
         try:
+            enforce_page_size(request.query_params.get("limit"))
             organization = getattr(request, "organization", None) or getattr(
                 request.user, "organization", None
             )
@@ -120,6 +123,8 @@ class SimulationMetricsView(APIView):
 
             return self._handle_run_test(request, run_test_name, organization)
 
+        except APIException:
+            raise
         except Exception:
             logger.exception("analytics_metrics_error")
             return self._gm.internal_server_error_response(
@@ -283,6 +288,7 @@ class SimulationRunsView(APIView):
     )
     def get(self, request, *args, **kwargs):
         try:
+            enforce_page_size(request.query_params.get("limit"))
             organization = getattr(request, "organization", None) or getattr(
                 request.user, "organization", None
             )
@@ -312,6 +318,8 @@ class SimulationRunsView(APIView):
                 request, run_test_name, organization, eval_names
             )
 
+        except APIException:
+            raise
         except Exception:
             logger.exception("analytics_runs_error")
             return self._gm.internal_server_error_response(

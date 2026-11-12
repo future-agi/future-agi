@@ -1,0 +1,41 @@
+# Parallel's Task MCP with a Parallel API key as the bearer. The Task MCP
+# always requires authentication (an API key or OAuth).
+schema: "connector-manifest/v1#provider"
+app: parallel-task
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://task-mcp.parallel.ai/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+      help: "A Parallel API key, sent as a bearer token."
+      helpUrl: https://docs.parallel.ai/integrations/mcp/task-mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.parallel.ai/integrations/mcp/task-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.parallel.ai/integrations/mcp/task-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://docs.parallel.ai/integrations/mcp/task-mcp
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

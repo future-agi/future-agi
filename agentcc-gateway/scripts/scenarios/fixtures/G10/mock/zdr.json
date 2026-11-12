@@ -1,0 +1,30 @@
+{
+  "data": [
+    {
+      "name": "Anthropic | anthropic/claude-sonnet-5.5",
+      "model_id": "anthropic/claude-sonnet-5.5",
+      "model_name": "Claude Sonnet 5.5",
+      "provider_name": "Anthropic",
+      "tag": "anthropic",
+      "context_length": 200000,
+      "pricing": {
+        "prompt": "0.000003",
+        "completion": "0.000015"
+      },
+      "status": 0
+    },
+    {
+      "name": "Google Vertex | anthropic/claude-sonnet-5.5",
+      "model_id": "anthropic/claude-sonnet-5.5",
+      "model_name": "Claude Sonnet 5.5",
+      "provider_name": "Google Vertex",
+      "tag": "google-vertex",
+      "context_length": 200000,
+      "pricing": {
+        "prompt": "0.000003",
+        "completion": "0.000015"
+      },
+      "status": 0
+    }
+  ]
+}

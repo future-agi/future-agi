@@ -1,0 +1,19 @@
+{
+  "$schema": "../../packages/hub/schema/omega.hub.schema.json",
+  "schema": "omega-hub/v1",
+  "id": "{{id}}",
+  "title": "{{title}}",
+  "tagline": "{{tagline}}",
+  "kind": "mcp",
+  "cover": { "emoji": "{{emoji}}", "from": "{{from}}", "to": "{{to}}" },
+  "author": { "github": "{{author}}", "kind": "community" },
+  "tags": {{tags}},
+  "difficulty": "starter",
+  "license": "Apache-2.0",
+  "added": "{{added}}",
+  "models": { "keyless": "none", "live": [] },
+  "run": { "keyless": ["node", "--import", "tsx", "main.ts"] },
+  "test": "main.test.ts",
+  "demo": { "cast": "demo.cast" },
+  "install": { "mcp": { "name": "greeter", "command": ["node", "server.mjs"] } }
+}

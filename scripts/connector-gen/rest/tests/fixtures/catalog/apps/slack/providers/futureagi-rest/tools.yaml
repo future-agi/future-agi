@@ -1,0 +1,158 @@
+# Fixture for the REST generator's tests, not catalog data (see ../../../gmail/app.yaml).
+# Slack's description puts the token in a `token` parameter on every method;
+# the runtime sends it as the bearer instead, so it is never a tool input.
+schema: connector-gen/rest-overlay/v1
+spec: fixtures/spec/slack-web-api.swagger.json.gz
+credentialParams: [token]
+tools:
+  - name: list_conversations
+    title: List channels
+    description: >-
+      List the channels the user can see, with ids such as C0123456789. types is a comma-separated list,
+      for example public_channel,private_channel. Pass response_metadata.next_cursor back as cursor for the next page.
+    operation: { operationId: conversations_list }
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [channels:read]
+    response:
+      fields:
+        [
+          channels.id,
+          channels.name,
+          channels.is_private,
+          channels.is_archived,
+          response_metadata.next_cursor,
+        ]
+
+  - name: get_conversation
+    title: Read a channel's details
+    description: Read one channel's name, topic, purpose and member count, by its id, for example C0123456789.
+    operation: { operationId: conversations_info }
+    params:
+      required: [channel]
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [channels:read]
+
+  - name: read_channel_history
+    title: Read a channel's messages
+    description: >-
+      Read a channel's recent messages, newest first. oldest and latest are Slack timestamps such as
+      1729500000.000100. Each message's ts identifies it for replies and reactions. When has_more is true,
+      call again with latest set to the oldest ts returned.
+    operation: { operationId: conversations_history }
+    params:
+      required: [channel]
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [channels:history]
+    response:
+      fields:
+        [
+          messages.ts,
+          messages.user,
+          messages.text,
+          messages.thread_ts,
+          messages.reply_count,
+          has_more,
+        ]
+      maxBytes: 50000
+
+  - name: read_thread
+    title: Read a thread
+    description: >-
+      Read the replies of a thread, by channel id and the parent message's ts, for example 1729500000.000100.
+    operation: { operationId: conversations_replies }
+    params:
+      required: [channel, ts]
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [channels:history]
+    response:
+      fields: [messages.ts, messages.user, messages.text, has_more]
+      maxBytes: 50000
+
+  - name: list_users
+    title: List people
+    description: >-
+      List the workspace's members with their ids (for example U0123456789), names and time zones.
+      Pass response_metadata.next_cursor back as cursor for the next page.
+    operation: { operationId: users_list }
+    params:
+      exclude: [include_locale]
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [users:read]
+    response:
+      fields:
+        [
+          members.id,
+          members.name,
+          members.real_name,
+          members.tz,
+          members.deleted,
+          response_metadata.next_cursor,
+        ]
+      maxBytes: 50000
+
+  - name: get_user
+    title: Read a person's profile
+    description: Read one member's profile by user id, for example U0123456789.
+    operation: { operationId: users_info }
+    params:
+      exclude: [include_locale]
+      required: [user]
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [users:read]
+
+  - name: find_user_by_email
+    title: Find a person by email
+    description: Find a member by email address, for example alice@example.com, and return their user id and profile.
+    operation: { operationId: users_lookupByEmail }
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [users:read.email]
+
+  - name: search_messages
+    title: Search messages
+    description: >-
+      Search messages with Slack search syntax, for example "invoice in:#finance from:@alice after:2026-10-01".
+    operation: { operationId: search_messages }
+    params:
+      describe:
+        page: "Result page number, starting at 1."
+    annotations: { openWorldHint: false }
+    posture: auto
+    scopes: [search:read]
+    response:
+      maxBytes: 50000
+
+  - name: post_message
+    title: Post a message
+    description: >-
+      Post a message to a channel by its id. text is mrkdwn, for example "Deploy *done* :rocket:". Set thread_ts to
+      the parent message's ts to reply in its thread.
+    operation: { operationId: chat_postMessage }
+    body:
+      fields: [channel, text, thread_ts]
+      required: [channel, text]
+      description: The message to post.
+    annotations:
+      { destructiveHint: false, idempotentHint: false, openWorldHint: true }
+    posture: ask
+    scopes: [chat:write]
+    scopeSource: https://docs.slack.dev/reference/methods/chat.postMessage
+    response:
+      fields: [channel, ts]
+
+  - name: add_reaction
+    title: React to a message
+    description: Add an emoji reaction to a message, by channel id, message ts and emoji name without colons, for example thumbsup.
+    operation: { operationId: reactions_add }
+    body:
+      description: The message and the reaction.
+    annotations:
+      { destructiveHint: false, idempotentHint: true, openWorldHint: true }
+    posture: ask
+    scopes: [reactions:write]

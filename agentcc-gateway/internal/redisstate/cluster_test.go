@@ -30,8 +30,7 @@ func TestClusterStore_NilClient(t *testing.T) {
 }
 
 func TestClusterStore_UnavailableClient(t *testing.T) {
-	client := &Client{breaker: newCircuitBreaker(1, 10*time.Second)}
-	client.breaker.recordFailure()
+	client := openBreakerClient(t)
 
 	cs := NewClusterStore(client, 30*time.Second, "test:cluster:")
 	if cs.Available() {

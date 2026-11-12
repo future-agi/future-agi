@@ -1,201 +1,266 @@
 import {
   Box,
+  ButtonBase,
   InputAdornment,
   MenuItem,
   Popover,
-  Select,
-  styled,
+  Stack,
   TextField,
   Typography,
 } from "@mui/material";
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router";
-import { useInfiniteExperimentList } from "src/api/develop/experiment-detail";
+import PropTypes from "prop-types";
+import React, { useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
 import Iconify from "src/components/iconify";
-import { useDebounce } from "src/hooks/use-debounce";
-import ScrollingWrapper from "src/components/custom-model-dropdown/ScrollingWrapper.jsx";
+import { useDatasetRuns } from "src/api/develop/runs";
+import { getRunStatus } from "src/sections/common/Runs/runStatus";
 
-const DevelopSelect = styled(Select)(({ theme }) => ({
-  "& .MuiSelect-select": {
-    paddingTop: 4,
-    paddingBottom: 4,
-    color: theme.palette.text.primary,
-    fontWeight: 500,
-    width: "245px",
-  },
-}));
+/** The most active status across an experiment's runs (running first). */
+export function experimentStatusOf(runs) {
+  const infos = (runs ?? []).map((r) => getRunStatus(r));
+  return (
+    infos.find((i) => i.active) ??
+    infos.find((i) => i.waiting) ??
+    infos.find((i) => i.key === "Failed") ??
+    infos.find((i) => i.key === "Cancelled") ??
+    // the capability contract: a run with errored rows never hides behind a green one.
+    infos.find((i) => i.key === "PartialCompleted") ??
+    infos[0] ??
+    null
+  );
+}
 
-const DevelopExperimentSelect = () => {
-  const [selectOpen, setSelectOpen] = useState(false);
+/** Experiments of a dataset from its runs, newest first: `#n name ●status`. */
+export function experimentsFromRuns(runs) {
+  const byId = new Map();
+  (runs ?? []).forEach((r) => {
+    if (!byId.has(r.experiment_id))
+      byId.set(r.experiment_id, {
+        id: r.experiment_id,
+        ordinal: r.experiment_ordinal,
+        name: r.experiment_name,
+        runs: [],
+      });
+    byId.get(r.experiment_id).runs.push(r);
+  });
+  return [...byId.values()].sort((a, b) => b.ordinal - a.ordinal);
+}
+
+/** Search matches `#4`, `4` or a word of the name. */
+export function matchesExperiment(exp, query) {
+  const q = (query ?? "").trim().toLowerCase();
+  if (!q) return true;
+  const num = q.replace(/^#/, "");
+  if (/^\d+$/.test(num)) return String(exp.ordinal).startsWith(num);
+  return (exp.name ?? "").toLowerCase().includes(q);
+}
+
+// `#4`, or "" when the experiment has no number (the experiment read does not
+// carry one): never `#undefined`; the experiment's name then names it.
+const numberText = (ordinal) =>
+  ordinal == null || ordinal === "" ? "" : `#${ordinal}`;
+
+const StatusDot = ({ info }) =>
+  info ? (
+    <Stack direction="row" alignItems="center" gap={0.5} sx={{ flexShrink: 0 }}>
+      <Box
+        sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: info.color }}
+      />
+      <Typography typography="s3" color="text.secondary" noWrap>
+        {info.label}
+      </Typography>
+    </Stack>
+  ) : null;
+StatusDot.propTypes = { info: PropTypes.object };
+
+/**
+ * Experiment switcher in the experiment page header (PRODUCT-SPEC §3.10.2):
+ * `#4 Support agent v3 · 3 trials`, a list of the dataset's experiments with
+ * their status; search matches `#4`. Keeps the current tab.
+ */
+const DevelopExperimentSelect = ({ experiment, maxWidth = 340 }) => {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
   const anchorRef = useRef(null);
-  const location = useLocation();
-  const queryParams = new URLSearchParams(location.search);
-  const datasetId = queryParams.get("datasetId");
   const navigate = useNavigate();
-  const { experimentId } = useParams();
-  const [selectedExperiment, setSelectedExperiment] = useState(null);
-  const [searchText, setSearchText] = useState("");
-  const debouncedSearchText = useDebounce(searchText.trim(), 500);
-  const { hasNextPage, isFetchingNextPage, fetchNextPage, data } =
-    useInfiniteExperimentList(debouncedSearchText);
-  const experimentList = useMemo(() => data?.allResults ?? [], [data]);
-  const payload = JSON.parse(decodeURIComponent(queryParams.get("payload")));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const payloadExperiment = payload
-    ? { label: payload.name, value: payload.id }
-    : null;
-
-  const experimentOptions = useMemo(
+  const { pathname } = useLocation();
+  const tab = pathname.endsWith("/summary")
+    ? "summary"
+    : pathname.endsWith("/matrix")
+      ? "matrix"
+      : "data";
+  const datasetId = experiment?.dataset_id;
+  const { data, isLoading } = useDatasetRuns(datasetId, { enabled: open });
+  const experiments = useMemo(
     () =>
-      experimentList?.map(({ id, name }) => ({
-        label: name,
-        value: id,
-      })),
-    [experimentList],
+      experimentsFromRuns(data?.results).filter((e) =>
+        matchesExperiment(e, search),
+      ),
+    [data, search],
   );
 
-  useEffect(() => {
-    // Convert IDs to string for safe comparison
-    const selectedId = selectedExperiment?.value?.toString();
-    const payloadId = payloadExperiment?.value?.toString();
-
-    // 1️⃣ If selectedExperiment is null, initialize from list or payload
-    if (!selectedExperiment) {
-      // Try experimentList first
-      if (experimentList?.length > 0) {
-        const found = experimentList.find(
-          (item) => String(item.id) === String(experimentId),
-        );
-        if (found) {
-          setSelectedExperiment({ label: found.name, value: found.id });
-          return;
-        }
-      }
-
-      // Fallback to payload if not in list
-      if (payloadExperiment) {
-        setSelectedExperiment(payloadExperiment);
-      }
-      return;
-    }
-
-    // 2️⃣ If payloadExperiment is different from selectedExperiment, update it
-    if (payloadExperiment && payloadId !== selectedId) {
-      setSelectedExperiment(payloadExperiment);
-    }
-  }, [experimentList, experimentId, selectedExperiment, payloadExperiment]);
-
-  const selectedOption = useMemo(() => {
-    const fromList = experimentOptions?.find((o) => o.value === experimentId);
-    return fromList || payloadExperiment;
-  }, [experimentId, experimentOptions, payloadExperiment]);
-
-  const renderValue = () => {
-    return selectedExperiment?.label || "Select an experiment";
+  const close = () => {
+    setOpen(false);
+    setSearch("");
   };
 
   return (
     <>
-      <DevelopSelect
-        size="small"
-        open={selectOpen}
-        onOpen={() => setSelectOpen(true)}
-        onClose={() => setSelectOpen(false)}
+      <ButtonBase
         ref={anchorRef}
-        MenuProps={{
-          PaperProps: {
-            style: {
-              display: "none",
-            },
-          },
+        onClick={() => setOpen(true)}
+        aria-label="Switch experiment"
+        sx={{
+          height: 38,
+          px: 1.5,
+          gap: 1,
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: 0.75,
+          maxWidth,
+          "&:hover": { borderColor: "text.primary" },
         }}
-        value={experimentId}
-        renderValue={renderValue}
-        sx={{ width: "max-content" }}
       >
-        <MenuItem value={experimentId}>{selectedOption?.label}</MenuItem>
-      </DevelopSelect>
+        {experiment ? (
+          <>
+            {numberText(experiment.ordinal) && (
+              <Typography
+                typography="s1"
+                fontWeight="fontWeightSemiBold"
+                sx={{ flexShrink: 0 }}
+              >
+                {numberText(experiment.ordinal)}
+              </Typography>
+            )}
+            <Typography
+              typography="s1"
+              fontWeight={500}
+              noWrap
+              sx={{ minWidth: 0 }}
+            >
+              {experiment.name}
+            </Typography>
+          </>
+        ) : (
+          <Typography typography="s1" color="text.secondary">
+            Loading experiment…
+          </Typography>
+        )}
+        <Iconify
+          icon="mdi:chevron-down"
+          width={18}
+          sx={{ color: "text.secondary", flexShrink: 0 }}
+        />
+      </ButtonBase>
       <Popover
-        open={selectOpen}
+        open={open}
         anchorEl={anchorRef.current}
-        onClose={() => {
-          setSelectOpen(false);
-          setSearchText("");
-        }}
-        anchorOrigin={{
-          vertical: "bottom",
-          horizontal: "right",
-        }}
-        transformOrigin={{
-          vertical: "top",
-          horizontal: "right",
-        }}
-        PaperProps={{
-          sx: {
-            minWidth: anchorRef.current?.clientWidth,
-          },
-        }}
+        onClose={close}
+        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+        transformOrigin={{ vertical: "top", horizontal: "left" }}
+        slotProps={{ paper: { sx: { width: 420, mt: 0.5, borderRadius: 1 } } }}
       >
-        <Box>
+        <Box sx={{ p: 1 }}>
           <TextField
-            placeholder="Search Experiment"
+            autoFocus
+            placeholder="Search by #number or name"
             size="small"
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
-                  <Iconify icon="eva:search-fill" sx={{ color: "divider" }} />
+                  <Iconify
+                    icon="solar:magnifier-linear"
+                    width={16}
+                    sx={{ color: "text.disabled" }}
+                  />
                 </InputAdornment>
               ),
             }}
             fullWidth
           />
           <Typography
-            sx={{ paddingX: 1, paddingTop: 1 }}
+            typography="s3"
             color="text.disabled"
-            fontWeight={600}
-            fontSize={12}
-          >
-            All Experiments
-          </Typography>
-          <ScrollingWrapper
-            position={{ height: 220 }}
-            width={anchorRef.current?.clientWidth - 26}
-            scrollFunction={() => {
-              if (hasNextPage && !isFetchingNextPage) {
-                fetchNextPage();
-              }
+            sx={{
+              px: 1,
+              pt: 1,
+              pb: 0.5,
+              display: "block",
+              textTransform: "uppercase",
+              letterSpacing: "0.5px",
             }}
-            dependancies={[isFetchingNextPage, hasNextPage, selectOpen]}
           >
-            {experimentOptions?.map((option) => (
-              <MenuItem
-                key={option.value}
-                value={option.value}
-                onClick={() => {
-                  const encoded = encodeURIComponent(
-                    JSON.stringify({
-                      id: option?.value,
-                      name: option?.label,
-                    }),
-                  );
-                  setSelectedExperiment(option);
-                  navigate(
-                    `/dashboard/develop/experiment/${option.value}/data?datasetId=${datasetId}&payload=${encoded}`,
-                  );
-                  setSelectOpen(false);
-                  setSearchText("");
-                }}
+            Experiments on this dataset
+          </Typography>
+          <Box sx={{ maxHeight: 300, overflow: "auto" }}>
+            {isLoading && (
+              <Typography
+                typography="s2"
+                color="text.secondary"
+                sx={{ px: 1, py: 1 }}
               >
-                {option.label}
+                Loading…
+              </Typography>
+            )}
+            {!isLoading && experiments.length === 0 && (
+              <Typography
+                typography="s2"
+                color="text.secondary"
+                sx={{ px: 1, py: 1 }}
+              >
+                {search
+                  ? `No experiment matches “${search}”`
+                  : "No experiments yet"}
+              </Typography>
+            )}
+            {experiments.map((exp) => (
+              <MenuItem
+                key={exp.id}
+                selected={exp.id === experiment?.id}
+                onClick={() => {
+                  close();
+                  navigate(`/dashboard/develop/experiment/${exp.id}/${tab}`);
+                }}
+                sx={{ gap: 1, borderRadius: 0.5, py: 0.75 }}
+              >
+                {numberText(exp.ordinal) && (
+                  <Typography
+                    typography="s1"
+                    fontWeight="fontWeightSemiBold"
+                    sx={{ width: 32, flexShrink: 0 }}
+                  >
+                    {numberText(exp.ordinal)}
+                  </Typography>
+                )}
+                <Typography
+                  typography="s1"
+                  noWrap
+                  sx={{ flex: 1, minWidth: 0 }}
+                >
+                  {exp.name}
+                </Typography>
+                <Typography
+                  typography="s3"
+                  color="text.disabled"
+                  sx={{ flexShrink: 0 }}
+                >
+                  {`${exp.runs.length} ${exp.runs.length === 1 ? "run" : "runs"}`}
+                </Typography>
+                <StatusDot info={experimentStatusOf(exp.runs)} />
               </MenuItem>
             ))}
-          </ScrollingWrapper>
+          </Box>
         </Box>
       </Popover>
     </>
   );
+};
+
+DevelopExperimentSelect.propTypes = {
+  experiment: PropTypes.object,
+  maxWidth: PropTypes.number,
 };
 
 export default DevelopExperimentSelect;

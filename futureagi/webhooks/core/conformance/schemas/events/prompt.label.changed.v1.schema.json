@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:futureagi:webhooks:v1:prompt.label.changed",
+  "title": "prompt.label.changed, api_version v1 (DESIGN.md section 14.3)",
+  "allOf": [{"$ref": "urn:futureagi:webhooks:v1:envelope"}],
+  "type": "object",
+  "properties": {
+    "type": {"const": "prompt.label.changed"},
+    "data": {
+      "type": "object",
+      "required": ["action", "cause", "prompt", "label", "revision", "from_version", "to_version", "changed_at", "changed_by", "links"],
+      "properties": {
+        "action": {"enum": ["assigned", "moved", "removed"]},
+        "cause": {"enum": ["label_change", "replaced", "version_deleted"]},
+        "prompt": {"$ref": "urn:futureagi:webhooks:v1:envelope#/$defs/prompt"},
+        "label": {"$ref": "urn:futureagi:webhooks:v1:envelope#/$defs/label"},
+        "revision": {"type": "integer", "minimum": 1},
+        "from_version": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/versionWithMessage"}]},
+        "to_version": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/versionWithMessage"}]},
+        "changed_at": {"$ref": "urn:futureagi:webhooks:v1:envelope#/$defs/ts"},
+        "changed_by": {"$ref": "urn:futureagi:webhooks:v1:envelope#/$defs/person"},
+        "links": {"$ref": "urn:futureagi:webhooks:v1:envelope#/$defs/promptLinks"},
+        "content": {"$ref": "urn:futureagi:webhooks:v1:envelope#/$defs/content"},
+        "content_truncated": {"const": true},
+        "content_omitted": {"const": "secret_shape"}
+      },
+      "allOf": [
+        {"if": {"properties": {"action": {"const": "assigned"}}}, "then": {"properties": {"from_version": {"type": "null"}, "to_version": {"type": "object"}}}},
+        {"if": {"properties": {"action": {"const": "moved"}}}, "then": {"properties": {"from_version": {"type": "object"}, "to_version": {"type": "object"}}}},
+        {"if": {"properties": {"action": {"const": "removed"}}}, "then": {"properties": {"from_version": {"type": "object"}, "to_version": {"type": "null"}}}},
+        {"if": {"properties": {"cause": {"enum": ["replaced", "version_deleted"]}}}, "then": {"properties": {"action": {"const": "removed"}}}}
+      ]
+    }
+  },
+  "$defs": {
+    "versionWithMessage": {
+      "type": "object",
+      "required": ["id", "version"],
+      "properties": {
+        "id": {"$ref": "urn:futureagi:webhooks:v1:envelope#/$defs/uuid"},
+        "version": {"type": "string", "minLength": 1},
+        "commit_message": {"type": ["string", "null"], "maxLength": 1000},
+        "commit_message_truncated": {"const": true}
+      }
+    }
+  }
+}

@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import PageHeader from "src/components/page-header";
 import { Helmet } from "react-helmet-async";
 import {
   Box,
@@ -13,6 +14,7 @@ import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
 import Tooltip from "@mui/material/Tooltip";
 import Iconify from "src/components/iconify";
+import { useAuthContext } from "src/auth/hooks";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import OrgTwoFactorPolicySection from "src/sections/settings/Security/OrgTwoFactorPolicySection";
 import logger from "src/utils/logger";
@@ -21,10 +23,55 @@ import {
   SS_KEY_ORG_NAME,
 } from "src/utils/sessionKeys";
 
+// A rename reloads the page so every part of the app reads the new name. The
+// confirmation waits in this tab's session storage and shows once after the
+// reload, where the user can read it. It carries who renamed which
+// organization: it shows only to that person in that organization, and is
+// discarded unread for anyone or anywhere else.
+const RENAMED_NOTICE_KEY = "orgSettings.renamedNotice";
+const RENAMED_MESSAGE = "Organization name updated successfully.";
+
+// True when a notice is waiting for this person in this organization. Any
+// notice found is removed, whether it matched or not.
+function takeRenamedNotice(userId, organizationId) {
+  try {
+    const stored = sessionStorage.getItem(RENAMED_NOTICE_KEY);
+    if (stored === null) return false;
+    sessionStorage.removeItem(RENAMED_NOTICE_KEY);
+    const notice = JSON.parse(stored);
+    return (
+      notice?.userId === String(userId) &&
+      notice?.organizationId === String(organizationId)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function keepRenamedNotice(userId, organizationId) {
+  if (userId == null || organizationId == null) return;
+  try {
+    sessionStorage.setItem(
+      RENAMED_NOTICE_KEY,
+      JSON.stringify({
+        userId: String(userId),
+        organizationId: String(organizationId),
+      }),
+    );
+  } catch {
+    // Without session storage the page still reloads with the new name.
+  }
+}
+
 const OrgSettings = () => {
   const theme = useTheme();
-  const { currentOrganizationName, currentOrganizationDisplayName } =
-    useOrganization();
+  const { user } = useAuthContext();
+  const {
+    currentOrganizationId,
+    currentOrganizationName,
+    currentOrganizationDisplayName,
+  } = useOrganization();
+  const userId = user?.id;
 
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState("");
@@ -36,6 +83,18 @@ const OrgSettings = () => {
     setEditName(orgDisplayName);
   }, [orgDisplayName]);
 
+  // Read once the signed-in person and organization are known; until then the
+  // notice is left in place.
+  const noticeRead = useRef(false);
+  useEffect(() => {
+    if (noticeRead.current || userId == null || currentOrganizationId == null)
+      return;
+    noticeRead.current = true;
+    if (takeRenamedNotice(userId, currentOrganizationId)) {
+      enqueueSnackbar(RENAMED_MESSAGE, { variant: "success" });
+    }
+  }, [userId, currentOrganizationId]);
+
   const { mutate: updateOrgName, isPending: isUpdating } = useMutation({
     mutationFn: async (name) => {
       const response = await axios.patch(endpoints.organizations.update, {
@@ -45,14 +104,13 @@ const OrgSettings = () => {
       return response.data;
     },
     onSuccess: () => {
-      enqueueSnackbar("Organization name updated successfully.", {
-        variant: "success",
-      });
       setIsEditing(false);
       // Update sessionStorage so the context picks up the new name
       sessionStorage.setItem(SS_KEY_ORG_NAME, editName.trim());
       sessionStorage.setItem(SS_KEY_ORG_DISPLAY_NAME, editName.trim());
-      // Reload to refresh all contexts with the new org name
+      // Reload to refresh all contexts with the new org name; the
+      // confirmation shows after the reload.
+      keepRenamedNotice(userId, currentOrganizationId);
       window.location.reload();
     },
     onError: (error) => {
@@ -88,36 +146,23 @@ const OrgSettings = () => {
   return (
     <>
       <Helmet>
-        <title>Organization Settings</title>
+        <title>Organization settings</title>
       </Helmet>
       <Box
         sx={{ display: "flex", flexDirection: "column", gap: theme.spacing(2) }}
       >
-        <Box>
-          <Typography
-            sx={{
-              typography: "m2",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.primary",
-            }}
-          >
-            Organization Settings
-          </Typography>
-          <Typography
-            sx={{
-              typography: "s1",
-              fontWeight: "fontWeightRegular",
-              color: "text.secondary",
-              marginTop: theme.spacing(0.5),
-            }}
-          >
-            Manage organization-level settings
-          </Typography>
-        </Box>
+        <PageHeader
+          title="Organization settings"
+          description="Manage organization-level settings"
+          sx={{ mb: 0 }}
+        />
 
+        {/* Below md (the compact Settings shell) the card fills the screen
+            and the label sits above its value. */}
         <Box
           sx={{
-            width: "670px",
+            width: "100%",
+            maxWidth: "670px",
             border: "1px solid",
             borderColor: "divider",
             borderRadius: theme.spacing(1),
@@ -128,6 +173,8 @@ const OrgSettings = () => {
           <Box
             sx={{
               display: "flex",
+              flexWrap: { xs: "wrap", md: "nowrap" },
+              rowGap: 1,
               justifyContent: "flex-start",
               alignItems: "center",
             }}
@@ -135,19 +182,21 @@ const OrgSettings = () => {
             <Typography
               variant="s1"
               sx={{
-                width: "200px",
+                width: { xs: "100%", md: "200px" },
                 color: "text.secondary",
                 fontWeight: "fontWeightRegular",
               }}
             >
-              Organization Name
+              Organization name
             </Typography>
             <Box
               sx={{
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
-                width: "70%",
+                width: { xs: "100%", md: "70%" },
+                minWidth: 0,
+                overflowWrap: "anywhere",
               }}
             >
               {isEditing ? (
@@ -201,9 +250,9 @@ const OrgSettings = () => {
                       <CircularProgress size={14} sx={{ ml: 1 }} />
                     )}
                   </Typography>
-                  <Tooltip title="Edit Organization Name">
+                  <Tooltip title="Edit organization name">
                     <Iconify
-                      icon="fluent:edit-12-regular"
+                      icon="solar:pen-linear"
                       color="text.primary"
                       onClick={() => setIsEditing(true)}
                       sx={{

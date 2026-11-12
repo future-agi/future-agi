@@ -83,14 +83,16 @@ func TestEmbeddingKeepsInputAndElidesVectors(t *testing.T) {
 	}
 }
 
-// OCR's result is the extracted markdown; the page images are the input
-// rendered back and can be large.
+// OCR's result is the extracted markdown, kept when the org opted in under
+// the full content mode (plan V3; ocr_test.go covers the metadata default);
+// the page images are the input rendered back and can be large.
 func TestOCRKeepsMarkdownAndElidesPageImages(t *testing.T) {
 	big := strings.Repeat("B", 300000)
 	rc := &models.RequestContext{
 		EndpointType: "ocr",
 		Metadata:     map[string]string{},
-		OCRRequest:   &models.OCRRequest{Model: "ocr-1", Document: models.OCRDocument{Type: "document_url", DocumentURL: "https://x/y.pdf"}},
+		Privacy:      models.Privacy{ContentMode: models.ContentModeFull},
+		OCRRequest:   &models.OCRRequest{Model: "ocr-1", Document: models.OCRDocument{Type: "document_url", DocumentURL: "https://x/y.pdf"}, KeepText: true},
 		OCRResponse: &models.OCRResponse{Pages: []models.OCRPage{
 			{Index: 0, Markdown: "# Invoice\ntotal 42", Images: []models.OCRImage{{ImageBase64: big}}},
 		}},
@@ -134,5 +136,47 @@ func TestTranscriptionDescribesAudioWithoutCarryingIt(t *testing.T) {
 	}
 	if !strings.Contains(string(req), "file_size_bytes") || !strings.Contains(string(req), "call.mp3") {
 		t.Errorf("audio not described: %s", req)
+	}
+}
+
+// By default a decision is summarised: which questions, of which types, over
+// how big a state, and the answers. The state and the questions' text appear
+// only in DecisionBodies.
+func TestDecisionSummaryLeavesContentOut(t *testing.T) {
+	req, apiErr := models.ParseDecisionRequest([]byte(`{"model":"typesafe/jev-1.13.0","state":"private-state","questions":{"resolved":{"type":"noul","instructions":"private-instructions"}}}`))
+	if apiErr != nil {
+		t.Fatal(apiErr)
+	}
+	respBody := []byte(`{"model":"jev-1.13.0","answers":{"resolved":{"type":"noul","noul":0.25}},"usage":{"input_tokens":9,"output_tokens":0}}`)
+	resp, _ := models.ParseDecisionResponse(respBody)
+	rc := &models.RequestContext{EndpointType: "decision", Metadata: map[string]string{}, DecisionRequest: req, DecisionResponse: resp}
+
+	in, out := ForEndpoint(rc)
+	var summary map[string]any
+	if err := json.Unmarshal(in, &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary["model"] != "typesafe/jev-1.13.0" || summary["state_bytes"] != float64(len(`"private-state"`)) {
+		t.Errorf("summary = %v", summary)
+	}
+	if ids, _ := summary["question_ids"].([]any); len(ids) != 1 || ids[0] != "resolved" {
+		t.Errorf("question_ids = %v", summary["question_ids"])
+	}
+	if strings.Contains(string(in), "private") || strings.Contains(string(out), "private") {
+		t.Fatalf("summary carries content: %s %s", in, out)
+	}
+	if !strings.Contains(string(out), `"noul":0.25`) || !strings.Contains(string(out), `"input_tokens":9`) {
+		t.Errorf("answers or usage missing: %s", out)
+	}
+
+	fullIn, fullOut := DecisionBodies(rc)
+	if string(fullIn) != string(req.Body) || string(fullOut) != string(respBody) {
+		t.Errorf("full bodies = %s %s", fullIn, fullOut)
+	}
+
+	// Absent stays absent.
+	empty := &models.RequestContext{EndpointType: "decision", Metadata: map[string]string{}}
+	if in, out := ForEndpoint(empty); in != nil || out != nil {
+		t.Errorf("absent decision rendered %q %q", in, out)
 	}
 }

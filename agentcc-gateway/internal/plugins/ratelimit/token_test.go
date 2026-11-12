@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/auth"
@@ -99,30 +100,48 @@ func TestTokenLimit_UnderTheLimitReportsWhatIsLeft(t *testing.T) {
 	assertMetadata(t, next, "ratelimit_tokens_remaining", "850")
 }
 
-// A key with no limit of its own falls back to the organization's, the same
-// precedence RPM uses.
-func TestTokenLimit_FallsBackToTheOrgLimit(t *testing.T) {
+// A key with no limit of its own is still held to its organization's token
+// limit. The org's global_tpm counts all of the org's keys together
+// (orglimits.go), so a key's own window never stands in for it: the org
+// limit is enforced by the org counter, and the key window stays unset.
+func TestTokenLimit_TheOrgLimitHoldsAKeyWithNoneOfItsOwn(t *testing.T) {
 	ks, keyID := newKeyStoreWithTokenLimit("sk-tpm-3", 0)
 	p := New(config.RateLimitConfig{Enabled: true}, ks, NewRateLimiter())
 	defer p.limiter.Stop()
+	defer p.Stop()
 
 	rc := newRequestContext(keyID)
 	defer rc.Release()
+	rc.Metadata["org_id"] = "org-tpm"
 	rc.Metadata["org_rate_limit_tpm"] = "500"
 
 	if res := p.ProcessRequest(context.Background(), rc); res.Error != nil {
 		t.Fatalf("refused: %v", res.Error)
 	}
-	assertMetadata(t, rc, "ratelimit_tokens_limit", "500")
+	headers := map[string]string{}
+	for _, h := range rc.ResponseHeaders() {
+		headers[strings.ToLower(h.Name)] = h.Value
+	}
+	if got := headers["x-ratelimit-limit-tokens"]; got != "500" {
+		t.Errorf("x-ratelimit-limit-tokens = %q, want 500 (the org's limit)", got)
+	}
+	if _, set := rc.Metadata["ratelimit_tokens_limit"]; set {
+		t.Error("the key's own token window was used for the org's limit")
+	}
 
 	answered(rc, 400, 200)
 	p.ProcessResponse(context.Background(), rc)
 
 	next := newRequestContext(keyID)
 	defer next.Release()
+	next.Metadata["org_id"] = "org-tpm"
 	next.Metadata["org_rate_limit_tpm"] = "500"
-	if res := p.ProcessRequest(context.Background(), next); res.Error == nil {
+	res := p.ProcessRequest(context.Background(), next)
+	if res.Error == nil {
 		t.Fatal("the org token limit was not enforced")
+	}
+	if res.Error.Status != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want %d", res.Error.Status, http.StatusTooManyRequests)
 	}
 }
 

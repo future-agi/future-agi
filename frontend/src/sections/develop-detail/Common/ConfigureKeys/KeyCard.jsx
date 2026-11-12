@@ -1,3 +1,7 @@
+import {
+  GENERIC_PROVIDER_LOGO,
+  localProviderLogo,
+} from "src/utils/localProviderLogo";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Box, Typography, useTheme } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -16,7 +20,46 @@ import APIKeyReadOnlyView from "src/components/custom-model-dropdown/APIKeyReadO
 import Actions from "./Actions";
 import { LOGO_WITH_BLACK_BACKGROUND } from "src/components/custom-model-dropdown/common";
 
-const KeyCardComponent = ({ data, onDeleteClick }) => {
+// Only bundled provider artwork is eligible; unknown identities show an initial.
+const ProviderLogo = ({ data }) => {
+  const logo = localProviderLogo(data);
+  return logo !== GENERIC_PROVIDER_LOGO ? (
+    <Image
+      src={logo}
+      alt={data?.display_name}
+      width={25}
+      height={25}
+      disableThemeFilter={
+        !LOGO_WITH_BLACK_BACKGROUND.includes(data?.provider?.toLowerCase())
+      }
+      style={{ objectFit: "contain" }}
+    />
+  ) : (
+    <Box
+      aria-hidden
+      sx={{
+        width: 25,
+        height: 25,
+        borderRadius: "6px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        bgcolor: "action.hover",
+        color: "text.secondary",
+        fontSize: 13,
+        fontWeight: 600,
+      }}
+    >
+      {(data?.display_name || data?.provider || "?").charAt(0).toUpperCase()}
+    </Box>
+  );
+};
+
+ProviderLogo.propTypes = {
+  data: PropTypes.object,
+};
+
+const KeyCardComponent = ({ data, onDeleteClick, onKeySaved }) => {
   const theme = useTheme();
   const hasClearedOnceRef = useRef(false);
   const focusTimeoutRef = useRef(null);
@@ -96,6 +139,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
       queryClient.invalidateQueries({ queryKey: ["api-key-status"] });
       setEditMode(false);
       hasClearedOnceRef.current = false;
+      onKeySaved?.(data.provider);
     },
   });
 
@@ -109,6 +153,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
       queryClient.invalidateQueries({ queryKey: ["api-key-status"] });
       setEditMode(false);
       hasClearedOnceRef.current = false;
+      onKeySaved?.(data.provider);
     },
   });
   const handleFormSubmit = async (formData) => {
@@ -272,18 +317,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
                 gap: theme.spacing(1),
               }}
             >
-              <Image
-                src={data?.logoUrl}
-                alt={data?.display_name}
-                width={25}
-                height={25}
-                disableThemeFilter={
-                  !LOGO_WITH_BLACK_BACKGROUND.includes(
-                    data?.provider?.toLowerCase(),
-                  )
-                }
-                style={{ objectFit: "contain" }}
-              />
+              <ProviderLogo data={data} />
               <Typography
                 component="div"
                 typography="s1"
@@ -299,7 +333,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
                 width={16}
                 height={16}
                 style={{
-                  color: theme.palette.green[400],
+                  color: theme.palette.status.success.fg,
                   marginRight: "2px",
                   marginLeft: "0px",
                 }}
@@ -339,18 +373,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
                   gap: theme.spacing(1),
                 }}
               >
-                <Image
-                  src={data?.logoUrl}
-                  alt={data?.display_name}
-                  width={25}
-                  height={25}
-                  disableThemeFilter={
-                    !LOGO_WITH_BLACK_BACKGROUND.includes(
-                      data?.provider?.toLowerCase(),
-                    )
-                  }
-                  style={{ objectFit: "contain" }}
-                />
+                <ProviderLogo data={data} />
                 <Typography
                   component="div"
                   typography="s1"
@@ -366,7 +389,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
                   width={16}
                   height={16}
                   style={{
-                    color: theme.palette.green[400],
+                    color: theme.palette.status.success.fg,
                     marginRight: "2px",
                     marginLeft: "0px",
                   }}
@@ -419,6 +442,7 @@ KeyCardComponent.propTypes = {
   onClose: PropTypes.func,
   isFetching: PropTypes.bool,
   onDeleteClick: PropTypes.func,
+  onKeySaved: PropTypes.func,
 };
 
 const KeyCard = React.memo(KeyCardComponent);

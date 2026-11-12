@@ -7,15 +7,21 @@ import ListSubheader from "@mui/material/ListSubheader";
 import Box from "@mui/material/Box";
 
 import NavList from "./nav-list";
-import { Divider, Typography } from "@mui/material";
 
 // ----------------------------------------------------------------------
 
-function NavSectionVertical({ data, slotProps, isBottomSection, ...other }) {
+function NavSectionVertical({
+  data,
+  slotProps,
+  isBottomSection,
+  label = "Main",
+  ...other
+}) {
   return (
     <Stack
       component="nav"
       id="nav-section-vertical"
+      aria-label={label}
       sx={{ pt: isBottomSection ? 0 : 0 }}
       {...other}
     >
@@ -35,6 +41,8 @@ NavSectionVertical.propTypes = {
   data: PropTypes.array,
   slotProps: PropTypes.object,
   isBottomSection: PropTypes.bool,
+  // The landmark's name; every nav on a page needs a different one.
+  label: PropTypes.string,
 };
 
 const MemoizedNavSectionVertical = memo(NavSectionVertical);
@@ -56,27 +64,29 @@ function Group({ subheader, items, slotProps }) {
       ),
   );
 
+  // Design system sidebar: sentence-case 11px/500 label in fg.tertiary on a
+  // 20px row, no divider rule, 8px between groups, 24px rows with no gap.
   return (
-    <Stack>
+    <Stack sx={{ mt: subheader ? 1 : 0 }}>
       {subheader ? (
         <>
           <ListSubheader
+            component="div"
             disableGutters
             disableSticky
             onClick={handleToggle}
             sx={{
-              fontSize: 11,
-              fontWeight: 600,
-              letterSpacing: 0.5,
-              cursor: "pointer",
-              typography: "overline",
               display: "flex",
               alignItems: "center",
-              justifyContent: "space-between",
+              height: 20,
+              px: 1,
+              mx: 0.5,
+              bgcolor: "transparent",
+              cursor: "pointer",
+              fontSize: 11,
+              lineHeight: "16px",
+              fontWeight: 500,
               color: "text.secondary",
-              mt: 1,
-              p: (theme) => theme.spacing(0.25, 0),
-              textTransform: "uppercase",
               transition: (theme) =>
                 theme.transitions.create(["color"], {
                   duration: theme.transitions.duration.shortest,
@@ -87,40 +97,28 @@ function Group({ subheader, items, slotProps }) {
               ...slotProps?.subheader,
             }}
           >
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
-                paddingX: 1.5,
-                width: "100%", // Take full width
-              }}
-            >
-              <Typography
-                fontSize="12px"
-                textTransform={"capitalize"}
-                fontWeight={500}
-                color={"text.secondary"}
-              >
-                {subheader
-                  .toLowerCase()
-                  .replace(/\b\w/g, (char) => char.toUpperCase())}
-              </Typography>
-              <Divider
-                sx={{
-                  borderColor: "divider",
-                  borderBottomWidth: "1px",
-                  flexGrow: 1,
-                  mt: 0.2,
-                }}
-              />
-            </Box>
+            {subheader.charAt(0).toUpperCase() +
+              subheader.slice(1).toLowerCase()}
           </ListSubheader>
 
-          <Box sx={{ px: 0.5, mb: "10px", width: "100%" }}>{renderContent}</Box>
+          <Box
+            sx={{
+              px: 0.5,
+              width: "100%",
+              display: "flex",
+              flexDirection: "column",
+              gap: 0,
+            }}
+          >
+            {renderContent}
+          </Box>
         </>
       ) : (
-        <Box sx={{ px: 0.5, mb: "10px" }}>{renderContent}</Box>
+        <Box
+          sx={{ px: 0.5, display: "flex", flexDirection: "column", gap: 0 }}
+        >
+          {renderContent}
+        </Box>
       )}
     </Stack>
   );

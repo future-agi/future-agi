@@ -2,8 +2,9 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
-import AddMCPServerDialog from "./AddMCPServerDialog";
+import AddMCPServerDialog from "./servers/AddMCPServerDialog";
 
+// R-LIT: the URLs and server IDs below are literal synthetic unit-test fixtures.
 const mockMutate = vi.fn();
 let mockMutationState = {};
 
@@ -12,6 +13,14 @@ vi.mock("./hooks/useMCPConfig", () => ({
     mutate: mockMutate,
     isPending: false,
     ...mockMutationState,
+  }),
+}));
+
+vi.mock("./hooks/useMCPProbe", () => ({
+  useMCPProbe: () => ({
+    reset: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
   }),
 }));
 
@@ -42,7 +51,7 @@ describe("AddMCPServerDialog", () => {
 
     await user.type(screen.getByLabelText(/Server ID/), "github");
     await user.type(screen.getByLabelText(/URL/), "http://mcp:8080");
-    await user.click(screen.getByRole("button", { name: "Add Server" }));
+    await user.click(screen.getByRole("button", { name: "Add server" }));
 
     expect(mockMutate.mock.calls[0][0]).toEqual({
       gatewayId: "default",
@@ -72,7 +81,7 @@ describe("AddMCPServerDialog", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Update Server" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
 
     expect(mockMutate.mock.calls[0][0].config).toEqual({
       transport: "http",

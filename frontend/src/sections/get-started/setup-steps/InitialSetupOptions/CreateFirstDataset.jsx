@@ -1,10 +1,12 @@
-import { Box, Typography } from "@mui/material";
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
+import { Box, Button } from "@mui/material";
 import React from "react";
 import HeaderContent from "./HeaderContent";
 import CreateDatasetLinks from "./CreateDatasetLinks";
 import { useNavigate } from "react-router";
 import PropTypes from "prop-types";
 import { createFirstDatasetLinks } from "../../constant";
+import ModelRoutes from "../../ModelRoutes";
 
 const CreateFirstDataset = ({ setCurrentLabel }) => {
   const navigate = useNavigate();
@@ -16,18 +18,21 @@ const CreateFirstDataset = ({ setCurrentLabel }) => {
       <Box sx={{ display: "flex", justifyContent: "space-between" }}>
         <HeaderContent
           title="Create your first dataset"
-          description="This tour will guide you through the key features and functionalities"
+          description="Create a dataset to hold the examples you test your prompts and models against."
         />
-        <Typography
-          variant="s1"
-          fontWeight={"fontWeightSemiBold"}
-          color="text.disabled"
-          sx={{ cursor: "pointer" }}
+        <Button
+          variant="text"
+          size="small"
+          sx={{ color: "text.secondary" }}
           onClick={() => setCurrentLabel("createFirstEvaluation")}
         >
           Skip
-        </Typography>
+        </Button>
       </Box>
+      <ModelRoutes
+        sentence="Run prompt columns and synthetic data call a model, and your organization has no provider key of its own."
+        onAddProviderKey={() => setCurrentLabel("addKeys")}
+      />
       <Box
         sx={{
           display: "flex",
@@ -54,7 +59,8 @@ const CreateFirstDataset = ({ setCurrentLabel }) => {
               width: "100%",
             }}
           >
-            <iframe
+            <ExternalContentFrame
+              title="Create your first dataset"
               src={iframeVideoLinks}
               frameBorder="0"
               loading="lazy"
@@ -67,15 +73,16 @@ const CreateFirstDataset = ({ setCurrentLabel }) => {
                 height: "100%",
                 colorScheme: "light",
               }}
-            ></iframe>
+            ></ExternalContentFrame>
           </div>
         </Box>
         <CreateDatasetLinks
           links={links}
-          heading="Create your first dataset"
+          heading="What you can do"
           descriptions={descriptions}
-          buttonTitle="Create Dataset"
+          buttonTitle="Go to Datasets"
           buttonAction={() => navigate("/dashboard/develop")}
+          videoPaddingBottom="45.000%"
         />
       </Box>
     </Box>

@@ -1134,6 +1134,7 @@ def publish_grouping(
         deferred_pending = set()
         reopened_issues = []
         touched = set()
+        attached_issues = set()
         new_ids = {}
         redirects = {}
         if (
@@ -1277,6 +1278,7 @@ def publish_grouping(
                 )
                 assigned_pending.update(ids)
                 touched.add(str(state.cluster_id))
+                attached_issues.add(str(state.cluster_id))
             elif kind == "refresh":
                 state = states.get(command["issue_id"])
                 prototypes = _refresh_prototypes(
@@ -1660,6 +1662,11 @@ def publish_grouping(
             state = TraceGroupingIssueState.no_workspace_objects.select_related(
                 "cluster"
             ).get(cluster_id=_uuid(key, "issue ID"))
+            if key in attached_issues:
+                # Fence the changed assessment input only after all commands validate.
+                # Attach/refresh commands may share the original expected revision.
+                state.revision += 1
+                state.save(update_fields=["revision", "updated_at"])
             _recount(state)
             from tracer.services.grouping.severity import enqueue_severity
 

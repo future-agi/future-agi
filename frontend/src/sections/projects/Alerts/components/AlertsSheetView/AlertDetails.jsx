@@ -4,7 +4,11 @@ import { format } from "date-fns";
 import _ from "lodash";
 import SvgColor from "src/components/svg-color";
 import PropTypes from "prop-types";
-import { formatConditionText, transformAlertToConditions } from "../../common";
+import {
+  earlierRuleNote,
+  formatConditionText,
+  transformAlertToConditions,
+} from "../../common";
 import { useAlertSheetView } from "../../store/useAlertSheetView";
 
 const AlertRuleDetails = ({ details }) => {
@@ -238,6 +242,7 @@ export default function AlertDetails() {
     () => transformAlertToConditions(alertRuleDetails),
     [alertRuleDetails],
   );
+  const earlierNote = earlierRuleNote(alertRuleDetails);
 
   return (
     <Stack gap={2.5}>
@@ -254,6 +259,16 @@ export default function AlertDetails() {
         }}
       />
       <AlertConditions conditions={conditions} />
+      {earlierNote && (
+        <Typography
+          variant="s1"
+          color="text.secondary"
+          fontWeight="fontWeightRegular"
+          data-alert-earlier-rule=""
+        >
+          {earlierNote}
+        </Typography>
+      )}
       <Divider
         sx={{
           borderColor: "divider",

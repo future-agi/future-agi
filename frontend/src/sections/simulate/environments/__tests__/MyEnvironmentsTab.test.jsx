@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
@@ -50,5 +50,36 @@ describe("MyEnvironmentsTab", () => {
     renderTab();
     expect(screen.getByText(/create your first environment/i)).toBeInTheDocument();
     expect(screen.queryByText(/Couldn't load your environments/i)).toBeNull();
+  });
+
+  it("W10-SIMULATE-OTHER-U08 offers Try again on a failed list and refetches it", () => {
+    const refetch = vi.fn();
+    useMyEnvironments.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isPending: false,
+      isError: true,
+      isFetching: false,
+      refetch,
+    });
+    renderTab();
+    const retry = screen.getByRole("button", { name: "Try again" });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("W10-SIMULATE-OTHER-U08 holds Try again while the retry is loading", () => {
+    useMyEnvironments.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isPending: false,
+      isError: true,
+      isFetching: true,
+      refetch: vi.fn(),
+    });
+    renderTab();
+    expect(screen.getByText(/Couldn't load your environments/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeDisabled();
   });
 });

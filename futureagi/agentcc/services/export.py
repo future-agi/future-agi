@@ -3,6 +3,8 @@ import io
 import json
 from decimal import Decimal
 
+from agentcc.services.provider_label import provider_label
+
 CSV_COLUMNS = [
     "started_at",
     "request_id",
@@ -22,9 +24,40 @@ CSV_COLUMNS = [
     "user_id",
     "session_id",
     "routing_strategy",
+    # Explicit correlation allowlist; never include bodies, headers or raw evidence.
+    "api_key_id",
+    "generation_id",
+    "agent_run_id",
+    "agent_parent_run_id",
+    "agent_root_run_id",
+    "agent_id",
+    "agent_framework",
+    "agent_workflow",
+    "agent_step",
+    "agent_turn",
+    "billing_mode",
+    "cost_source",
+    "metadata",
 ]
 
+# The two public attribution tags, not arbitrary caller-provided metadata.
+EXPORT_METADATA_KEYS = ("application", "service")
+
 MAX_EXPORT_ROWS = 10_000
+
+
+def _value(log, column):
+    """A column's value for the customer's download: the provider as customer
+    screens name it, "Future AGI managed" for a managed call;
+    the export has no upstream column."""
+    if column == "provider":
+        return provider_label(log.provider, log.billing_mode)
+    if column == "metadata":
+        metadata = getattr(log, "metadata", None)
+        if not isinstance(metadata, dict):
+            return {}
+        return {key: metadata[key] for key in EXPORT_METADATA_KEYS if key in metadata}
+    return getattr(log, column, "")
 
 
 def export_csv(queryset):
@@ -40,7 +73,16 @@ def export_csv(queryset):
     buf.truncate()
 
     for log in queryset.iterator(chunk_size=1000):
-        writer.writerow([getattr(log, col, "") for col in CSV_COLUMNS])
+        values = [_value(log, col) for col in CSV_COLUMNS]
+        # CSV holds the same structured metadata as a JSON object in one cell.
+        writer.writerow(
+            [
+                json.dumps(value, ensure_ascii=False, sort_keys=True)
+                if isinstance(value, (dict, list))
+                else value
+                for value in values
+            ]
+        )
         buf.seek(0)
         yield buf.read()
         buf.seek(0)
@@ -48,18 +90,24 @@ def export_csv(queryset):
 
 
 def export_json(queryset):
-    """Generator that yields NDJSON lines from a request log queryset."""
+    """Stream one JSON array without materializing the request log queryset."""
+    yield "["
+    first = True
     for log in queryset.iterator(chunk_size=1000):
         row = {}
         for col in CSV_COLUMNS:
-            val = getattr(log, col, "")
+            val = _value(log, col)
             if hasattr(val, "isoformat"):
                 val = val.isoformat()
             elif isinstance(val, Decimal):
                 val = float(val)
-            elif isinstance(val, (int, float, bool)):
+            elif isinstance(val, (int, float, bool, dict, list)):
                 pass  # Keep as-is
             else:
                 val = str(val) if val is not None else None
             row[col] = val
-        yield json.dumps(row) + "\n"
+        if not first:
+            yield ",\n"
+        yield json.dumps(row)
+        first = False
+    yield "]\n"

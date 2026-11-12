@@ -1,6 +1,7 @@
 import { Box, LinearProgress, Stack, Typography } from "@mui/material";
 import React, { useMemo, useState } from "react";
 import { useApiKeysStatus } from "src/api/model/api-keys";
+import { providerMatchesSearch } from "src/components/custom-model-dropdown/KeysHelper";
 import PropTypes from "prop-types";
 import KeyCard from "src/sections/develop-detail/Common/ConfigureKeys/KeyCard";
 import FormSearchField from "../FormSearchField/FormSearchField";
@@ -38,13 +39,12 @@ export default function ConfigureKeysContent({
   //   );
   // }, [data, searchQuery]);
 
-  // Function to filter keys based on displayName
+  // Cards whose name or provider id matches the search
   const filteredData = useMemo(() => {
-    const search = searchQuery.toLowerCase();
     const selectedProvider = selectedModel?.providers?.toLowerCase();
 
     return (data || [])
-      .filter((d) => d.display_name.toLowerCase().includes(search))
+      .filter((d) => providerMatchesSearch(d, searchQuery))
       .sort((a, b) => {
         if (!selectedProvider) return 0;
         const aMatch = a.provider.toLowerCase() === selectedProvider;
@@ -80,19 +80,19 @@ export default function ConfigureKeysContent({
                 },
                 "&:hover fieldset": {
                   borderColor: "action.hover",
-                  boxShadow: "unset",
+                  boxShadow: "none",
                   outline: "none",
                 },
                 "&.Mui-focused fieldset": {
                   borderColor: "action.hover",
-                  boxShadow: "unset",
+                  boxShadow: "none",
                   outline: "none",
                 },
                 "&.Mui-focused": {
-                  boxShadow: "none !important",
+                  boxShadow: "none",
                 },
                 "& input": {
-                  boxShadow: "none !important",
+                  boxShadow: "none",
                   outline: "none",
                 },
               },
@@ -147,7 +147,8 @@ export default function ConfigureKeysContent({
             startIcon={
               <SvgColor
                 // @ts-ignore
-                sx={{ height: 2, width: 2, mt: -0.5 }}
+                width={2}
+                sx={{ mt: -0.5 }}
                 src={"/assets/icons/ic_delete.svg"}
               />
             }

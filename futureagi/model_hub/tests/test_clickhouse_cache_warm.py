@@ -86,6 +86,10 @@ def test_mutation_guard_rejects_unsafe_management_commands(command):
 @pytest.mark.parametrize(
     "command",
     [
+        "agentcc_check_key_org",
+        "agentcc_export_ledger",
+        "agentcc_managed_credits",
+        "agentcc_managed_upstream_keys",
         "backfill_harness_agent_prompts",
         "backfill_legacy_scans",
         "backfill_score_tracer_project",
@@ -588,3 +592,135 @@ def test_harness_backfill_run_is_allowed_for_the_operator(monkeypatch):
     assert operator_startup_mutation_authorized(
         ["manage.py", "harness_versions_backfill"]
     )
+
+
+# Restarting stopped demo seeds is an operator command: every row below admits
+# or refuses it exactly as it admits or refuses a listed operator command
+# without a special form, and `shell` stays refused in every hosted or plain row.
+DEMO_SEED_RESTART = "restart_demo_seeding"
+LISTED_OPERATOR_COMMAND = "requeue_investigations"
+_SEED_ORG = "5f0c9a52-3b7e-4d8e-9a61-0c2f4b7d8e19"
+HOSTED_AND_PLAIN_ROWS = [
+    # A plain `docker compose exec` session.
+    ({"NO_STARTUP_DB_MUTATIONS": "true"}, False),
+    # A hosted process, even when it asks for the local mode.
+    ({"NO_STARTUP_DB_MUTATIONS": "false", "ENV_TYPE": "production"}, False),
+    ({"NO_STARTUP_DB_MUTATIONS": "false", "ENV_TYPE": "staging"}, False),
+    ({"NO_STARTUP_DB_MUTATIONS": "false", "CLOUD_DEPLOYMENT": "US"}, False),
+    # A hosted application process.
+    (
+        {
+            "NO_STARTUP_DB_MUTATIONS": "true",
+            "ENV_TYPE": "production",
+            "SERVICE_TYPE": "backend",
+        },
+        False,
+    ),
+    # The hosted schedule registrar registers schedules and nothing else.
+    (
+        {
+            "NO_STARTUP_DB_MUTATIONS": "true",
+            "ENV_TYPE": "prod",
+            "CLOUD_DEPLOYMENT": "US",
+            "SERVICE_TYPE": "temporal-schedules",
+            "STARTUP_DB_MUTATION_MODE": "disabled",
+        },
+        False,
+    ),
+    # The bootstrap service without the operator mode is not the operator job.
+    (
+        {
+            "NO_STARTUP_DB_MUTATIONS": "true",
+            "ENV_TYPE": "production",
+            "SERVICE_TYPE": "bootstrap",
+            "STARTUP_DB_MUTATION_MODE": "disabled",
+        },
+        False,
+    ),
+    # The hosted one-shot operator job, with either value its pod spec carries.
+    (
+        {
+            "NO_STARTUP_DB_MUTATIONS": "false",
+            "ENV_TYPE": "production",
+            "SERVICE_TYPE": "bootstrap",
+            "STARTUP_DB_MUTATION_MODE": "operator",
+        },
+        True,
+    ),
+    (
+        {
+            "NO_STARTUP_DB_MUTATIONS": "true",
+            "ENV_TYPE": "production",
+            "CLOUD_DEPLOYMENT": "US",
+            "SERVICE_TYPE": "bootstrap",
+            "STARTUP_DB_MUTATION_MODE": "operator",
+        },
+        True,
+    ),
+]
+LOCAL_MODE_ROWS = [
+    # The explicit local mode (./bin/dev manage).
+    ({"NO_STARTUP_DB_MUTATIONS": "false"}, True),
+    # A self-hosted operator process, as INSTALLATION.md runs one:
+    # `docker compose exec -e SERVICE_TYPE=bootstrap
+    # -e STARTUP_DB_MUTATION_MODE=operator -e NO_STARTUP_DB_MUTATIONS=false`.
+    (
+        {
+            "NO_STARTUP_DB_MUTATIONS": "false",
+            "SERVICE_TYPE": "bootstrap",
+            "STARTUP_DB_MUTATION_MODE": "operator",
+        },
+        True,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        [],
+        ["--dry-run"],
+        ["--organization", _SEED_ORG],
+        ["--organization", _SEED_ORG, "--dry-run"],
+    ],
+)
+@pytest.mark.parametrize(
+    "environment, admitted", [*HOSTED_AND_PLAIN_ROWS, *LOCAL_MODE_ROWS]
+)
+def test_demo_seed_restart_is_admitted_where_operator_commands_are(
+    monkeypatch, environment, admitted, options
+):
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    argv = ["manage.py", DEMO_SEED_RESTART, *options]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    # No form of it, the dry run included, is a command any process may run.
+    assert guarded_management_command(argv) == DEMO_SEED_RESTART
+    assert (
+        explicit_management_mutation_authorized(["manage.py", LISTED_OPERATOR_COMMAND])
+        is admitted
+    )
+    assert explicit_management_mutation_authorized(argv) is admitted
+    if admitted:
+        ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+    else:
+        with pytest.raises(RuntimeError, match=f"^{DEMO_SEED_RESTART} is disabled"):
+            ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+
+@pytest.mark.parametrize("environment, admitted", HOSTED_AND_PLAIN_ROWS)
+def test_shell_stays_refused_where_the_demo_seed_restart_runs(
+    monkeypatch, environment, admitted
+):
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(sys, "argv", ["manage.py", "shell"])
+
+    assert (
+        explicit_management_mutation_authorized(["manage.py", DEMO_SEED_RESTART])
+        is admitted
+    )
+    assert explicit_management_mutation_authorized(["manage.py", "shell"]) is False
+    with pytest.raises(RuntimeError, match="^shell is disabled"):
+        ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()

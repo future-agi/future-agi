@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: mongodb-atlas
+version: 1.0.0
+name: MongoDB Atlas
+description: "Your Atlas data and deployments: queries, indexes, clusters and Performance Advisor."
+vendor:
+  name: MongoDB
+  domains: [mongodb.com]
+eeCategory: data
+group: other
+categories: [data, database]
+tags: [mongodb, database, nosql]
+docsUrl: https://www.mongodb.com/docs/mcp-server/overview/
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://www.mongodb.com/docs/mcp-server/overview/
+    fetchedAt: 2026-10-21

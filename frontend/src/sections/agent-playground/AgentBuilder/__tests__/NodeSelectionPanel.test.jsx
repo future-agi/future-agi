@@ -205,3 +205,72 @@ describe("NodeSelectionPanel — Agent node discoverability (TH-4549)", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests — AUD-AGENTS-03: a keyboard-only user can add a node from the palette.
+// ---------------------------------------------------------------------------
+describe("NodeSelectionPanel — keyboard access (AUD-AGENTS-03)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setReferenceable();
+  });
+
+  it("every palette card is a button in the tab order, named by its node", () => {
+    render(<NodeSelectionPanel width={240} />);
+
+    expect(screen.getByRole("button", { name: "LLM Prompt" })).toHaveAttribute(
+      "tabindex",
+      "0",
+    );
+    expect(screen.getByRole("button", { name: "Agent Node" })).toHaveAttribute(
+      "tabindex",
+      "0",
+    );
+  });
+
+  it("Enter on a palette card inserts that node", () => {
+    render(<NodeSelectionPanel width={240} />);
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "LLM Prompt" }), {
+      key: "Enter",
+    });
+
+    expect(mockAddNode).toHaveBeenCalledWith({
+      type: "llm_prompt",
+      position: undefined,
+      node_template_id: "tpl-1",
+    });
+  });
+
+  it("Space on the Agent card goes through the same guard as a click", () => {
+    render(<NodeSelectionPanel width={240} />);
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Agent Node" }), {
+      key: " ",
+    });
+
+    expect(mockAddNode).not.toHaveBeenCalled();
+    expect(screen.getByTestId("agent-node-setup-dialog")).toBeInTheDocument();
+  });
+
+  it("other keys do not insert anything", () => {
+    render(<NodeSelectionPanel width={240} />);
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "LLM Prompt" }), {
+      key: "Tab",
+    });
+
+    expect(mockAddNode).not.toHaveBeenCalled();
+  });
+
+  it("a disabled palette leaves the tab order and ignores Enter", () => {
+    render(<NodeSelectionPanel width={240} disabled />);
+
+    const prompt = screen.getByRole("button", { name: "LLM Prompt" });
+    expect(prompt).toHaveAttribute("tabindex", "-1");
+    expect(prompt).toHaveAttribute("aria-disabled", "true");
+    fireEvent.keyDown(prompt, { key: "Enter" });
+
+    expect(mockAddNode).not.toHaveBeenCalled();
+  });
+});

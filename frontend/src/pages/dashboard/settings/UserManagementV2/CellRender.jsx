@@ -14,7 +14,15 @@ import {
 import CustomTooltip from "src/components/tooltip";
 import { useAuthContext } from "src/auth/hooks";
 
-export const useCanEditRole = (actorOrgLevel, targetOrgLevel, isSameUser) => {
+const ORG_ADMIN_MANAGED_REASON =
+  "Organization Admins and Owners are managed from Organization Members.";
+
+export const useCanEditRole = (
+  actorOrgLevel,
+  targetOrgLevel,
+  isSameUser,
+  { workspaceScope = false, actorWsLevel, targetWsLevel } = {},
+) => {
   return useMemo(() => {
     if (isSameUser) {
       return { allowed: false, reason: "You can't edit your own role." };
@@ -24,7 +32,43 @@ export const useCanEditRole = (actorOrgLevel, targetOrgLevel, isSameUser) => {
       return { allowed: false, reason: "Unable to determine permissions." };
     }
 
-    // Owner can manage everyone
+    if (workspaceScope) {
+      // Org Admin+ have automatic workspace access, even when the actor is Owner.
+      if (targetOrgLevel >= LEVELS.ADMIN) {
+        return {
+          allowed: false,
+          reason: "Organization admins cannot be managed from a workspace.",
+        };
+      }
+
+      // Org Admin+ bypass the scoped API's workspace-rank checks.
+      if (actorOrgLevel >= LEVELS.ADMIN) {
+        return { allowed: true, reason: "" };
+      }
+
+      if (actorWsLevel == null || targetWsLevel == null) {
+        return {
+          allowed: false,
+          reason: "Unable to determine workspace permissions.",
+        };
+      }
+
+      // WorkspaceMemberRoleUpdateAPIView requires WS Admin and a lower target role.
+      if (
+        actorWsLevel < LEVELS.WORKSPACE_ADMIN ||
+        actorWsLevel <= targetWsLevel
+      ) {
+        return {
+          allowed: false,
+          reason:
+            "You must be a workspace admin above this user's workspace level.",
+        };
+      }
+
+      return { allowed: true, reason: "" };
+    }
+
+    // Owner can manage everyone in organization scope.
     if (actorOrgLevel >= LEVELS.OWNER) {
       return { allowed: true, reason: "" };
     }
@@ -38,7 +82,14 @@ export const useCanEditRole = (actorOrgLevel, targetOrgLevel, isSameUser) => {
       allowed: false,
       reason: "You cannot manage a user at or above your own level.",
     };
-  }, [actorOrgLevel, targetOrgLevel, isSameUser]);
+  }, [
+    actorOrgLevel,
+    targetOrgLevel,
+    isSameUser,
+    workspaceScope,
+    actorWsLevel,
+    targetWsLevel,
+  ]);
 };
 
 export const useCanResendInvite = (
@@ -93,6 +144,14 @@ export const useCanSendInvite = (orgLevel, effectiveLevel) => {
   }, [orgLevel, effectiveLevel]);
 };
 
+// Use integer levels when available, fall back to string role check
+export const canManageUsersFor = ({ orgLevel, effectiveLevel, role }) =>
+  (orgLevel != null && orgLevel >= LEVELS.ADMIN) ||
+  (effectiveLevel != null && effectiveLevel >= LEVELS.ADMIN) ||
+  role === "Owner" ||
+  role === "Admin" ||
+  role === "workspace_admin";
+
 const ChipCell = ({ value, styleMap }) => {
   if (!value) return null;
   const styles = styleMap?.[value] || {
@@ -116,7 +175,7 @@ const ChipCell = ({ value, styleMap }) => {
           py: "4px",
           gap: "8px",
           height: "24px",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           ...styles,
         }}
         direction={"row"}
@@ -197,17 +256,8 @@ export const WorkspaceChipsCell = ({ value }) => {
         tooltip: {
           sx: {
             maxWidth: 300,
-            bgcolor: "background.paper",
-            color: "text.primary",
-            border: "1px solid",
-            borderColor: "divider",
-            boxShadow: 3,
             "& .MuiTooltip-arrow": {
-              color: "background.paper",
-              "&::before": {
-                border: "1px solid",
-                borderColor: "divider",
-              },
+              "&::before": {},
             },
           },
         },
@@ -226,9 +276,7 @@ export const WorkspaceChipsCell = ({ value }) => {
           size="small"
           sx={{
             maxWidth: 160,
-            height: 24,
             typography: "s2",
-            fontWeight: "fontWeightMedium",
             bgcolor: (theme) => theme.palette.action.hover,
             color: "text.primary",
             "&:hover": {
@@ -242,9 +290,7 @@ export const WorkspaceChipsCell = ({ value }) => {
             size="small"
             variant="outlined"
             sx={{
-              height: 24,
               typography: "s2",
-              fontWeight: "fontWeightMedium",
               borderColor: "divider",
               color: "text.secondary",
             }}
@@ -256,13 +302,18 @@ export const WorkspaceChipsCell = ({ value }) => {
 };
 WorkspaceChipsCell.propTypes = { value: PropTypes.array };
 
+// The row's menu. On the Members page the form it opens lives in the page
+// (onOpenActionForm, from cellRendererParams), not in this cell: the table
+// builds its cells again when it reloads, which would close a form held here.
+// Without onOpenActionForm the cell holds the form itself.
 export const ActionRender = (props) => {
-  const { data, api, workspaceScope, workspaceId } = props;
+  const { data, api, workspaceScope, workspaceId, onOpenActionForm } = props;
   const status = data.status;
-  const { user, orgLevel } = useAuthContext();
+  const { user, orgLevel, wsLevel } = useAuthContext();
 
   const targetOrgLevel = data?.org_level;
   const actorOrgLevel = orgLevel ?? user?.org_level;
+  const actorWsLevel = wsLevel ?? user?.ws_level;
   const loggedInUserEmail = user?.email;
   const selectedUserEmail = data?.email;
 
@@ -272,6 +323,7 @@ export const ActionRender = (props) => {
     actorOrgLevel,
     targetOrgLevel,
     isSameUser,
+    { workspaceScope, actorWsLevel, targetWsLevel: data?.ws_level },
   );
 
   const { allowed: canResend, reason: resendReason } = useCanResendInvite(
@@ -280,7 +332,40 @@ export const ActionRender = (props) => {
     isSameUser,
   );
 
-  const hasAnyPermission = canEdit || canResend;
+  // Workspace removal requires admin authority, not a higher target role.
+  // The endpoint remains responsible for protecting the user's last workspace.
+  const canRemove = workspaceScope
+    ? !isSameUser &&
+      actorOrgLevel != null &&
+      targetOrgLevel != null &&
+      targetOrgLevel < LEVELS.ADMIN &&
+      (actorOrgLevel >= LEVELS.ADMIN ||
+        (actorWsLevel != null && actorWsLevel >= LEVELS.WORKSPACE_ADMIN))
+    : canEdit;
+
+  // Org Admins and Owners hold Workspace Admin in every workspace, and the
+  // workspace role and removal endpoints refuse them. Whoever the organization
+  // rule lets manage them sees those entries disabled with the reason; the
+  // invite cancel endpoint accepts them from an org Admin+ actor.
+  const { allowed: canManageInOrganization } = useCanEditRole(
+    actorOrgLevel,
+    targetOrgLevel,
+    isSameUser,
+  );
+  const managedFromOrganization =
+    workspaceScope &&
+    targetOrgLevel != null &&
+    targetOrgLevel >= LEVELS.ADMIN &&
+    canManageInOrganization;
+  const canCancel = managedFromOrganization || canEdit;
+  const disabledReasons = managedFromOrganization
+    ? {
+        "edit-ws-role": ORG_ADMIN_MANAGED_REASON,
+        "remove-ws-member": ORG_ADMIN_MANAGED_REASON,
+      }
+    : undefined;
+
+  const hasAnyPermission = canEdit || canRemove || canResend || canCancel;
   const isDisabled = !hasAnyPermission;
   const tooltipReason = isDisabled ? editReason || resendReason : "";
 
@@ -289,6 +374,10 @@ export const ActionRender = (props) => {
   const id = showOptions ? "action-popper" : undefined;
 
   const [openActionForm, setOpenActionForm] = useState(null);
+  const openForm = (item) => {
+    if (onOpenActionForm) onOpenActionForm(item, data);
+    else setOpenActionForm(item);
+  };
 
   return (
     <Box
@@ -307,7 +396,7 @@ export const ActionRender = (props) => {
             py: "4px",
             gap: "8px",
             height: "24px",
-            borderRadius: 0.5,
+            borderRadius: "4px",
             cursor: isDisabled ? "not-allowed" : "pointer",
           }}
           direction={"row"}
@@ -319,7 +408,7 @@ export const ActionRender = (props) => {
         >
           <CustomTooltip show={isDisabled} title={tooltipReason}>
             <Iconify
-              icon="uiw:more"
+              icon="solar:menu-dots-linear"
               sx={{
                 color: isDisabled ? "divider" : "text.primary",
               }}
@@ -334,13 +423,16 @@ export const ActionRender = (props) => {
         open={showOptions}
         onClose={() => setShowOptions(false)}
         data={data}
-        setOpenActionForm={setOpenActionForm}
+        setOpenActionForm={openForm}
         canEdit={canEdit}
+        canRemove={canRemove}
         canResend={canResend}
+        canCancel={canCancel}
+        disabledReasons={disabledReasons}
         menusByStatus={workspaceScope ? wsActionMenusByStatus : undefined}
       />
 
-      {openActionForm && (
+      {!onOpenActionForm && openActionForm && (
         <AllActionForm
           openActionForm={openActionForm}
           onClose={() => setOpenActionForm(null)}
@@ -358,4 +450,5 @@ ActionRender.propTypes = {
   api: PropTypes.object,
   workspaceScope: PropTypes.bool,
   workspaceId: PropTypes.string,
+  onOpenActionForm: PropTypes.func,
 };

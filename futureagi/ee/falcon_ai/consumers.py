@@ -9,6 +9,7 @@ from django.core.exceptions import ValidationError
 
 from ai_tools.base import ToolContext
 from ee.falcon_ai.agent import AgentLoop
+from ee.falcon_ai.snapshot_results import scrub_snapshot_result_event
 from ee.falcon_ai.stream_buffer import StreamBuffer
 from ee.usage.schemas.event_types import BillingEventType
 from ee.usage.schemas.events import UsageEvent
@@ -36,6 +37,7 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         self.organization = None
         self.workspace = None
         self.workspace_id = None
+        self._explicit_workspace_unavailable = False
         self.organization_id = None
         self._message_timestamps = []  # For rate limiting
         self._rate_limit = 10  # max messages per window
@@ -88,7 +90,6 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
 
         # Resolve workspace
         self.workspace = await self._get_workspace()
-
         await self.accept()
         logger.info(
             "falcon_ai_ws_connected",
@@ -141,8 +142,78 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
                 }
             )
 
+    @database_sync_to_async
+    def _chat_access_allowed(self):
+        return self._has_live_chat_access(self.workspace)
+
+    def _has_live_chat_access(self, workspace):
+        """Revalidate the persisted principal and a concrete resource's workspace."""
+        from accounts.models.user import User
+        from ee.falcon_ai.tool_scope import (
+            authenticated_tool_scope,
+            workspace_access_allowed,
+        )
+        from tfc.utils.tenant_scope import acts_in_organization
+
+        context = ToolContext(self.user, self.organization, workspace)
+        try:
+            with authenticated_tool_scope(context):
+                # Socket principals are cached; deactivation can leave every
+                # membership active, so check the persisted user before either
+                # workspace or empty-landing authorization.
+                if (
+                    context.user is None
+                    or not User.objects.filter(
+                        pk=context.user.pk, is_active=True
+                    ).exists()
+                ):
+                    return False
+                return (
+                    workspace_access_allowed(context, context.workspace)
+                    if context.workspace is not None
+                    else acts_in_organization(context.user, context.organization)
+                )
+        except Exception:
+            # Database/authorization failures are not permission to use a cached
+            # membership. Do not expose credentials or context in a new log.
+            return False
+
+    async def _write_destination_available(self, content):
+        if not self._explicit_workspace_unavailable:
+            return True
+        await self._refuse_workspace_unavailable(content)
+        return False
+
+    async def _refuse_workspace_unavailable(self, content):
+        await self.send_json(
+            {
+                "type": "error",
+                "data": {
+                    "code": "workspace_unavailable",
+                    "error": "The selected workspace is unavailable. Select an accessible workspace and retry.",
+                    "conversation_id": content.get("conversation_id"),
+                    # A pre-turn refusal has no persisted assistant message yet.
+                    "client_message_id": content.get("client_message_id"),
+                },
+            }
+        )
+        await self.close(code=4003)
+
     async def _handle_chat(self, content):
+        if not await self._write_destination_available(content):
+            return
+        # This is the interactive turn entry, before slash skills, files, URL
+        # fetching, message saves, AgentLoop memories and all usage/billing.
+        # Background AgentLoops are untouched; native tools still recheck live.
+        if not await self._chat_access_allowed():
+            await self._refuse_workspace_unavailable(content)
+            return
         conversation_id = content.get("conversation_id")
+        # Recovery can reconnect to a new landing while a client still names
+        # the old chat. Authorize that target before skills, files or URL work.
+        if conversation_id and not await self._owns_conversation(conversation_id):
+            await self._refuse_workspace_unavailable(content)
+            return
         message_content = content.get("message", "")
         # Context can be a string or an object {page: "...", path: "...", entity_type: "...", entity_id: "..."}
         raw_context = content.get("context", content.get("context_page", ""))
@@ -239,15 +310,7 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             conversation_id, message_content, files_metadata
         )
         if user_message is None:
-            await self.send_json(
-                {
-                    "type": "error",
-                    "data": {
-                        "error": "Conversation not found",
-                        "conversation_id": conversation_id,
-                    },
-                }
-            )
+            await self._refuse_workspace_unavailable(content)
             return
 
         # Launch agent loop — pass full context + file context + images
@@ -283,6 +346,11 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({"type": "stopped"})
 
     async def _handle_feedback(self, content):
+        if not await self._write_destination_available(content):
+            return
+        if not await self._chat_access_allowed():
+            await self._refuse_workspace_unavailable(content)
+            return
         message_id = content.get("message_id")
         feedback = content.get("feedback", "")
 
@@ -302,8 +370,13 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
 
     async def _handle_reconnect(self, content):
         """Replay buffered events for a conversation when a client reconnects."""
+        if not await self._chat_access_allowed():
+            await self._refuse_workspace_unavailable(content)
+            return
         conversation_id = content.get("conversation_id")
-        if not conversation_id:
+        # Replay only the caller's own conversation; any other id answers as
+        # if nothing were buffered.
+        if not conversation_id or not await self._owns_conversation(conversation_id):
             await self.send_json(
                 {"type": "reconnect_status", "data": {"status": "none"}}
             )
@@ -351,6 +424,16 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         file_images=None,
         skill_id=None,
     ):
+        # Revalidate before any buffer, skill or agent effects in the task too.
+        conversation, history = await self._get_conversation_and_history(
+            conversation_id
+        )
+        if conversation is None:
+            await self._refuse_workspace_unavailable(
+                {"conversation_id": conversation_id}
+            )
+            return
+
         # Set up Redis stream buffer for reconnection support
         stream_buffer = StreamBuffer(conversation_id)
         await database_sync_to_async(stream_buffer.clear)()
@@ -375,6 +458,7 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
                 user=self.user,
                 organization=self.organization,
                 workspace=self.workspace,
+                interactive_falcon_socket=True,
             )
 
             # Resolve skill from DB if skill_id provided
@@ -398,23 +482,6 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             if file_context:
                 agent_message = f"{user_message_content}\n\n{file_context}"
 
-            # Get conversation and history
-            conversation, history = await self._get_conversation_and_history(
-                conversation_id
-            )
-            if conversation is None:
-                await self.send_json(
-                    {
-                        "type": "error",
-                        "data": {
-                            "error": "Conversation not found",
-                            "conversation_id": conversation_id,
-                        },
-                    }
-                )
-                await database_sync_to_async(stream_buffer.set_status)("error")
-                return
-
             # Create AgentLoop instance
             agent = AgentLoop(tool_context=tool_context, conversation=conversation)
 
@@ -431,6 +498,9 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
                         "type": "error",
                         "data": {
                             "error": usage_check.reason or "Usage limit exceeded",
+                            # Lets the client offer the matching fix (e.g. a
+                            # budget link for BUDGET_PAUSED).
+                            "error_code": getattr(usage_check, "error_code", ""),
                             "conversation_id": conversation_id,
                         },
                     }
@@ -559,7 +629,7 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         if not await self._guard.ensure_live(inbound=False):
             return
         try:
-            await super().send_json(content, close=close)
+            await super().send_json(scrub_snapshot_result_event(content), close=close)
         except Exception as e:
             logger.warning(
                 f"Failed to send WebSocket message (connection likely closed): {e}"
@@ -579,31 +649,25 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             )
             if membership:
                 return membership.organization
-            # Fallback to legacy FK
-            if getattr(self.user, "organization", None):
-                return self.user.organization
-            return None
+            # The legacy field counts only for an account with no membership
+            # rows at all; an inactive membership grants nothing.
+            from tfc.utils.tenant_scope import user_organization
+
+            return user_organization(self.user)
         except Exception:
             return None
 
     @database_sync_to_async
     def _get_organization_from_workspace(self, workspace_id):
-        """Resolve organization from workspace_id, verifying user membership."""
+        """Only an accessible selector may choose the socket's organization."""
         from accounts.models import Workspace
-        from accounts.models.organization_membership import OrganizationMembership
+        from accounts.services.workspace_selection import (
+            accessible_workspace_selections,
+        )
 
         try:
-            workspace = Workspace.objects.select_related("organization").get(
-                id=workspace_id, is_active=True
-            )
-            has_access = OrganizationMembership.objects.filter(
-                user=self.user,
-                organization=workspace.organization,
-                is_active=True,
-            ).exists()
-            if has_access:
-                return workspace.organization
-            return None
+            workspace = accessible_workspace_selections(self.user).get(id=workspace_id)
+            return workspace.organization
         except (Workspace.DoesNotExist, ValueError, ValidationError):
             return None
 
@@ -614,132 +678,122 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         if not self.organization_id:
             return None
 
-        # Prefer workspace_id from query params
+        # A failed explicit selector can still land for reads, never for writes.
         if self.workspace_id:
+            self._explicit_workspace_unavailable = True
             try:
-                workspace = Workspace.objects.get(
-                    id=self.workspace_id,
-                    organization_id=self.organization_id,
-                    is_active=True,
+                from accounts.services.workspace_selection import (
+                    accessible_workspace_selections,
                 )
-                if self.user.can_access_workspace(workspace):
-                    return workspace
+
+                workspace = accessible_workspace_selections(self.user).get(
+                    id=self.workspace_id, organization_id=self.organization_id
+                )
+                self._explicit_workspace_unavailable = False
+                return workspace
             except (Workspace.DoesNotExist, ValueError):
                 pass
 
-        # Fallback to user.config
-        user_config = getattr(self.user, "config", {}) or {}
-        preferred_workspace_id = user_config.get(
-            "currentWorkspaceId"
-        ) or user_config.get("defaultWorkspaceId")
+        from accounts.services.workspace_landing import resolve_user_workspace
 
-        if preferred_workspace_id:
-            try:
-                workspace = Workspace.objects.get(
-                    id=preferred_workspace_id,
-                    organization_id=self.organization_id,
-                    is_active=True,
-                )
-                if self.user.can_access_workspace(workspace):
-                    return workspace
-            except (Workspace.DoesNotExist, ValueError):
-                pass
+        return resolve_user_workspace(self.user, self.organization)
 
-        # Fallback to default workspace
-        try:
-            return Workspace.objects.get(
-                organization_id=self.organization_id,
-                is_default=True,
-                is_active=True,
-            )
-        except Workspace.DoesNotExist:
+    def _get_chat_conversation(self, conversation_id):
+        """One scoped, live-authorized lookup for every socket chat operation."""
+        from ee.falcon_ai.models import Conversation
+        from tfc.utils.tenant_scope import workspace_scope_q
+
+        # workspace_scope_q(None) is unscoped, not an empty-landing capability.
+        if self.workspace is None:
             return None
-
-    @database_sync_to_async
-    def _save_user_message(self, conversation_id, content, files_metadata=None):
-        from ee.falcon_ai.models import Conversation, Message
-
         try:
-            conversation = Conversation.no_workspace_objects.get(
+            conversation = Conversation.no_workspace_objects.select_related(
+                "workspace"
+            ).get(
+                workspace_scope_q(self.workspace),
                 id=conversation_id,
                 user=self.user,
                 organization=self.organization,
             )
-            message = Message(
-                conversation=conversation,
-                role="user",
-                content=content,
-                files=files_metadata or [],
-            )
-            message.save()
-            return message
-        except Conversation.DoesNotExist:
+            if not self._has_live_chat_access(conversation.workspace or self.workspace):
+                return None
+            return conversation
+        except (Conversation.DoesNotExist, ValidationError, ValueError, TypeError):
             return None
+
+    @database_sync_to_async
+    def _save_user_message(self, conversation_id, content, files_metadata=None):
+        from ee.falcon_ai.models import Message
+
+        conversation = self._get_chat_conversation(conversation_id)
+        if conversation is None:
+            return None
+        message = Message(
+            conversation=conversation,
+            role="user",
+            content=content,
+            files=files_metadata or [],
+        )
+        message.save()
+        return message
 
     @database_sync_to_async
     def _save_assistant_message(self, conversation_id, result, mode=""):
         from django.db import transaction
 
-        from ee.falcon_ai.models import Conversation, Message
+        from ee.falcon_ai.models import Message
 
-        try:
-            with transaction.atomic():
-                conversation = Conversation.no_workspace_objects.get(
-                    id=conversation_id,
-                    user=self.user,
-                    organization=self.organization,
-                )
-                message = Message(
-                    id=result["id"],
-                    conversation=conversation,
-                    role="assistant",
-                    content=result.get("content", ""),
-                    thoughts=[],  # deprecated — tool calls are now first-class
-                    tool_calls=result.get("tool_calls", []),
-                    completion_card=result.get("completion_card"),
-                    model_used=result.get("model_used", ""),
-                    input_tokens=result.get("input_tokens", 0),
-                    output_tokens=result.get("output_tokens", 0),
-                )
-                message.save()
-                if mode:
-                    conversation.mode = mode
-                    conversation.save(update_fields=["mode", "updated_at"])
-                return message
-        except Conversation.DoesNotExist:
-            return None
+        with transaction.atomic():
+            conversation = self._get_chat_conversation(conversation_id)
+            if conversation is None:
+                return None
+            message = Message(
+                id=result["id"],
+                conversation=conversation,
+                role="assistant",
+                content=result.get("content", ""),
+                thoughts=[],  # deprecated — tool calls are now first-class
+                tool_calls=result.get("tool_calls", []),
+                completion_card=result.get("completion_card"),
+                model_used=result.get("model_used", ""),
+                input_tokens=result.get("input_tokens", 0),
+                output_tokens=result.get("output_tokens", 0),
+            )
+            message.save()
+            if mode:
+                conversation.mode = mode
+                conversation.save(update_fields=["mode", "updated_at"])
+            return message
+
+    @database_sync_to_async
+    def _owns_conversation(self, conversation_id):
+        """Whether this socket can still operate on the requested conversation."""
+        return self._get_chat_conversation(conversation_id) is not None
 
     @database_sync_to_async
     def _get_conversation_and_history(self, conversation_id):
-        from ee.falcon_ai.models import Conversation
-
-        try:
-            conversation = Conversation.no_workspace_objects.get(
-                id=conversation_id,
-                user=self.user,
-                organization=self.organization,
-            )
-            # Get recent messages for context (last 30), include tool_calls
-            # so the agent remembers what tools it used in previous turns
-            messages = list(
-                conversation.messages.order_by("created_at").values(
-                    "role", "content", "tool_calls"
-                )[:30]
-            )
-            return conversation, messages
-        except Conversation.DoesNotExist:
+        conversation = self._get_chat_conversation(conversation_id)
+        if conversation is None:
             return None, []
+        # Get recent messages for context (last 30), include tool_calls
+        # so the agent remembers what tools it used in previous turns
+        messages = list(
+            conversation.messages.order_by("-created_at").values(
+                "role", "content", "tool_calls"
+            )[:30]
+        )
+        messages.reverse()  # Present the recent window in chronological order.
+        return conversation, messages
 
     @database_sync_to_async
     def _update_conversation_tokens(self, conversation_id, turn_tokens):
         """Accumulate token usage on the conversation for compaction tracking."""
         from django.db.models import F
 
-        from ee.falcon_ai.models import Conversation
-
-        Conversation.objects.filter(id=conversation_id).update(
-            total_tokens=F("total_tokens") + turn_tokens
-        )
+        conversation = self._get_chat_conversation(conversation_id)
+        if conversation is not None:
+            conversation.total_tokens = F("total_tokens") + turn_tokens
+            conversation.save(update_fields=["total_tokens"])
 
     @database_sync_to_async
     def _get_files_metadata(self, file_ids):
@@ -818,18 +872,10 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
 
     @database_sync_to_async
     def _update_conversation_mode(self, conversation_id, mode):
-        from ee.falcon_ai.models import Conversation
-
-        try:
-            conversation = Conversation.no_workspace_objects.get(
-                id=conversation_id,
-                user=self.user,
-                organization=self.organization,
-            )
+        conversation = self._get_chat_conversation(conversation_id)
+        if conversation is not None:
             conversation.mode = mode
             conversation.save(update_fields=["mode", "updated_at"])
-        except Conversation.DoesNotExist:
-            pass
 
     def _emit_chat_usage(
         self,
@@ -939,15 +985,28 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
     @database_sync_to_async
     def _update_message_feedback(self, message_id, feedback):
         from ee.falcon_ai.models import Message
+        from tfc.utils.tenant_scope import workspace_scope_q
 
+        # An empty landing is not an unscoped feedback capability.
+        if self.workspace is None:
+            return False
         try:
-            message = Message.no_workspace_objects.select_related("conversation").get(
+            message = Message.no_workspace_objects.select_related(
+                "conversation__workspace"
+            ).get(
+                workspace_scope_q(self.workspace, "conversation__workspace"),
                 id=message_id,
                 conversation__user=self.user,
                 conversation__organization=self.organization,
             )
+            # The socket gate ran before this lookup; membership or the target
+            # workspace may have changed since. Revalidate the resource itself.
+            if not self._has_live_chat_access(
+                message.conversation.workspace or self.workspace
+            ):
+                return False
             message.feedback = feedback
             message.save(update_fields=["feedback", "updated_at"])
             return True
-        except Message.DoesNotExist:
+        except (Message.DoesNotExist, ValidationError, ValueError, TypeError):
             return False

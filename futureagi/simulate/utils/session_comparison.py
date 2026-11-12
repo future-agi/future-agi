@@ -1,7 +1,6 @@
 import json
 from collections import ChainMap
 from datetime import datetime
-from typing import List
 
 from simulate.models import CallExecution
 from simulate.models.chat_message import ChatMessageModel
@@ -19,24 +18,55 @@ RECORDING_ATTR_KEYS = {
 }
 
 
-def fetch_base_session_metrics(session_id: str, *, organization=None):
+def _session_project_id(session_id, *, organization, project_id=None, workspace=None):
+    """Resolve CH sessions (including new-id straddlers) in the authorized scope."""
+    from types import SimpleNamespace
+
+    from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+        resolve_session_fields,
+    )
+    from tracer.utils.workspace_scope import project_queryset_for_request
 
     if not session_id:
         raise ValueError("Session ID is required")
+    if organization is None or (project_id is None and workspace is None):
+        raise ValueError("Comparison source not found")
+    projects = project_queryset_for_request(
+        SimpleNamespace(organization=organization, workspace=workspace, user=None)
+    )
+    if project_id is not None:
+        projects = projects.filter(id=project_id)
+    project_ids = [str(pid) for pid in projects.values_list("id", flat=True)]
+    # An empty list means no access, never an unscoped CH read.
+    if not project_ids:
+        raise ValueError("Comparison source not found")
+    record = resolve_session_fields(
+        [str(session_id)],
+        project_ids=project_ids,
+        include_overlay=False,
+    ).get(str(session_id))
+    if not record or str(record["project_id"]) not in project_ids:
+        raise ValueError("Comparison source not found")
+    return str(record["project_id"])
 
-    # Codex wave-3 P0 (2026-05-26): the legacy ORM path joined through
-    # `trace__session=session` which the caller had already org-scoped
-    # via `CallExecution.objects.filter(test_execution__organization=)`.
-    # The new CH path receives a raw `session_id` (from `Row.metadata`)
-    # and queries by id only — a forged/stale Row.metadata could return
-    # another tenant's metrics. Verify tenant scope BEFORE the CH read.
-    if organization is not None:
-        from tracer.models.trace_session import TraceSession
 
-        if not TraceSession.objects.filter(
-            id=session_id, project__organization=organization
-        ).exists():
-            raise ValueError("Session not found in organization scope")
+def _comparison_organization(call_execution):
+    # TestExecution has no organization field; RunTest is the tenant anchor.
+    run_test = getattr(
+        getattr(call_execution, "test_execution", None), "run_test", None
+    )
+    return getattr(run_test, "organization", None)
+
+
+def fetch_base_session_metrics(
+    session_id: str, *, organization=None, project_id=None, workspace=None
+):
+    project_id = _session_project_id(
+        session_id,
+        organization=organization,
+        project_id=project_id,
+        workspace=workspace,
+    )
 
     # Session-level aggregates from ClickHouse via wave-3 reader extension
     # ``CHSpanReader.aggregate_by_session_ids`` (commit 93c5c415f).
@@ -53,10 +83,18 @@ def fetch_base_session_metrics(session_id: str, *, organization=None):
     from tracer.services.clickhouse.v2 import get_reader
 
     with get_reader() as reader:
-        per_session = reader.aggregate_by_session_ids([str(session_id)])
+        per_session = reader.aggregate_by_session_ids(
+            [str(session_id)], project_id=project_id
+        )
+        # Unlike aggregate_by_session_ids, count_with_filters remaps only the
+        # span side. Normalize the input too when addressed by a new alias.
+        canonical_id = reader._resolve_session_ids_to_canonical([str(session_id)])[
+            str(session_id)
+        ]
         tools_count = reader.count_with_filters(
-            session_id=str(session_id),
+            session_id=canonical_id,
             observation_type="tool",
+            project_id=project_id,
         )
 
     agg = per_session.get(str(session_id))
@@ -82,7 +120,7 @@ def fetch_base_session_metrics(session_id: str, *, organization=None):
     return base_session_metrics
 
 
-def convert_trace_to_chat_messages(traces: List[Trace]):
+def convert_trace_to_chat_messages(traces: list[Trace]):
     if not traces or len(traces) == 0:
         return []
 
@@ -154,7 +192,6 @@ def fetch_tool_calls(call_execution: CallExecution, role: ChatRole):
     for chat_message in chat_messages:
         content = chat_message.content
         if content and len(content) > 0:
-
             for item in content:
                 if (
                     item.get("role") == role
@@ -170,13 +207,28 @@ def fetch_tool_calls(call_execution: CallExecution, role: ChatRole):
     }
 
 
-def fetch_base_session_transcripts(session_id: str):
-    if not session_id:
-        raise ValueError("Session ID is required")
-
-    traces = Trace.objects.filter(session_id=session_id, deleted=False).order_by(
-        "created_at"
+def fetch_base_session_transcripts(
+    session_id: str, *, organization=None, project_id=None, workspace=None
+):
+    project_id = _session_project_id(
+        session_id,
+        organization=organization,
+        project_id=project_id,
+        workspace=workspace,
     )
+    from tracer.services.clickhouse.v2 import get_reader
+
+    # Post-flip traces have no PG session FK. Resolve span membership (including
+    # old/new aliases) first, then hydrate any retained PG transcript fields.
+    with get_reader() as reader:
+        trace_ids = reader.session_trace_ids(project_id, str(session_id))
+    traces = Trace.no_workspace_objects.filter(
+        id__in=trace_ids,
+        project_id=project_id,
+        project__organization=organization,
+        project__deleted=False,
+        deleted=False,
+    ).order_by("created_at")
     base_session_transcripts = convert_trace_to_chat_messages(traces)
     return base_session_transcripts
 
@@ -195,11 +247,18 @@ def fetch_call_execution_transcripts(call_execution: CallExecution):
     return chat_messages
 
 
-def fetch_comparison_transcripts(call_execution: CallExecution, session_id: str):
+def fetch_comparison_transcripts(
+    call_execution: CallExecution, session_id: str, *, project_id=None
+):
     if not call_execution or not session_id:
         raise ValueError("Call execution and session ID are required")
 
-    base_session_transcripts = fetch_base_session_transcripts(session_id)
+    base_session_transcripts = fetch_base_session_transcripts(
+        session_id,
+        organization=_comparison_organization(call_execution),
+        project_id=project_id,
+        workspace=call_execution.test_execution.run_test.workspace,
+    )
     comparison_call_transcripts = fetch_call_execution_transcripts(call_execution)
 
     return {
@@ -231,27 +290,24 @@ def _build_metric_comparisons(
     return result
 
 
-def fetch_comparison_metrics(call_execution: CallExecution, session_id: str):
-
+def fetch_comparison_metrics(
+    call_execution: CallExecution, session_id: str, *, project_id=None
+):
     if not call_execution or not session_id:
         raise ValueError("Call execution and session ID are required")
 
-    # Codex wave-3 P0: thread the call_execution's organization through to
-    # the session lookup so the CH read is tenant-scoped. The CallExecution
-    # is the caller's org-scoped anchor (test_execution__organization gate
-    # upstream); the session_id comes from Row.metadata which is untrusted.
-    organization = getattr(
-        getattr(call_execution, "test_execution", None), "organization", None
-    )
     base_session_metrics = fetch_base_session_metrics(
-        session_id, organization=organization
+        session_id,
+        organization=_comparison_organization(call_execution),
+        project_id=project_id,
+        workspace=call_execution.test_execution.run_test.workspace,
     )
     comparison_call_metrics = fetch_call_execution_metrics(call_execution)
 
     return _build_metric_comparisons(base_session_metrics, comparison_call_metrics)
 
 
-def fetch_voice_conversation_span(trace_id: str) -> dict:
+def fetch_voice_conversation_span(trace_id: str, *, project_id=None) -> dict:
     """
     Fetch the conversation span for a voice trace via ClickHouse.
     Returns a dict with span_attributes and eval_attributes (legacy shape).
@@ -264,11 +320,13 @@ def fetch_voice_conversation_span(trace_id: str) -> dict:
     """
     if not trace_id:
         raise ValueError("Trace ID is required")
+    if not project_id:
+        raise ValueError("Project ID is required")
 
     from tracer.services.clickhouse.v2 import get_reader
 
     with get_reader() as reader:
-        spans = reader.list_by_trace(str(trace_id))
+        spans = reader.list_by_trace(str(trace_id), project_id=str(project_id))
 
     conversation_span = next(
         (s for s in spans if s.observation_type == "conversation"), None
@@ -293,7 +351,12 @@ def fetch_voice_conversation_span(trace_id: str) -> dict:
     span_attributes.update(conversation_span.attrs_bool or {})
     # Overflow keys that aren't the round-tripped PG JSONField columns are
     # part of the original span_attributes; keep them merged in.
-    _ROUND_TRIP_COLS = ("model_parameters", "input_images", "eval_input", "eval_attributes")
+    _ROUND_TRIP_COLS = (
+        "model_parameters",
+        "input_images",
+        "eval_input",
+        "eval_attributes",
+    )
     for k, v in extra.items():
         if k not in _ROUND_TRIP_COLS:
             span_attributes[k] = v
@@ -318,12 +381,14 @@ def merge_span_attrs(span: dict) -> ChainMap:
     return ChainMap(span_attrs, eval_attrs)
 
 
-def fetch_voice_trace_baseline_metrics(trace_id: str, _span: dict | None = None):
+def fetch_voice_trace_baseline_metrics(
+    trace_id: str, _span: dict | None = None, *, project_id=None
+):
     """
     Fetch baseline metrics from a voice trace's conversation span.
     Accepts an optional pre-fetched span to avoid redundant DB queries.
     """
-    span = _span or fetch_voice_conversation_span(trace_id)
+    span = _span or fetch_voice_conversation_span(trace_id, project_id=project_id)
     attrs = merge_span_attrs(span)
     return _extract_voice_metrics_from_attrs(attrs)
 
@@ -417,13 +482,15 @@ def parse_voice_span_transcripts(attrs: dict) -> list[dict]:
     return transcripts
 
 
-def fetch_voice_trace_baseline_transcripts(trace_id: str, _span: dict | None = None):
+def fetch_voice_trace_baseline_transcripts(
+    trace_id: str, _span: dict | None = None, *, project_id=None
+):
     """
     Fetch baseline transcripts from a voice trace's provider_transcript.
     Accepts an optional pre-fetched span to avoid redundant DB queries.
     """
     try:
-        span = _span or fetch_voice_conversation_span(trace_id)
+        span = _span or fetch_voice_conversation_span(trace_id, project_id=project_id)
     except ValueError:
         return []
 
@@ -484,13 +551,19 @@ def _extract_metrics_from_provider_call_data(call_execution: CallExecution):
 
 
 def fetch_voice_trace_comparison_metrics(
-    call_execution: CallExecution, trace_id: str, _span: dict | None = None
+    call_execution: CallExecution,
+    trace_id: str,
+    _span: dict | None = None,
+    *,
+    project_id=None,
 ):
     """Compare a simulated call execution against a voice trace baseline."""
     if not call_execution or not trace_id:
         raise ValueError("Call execution and trace ID are required")
 
-    base_metrics = fetch_voice_trace_baseline_metrics(trace_id, _span=_span)
+    base_metrics = fetch_voice_trace_baseline_metrics(
+        trace_id, _span=_span, project_id=project_id
+    )
     comparison_metrics = _extract_metrics_from_provider_call_data(call_execution)
 
     return _build_metric_comparisons(base_metrics, comparison_metrics)
@@ -579,13 +652,19 @@ def _extract_transcripts_from_provider_call_data(call_execution: CallExecution):
 
 
 def fetch_voice_trace_comparison_transcripts(
-    call_execution: CallExecution, trace_id: str, _span: dict | None = None
+    call_execution: CallExecution,
+    trace_id: str,
+    _span: dict | None = None,
+    *,
+    project_id=None,
 ):
     """Compare transcripts between a voice trace baseline and a simulated call."""
     if not call_execution or not trace_id:
         raise ValueError("Call execution and trace ID are required")
 
-    base_transcripts = fetch_voice_trace_baseline_transcripts(trace_id, _span=_span)
+    base_transcripts = fetch_voice_trace_baseline_transcripts(
+        trace_id, _span=_span, project_id=project_id
+    )
 
     # Voice calls store transcripts in provider_call_data, not ChatMessageModel
     comparison_transcripts = _extract_transcripts_from_provider_call_data(
@@ -601,10 +680,12 @@ def fetch_voice_trace_comparison_transcripts(
     }
 
 
-def fetch_baseline_trace_recordings(trace_id: str, _span: dict | None = None) -> dict:
+def fetch_baseline_trace_recordings(
+    trace_id: str, _span: dict | None = None, *, project_id=None
+) -> dict:
     """Return recording URLs from a baseline voice trace's span attributes."""
     try:
-        span = _span or fetch_voice_conversation_span(trace_id)
+        span = _span or fetch_voice_conversation_span(trace_id, project_id=project_id)
     except ValueError:
         return {}
 
@@ -631,7 +712,9 @@ def fetch_simulated_call_recordings(call_execution: CallExecution) -> dict:
         payload = {}
 
     recording = (
-        (payload.get("artifact") or {}).get("recording") or payload.get("recording") or {}
+        (payload.get("artifact") or {}).get("recording")
+        or payload.get("recording")
+        or {}
     )
     if not isinstance(recording, dict):
         recording = {}
@@ -661,10 +744,16 @@ def _fallback_model_recordings(call_execution: CallExecution) -> dict:
 
 
 def fetch_comparison_recordings(
-    call_execution: CallExecution, trace_id: str, _span: dict | None = None
+    call_execution: CallExecution,
+    trace_id: str,
+    _span: dict | None = None,
+    *,
+    project_id=None,
 ) -> dict:
     """Fetch recording URLs for both baseline and simulated calls."""
     return {
-        "baseline": fetch_baseline_trace_recordings(trace_id, _span=_span),
+        "baseline": fetch_baseline_trace_recordings(
+            trace_id, _span=_span, project_id=project_id
+        ),
         "simulated": fetch_simulated_call_recordings(call_execution),
     }

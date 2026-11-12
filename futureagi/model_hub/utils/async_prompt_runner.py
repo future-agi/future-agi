@@ -7,6 +7,7 @@ from accounts.models import Organization
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
+from model_hub.services import credit_ledger_port as credit_ledger
 from model_hub.services.derived_variable_service import (
     extract_derived_variables_from_output,
 )
@@ -85,11 +86,15 @@ async def run_template_async(
             try:
                 prompt_messages = config.get("messages", []).copy()
 
+                # A Jinja part the sandbox does not allow stops this row with
+                # a plain message before the model is called; it is not left
+                # out silently.
                 messages_with_replacement = replace_variables(
                     prompt_messages,
                     variable_combination,
                     config.get("configuration", {}).get("model"),
                     template_format=config.get("configuration", {}).get("template_format"),
+                    refuse_unsafe=True,
                 )
                 messages_with_replacement = remove_empty_text_from_messages(
                     messages_with_replacement
@@ -128,13 +133,36 @@ async def run_template_async(
                 )
 
                 if is_run == "prompt":
-                    response, value_info = await run_prompt.litellm_response_async(
-                        streaming=True,
-                        template_id=template.id,
-                        version=version_to_run or execution.template_version,
-                        index=i,
-                        max_index=max_len,
-                        type="run_prompt",
+                    # One key (OK-E): a managed call is held before dispatch,
+                    # settled once when the managed transport claimed it, and
+                    # backs off per Retry-After on the contract's retryable
+                    # refusals; BYOK gets an inert meter and runs exactly once.
+                    meter = await database_sync_to_async(credit_ledger.call_meter)(
+                        organization=organization,
+                        workspace=workspace,
+                        model_name=config.get("configuration", {}).get("model"),
+                        purpose=credit_ledger.PURPOSE_PROMPT_PLAYGROUND,
+                        source="run_prompt_gen",
+                        source_id=template.id,
+                        row_id=execution.id if execution else None,
+                        call_ref=i,
+                    )
+                    credit_ledger.require_single_billing_path(
+                        meter, log_and_deduct_cost_for_api_request
+                    )
+                    (response, value_info), managed_call = await credit_ledger.arun_metered(
+                        meter,
+                        lambda: run_prompt.litellm_response_async(
+                            streaming=True,
+                            template_id=template.id,
+                            version=version_to_run or execution.template_version,
+                            index=i,
+                            max_index=max_len,
+                            type="run_prompt",
+                        ),
+                        messages=messages_with_replacement,
+                        max_tokens=config.get("configuration", {}).get("max_tokens"),
+                        observe=credit_ledger.observe_value_info,
                     )
                     metadata = value_info.get("metadata", {})
                     token_config = metadata.get("usage", {})
@@ -160,7 +188,12 @@ async def run_template_async(
                         except ImportError:
                             emit = None
 
-                        if emit is not None and UsageEvent is not None:
+                        # A managed call emits its event once, after settlement.
+                        if (
+                            emit is not None
+                            and UsageEvent is not None
+                            and not meter.is_managed
+                        ):
                             emit(
                                 UsageEvent(
                                 org_id=str(organization.id),
@@ -173,6 +206,17 @@ async def run_template_async(
                         )
                     except Exception:
                         pass  # Metering failure must not break the action
+
+                    if managed_call is not None:
+                        metadata["credit_settlement"] = managed_call.summary()
+                        await database_sync_to_async(meter.emit_usage_event)(
+                            managed_call,
+                            event_type=APICallTypeChoices.PROMPT_BENCH.value,
+                            properties={
+                                "source": "run_prompt_gen",
+                                "source_id": str(template.id),
+                            },
+                        )
 
                     responses[i] = response
                     value_infos[i] = value_info.get("metadata")
@@ -188,6 +232,9 @@ async def run_template_async(
                     output_format=output_format,
                 )
                 responses[i] = str(e)
+                if credit_ledger.is_managed_refusal(e):
+                    # Typed refusal for the recovery UI; never provider text.
+                    value_infos[i] = credit_ledger.refusal_cell_info(e)
 
         execution.output = responses
         execution.metadata = value_infos

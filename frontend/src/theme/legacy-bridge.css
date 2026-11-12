@@ -1,0 +1,40 @@
+/* Compatibility only. New CSS consumers use the pinned --ds-* roles directly. */
+:root,
+body[data-theme] {
+  --primary-main: var(--ds-action-primary-bg);
+  --bg-default: var(--ds-bg-canvas);
+  --bg-paper: var(--ds-bg-surface);
+  --bg-neutral: var(--ds-bg-subtle);
+  --bg-subtle: var(--ds-bg-subtle);
+  --bg-elevated: var(--ds-bg-overlay);
+  --bg-input: var(--ds-bg-surface);
+  --text-primary: var(--ds-fg-default);
+  --text-secondary: var(--ds-fg-secondary);
+  --text-muted: var(--ds-fg-secondary);
+  --text-disabled: var(--ds-fg-disabled);
+  --border-default: var(--ds-border-default);
+  --border-light: var(--ds-border-default);
+  --border-hover: var(--ds-border-strong);
+  --border-active: var(--ds-border-focus);
+  --surface-row-active: var(--ds-bg-selected);
+  --surface-row-hover: var(--ds-bg-hover);
+  --surface-menu: var(--ds-bg-overlay);
+  --surface-header: var(--ds-bg-surface);
+  --chip-success-bg: var(--ds-status-success-bg);
+  --chip-success-text: var(--ds-status-success-fg);
+  --chip-delete-hover: var(--ds-status-danger-bg);
+  --mention-valid-color: var(--ds-status-success-fg);
+  --mention-valid-bg: var(--ds-status-success-bg);
+  --mention-invalid-color: var(--ds-status-danger-fg);
+  --mention-invalid-bg: var(--ds-status-danger-bg);
+  --diff-added-bg: var(--ds-status-success-bg);
+  --diff-added-text: var(--ds-status-success-fg);
+  --diff-removed-bg: var(--ds-status-danger-bg);
+  --diff-removed-text: var(--ds-status-danger-fg);
+  --shadow-elevated: var(--ds-shadow-overlay);
+  --elevation-border: 1px solid var(--ds-border-default);
+  --elevation-bg: var(--ds-bg-overlay);
+  --scrollbar-thumb: var(--ds-border-strong);
+  --monaco-bg: var(--ds-bg-surface);
+  --monaco-gutter-bg: var(--ds-bg-subtle);
+}

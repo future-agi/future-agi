@@ -1,0 +1,70 @@
+[
+  {
+    "tool": "list_worksheets",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "item-fixture"
+    }
+  },
+  {
+    "tool": "get_worksheet",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "item-fixture",
+      "workbookWorksheet-id": "sheet-fixture"
+    }
+  },
+  {
+    "tool": "list_tables",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "item-fixture"
+    }
+  },
+  {
+    "tool": "get_table",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "item-fixture",
+      "workbookTable-id": "table-fixture"
+    }
+  },
+  {
+    "tool": "list_table_rows",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "item-fixture",
+      "workbookTable-id": "table-fixture"
+    }
+  },
+  {
+    "tool": "list_table_columns",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "item-fixture",
+      "workbookTable-id": "table-fixture"
+    }
+  },
+  {
+    "tool": "list_names",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "item-fixture"
+    }
+  },
+  {
+    "tool": "get_used_range",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "item-fixture",
+      "workbookWorksheet-id": "sheet-fixture"
+    }
+  },
+  {
+    "tool": "list_worksheets",
+    "arguments": {
+      "drive-id": "drive-fixture",
+      "driveItem-id": "missing-fixture"
+    }
+  }
+]

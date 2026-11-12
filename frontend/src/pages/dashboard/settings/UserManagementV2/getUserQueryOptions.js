@@ -25,6 +25,7 @@ export const getUserQueryKey = (
   filterStatus,
   filterRole,
   workspaceId,
+  endpoint = endpoints.rbac.memberList,
 ) => {
   return [
     "user-detail",
@@ -34,6 +35,7 @@ export const getUserQueryKey = (
     filterStatus,
     filterRole,
     workspaceId,
+    endpoint || endpoints.rbac.memberList,
   ];
 };
 
@@ -51,6 +53,7 @@ export const getUserQueryOptions = (
       filterStatus,
       filterRole,
       workspaceId,
+      url,
     ),
     queryFn: () =>
       axios.get(url, {

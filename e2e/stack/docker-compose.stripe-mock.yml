@@ -1,0 +1,19 @@
+# Opt-in stripe-mock for walks on the Standalone stack, added by bin/e2e when
+# E2E_STRIPE_MOCK=1, after the walk pins so these Stripe values win over their
+# empty ones (e2e/walks/README.md). The app's Stripe calls go to stripe-mock,
+# never to api.stripe.com: STRIPE_API_BASE is read by tfc.stripe_client, which
+# every Stripe call in futureagi/ goes through. stripe-mock accepts any test-mode
+# key and answers with fixture data; it keeps no state between calls.
+#   - STRIPE_SECRET_KEY is a placeholder, not a credential: stripe_key_mode
+#     reads it as test mode, so the deployment is in test mode.
+#   - WEBHOOK_SECRET_TEST is a placeholder too; settings refuse to start with a
+#     Stripe key and no signing secret for its mode.
+services:
+  stripe-mock:
+    image: stripe/stripe-mock:v0.188.0
+    restart: "no"
+  app:
+    environment:
+      STRIPE_API_BASE: http://stripe-mock:12111
+      STRIPE_SECRET_KEY: sk_test_mock
+      WEBHOOK_SECRET_TEST: e2e-stripe-mock-placeholder

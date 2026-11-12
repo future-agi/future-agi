@@ -173,7 +173,7 @@ async function main() {
     await waitForVisibleText(page, "Invite User", { exact: true });
 
     await waitForVisibleText(page, email);
-    await waitForVisibleText(page, "Organisation Role", { exact: true });
+    await waitForVisibleText(page, "Organization role", { exact: true });
     await waitForVisibleText(page, "Workspaces", { exact: true });
     await waitForVisibleText(page, "Status", { exact: true });
 
@@ -210,7 +210,7 @@ async function main() {
         { timeout: 60000 },
       );
       await fillChipsInput(page, "Emails, comma separated", inviteEmail);
-      await selectSearchFieldOption(page, "Organization Role", "Viewer");
+      await selectSearchFieldOption(page, "Organization role", "Viewer");
       await clickEnabledButton(page, "Send Invite");
       const inviteResponse = await inviteResponsePromise;
       const inviteBody = await inviteResponse.json().catch(() => null);
@@ -321,7 +321,7 @@ async function main() {
       await clickMemberRowActionMenu(page, activeMemberEmail, "Edit user info");
       await clickVisibleTextElement(page, "Edit user info", { exact: true });
       await waitForVisibleText(page, "Edit user info", { exact: true });
-      await selectSearchFieldOption(page, "Organization Role", "Admin");
+      await selectSearchFieldOption(page, "Organization role", "Admin");
       const roleResponsePromise = page.waitForResponse(
         (response) =>
           response.url().includes("/accounts/organization/members/role/") &&

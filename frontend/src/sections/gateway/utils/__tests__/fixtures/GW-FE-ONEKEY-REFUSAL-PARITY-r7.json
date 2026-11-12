@@ -1,0 +1,743 @@
+{
+  "consumer": "FA gateway console frontend",
+  "head": "651ab5bb8ac3a6c54d82c59bdd5a1f1271049aec",
+  "rows": [
+    {
+      "httpStatus": 402,
+      "errorCode": "managed_credits_exhausted",
+      "consumerClassOrState": "managedRefusal.out_of_credits",
+      "userFacingCategory": "out_of_credits",
+      "retry": "never",
+      "remedyShown": "top_up | operator_grant | own_provider_keys"
+    },
+    {
+      "httpStatus": 402,
+      "errorCode": "managed_credits_insufficient",
+      "consumerClassOrState": "managedRefusal.out_of_credits",
+      "userFacingCategory": "out_of_credits",
+      "retry": "never",
+      "remedyShown": "if error.metadata.limit_source == agentcc_in_flight AND error.metadata.remedy_hint == retry: retry_manually_after_in_flight; otherwise: top_up | lower_max_tokens | operator_grant | own_provider_keys"
+    },
+    {
+      "httpStatus": 402,
+      "errorCode": "agent_budget_exhausted",
+      "consumerClassOrState": "managedRefusal.agent_budget",
+      "userFacingCategory": "agent_budget",
+      "retry": "never",
+      "remedyShown": "raise_run_budget | start_new_run | lower_max_tokens | choose_cheaper_model"
+    },
+    {
+      "httpStatus": 429,
+      "errorCode": "budget_exceeded",
+      "consumerClassOrState": "managedRefusal.budget_limit",
+      "userFacingCategory": "budget_limit",
+      "retry": "never",
+      "remedyShown": "open_gateway_budgets"
+    },
+    {
+      "httpStatus": 429,
+      "errorCode": "org_budget_exceeded",
+      "consumerClassOrState": "managedRefusal.budget_limit",
+      "userFacingCategory": "budget_limit",
+      "retry": "never",
+      "remedyShown": "open_gateway_budgets"
+    },
+    {
+      "httpStatus": 429,
+      "errorCode": "managed_spend_velocity",
+      "consumerClassOrState": "managedRefusal.rate_limit",
+      "userFacingCategory": "rate_limit",
+      "retry": "never",
+      "remedyShown": "If error.metadata.remedy_hint=retry AND Retry-After is valid positive integer delta-seconds AND reason is absent/null/empty: show Retry-After, wait before trying again manually on the same billing source; own-provider-key setup is a separate manual choice. request_exceeds_minute_cap/request_exceeds_hour_cap: lower max_tokens or reduce the request, never wait/retry. new_org_daily_cap: contact support, never wait/retry. Missing/invalid header or hint, or unknown reason: review the spending limit with an administrator; no reset-window or retry promise. No automatic replay or failover."
+    },
+    {
+      "httpStatus": 429,
+      "errorCode": "rate_limit_exceeded",
+      "consumerClassOrState": "managedRefusal.rate_limit",
+      "userFacingCategory": "rate_limit",
+      "retry": "never",
+      "remedyShown": "retry_manually_after_wait_same_provider"
+    },
+    {
+      "httpStatus": 503,
+      "errorCode": "managed_billing_unavailable",
+      "consumerClassOrState": "managedRefusal.billing_unavailable",
+      "userFacingCategory": "billing_unavailable",
+      "retry": "never",
+      "remedyShown": "retry_manually_later | own_provider_keys"
+    },
+    {
+      "httpStatus": 403,
+      "errorCode": "permission_denied",
+      "consumerClassOrState": "managedRefusal.permission",
+      "userFacingCategory": "permission",
+      "retry": "never",
+      "remedyShown": "ask_administrator_to_review_access; known legacy missing-pricing text: choose_priced_model | own_provider_keys; category remains permission for all metadata and messages"
+    },
+    {
+      "httpStatus": 403,
+      "errorCode": "future_agi_credits_off",
+      "consumerClassOrState": "managedRefusal.permission",
+      "userFacingCategory": "permission",
+      "retry": "never",
+      "remedyShown": "credits_toggle_instruction | contact_administrator | own_provider_keys"
+    },
+    {
+      "httpStatus": 401,
+      "errorCode": "invalid_api_key",
+      "consumerClassOrState": "managedRefusal.invalid_key",
+      "userFacingCategory": "invalid_key",
+      "retry": "never",
+      "remedyShown": "open_gateway_api_keys | create_or_rotate_gateway_key | use_gateway_auth_header; all documented reasons and absent or unknown reason use invalid_key without a key-existence distinction"
+    },
+    {
+      "httpStatus": 402,
+      "errorCode": "agent_call_cap_exceeded",
+      "consumerClassOrState": "managedRefusal.agent_budget",
+      "userFacingCategory": "agent_budget",
+      "retry": "never",
+      "remedyShown": "Lower max_tokens"
+    },
+    {
+      "httpStatus": 402,
+      "errorCode": "call_cap_unenforceable",
+      "consumerClassOrState": "managedRefusal.agent_budget",
+      "userFacingCategory": "agent_budget",
+      "retry": "never",
+      "remedyShown": "Choose a priced model with an enforceable bound, or ask an authorized administrator to correct the identity, route or cap policy; do not bypass the cap. No automatic replay."
+    },
+    {
+      "httpStatus": 402,
+      "errorCode": "agent_run_stopped",
+      "consumerClassOrState": "managedRefusal.agent_budget",
+      "userFacingCategory": "agent_budget",
+      "retry": "never",
+      "remedyShown": "Resolve the stop cause before starting a new run"
+    },
+    {
+      "httpStatus": 503,
+      "errorCode": "budget_state_unavailable",
+      "consumerClassOrState": "managedRefusal.billing_unavailable",
+      "userFacingCategory": "billing_unavailable",
+      "retry": "never",
+      "remedyShown": "Known transient reason=redis_unavailable AND remedy_hint=retry: wait, then try again manually once on the same billing source; if it still fails, stop and ask an authorized administrator to check durable budget state. Unproven, missing-activation, stale-policy or other persistent failures: an authorized administrator corrects missing activation, stale policy or unavailable durable budget state; do not keep resending. No automatic replay; no invented retry delay."
+    },
+    {
+      "httpStatus": 402,
+      "errorCode": "managed_spend_paused",
+      "consumerClassOrState": "managedRefusal.budget_limit",
+      "userFacingCategory": "budget_limit",
+      "retry": "never",
+      "remedyShown": "Ask an administrator to review the pause"
+    },
+    {
+      "httpStatus": 402,
+      "errorCode": "payment_required",
+      "consumerClassOrState": "managedRefusal.out_of_credits",
+      "userFacingCategory": "out_of_credits",
+      "retry": "never",
+      "remedyShown": "Top up the managed key balance"
+    },
+    {
+      "httpStatus": 429,
+      "errorCode": "budget_throttled",
+      "consumerClassOrState": "managedRefusal.rate_limit",
+      "userFacingCategory": "rate_limit",
+      "retry": "never",
+      "remedyShown": "Try again after waiting"
+    },
+    {
+      "httpStatus": 503,
+      "errorCode": "key_list_not_loaded",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Try again later"
+    },
+    {
+      "httpStatus": 403,
+      "errorCode": "model_not_permitted",
+      "consumerClassOrState": "managedRefusal.permission",
+      "userFacingCategory": "permission",
+      "retry": "never",
+      "remedyShown": "Choose an allowed model"
+    },
+    {
+      "httpStatus": 403,
+      "errorCode": "managed_router_unbounded",
+      "consumerClassOrState": "managedRefusal.permission",
+      "userFacingCategory": "permission",
+      "retry": "never",
+      "remedyShown": "Choose a bounded priced model"
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "unsupported_field_for_managed",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Remove the unsupported field"
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "unsupported_routing_field",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Remove the unsupported routing field; Field: <local allowlisted error.param label> only for an exact known field identifier. Unknown, missing or malformed fields keep the generic remedy; parameter values and server prose are not copied."
+    },
+    {
+      "httpStatus": 403,
+      "errorCode": "key_scope_denied",
+      "consumerClassOrState": "managedRefusal.permission",
+      "userFacingCategory": "permission",
+      "retry": "never",
+      "remedyShown": "ask_administrator_for_appropriately_scoped_key"
+    },
+    {
+      "httpStatus": 402,
+      "errorCode": "agent_key_budget_exhausted",
+      "consumerClassOrState": "managedRefusal.agent_budget",
+      "userFacingCategory": "agent_budget",
+      "retry": "never",
+      "remedyShown": "Ask an administrator to review the key budget"
+    },
+    {
+      "httpStatus": 429,
+      "errorCode": "token_rate_limit_exceeded",
+      "consumerClassOrState": "managedRefusal.rate_limit",
+      "userFacingCategory": "rate_limit",
+      "retry": "never",
+      "remedyShown": "Try again after waiting"
+    },
+    {
+      "httpStatus": 429,
+      "errorCode": "usage_paused",
+      "consumerClassOrState": "managedRefusal.budget_limit",
+      "userFacingCategory": "budget_limit",
+      "retry": "never",
+      "remedyShown": "Ask an administrator to review the budget"
+    },
+    {
+      "httpStatus": 429,
+      "errorCode": "quota_exceeded",
+      "consumerClassOrState": "managedRefusal.budget_limit",
+      "userFacingCategory": "budget_limit",
+      "retry": "never",
+      "remedyShown": "Review the plan quota"
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "usage_unavailable",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Send without background mode"
+    },
+    {
+      "httpStatus": 503,
+      "errorCode": "provider_busy",
+      "consumerClassOrState": "managedRefusal.rate_limit",
+      "userFacingCategory": "rate_limit",
+      "retry": "never",
+      "remedyShown": "Try again after waiting"
+    },
+    {
+      "httpStatus": 409,
+      "errorCode": "idempotency_in_progress",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Wait before resending the same request and idempotency key; show Retry-After only when supplied. Wait before trying again. Keep the request body unchanged and resend with the same idempotency key. The console will not retry automatically."
+    },
+    {
+      "httpStatus": 422,
+      "errorCode": "idempotency_key_reused",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Use a new idempotency key for a different request"
+    },
+    {
+      "httpStatus": 404,
+      "errorCode": "managed_models_disabled",
+      "consumerClassOrState": "managedRefusal.permission",
+      "userFacingCategory": "permission",
+      "retry": "never",
+      "remedyShown": "Ask an operator to configure managed providers"
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "deferred_run_unavailable",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Send the request synchronously"
+    },
+    {
+      "httpStatus": 404,
+      "errorCode": "model_not_found",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Choose an available catalog model"
+    },
+    {
+      "httpStatus": 504,
+      "errorCode": "gateway_timeout",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Check request status before sending again"
+    },
+    {
+      "httpStatus": 410,
+      "errorCode": "model_expired",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Choose an active replacement model"
+    },
+    {
+      "httpStatus": 404,
+      "errorCode": "no_provider_matches",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Adjust provider filters to include an eligible endpoint"
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "provider_preference_unavailable",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Remove or change the provider preference"
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "model_ambiguous",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Use a complete catalog model ID"
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "no_auto_candidate",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Choose an eligible explicit model"
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "omega_default_unroutable",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Configure a routable default model"
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "route_hint_unsupported",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Use cost, balanced or quality for an automatic route"
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "routing_field_not_yet_supported",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Remove the unimplemented routing field; Field: <local allowlisted error.param label> only for an exact known field identifier. Unknown, missing or malformed fields keep the generic remedy; parameter values and server prose are not copied."
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "invalid_provider_preference",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Correct or remove the provider preference; Field: <local allowlisted error.param label> only for an exact known field identifier. Unknown, missing or malformed fields keep the generic remedy; parameter values and server prose are not copied."
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "invalid_routing_field",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Correct the routing field shape and limits; Field: <local allowlisted error.param label> only for an exact known field identifier. Unknown, missing or malformed fields keep the generic remedy; parameter values and server prose are not copied."
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "extra_body_conflict",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Remove the conflicting duplicate field; Field: <local allowlisted error.param label> only for an exact known field identifier. Unknown, missing or malformed fields keep the generic remedy; parameter values and server prose are not copied."
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "invalid_extra_body",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Use a non-nested JSON object for extra_body; Field: <local allowlisted error.param label> only for an exact known field identifier. Unknown, missing or malformed fields keep the generic remedy; parameter values and server prose are not copied."
+    },
+    {
+      "httpStatus": 404,
+      "errorCode": "provider_not_found",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Correct or remove the provider lock"
+    },
+    {
+      "httpStatus": 403,
+      "errorCode": "managed_model_unpriced",
+      "consumerClassOrState": "managedRefusal.unpriced_model",
+      "userFacingCategory": "unpriced_model",
+      "retry": "never",
+      "remedyShown": "choose_priced_model | own_provider_keys"
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "managed_resource_unsupported",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Use a supported managed request shape"
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "unknown_future_code",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "server_message_fallback; no replay or action"
+    },
+    {
+      "httpStatus": 401,
+      "errorCode": "unknown_future_code",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "server_message_fallback; no replay or action"
+    },
+    {
+      "httpStatus": 402,
+      "errorCode": "unknown_future_code",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "server_message_fallback; no replay or action"
+    },
+    {
+      "httpStatus": 403,
+      "errorCode": "unknown_future_code",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "server_message_fallback; no replay or action"
+    },
+    {
+      "httpStatus": 404,
+      "errorCode": "unknown_future_code",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "server_message_fallback; no replay or action"
+    },
+    {
+      "httpStatus": 409,
+      "errorCode": "unknown_future_code",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "server_message_fallback; no replay or action"
+    },
+    {
+      "httpStatus": 410,
+      "errorCode": "unknown_future_code",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "server_message_fallback; no replay or action"
+    },
+    {
+      "httpStatus": 418,
+      "errorCode": "unknown_future_code",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "server_message_fallback; no replay or action"
+    },
+    {
+      "httpStatus": 422,
+      "errorCode": "unknown_future_code",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "server_message_fallback; no replay or action"
+    },
+    {
+      "httpStatus": 429,
+      "errorCode": "unknown_future_code",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "server_message_fallback; no replay or action"
+    },
+    {
+      "httpStatus": 500,
+      "errorCode": "unknown_future_code",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "server_message_fallback; no replay or action"
+    },
+    {
+      "httpStatus": 503,
+      "errorCode": "unknown_future_code",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "server_message_fallback; no replay or action"
+    },
+    {
+      "httpStatus": 504,
+      "errorCode": "unknown_future_code",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "server_message_fallback; no replay or action"
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "managed_model_ambiguous",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "Choose an exact provider-prefixed model ID. Show valid, deduplicated error.metadata.candidates as plain-text candidate IDs so the user can pick one; if missing/invalid, choose an exact ID from the catalog. No automatic choice, request, replay or billing-source switch. Forward 400 invalid_request_error tuple; producer deployment not attested."
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "<no_error.code>",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "The gateway refused the request. The console will not retry automatically. No action; do not infer authentication, budget, rate-limit or billing-source remedies from status or message prose."
+    },
+    {
+      "httpStatus": 401,
+      "errorCode": "<no_error.code>",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "The gateway refused the request. The console will not retry automatically. No action; do not infer authentication, budget, rate-limit or billing-source remedies from status or message prose."
+    },
+    {
+      "httpStatus": 402,
+      "errorCode": "<no_error.code>",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "The gateway refused the request. The console will not retry automatically. No action; do not infer authentication, budget, rate-limit or billing-source remedies from status or message prose."
+    },
+    {
+      "httpStatus": 403,
+      "errorCode": "<no_error.code>",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "The gateway refused the request. The console will not retry automatically. No action; do not infer authentication, budget, rate-limit or billing-source remedies from status or message prose."
+    },
+    {
+      "httpStatus": 404,
+      "errorCode": "<no_error.code>",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "The gateway refused the request. The console will not retry automatically. No action; do not infer authentication, budget, rate-limit or billing-source remedies from status or message prose."
+    },
+    {
+      "httpStatus": 409,
+      "errorCode": "<no_error.code>",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "The gateway refused the request. The console will not retry automatically. No action; do not infer authentication, budget, rate-limit or billing-source remedies from status or message prose."
+    },
+    {
+      "httpStatus": 410,
+      "errorCode": "<no_error.code>",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "The gateway refused the request. The console will not retry automatically. No action; do not infer authentication, budget, rate-limit or billing-source remedies from status or message prose."
+    },
+    {
+      "httpStatus": 418,
+      "errorCode": "<no_error.code>",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "The gateway refused the request. The console will not retry automatically. No action; do not infer authentication, budget, rate-limit or billing-source remedies from status or message prose."
+    },
+    {
+      "httpStatus": 422,
+      "errorCode": "<no_error.code>",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "The gateway refused the request. The console will not retry automatically. No action; do not infer authentication, budget, rate-limit or billing-source remedies from status or message prose."
+    },
+    {
+      "httpStatus": 429,
+      "errorCode": "<no_error.code>",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "The gateway refused the request. The console will not retry automatically. No action; do not infer authentication, budget, rate-limit or billing-source remedies from status or message prose."
+    },
+    {
+      "httpStatus": 500,
+      "errorCode": "<no_error.code>",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "The gateway refused the request. The console will not retry automatically. No action; do not infer authentication, budget, rate-limit or billing-source remedies from status or message prose."
+    },
+    {
+      "httpStatus": 503,
+      "errorCode": "<no_error.code>",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "The gateway refused the request. The console will not retry automatically. No action; do not infer authentication, budget, rate-limit or billing-source remedies from status or message prose."
+    },
+    {
+      "httpStatus": 504,
+      "errorCode": "<no_error.code>",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "The gateway refused the request. The console will not retry automatically. No action; do not infer authentication, budget, rate-limit or billing-source remedies from status or message prose."
+    },
+    {
+      "httpStatus": "*",
+      "errorCode": "<response_evidence>",
+      "consumerClassOrState": "managedRefusal.evidence.dispatched",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "dispatched_header_only: x-agentcc-dispatched response header only. Exact string true -> true, false -> false; missing/malformed -> unknown. Ignore body/error.metadata.dispatched. Display Gateway dispatch: yes/no/unknown as information, never billing proof or permission to retry."
+    },
+    {
+      "httpStatus": "*",
+      "errorCode": "<response_evidence>",
+      "consumerClassOrState": "managedRefusal.evidence.requestId",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "remedyShown": "request_id_header_only: x-agentcc-request-id response header -> refusal.evidence.requestId and displayed Request ID. Missing/malformed -> null; no body metadata, generation-ID or locally generated fallback for refusals."
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "managed_async_unsupported",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "retryable": false,
+      "remedyShown": "Send the request without x-agentcc-async.",
+      "contractRow": {
+        "path": "GATEWAY-ONEKEY-ERROR-CONTRACT-r5.json",
+        "sha256": "d199c08ad5d5db59ccb4e976b5d9f5f42d60b0794ce95cd5bc83544163106bcd",
+        "pointer": "/rows/52"
+      },
+      "mappingStatus": "REQUESTED_NOT_IMPLEMENTED",
+      "availabilityLabel": "PENDING_QUALIFIED_HEAD",
+      "emittedAtC26": false,
+      "source": "INTEGRATION-FROM-ISO.patch:40534",
+      "renderingRule": "Use local code-bound remedy text. For parameter corrections display only an allowlisted field name; do not render parameter values or substitute arbitrary server prose. No automatic replay, route change or billing-source switch. Dispatch/request ID remain header-authoritative."
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "managed_output_ceiling_required",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "retryable": false,
+      "remedyShown": "Set a positive max_tokens value so this model has an output ceiling.",
+      "contractRow": {
+        "path": "GATEWAY-ONEKEY-ERROR-CONTRACT-r5.json",
+        "sha256": "d199c08ad5d5db59ccb4e976b5d9f5f42d60b0794ce95cd5bc83544163106bcd",
+        "pointer": "/rows/53"
+      },
+      "mappingStatus": "REQUESTED_NOT_IMPLEMENTED",
+      "availabilityLabel": "PENDING_QUALIFIED_HEAD",
+      "emittedAtC26": false,
+      "source": "INTEGRATION-FROM-ISO.patch:40569",
+      "renderingRule": "Use local code-bound remedy text. For parameter corrections display only an allowlisted field name; do not render parameter values or substitute arbitrary server prose. No automatic replay, route change or billing-source switch. Dispatch/request ID remain header-authoritative."
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "managed_unsupported_parameter",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "retryable": false,
+      "remedyShown": "Correct the named parameter: supply a valid request object; omit n/best_of or use 1; use positive max_tokens/max_completion_tokens; remove max_output_tokens, max_new_tokens, maxOutputTokens and max_tokens_to_sample from Extra. Do not retry the unchanged request.",
+      "contractRow": {
+        "path": "GATEWAY-ONEKEY-ERROR-CONTRACT-r5.json",
+        "sha256": "d199c08ad5d5db59ccb4e976b5d9f5f42d60b0794ce95cd5bc83544163106bcd",
+        "pointer": "/rows/54"
+      },
+      "mappingStatus": "REQUESTED_NOT_IMPLEMENTED",
+      "availabilityLabel": "PENDING_QUALIFIED_HEAD",
+      "emittedAtC26": false,
+      "source": "INTEGRATION-FROM-ISO.patch:40587",
+      "renderingRule": "Use local code-bound remedy text. For parameter corrections display only an allowlisted field name; do not render parameter values or substitute arbitrary server prose. No automatic replay, route change or billing-source switch. Dispatch/request ID remain header-authoritative."
+    },
+    {
+      "httpStatus": 400,
+      "errorCode": "managed_openrouter_streaming_not_yet",
+      "consumerClassOrState": "managedRefusal.other",
+      "userFacingCategory": "other",
+      "retry": "never",
+      "retryable": false,
+      "remedyShown": "For OpenRouter streaming, explicitly choose your own provider key, which the qualification disclosure lists as unaffected. Do not automatically replay or switch billing source; this is not a transient credits-streaming failure.",
+      "contractRow": {
+        "path": "GATEWAY-ONEKEY-ERROR-CONTRACT-r5.json",
+        "sha256": "d199c08ad5d5db59ccb4e976b5d9f5f42d60b0794ce95cd5bc83544163106bcd",
+        "pointer": "/rows/55"
+      },
+      "mappingStatus": "REQUESTED_NOT_IMPLEMENTED",
+      "availabilityLabel": "PENDING_QUALIFIED_HEAD",
+      "emittedAtC26": false,
+      "source": "R3-03-STREAM-REFUSAL-VALUE-FREE-ERRORS.patch:17",
+      "renderingRule": "Use local code-bound remedy text. For parameter corrections display only an allowlisted field name; do not render parameter values or substitute arbitrary server prose. No automatic replay, route change or billing-source switch. Dispatch/request ID remain header-authoritative."
+    }
+  ],
+  "generatedFrom": "frontend/src/sections/gateway/utils/managedRefusals.js; frontend/src/sections/gateway/utils/managedRefusalRows.js; frontend/src/sections/gateway/utils/managedRefusalFields.js; frontend/src/sections/gateway/utils/managedRefusalVariants.js; frontend/src/sections/gateway/utils/managedRefusalEvidence.js; frontend/src/sections/gateway/components/ManagedRefusalAlert.jsx; frontend/src/sections/gateway/models/detail/modelFacts.js; frontend/src/sections/gateway/models/detail/ModelTryIt.jsx; frontend/src/sections/gateway/guardrails/test/interpret-result.js",
+  "id": "GW-FE-ONEKEY-REFUSAL-PARITY-r7",
+  "servedModel": "gpt-6-astra",
+  "recordedAtUtc": "2026-11-06T23:27:21.318263+00:00",
+  "r7_parent": {
+    "path": "GW-FE-ONEKEY-REFUSAL-PARITY-r6.json",
+    "sha256": "7e59451251f1d981d0a8bdc0ca22110a941e0ca13d1379082f06ddd6498a63c6",
+    "rowRangePreserved": "/rows/0 through /rows/79"
+  },
+  "r7_status": {
+    "step": 4,
+    "recordKind": "CREATE_ONLY_CONTRACT_MAPPING_REQUEST",
+    "rowCount": 84,
+    "inheritedRows": 80,
+    "appendedRows": 4,
+    "implementation": "REQUESTED_NOT_IMPLEMENTED",
+    "inheritedMetadataScope": "head and generatedFrom remain r6 provenance; they do not mean the four appended rows are generated from or implemented in those files.",
+    "c26Commit": "18519f182cee7c61ef70b959d920bd710e0a6841",
+    "runtimeClaim": false,
+    "sourceOrConsumerFilesWritten": false
+  }
+}

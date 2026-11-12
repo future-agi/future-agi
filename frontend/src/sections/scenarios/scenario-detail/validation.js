@@ -6,6 +6,6 @@ export const AddRowUsingAiValidationSchema = z.object({
     .min(1, "Description is required"),
   numRows: z
     .number({ message: "Rows is required" })
-    .min(10, "Minimum 10 Rows are required")
-    .max(20000, "Maximum 20000 Rows are allowed"),
+    .min(10, "Enter at least 10 rows")
+    .max(20000, "Enter 20,000 rows or fewer"),
 });

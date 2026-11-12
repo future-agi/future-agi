@@ -1,0 +1,39 @@
+# H12: the walk runs' environment pins, added by bin/e2e when E2E_WALK_PINS=1
+# (the walk launchers set it; e2e/walks/README.md). It replaces the 10-27 QA
+# kits' safety overlays (gw-qa-mcp-a/kit/safety.compose.yml,
+# gw-qa-onekey/kit/walk/qa-compose.yml, the gw-qa-c5 relay kit): those made the
+# compose networks `internal: true` and then relayed localhost into them. Here
+# the stack keeps its own networks and publishes its ports on 127.0.0.1 only
+# (docker-compose.standalone-e2e.yml), and the boundary is enforced in the
+# browser: lib/walk/boundary.ts aborts and records every non-local request.
+# What the kits pinned and a walk still needs is kept:
+#   - the licence check, telemetry and Ollama point at a closed loopback port;
+#   - Stripe keys are empty, so no checkout or card session can be created;
+#   - APP_URL is the harness app origin, so an invitation link is a real link
+#     (lib/scope-actors.ts records the None/auth/ prefix when it is unset).
+# The managed-mock inspector accepts every one of these (lib/managed-mock.ts:
+# none is a gateway override, a provider key or a credential).
+services:
+  app:
+    environment:
+      FUTURE_AGI_LICENSE_URL: http://127.0.0.1:9
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      OLLAMA_HOST: 127.0.0.1:9
+      OLLAMA_URL: http://127.0.0.1:9
+      OLLAMA_BASE_URL: http://127.0.0.1:9
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      APP_URL: http://localhost:3100
+      STRIPE_SECRET_KEY: ""
+      STRIPE_API_KEY: ""
+      STRIPE_PUBLISHABLE_KEY: ""
+      STRIPE_WEBHOOK_SECRET: ""
+    # Every port on the VM's loopback only (docker-compose.yml binds the app,
+    # API and gateway on all interfaces); the harness ports are unchanged.
+    ports: !override
+      - "127.0.0.1:${FRONTEND_PORT:-3100}:3000"
+      - "127.0.0.1:${BACKEND_PORT:-8100}:8000"
+      - "127.0.0.1:${FI_COLLECTOR_OTLP_PORT:-24317}:4317"
+      - "127.0.0.1:${FI_COLLECTOR_OTLP_HTTP_PORT:-24318}:4318"
+      - "127.0.0.1:${AGENTCC_GATEWAY_PORT:-28090}:8080"
+      - "127.0.0.1:${MINIO_API_PORT:-29005}:9005"

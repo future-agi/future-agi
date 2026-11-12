@@ -1,0 +1,86 @@
+Personal API keys only
+======================
+
+Upgrade impact
+--------------
+Organization, connector-specific and agent-ingest API keys stop authenticating.
+Existing integrations must be updated to a personal key explicitly created by
+an active member on the Keys page (/dashboard/keys). A fresh signup or
+organization has no API keys. The old GET /accounts/keys/ bootstrap returns HTTP 410 with the
+personal-key creation URL. Secrets are shown once; nobody can retrieve another
+person's key or create one for them.
+
+Both POST /accounts/key/generate_secret_key/ and POST /agentcc/api-keys/ require
+an interactive sign-in session. An API key, run token or service signature
+cannot create another key; such requests receive HTTP 403 without minting a
+credential or initializing organization model settings. After sign-in, the
+existing key-settings validation still applies. Django administration can
+disable existing keys, but cannot add, delete or re-enable them.
+
+Deploy the worker relay, admission policy and retirement migration together.
+Do not deploy the refusal independently of the relay replacement. Redis and
+RabbitMQ workers publish directly; memory mode requires one web process and
+the signed /call-websocket/ relay. Workers and web must share SECRET_KEY.
+
+Deployment steps
+----------------
+1. Notify customers before upgrading: existing organization-key integrations
+   will need a personal key; there is no automatic conversion or replacement.
+2. Apply migrations with the new application image:
+       python manage.py migrate
+3. Publish retired-key cache invalidations after the database commit:
+       python manage.py publish_retired_key_revocations
+   This command is safe to repeat. A publication failure exits nonzero: retry
+   after restoring the cache connection. The migration itself makes no network
+   calls. MCP connections using retired keys are marked reconnect_required.
+4. Restart the collector to clear any previously cached acceptance. Compose
+   with the collector's personal-key membership filter; this backend branch
+   alone does not implement the collector's resolver.
+5. Re-push gateway configuration and apply the gateway credential migration
+   from its corresponding release. Compose with the Playground and batch
+   credential changes, the collector changes, and Enterprise credential
+   retirement; this backend must not ship alone.
+6. Keep EE_SERVICE_PROVISIONING_ENABLED=false in every web and worker process.
+   After migrations, with the gateway running, execute from the new backend:
+       python manage.py retire_ee_credentials
+   This is an operator-owned deployment gate, not a scheduled background job.
+   The database migration does not publish to the running gateway. A missed
+   publication can leave a previously issued Enterprise agent key usable there,
+   even though the backend already refuses it and has marked it revoked.
+   Retry the command after any connectivity repair until it exits zero AND its
+   JSON output has gateway_pending=0. Each binding must be confirmed by gateway
+   readback as absent (HTTP 404), or as the same key id with status=revoked and
+   the same metadata.org_id. A successful revocation request alone is not proof.
+   Retain the counts and value-free deployment evidence; do not log credentials.
+   The durable binding records are the retry set: repeat execution also checks
+   already retired keys and does not create replacements or delete history.
+7. Before admitting traffic, repeat retirement and verify a previously issued
+   Enterprise service credential is refused by the backend and its agent key
+   is refused by the gateway (HTTP 401), while an explicitly created personal
+   key still works. Restart/reload the gateway and repeat those checks plus the
+   command's gateway_pending=0 readback. A restart alone is not a substitute for
+   this readback gate. If any step is unconfirmed, keep the rollout incomplete.
+8. Run the keyless worker-delivery, new-signup zero-key, personal-key creation,
+   removed-member refusal and retired-key HTTP/Basic/MCP smoke checks.
+
+Temporary OFF states
+--------------------
+Platform provider/voice span emission and hosted instrumented-sandbox export
+are OFF pending per-run token support. They never mint substitute API keys.
+Customer code explicitly configured with a personal key is independent of the
+platform's internal export path. Treat these OFF states as release known issues.
+
+Rollback
+--------
+Rollback requires the release owner's decision: it restores retired access.
+The reverse accounts retirement migration restores exactly the rows bearing
+its retirement reason to their recorded prior_enabled value. Hashes and
+ciphertext are retained during this phase. Restore the matching previous image,
+then restart the collector and apply the matching gateway rollback procedure.
+MCP reconnect flags remain conservative; reconnect using an explicit personal
+key rather than silently restoring a connection.
+
+Enterprise service and agent credential retirement is durable and is not
+reversed by the account-key procedure above or by rolling back an image. Keep
+provisioning OFF; recovery requires a coordinated roll-forward or restoration
+of the pre-upgrade backup, not reissuing replacement credentials.

@@ -1,25 +1,218 @@
-import { alpha, Box, IconButton, Typography, useTheme } from "@mui/material";
+import { Box, IconButton, Typography } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useState } from "react";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
+import CustomTooltip from "src/components/tooltip";
+import ColumnStatsPopover from "./ColumnStatsPopover";
+import {
+  ROLE_TAG,
+  statsLine,
+} from "src/sections/develop-detail/DataTab/DataGrid/dataGridView";
+import {
+  addColumnFilter,
+  statsActionFilter,
+} from "src/sections/develop-detail/DataTab/DataGrid/gridFilterActions";
+import { useDataGridViewStore } from "src/sections/develop-detail/DataTab/DataGrid/useDataGridView";
+
+const ROLE_TAG_COLOR = {
+  input: "text.secondary",
+  expected: "success.dark",
+  metadata: "info.dark",
+};
+
+/**
+ * Line 2 of a versioned Data grid header (area-datasets G3, G5): the role
+ * tag of a user column, then the stats line. A part with an action filters
+ * the grid; anywhere else opens the stats popover.
+ */
+const HeaderLine2 = ({ col, api, datasetId }) => {
+  const [anchor, setAnchor] = useState(null);
+  const isUser = col?.originType === "OTHERS";
+  const line = statsLine(col?.stats, { status: col?.status });
+  const role = col?.role ?? null;
+
+  const runAction = (action) => {
+    if (action === "errors") {
+      useDataGridViewStore.getState().patch(datasetId, { cellErrorOnly: true });
+      return;
+    }
+    if (action === "sortWorst" || action === "sortBest") {
+      const higher = col?.stats?.higher_is_better !== false;
+      const asc = action === "sortWorst" ? higher : !higher;
+      api?.applyColumnState({
+        state: [{ colId: col.id, sort: asc ? "asc" : "desc" }],
+        defaultState: { sort: null },
+      });
+      return;
+    }
+    if (action === "hide") {
+      api?.setColumnsVisible([col.id], false);
+      return;
+    }
+    const filter = statsActionFilter(action, col);
+    if (filter) addColumnFilter(api, filter);
+  };
+
+  if (!isUser && !line) return null;
+  return (
+    <>
+      <Box
+        role="button"
+        tabIndex={-1}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (col?.stats) setAnchor(e.currentTarget);
+        }}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 0.75,
+          minWidth: 0,
+          height: 18,
+          cursor: col?.stats ? "pointer" : "default",
+          borderRadius: 0.5,
+          "&:hover .stats-text": col?.stats ? { color: "text.primary" } : {},
+        }}
+      >
+        {isUser && (
+          <Typography
+            component="span"
+            sx={{
+              fontSize: 10,
+              lineHeight: "14px",
+              fontWeight: 600,
+              letterSpacing: "0.04em",
+              px: 0.5,
+              borderRadius: 0.5,
+              flexShrink: 0,
+              border: "1px solid",
+              borderColor: "divider",
+              color: role
+                ? ROLE_TAG_COLOR[role] ?? "text.secondary"
+                : "text.disabled",
+            }}
+          >
+            {role ? ROLE_TAG[role] ?? role.toUpperCase() : "NO ROLE"}
+          </Typography>
+        )}
+        {line && (
+          <Box
+            className="stats-text"
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 0.5,
+              minWidth: 0,
+              overflow: "hidden",
+              color: "text.secondary",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {line.parts.map((part, i) => (
+              <React.Fragment key={part.text}>
+                {i > 0 && (
+                  <Typography
+                    component="span"
+                    typography="s3"
+                    color="text.disabled"
+                  >
+                    ·
+                  </Typography>
+                )}
+                <Typography
+                  component="span"
+                  typography="s3"
+                  onClick={
+                    part.action
+                      ? (e) => {
+                          e.stopPropagation();
+                          runAction(part.action);
+                        }
+                      : undefined
+                  }
+                  sx={{
+                    color: part.tone
+                      ? part.tone === "warning"
+                        ? "warning.dark"
+                        : `${part.tone}.main`
+                      : "inherit",
+                    fontWeight: part.action ? 500 : 400,
+                    fontVariantNumeric: "tabular-nums",
+                    ...(part.action && {
+                      cursor: "pointer",
+                      "&:hover": { textDecoration: "underline" },
+                    }),
+                  }}
+                >
+                  {part.text}
+                </Typography>
+              </React.Fragment>
+            ))}
+            {line.progress != null && (
+              <Box
+                sx={{
+                  width: 40,
+                  height: 2,
+                  borderRadius: 1,
+                  bgcolor: "action.hover",
+                  flexShrink: 0,
+                }}
+              >
+                <Box
+                  sx={{
+                    width: `${Math.round(line.progress * 100)}%`,
+                    height: "100%",
+                    bgcolor: "primary.main",
+                    borderRadius: 1,
+                  }}
+                />
+              </Box>
+            )}
+          </Box>
+        )}
+      </Box>
+      <ColumnStatsPopover
+        anchorEl={anchor}
+        onClose={() => setAnchor(null)}
+        column={col}
+        onAction={runAction}
+      />
+    </>
+  );
+};
+
+HeaderLine2.propTypes = {
+  col: PropTypes.object,
+  api: PropTypes.any,
+  datasetId: PropTypes.string,
+};
 
 export const CustomDevelopDetailColumn = (props) => {
-  const { displayName, showColumnMenu, col, hideMenu, eGridHeader, api } =
-    props;
+  const {
+    displayName,
+    showColumnMenu,
+    col,
+    hideMenu,
+    eGridHeader,
+    api,
+    versioned,
+    datasetId,
+  } = props;
   const refButton = useRef(null);
-  const theme = useTheme();
 
   useEffect(() => {
     eGridHeader.style.padding = "0px";
   }, [eGridHeader.style]);
 
+  // The versioned grid sizes columns by type (G4); only the legacy grid
+  // widens every column to fit its name.
   useEffect(() => {
-    if (api && col) {
+    if (!versioned && api && col) {
       const minWidth = Math.max(displayName.length * 8 + 50, 250);
       props.api.setColumnWidths([{ key: col.id, newWidth: minWidth }]);
     }
-  }, [api, col, displayName, props.api]);
+  }, [api, col, displayName, props.api, versioned]);
 
   const onMenuClicked = () => {
     showColumnMenu(refButton?.current);
@@ -28,7 +221,15 @@ export const CustomDevelopDetailColumn = (props) => {
   const iconStyle = {
     color: "text.secondary",
   };
+  const emptyCount = Number(col?.stats?.empty_count);
+  const totalCount = Number(col?.stats?.total);
+  const headerTitle =
+    totalCount > 0 && emptyCount / totalCount > 0.9
+      ? `Empty in ${emptyCount} of ${totalCount} rows`
+      : displayName;
 
+  // Dataset column-type icons keep their original set (design-system exception,
+  // agreed 2026-10-30); every other icon in this header is Solar.
   const renderIcon = () => {
     if (col.originType === "run_prompt") {
       return (
@@ -118,25 +319,98 @@ export const CustomDevelopDetailColumn = (props) => {
   };
 
   const getBackgroundColor = (originType) => {
-    const isDark = theme.palette.mode === "dark";
     if (
       originType === "evaluation" ||
       originType === "optimisation_evaluation"
     ) {
       return "var(--surface-highlight)";
     } else if (originType === "run_prompt") {
-      return isDark ? alpha(theme.palette.info.main, 0.18) : "info.lighter";
+      return "status.info.bg";
     } else if (originType === "optimisation") {
-      return isDark
-        ? alpha(theme.palette.primary.main, 0.16)
-        : "primary.lighter";
+      return "status.discovery.bg";
     } else if (originType === "annotation_label") {
-      return isDark
-        ? alpha(theme.palette.primary.main, 0.16)
-        : "primary.lighter";
+      return "status.discovery.bg";
     }
-    return isDark ? "background.neutral" : "whiteScale.100";
+    return "background.neutral";
   };
+
+  if (versioned) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          gap: 0.25,
+          width: "100%",
+          minWidth: 0,
+          backgroundColor: getBackgroundColor(),
+          pl: 1,
+          pr: 0.25,
+          height: "100%",
+        }}
+      >
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            minWidth: 0,
+            height: 22,
+          }}
+        >
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 0.5,
+              minWidth: 0,
+            }}
+          >
+            <Box
+              sx={{
+                display: "flex",
+                flexShrink: 0,
+                "& svg, & span": { width: 16, height: 16 },
+              }}
+            >
+              {renderIcon()}
+            </Box>
+            <CustomTooltip
+              show
+              title={headerTitle}
+              placement="top"
+              size="small"
+              arrow
+              enterDelay={600}
+            >
+              <Typography
+                noWrap
+                typography="s2"
+                fontWeight="fontWeightMedium"
+                color="text.primary"
+                sx={{ minWidth: 0 }}
+              >
+                {displayName}
+              </Typography>
+            </CustomTooltip>
+          </Box>
+          {!hideMenu && (
+            <IconButton
+              size="small"
+              ref={refButton}
+              onClick={onMenuClicked}
+              sx={{ p: 0.25, flexShrink: 0 }}
+              aria-label={`${displayName} column menu`}
+            >
+              <Iconify icon="mdi:dots-vertical" width={16} />
+            </IconButton>
+          )}
+        </Box>
+        <HeaderLine2 col={col} api={api} datasetId={datasetId} />
+      </Box>
+    );
+  }
 
   return (
     <Box
@@ -152,13 +426,13 @@ export const CustomDevelopDetailColumn = (props) => {
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
         {renderIcon()}
-        <Typography fontWeight={500} fontSize="14px" color={"text.secondary"}>
+        <Typography fontWeight={500} fontSize="13px" color={"text.secondary"}>
           {displayName}
         </Typography>
       </Box>
       {!hideMenu && (
         <IconButton size="small" ref={refButton} onClick={onMenuClicked}>
-          <Iconify icon="mdi:dots-vertical" />
+          <Iconify icon="solar:menu-dots-vertical-linear" />
         </IconButton>
       )}
     </Box>
@@ -188,6 +462,8 @@ CustomDevelopDetailColumn.propTypes = {
   hideMenu: PropTypes.bool,
   eGridHeader: PropTypes.any,
   api: PropTypes.any,
+  versioned: PropTypes.bool,
+  datasetId: PropTypes.string,
 };
 
 export default CustomDevelopDetailColumn;

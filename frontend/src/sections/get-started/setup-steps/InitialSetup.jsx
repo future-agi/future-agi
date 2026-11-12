@@ -1,14 +1,48 @@
-import { Button, Typography } from "@mui/material";
+import { Button, Typography, useTheme } from "@mui/material";
 import Box from "@mui/material/Box/Box";
 import PropTypes from "prop-types";
 import React, { useMemo } from "react";
-import { useAuthContext } from "src/auth/hooks";
 import SvgColor from "src/components/svg-color";
-import { menuesConstant } from "./../constant";
+import { countedSteps, listedSteps, menuesConstant } from "./../constant";
+import { useInviteAccess } from "../useInviteAccess";
+import { statusColors } from "src/utils/runStatus";
+
+// Each setup step's state, as a role in the one status map.
+const STEP_ROLE = {
+  complete: "success",
+  active: "info",
+  incomplete: "neutral",
+};
+
+const stepColors = (theme, status) => {
+  const role = STEP_ROLE[status] || "neutral";
+  if (role === "neutral") {
+    return {
+      iconColor: theme.palette.text.primary,
+      titleColor: theme.palette.text.primary,
+      iconBackgroundColor: theme.palette.background.neutral,
+      hoverIconBackgroundColor: theme.palette.background.neutral,
+      borderColor: theme.palette.divider,
+      hoverColor: "",
+      backgroundColor: "",
+    };
+  }
+  const c = statusColors(theme, role);
+  return {
+    iconColor: c.fg,
+    titleColor: theme.palette.text.primary,
+    iconBackgroundColor: c.bg,
+    hoverIconBackgroundColor: c.bg,
+    borderColor: c.solid,
+    hoverColor: role === "success" ? c.bg : "",
+    backgroundColor: "",
+  };
+};
 
 const InitialSetup = ({ currentLabel, setCurrentLabel, data }) => {
-  const { menusList, keySelector, statusColor } = menuesConstant;
-  const { user } = useAuthContext();
+  const theme = useTheme();
+  const { menusList, keySelector } = menuesConstant;
+  const { countsInvite } = useInviteAccess();
 
   const menus = useMemo(() => {
     const menu = JSON.parse(JSON.stringify(menusList));
@@ -24,6 +58,15 @@ const InitialSetup = ({ currentLabel, setCurrentLabel, data }) => {
       return item;
     });
   }, [currentLabel, data, keySelector, menusList]);
+
+  // Every step is listed; the count is over the steps that count for this
+  // reader.
+  const shownMenus = listedSteps(menus);
+  const counted = countedSteps(shownMenus, countsInvite);
+  // A step counts as done from its check, not its status: the open step's
+  // status is "active" even when its check is done.
+  const isDone = (item) => Boolean(data?.[keySelector[item.label]]);
+  const doneCount = counted.filter(isDone).length;
 
   const handleMenuClick = (selected) => {
     setCurrentLabel(selected.label);
@@ -45,14 +88,14 @@ const InitialSetup = ({ currentLabel, setCurrentLabel, data }) => {
           fontWeight={"fontWeightSemiBold"}
           color={"text.primary"}
         >
-          Initial Setup
+          Setup steps
         </Typography>
         <Typography
           variant="s2"
           fontWeight={"fontWeightRegular"}
           color="text.secondary"
         >
-          Help you guide through the key features and functionalities
+          {`${doneCount} of ${counted.length} done`}
         </Typography>
       </Box>
       <Box
@@ -66,70 +109,73 @@ const InitialSetup = ({ currentLabel, setCurrentLabel, data }) => {
           // maxWidth: "max-content",
         }}
       >
-        {menus
-          .filter((item) => {
-            return (user?.organization_role ?? user?.organizationRole) ===
-              "Owner"
-              ? true
-              : item.label !== "inviteTeamMembers";
-          })
-          ?.map((item, index) => {
-            const color = statusColor[item.status || "incomplete"];
-            return (
-              <Button
-                key={index}
-                fullWidth
-                sx={{
-                  display: "flex",
-                  px: "12px",
-                  flexDirection: "row",
-                  justifyContent: "flex-start",
-                  border: `1px solid`,
-                  borderColor: color.borderColor,
-                  bgcolor: color.backgroundColor,
-                  borderRadius: "4px",
-                  "&:hover": {
-                    bgcolor: color.hoverColor,
-                    "& span div": {
-                      bgcolor: `${color.hoverIconBackgroundColor} !important`,
-                    },
+        {shownMenus.map((item, index) => {
+          const color = stepColors(theme, item.status || "incomplete");
+          return (
+            <Button
+              key={index}
+              fullWidth
+              sx={{
+                display: "flex",
+                flexDirection: "row",
+                justifyContent: "flex-start",
+                border: `1px solid`,
+                borderColor: color.borderColor,
+                bgcolor: color.backgroundColor,
+                "&:hover": {
+                  bgcolor: color.hoverColor,
+                  "& span div": {
+                    bgcolor: `${color.hoverIconBackgroundColor} !important`,
                   },
-                }}
-                onClick={() => handleMenuClick(item)}
-                startIcon={
-                  <Box
-                    bgcolor={color.iconBackgroundColor}
-                    height={"28px"}
-                    width={"28px"}
-                    borderRadius={"2px"}
-                    pb={"12px"}
-                  >
-                    <SvgColor
-                      src={item.icon}
-                      sx={{
-                        color: color.iconColor,
-                        height: "16px",
-                        width: "16px",
-                        mb: "2px",
-                      }}
-                    />
-                  </Box>
-                }
-              >
-                <Typography
-                  variant="s2"
-                  fontWeight={
-                    item.status === "active"
-                      ? "fontWeightSemiBold"
-                      : "fontWeightRegular"
-                  }
-                  color={"text.primary"}
+                },
+              }}
+              onClick={() => handleMenuClick(item)}
+              startIcon={
+                <Box
+                  bgcolor={color.iconBackgroundColor}
+                  height={"28px"}
+                  width={"28px"}
+                  borderRadius={"2px"}
+                  pb={"12px"}
                 >
-                  {item.title}
-                </Typography>
-              </Button>
-            );
-          })}
+                  <SvgColor
+                    width={16}
+                    src={item.icon}
+                    sx={{
+                      color: color.iconColor,
+                      mb: "2px",
+                    }}
+                  />
+                </Box>
+              }
+            >
+              <Typography
+                variant="s2"
+                fontWeight={
+                  item.status === "active"
+                    ? "fontWeightSemiBold"
+                    : "fontWeightRegular"
+                }
+                color={"text.primary"}
+              >
+                {item.title}
+              </Typography>
+              {isDone(item) && (
+                <>
+                  {" "}
+                  <Typography
+                    component="span"
+                    variant="body_sm"
+                    color="text.secondary"
+                    sx={{ ml: "auto", pl: "8px", flexShrink: 0 }}
+                  >
+                    Done
+                  </Typography>
+                </>
+              )}
+            </Button>
+          );
+        })}
       </Box>
     </Box>
   );

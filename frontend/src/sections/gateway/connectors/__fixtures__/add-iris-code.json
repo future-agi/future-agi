@@ -1,0 +1,69 @@
+{
+  "result": {
+    "app": "iris-code",
+    "baseline": {
+      "tool_count": 3,
+      "tools_hash": "9a2d02fdb30d1a1a4e07efb4e1560c0a634559857c1774191e490df859713109"
+    },
+    "catalog_ref": "iris-code/iris-mcp@1.0.0",
+    "credential": {
+      "connected": true,
+      "header_name": "",
+      "help": "Create a fine-grained token with read access.",
+      "help_url": "https://docs.iris-code.example.com/tokens",
+      "in": "header",
+      "kind": "bearer",
+      "label": "Personal access token",
+      "mode": "shared",
+      "name": "Authorization"
+    },
+    "gateway_synced": true,
+    "mcp_enabled": true,
+    "mode": "agent",
+    "provider": "iris-mcp",
+    "server_id": "iris-code",
+    "tools": [
+      {
+        "description": "The search_issues tool.",
+        "destructive": false,
+        "gateway_posture": "allow",
+        "idempotent": true,
+        "name": "search_issues",
+        "open_world": true,
+        "read_only": true,
+        "reason": null,
+        "title": "Search issues"
+      },
+      {
+        "description": "The get_pull_request tool.",
+        "destructive": false,
+        "gateway_posture": "allow",
+        "idempotent": true,
+        "name": "get_pull_request",
+        "open_world": true,
+        "read_only": true,
+        "reason": null,
+        "title": "Get pull request"
+      },
+      {
+        "description": "The create_issue tool.",
+        "destructive": false,
+        "gateway_posture": "deny",
+        "idempotent": false,
+        "name": "create_issue",
+        "open_world": true,
+        "read_only": false,
+        "reason": "write_tool",
+        "title": "Create issue"
+      }
+    ],
+    "url": "https://mcp.iris-code.example.com/mcp",
+    "url_variables": {},
+    "version": 4,
+    "virtual_server": {
+      "id": "vs_01M5F7JBS88BJXZ4N1BYJ1Y4MJ",
+      "slug": "iris-code"
+    }
+  },
+  "status": true
+}

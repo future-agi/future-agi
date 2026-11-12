@@ -28,10 +28,3 @@ type PropertyCatalogWriter interface {
 type NoopUsageEmitter struct{}
 
 func (NoopUsageEmitter) EmitIngestion(string, int, int, int64, string) {}
-
-// NoopMetering allows all requests when Redis is not configured.
-type NoopMetering struct{}
-
-func (NoopMetering) CheckUsage(_ context.Context, _, _ string, _ int64) auth.CheckResult {
-	return auth.CheckResult{Allowed: true}
-}

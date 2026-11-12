@@ -4,11 +4,30 @@ Provides fixtures specific to model_hub models and test data.
 """
 
 import pytest
+from django.urls import get_resolver
 
 from tfc.middleware.workspace_context import (
     clear_workspace_context,
     set_workspace_context,
 )
+
+
+@pytest.fixture(scope="module")
+def urlconf_loaded_without_workspace_context():
+    """Import the URLconf, and with it every view module, with no workspace context.
+
+    A view's class-level queryset goes through BaseModelManager, which filters
+    by the thread-local workspace context when the view module is imported.
+    When a test body's ``reverse()`` is the session's first URLconf import, the
+    ``user`` fixture's context is still set, and those querysets stay pinned to
+    that test's workspace for the rest of the session: later suites (dataset
+    optimization, the structured knowledge base) then get 404s and empty lists
+    in every other workspace. Modules that call ``reverse()`` in test bodies
+    request this fixture, so the import happens here, outside any context.
+    """
+    clear_workspace_context()
+    get_resolver().url_patterns  # noqa: B018 - imports the URLconf
+    yield
 
 
 @pytest.fixture(autouse=True)

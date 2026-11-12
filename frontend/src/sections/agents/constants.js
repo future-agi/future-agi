@@ -1,3 +1,6 @@
+import { importWithRecovery } from "src/utils/chunkRecovery";
+import { NOT_IN_RELEASE } from "src/components/NotInRelease/notInRelease";
+
 export const AGENT_TAB_IDS = {
   AGENT_CONFIGURATION: "AgentConfiguration",
   PERFORMANCE_ANALYTICS: "PerformanceAnalytics",
@@ -106,36 +109,36 @@ export const transportFromContactNumber = (contactNumber) =>
 export const callStatusCellStyle = {
   "in-progress": {
     sx: {
-      color: "orange.700",
-      backgroundColor: "orange.o10",
+      color: "status.warning.fg",
+      backgroundColor: "status.warning.bg",
     },
     icon: "/assets/icons/navbar/ic_new_clock.svg",
   },
   completed: {
     sx: {
-      color: "green.700",
-      backgroundColor: "green.o10",
+      color: "status.success.fg",
+      backgroundColor: "status.success.bg",
     },
     icon: "/assets/icons/agent/call_completed.svg",
   },
   failed: {
     sx: {
-      color: "red.700",
-      backgroundColor: "red.o10",
+      color: "status.danger.fg",
+      backgroundColor: "status.danger.bg",
     },
     icon: "/assets/icons/agent/call_failed.svg",
   },
   dropped: {
     sx: {
-      color: "blue.700",
-      backgroundColor: "blue.o10",
+      color: "status.info.fg",
+      backgroundColor: "status.info.bg",
     },
     icon: "/assets/icons/agent/call_dropped.svg",
   },
   "not-connected": {
     sx: {
-      color: "red.700",
-      backgroundColor: "red.o10",
+      color: "status.danger.fg",
+      backgroundColor: "status.danger.bg",
     },
     icon: "/assets/icons/ic_failed.svg",
   },
@@ -164,13 +167,15 @@ export const OTHER_AUTH_METHODS = [
     label: "NO AUTH",
     value: "noAuth",
   },
+  // Not built in this release: listed, disabled, with the shared line in the
+  // label because the menu renders only an option's label.
   {
-    label: "OAUTH 2.0 (coming soon)",
+    label: `OAUTH 2.0 · ${NOT_IN_RELEASE}`,
     value: "oauth2_0",
     disabled: true,
   },
   {
-    label: "DIGEST AUTH (coming soon)",
+    label: `DIGEST AUTH · ${NOT_IN_RELEASE}`,
     value: "bigestAuth",
     disabled: true,
   },
@@ -369,9 +374,22 @@ export const PROVIDER_STEPS_MAPPER = {
 };
 
 /**
+ * The form status a LiveKit "Test Connection" result maps to. On Future AGI
+ * Cloud the backend never contacts a customer's LiveKit URL, so it answers
+ * `skipped`: the credentials were not verified. That is never shown as a
+ * success and never blocks saving them.
+ * @param {{ valid?: boolean, skipped?: boolean }} result
+ * @returns {"valid" | "skipped" | "invalid"}
+ */
+export const livekitValidationStatus = (result) => {
+  if (result?.skipped) return "skipped";
+  return result?.valid ? "valid" : "invalid";
+};
+
+/**
  * Validate LiveKit credentials by calling the backend endpoint.
  * @param {{ livekitUrl: string, livekitApiKey: string, livekitApiSecret: string, livekitAgentName: string }} params
- * @returns {Promise<{ valid: boolean, error?: string }>}
+ * @returns {Promise<{ valid: boolean, skipped?: boolean, message?: string, error?: string }>}
  */
 export const validateLiveKitCredentials = async ({
   livekitUrl,
@@ -381,7 +399,9 @@ export const validateLiveKitCredentials = async ({
   agentDefinitionId,
 }) => {
   // Importing here to avoid circular dependency issues at module level
-  const { default: axios, endpoints } = await import("src/utils/axios");
+  const { default: axios, endpoints } = await importWithRecovery(
+    () => import("src/utils/axios"),
+  );
   try {
     const response = await axios.post(
       endpoints.runTests.validateLiveKitCredentials,
@@ -396,6 +416,13 @@ export const validateLiveKitCredentials = async ({
       },
     );
     const result = response.data?.result || response.data;
+    if (result?.skipped) {
+      return {
+        valid: false,
+        skipped: true,
+        message: result?.message || "LiveKit credentials were not verified.",
+      };
+    }
     if (result?.valid) {
       return { valid: true };
     }

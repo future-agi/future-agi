@@ -13,7 +13,8 @@ from uuid import UUID
 
 import structlog
 from django.conf import settings
-from django.db import DatabaseError, connection, transaction
+from django.db import DatabaseError, OperationalError, connection, transaction
+from django.db.models import Q
 from django.http import Http404
 from django.utils import timezone
 from rest_framework import serializers, status
@@ -21,6 +22,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
+from model_hub.models.develop_annotations import AnnotationsLabels
 from tfc.routers import uses_db
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import ApiErrorCode
@@ -36,9 +38,11 @@ from tracer.models.dashboard import Dashboard, DashboardWidget
 from tracer.models.project import Project
 from tracer.serializers.dashboard import (
     DashboardCreateUpdateSerializer,
+    DashboardDetailApiResponseSerializer,
     DashboardDetailSerializer,
     DashboardFilterValuesQuerySerializer,
     DashboardFilterValuesResponseSerializer,
+    DashboardListApiResponseSerializer,
     DashboardMetricsCatalogQuerySerializer,
     DashboardMetricsCatalogResponseSerializer,
     DashboardPreviewQuerySerializer,
@@ -47,6 +51,7 @@ from tracer.serializers.dashboard import (
     DashboardRefreshQuerySerializer,
     DashboardSampleOptInSerializer,
     DashboardSerializer,
+    DashboardWidgetApiResponseSerializer,
     DashboardWidgetSerializer,
 )
 from tracer.services.annotation_label_source import (
@@ -2394,6 +2399,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         return normalized
 
     @uses_db(DATABASE_FOR_DASHBOARD_LIST, feature_key="feature:dashboard_list")
+    @validated_request(responses={200: DashboardListApiResponseSerializer})
     def list(self, request, *args, **kwargs):
         try:
             # Route the main list read to replica when "feature:dashboard_list"
@@ -2411,6 +2417,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error(f"Failed to list dashboards: {e}", exc_info=True)
             return self._gm.bad_request("Failed to list dashboards.")
 
+    @validated_request(responses={200: DashboardDetailApiResponseSerializer})
     def retrieve(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
@@ -2418,12 +2425,17 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 instance, context={"request": request}
             )
             return self._gm.success_response(serializer.data)
-        except Dashboard.DoesNotExist:
+        # get_object() raises Http404 for an id outside the caller's scoped
+        # queryset (missing, deleted, or another workspace's dashboard).
+        except (Dashboard.DoesNotExist, Http404):
             return self._gm.not_found("Dashboard not found.")
         except Exception as e:
             logger.error(f"Failed to retrieve dashboard: {e}", exc_info=True)
             return self._gm.bad_request("Failed to retrieve dashboard.")
 
+    # Writes validate DashboardCreateUpdateSerializer but answer the dashboard
+    # detail with HTTP 200, not drf-yasg's inferred 201 body.
+    @validated_request(responses={200: DashboardDetailApiResponseSerializer})
     def create(self, request, *args, **kwargs):
         try:
             serializer = DashboardCreateUpdateSerializer(data=request.data)
@@ -2443,6 +2455,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error(f"Failed to create dashboard: {e}", exc_info=True)
             return self._gm.bad_request("Failed to create dashboard.")
 
+    @validated_request(responses={200: DashboardDetailApiResponseSerializer})
     def update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
@@ -2461,6 +2474,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error(f"Failed to update dashboard: {e}", exc_info=True)
             return self._gm.bad_request("Failed to update dashboard.")
 
+    @validated_request(responses={200: DashboardDetailApiResponseSerializer})
     def partial_update(self, request, *args, **kwargs):
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
@@ -2834,21 +2848,29 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         annotation_metrics = []
         try:
-            from tracer.models.trace_annotation import AnnotationLabel
-
-            annotation_labels = AnnotationLabel.no_workspace_objects.filter(
-                project__in=project_ids
-            ).values("id", "name", "label_type")
+            annotation_labels = AnnotationsLabels.no_workspace_objects.filter(
+                Q(workspace__isnull=True) | Q(workspace=request.workspace),
+                organization_id=request.workspace.organization_id,
+                project_id__in=project_ids,
+            ).values("id", "name", "type")
             for al in annotation_labels:
                 annotation_metrics.append(
                     {
                         "name": str(al["id"]),
                         "display_name": al["name"],
-                        "output_type": al.get("label_type", "float"),
+                        "output_type": al["type"],
                     }
                 )
-        except (ImportError, Exception):
-            pass
+        except OperationalError as exc:
+            logger.warning(
+                "dashboard_annotation_metrics_unavailable",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Dashboard properties are temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
 
         # CH-only span attribute key inventory. PG fallback removed
         # post-migration — the attrs_* typed-Map indexes on CH are the
@@ -5984,6 +6006,8 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
     def _normalize_metric_sources(self, metrics):
         return DashboardViewSet._normalize_metric_sources(self, metrics)
 
+    # Widget writes answer success_response() with HTTP 200.
+    @validated_request(responses={200: DashboardWidgetApiResponseSerializer})
     def create(self, request, *args, **kwargs):
         try:
             dashboard_id = self.kwargs.get("dashboard_pk") or self.kwargs.get(
@@ -6013,6 +6037,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error(f"Failed to create widget: {e}", exc_info=True)
             return self._gm.bad_request("Failed to create widget.")
 
+    @validated_request(responses={200: DashboardWidgetApiResponseSerializer})
     def update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
@@ -6034,6 +6059,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error(f"Failed to update widget: {e}", exc_info=True)
             return self._gm.bad_request("Failed to update widget.")
 
+    @validated_request(responses={200: DashboardWidgetApiResponseSerializer})
     def partial_update(self, request, *args, **kwargs):
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
@@ -6227,11 +6253,12 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             }
         )
         if trace_metrics:
-            # Do not reuse the previous uncollapsed physical-window results.
+            # Do not reuse bucket-only snapshots without exact period scalars.
             # The worker receives this same identity; no cache TTL is relaxed.
             cache_identity["trace_snapshot_semantics"] = (
                 "physical-latest-complete-series-v2"
             )
+            cache_identity["trace_period_aggregate_semantics"] = "grouping-sets-v1"
 
         def _schedule_heavy_dashboard_read():
             payload = _read_public_dashboard_query(
@@ -6351,6 +6378,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             )
             trace_builder = DashboardQueryBuilderV2(trace_config)
             trace_builder._latest_state_spans_required = True
+            trace_builder.include_period_aggregate = True
             if project_ids:
                 trace_prepared = DashboardViewSet._prepare_metric_queries(trace_builder)
                 trace_query_groups = trace_builder.group_prepared_metric_queries(
@@ -6599,7 +6627,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
         formatter_config = {**query_config, "workspace_id": str(workspace.id)}
         formatter = DatasetQueryBuilder(formatter_config)
 
-        if trace_metrics and not dataset_metrics and not simulation_metrics:
+        if trace_metrics:
             project_ids = query_config.get("project_ids", [])
             project_name_map = dict(
                 Project.objects.filter(
@@ -6607,9 +6635,26 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 ).values_list("id", "name")
             )
             project_name_map = {str(k): v for k, v in project_name_map.items()}
-            formatted = DashboardQueryBuilderV2(query_config).format_results(
-                metric_results, project_name_map=project_name_map
+            # Trace grouping-set rows require their own formatter, including
+            # in a mixed-source widget. Never feed period rows into a bucket-
+            # only dataset/simulation formatter.
+            formatted = trace_builder.format_results(
+                [
+                    result
+                    for result in metric_results
+                    if result[0].get("source") == "traces"
+                ],
+                project_name_map=project_name_map,
             )
+            if dataset_metrics or simulation_metrics:
+                other_results = [
+                    result
+                    for result in metric_results
+                    if result[0].get("source") != "traces"
+                ]
+                formatted["metrics"].extend(
+                    formatter.format_results(other_results)["metrics"]
+                )
         else:
             formatted = formatter.format_results(metric_results)
 

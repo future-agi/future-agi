@@ -197,6 +197,24 @@ class TestAnnotationApiContract:
         for (path, method), expected_ref in expected_refs.items():
             assert _body_ref(path, method) == expected_ref
 
+        assert _swagger()["definitions"]["TraceTagsUpdate"] == {
+            "required": ["tags"],
+            "type": "object",
+            "properties": {
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["name"],
+                        "properties": {
+                            "name": {"type": "string", "minLength": 1},
+                            "color": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        }
+
     def test_custom_action_responses_document_general_methods_envelopes(self):
         expected_refs = {
             (
@@ -408,9 +426,7 @@ class TestAnnotationApiContract:
         assert validation_error.data["type"] == "validation_error"
         assert validation_error.data["code"] == "invalid"
         assert validation_error.data["attr"] == "name"
-        assert validation_error.data["details"] == {
-            "name": ["This field is required."]
-        }
+        assert validation_error.data["details"] == {"name": ["This field is required."]}
 
         custom_error = gm.custom_error_response(409, "Already running")
         assert custom_error.data["status"] is False
@@ -430,9 +446,7 @@ class TestAnnotationApiContract:
         assert custom_validation_error.data["error"] == "Already running"
         assert custom_validation_error.data["type"] == "conflict"
         assert custom_validation_error.data["code"] == "conflict"
-        assert custom_validation_error.data["details"] == {
-            "error": ["Already running"]
-        }
+        assert custom_validation_error.data["details"] == {"error": ["Already running"]}
 
     def test_empty_request_contract_rejects_surprise_payloads(self):
         empty = EmptyRequestSerializer(data={})
@@ -473,8 +487,22 @@ class TestAnnotationApiContract:
         legacy_single_user = AssignItemsSerializer(
             data={"item_ids": [item_id], "user_id": user_id}
         )
-        assert not legacy_single_user.is_valid()
-        assert "user_id" in legacy_single_user.errors
+        assert legacy_single_user.is_valid(), legacy_single_user.errors
+        assert legacy_single_user.validated_data["action"] == "add"
+        assert [str(uid) for uid in legacy_single_user.validated_data["user_ids"]] == [user_id]
+
+        legacy_clear = AssignItemsSerializer(
+            data={"item_ids": [item_id], "user_id": None}
+        )
+        assert legacy_clear.is_valid(), legacy_clear.errors
+        assert legacy_clear.validated_data["action"] == "set"
+        assert legacy_clear.validated_data["user_ids"] == []
+
+        unknown_key = AssignItemsSerializer(
+            data={"item_ids": [item_id], "user_id": user_id, "unexpected": True}
+        )
+        assert not unknown_key.is_valid()
+        assert "Unknown field." in str(unknown_key.errors["unexpected"])
 
     def test_queue_for_source_contract_validates_nested_sources(self):
         source_id = _uuid()
@@ -505,9 +533,7 @@ class TestAnnotationApiContract:
 
         legacy_nested_alias = QueueForSourceQuerySerializer(
             data={
-                "sources": json.dumps(
-                    [{"sourceType": "trace", "sourceId": source_id}]
-                )
+                "sources": json.dumps([{"sourceType": "trace", "sourceId": source_id}])
             }
         )
         assert not legacy_nested_alias.is_valid()

@@ -1,422 +1,507 @@
-import React, { useState, useMemo } from "react";
-import {
-  Box,
-  Typography,
-  Button,
-  Stack,
-  Chip,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  TextField,
-  Skeleton,
-  Card,
-  InputAdornment,
-  IconButton,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  CardContent,
-} from "@mui/material";
+import React, { useMemo, useState } from "react";
+import PropTypes from "prop-types";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Dialog from "@mui/material/Dialog";
+import DialogActions from "@mui/material/DialogActions";
+import DialogContent from "@mui/material/DialogContent";
+import DialogTitle from "@mui/material/DialogTitle";
+import IconButton from "@mui/material/IconButton";
+import Link from "@mui/material/Link";
+import Skeleton from "@mui/material/Skeleton";
+import Stack from "@mui/material/Stack";
+import Tooltip from "@mui/material/Tooltip";
+import Typography from "@mui/material/Typography";
 import { enqueueSnackbar } from "notistack";
-import Iconify from "src/components/iconify";
-import SectionHeader from "../components/SectionHeader";
-import PageErrorState from "../components/PageErrorState";
-import { GATEWAY_ICONS } from "../constants/gatewayIcons";
-import { useGatewayContext } from "../context/useGatewayContext";
+
+import SvgColor from "src/components/svg-color";
+import { RouterLink } from "src/routes/components";
+import { paths } from "src/routes/paths";
 
 import {
-  useCustomProperties,
-  useCreateCustomProperty,
-  useUpdateCustomProperty,
-  useDeleteCustomProperty,
-} from "./hooks/useCustomProperties";
+  GatewayEmptyState,
+  GatewayFilterBar,
+  GatewayGrid,
+  GatewayPageFrame,
+  GatewayStatusChip,
+} from "../components/frame";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
+import { CopyButton, SettingsPanel } from "../settings/ui";
+import { formatDate } from "../utils/formatters";
 import CreateEditPropertyDialog from "./CreateEditPropertyDialog";
+import TestMetadataDialog from "./TestMetadataDialog";
+import {
+  hasStoredDefault,
+  RULES_CHECKED_BY_VALIDATE_API,
+} from "./customPropertyForm";
+import {
+  useCreateCustomProperty,
+  useCustomProperties,
+  useDeleteCustomProperty,
+  useUpdateCustomProperty,
+} from "./hooks/useCustomProperties";
+import { reservedReason, sendSnippet } from "./reservedNames";
+import { GATEWAY_MONO } from "../utils/fonts";
 
-const TYPE_ICONS = {
-  string: "mdi:format-text",
-  number: "mdi:numeric",
-  boolean: "mdi:toggle-switch-outline",
-  enum: "mdi:format-list-bulleted-type",
+const ROW_HEIGHT = 52;
+
+const TYPE_LABEL = {
+  string: "Text",
+  number: "Number",
+  boolean: "Boolean",
+  enum: "One of a list",
 };
 
-const CustomPropertySection = () => {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [createOpen, setCreateOpen] = useState(false);
-  const [editProperty, setEditProperty] = useState(null);
+// Required and Allowed values: checked by the Validate API.
+const hasRules = (p) =>
+  Boolean(p.required) || (p.allowed_values || []).length > 0;
+
+const Cell = ({ children }) => (
+  <Box sx={{ display: "flex", alignItems: "center", height: 1, minWidth: 0 }}>
+    {children}
+  </Box>
+);
+Cell.propTypes = { children: PropTypes.node };
+
+function NameCell({ data }) {
+  const reserved = reservedReason(data.name);
+  return (
+    <Stack
+      direction="row"
+      alignItems="center"
+      gap={1}
+      sx={{ height: 1, minWidth: 0 }}
+    >
+      <Box sx={{ lineHeight: 1.2, minWidth: 0 }}>
+        <Typography typography="s1" noWrap sx={{ fontFamily: GATEWAY_MONO }}>
+          {data.name}
+        </Typography>
+        {data.description && (
+          <Typography
+            typography="s3"
+            color="text.secondary"
+            noWrap
+            title={data.description}
+          >
+            {data.description}
+          </Typography>
+        )}
+      </Box>
+      {reserved && (
+        <Tooltip title={reserved}>
+          <Box sx={{ flexShrink: 0 }}>
+            <GatewayStatusChip tone="warning" label="Not recorded" />
+          </Box>
+        </Tooltip>
+      )}
+    </Stack>
+  );
+}
+NameCell.propTypes = { data: PropTypes.object };
+
+function AllowedCell({ value }) {
+  const list = value || [];
+  if (!list.length) {
+    return (
+      <Cell>
+        <Typography typography="s2" color="text.disabled">
+          Any
+        </Typography>
+      </Cell>
+    );
+  }
+  return (
+    <Stack
+      direction="row"
+      gap={0.5}
+      alignItems="center"
+      sx={{ height: 1, overflow: "hidden" }}
+      title={list.join(", ")}
+    >
+      {list.slice(0, 3).map((v, index, shown) => (
+        <Box
+          key={String(v)}
+          component="span"
+          sx={{
+            px: 0.75,
+            py: 0.125,
+            borderRadius: 0.5,
+            border: 1,
+            borderColor: "divider",
+            typography: "s3",
+            whiteSpace: "nowrap",
+            // Long values give way (the last shown one first), so the +N
+            // count stays whole.
+            minWidth: 0,
+            flexShrink: index === shown.length - 1 ? 100 : 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {String(v)}
+        </Box>
+      ))}
+      {list.length > 3 && (
+        <Typography
+          typography="s3"
+          color="text.secondary"
+          sx={{ flexShrink: 0 }}
+        >
+          +{list.length - 3}
+        </Typography>
+      )}
+    </Stack>
+  );
+}
+AllowedCell.propTypes = { value: PropTypes.array };
+
+function RowActions({ data, context }) {
+  // Edit and Delete are gateway writes: Owner or Admin only.
+  const allowed = Boolean(context.canEdit);
+  const action = (label, icon, onClick) => {
+    const button = (
+      <IconButton
+        size="small"
+        aria-label={`${label} ${data.name}`}
+        onClick={() => onClick(data)}
+        disabled={!allowed}
+      >
+        <SvgColor src={icon} aria-hidden sx={{ width: 16, height: 16 }} />
+      </IconButton>
+    );
+    return allowed ? (
+      <Tooltip title={label}>{button}</Tooltip>
+    ) : (
+      <GatewayAdminOnly allowed={false}>{button}</GatewayAdminOnly>
+    );
+  };
+  return (
+    <Stack direction="row" gap={0.5} alignItems="center" sx={{ height: 1 }}>
+      {action("Edit", "/assets/icons/ic_edit.svg", context.onEdit)}
+      {action("Delete", "/assets/icons/ic_delete.svg", context.onDelete)}
+    </Stack>
+  );
+}
+RowActions.propTypes = { data: PropTypes.object, context: PropTypes.object };
+
+const COLUMNS = [
+  {
+    field: "name",
+    headerName: "Property",
+    minWidth: 220,
+    flex: 1.5,
+    cellRenderer: NameCell,
+  },
+  {
+    field: "property_type",
+    headerName: "Type",
+    minWidth: 110,
+    flex: 0.6,
+    valueFormatter: ({ value }) => TYPE_LABEL[value] || value,
+  },
+  {
+    field: "required",
+    headerName: "Required (Validate API)",
+    // A boolean column would render as a checkbox; this one is a word.
+    cellDataType: "text",
+    minWidth: 144,
+    flex: 0.5,
+    valueFormatter: ({ value }) => (value ? "Required" : "Optional"),
+  },
+  {
+    field: "allowed_values",
+    headerName: "Allowed values (Validate API)",
+    minWidth: 200,
+    flex: 1.3,
+    sortable: false,
+    cellRenderer: AllowedCell,
+  },
+  // A Default has no reader anywhere: the column is there only when
+  // a property still has one stored, and says it is not applied.
+  {
+    colId: "stored_default",
+    field: "default_value",
+    headerName: "Stored default (not applied)",
+    minWidth: 200,
+    flex: 0.8,
+    valueFormatter: ({ value }) =>
+      value === null || value === undefined ? "—" : String(value),
+  },
+  {
+    field: "created_at",
+    headerName: "Added",
+    minWidth: 110,
+    flex: 0.6,
+    valueFormatter: ({ value }) => formatDate(value),
+  },
+  {
+    colId: "actions",
+    headerName: "",
+    minWidth: 90,
+    flex: 0.4,
+    sortable: false,
+    resizable: false,
+    cellRenderer: RowActions,
+  },
+];
+
+function CodeLine({ label, code }) {
+  return (
+    <Box>
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="space-between"
+        sx={{ mb: 0.5 }}
+      >
+        <Typography typography="s2" color="text.secondary">
+          {label}
+        </Typography>
+        <CopyButton text={code} label={`Copy ${label.toLowerCase()}`} />
+      </Stack>
+      <Box
+        component="pre"
+        sx={{
+          m: 0,
+          p: 1.5,
+          borderRadius: 1,
+          border: 1,
+          borderColor: "divider",
+          bgcolor: "background.neutral",
+          typography: "s2",
+          fontFamily: GATEWAY_MONO,
+          overflowX: "auto",
+          whiteSpace: "pre",
+        }}
+      >
+        {code}
+      </Box>
+    </Box>
+  );
+}
+CodeLine.propTypes = {
+  label: PropTypes.string.isRequired,
+  code: PropTypes.string.isRequired,
+};
+
+function matches(property, query) {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  return (
+    property.name?.toLowerCase().includes(q) ||
+    property.description?.toLowerCase().includes(q)
+  );
+}
+
+// Custom properties: the metadata names the organization attaches to its
+// requests (tenant, feature, ...). A declared property becomes a column you
+// can show in Logs. Required and Allowed values are checked by the Validate
+// API, not applied by the gateway; a stored default is not applied anywhere
+//; and a name the gateway reserves is never recorded.
+export default function CustomPropertySection() {
+  // Declaring, editing and deleting a property are gateway writes: Owner or
+  // Admin only, as on Providers, API keys and Budgets.
+  const { canEdit } = useGatewayAdmin();
+  const [search, setSearch] = useState("");
+  const [dialog, setDialog] = useState(null);
+  const [testMetadataOpen, setTestMetadataOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
-  const { gatewayId: _gatewayId } = useGatewayContext();
   const { data: properties, isLoading, error, refetch } = useCustomProperties();
   const createMutation = useCreateCustomProperty();
   const updateMutation = useUpdateCustomProperty();
   const deleteMutation = useDeleteCustomProperty();
 
-  const filteredProperties = useMemo(() => {
-    if (!properties) return [];
-    if (!searchQuery.trim()) return properties;
-    const q = searchQuery.toLowerCase();
-    return properties.filter(
-      (p) =>
-        p.name?.toLowerCase().includes(q) ||
-        p.description?.toLowerCase().includes(q),
-    );
-  }, [properties, searchQuery]);
+  const all = useMemo(() => properties || [], [properties]);
+  const rows = useMemo(
+    () => all.filter((p) => matches(p, search.trim())),
+    [all, search],
+  );
+  const snippet = useMemo(() => sendSnippet(all), [all]);
+  const columns = useMemo(
+    () =>
+      all.some(hasStoredDefault)
+        ? COLUMNS
+        : COLUMNS.filter((column) => column.colId !== "stored_default"),
+    [all],
+  );
 
-  const handleCreate = (payload) => {
-    createMutation.mutate(payload, {
+  const save = (payload) => {
+    const editing = Boolean(payload.id);
+    const mutation = editing ? updateMutation : createMutation;
+    mutation.mutate(payload, {
       onSuccess: () => {
-        enqueueSnackbar("Property schema created", { variant: "success" });
-        setCreateOpen(false);
+        enqueueSnackbar(editing ? "Property saved" : "Property added", {
+          variant: "success",
+        });
+        setDialog(null);
       },
-      onError: (err) => {
+      onError: (err) =>
         enqueueSnackbar(
-          err?.response?.data?.message || "Failed to create property",
+          err?.message ||
+            err?.response?.data?.message ||
+            (editing
+              ? "Failed to save the property"
+              : "Failed to add the property"),
           { variant: "error" },
-        );
-      },
+        ),
     });
   };
 
-  const handleUpdate = (payload) => {
-    updateMutation.mutate(payload, {
-      onSuccess: () => {
-        enqueueSnackbar("Property schema updated", { variant: "success" });
-        setEditProperty(null);
-      },
-      onError: (err) => {
-        enqueueSnackbar(
-          err?.response?.data?.message || "Failed to update property",
-          { variant: "error" },
-        );
-      },
-    });
-  };
-
-  const handleDelete = () => {
+  const remove = () => {
     if (!deleteTarget) return;
     deleteMutation.mutate(deleteTarget.id, {
       onSuccess: () => {
-        enqueueSnackbar("Property schema deleted", { variant: "success" });
+        enqueueSnackbar("Property deleted", { variant: "success" });
         setDeleteTarget(null);
       },
       onError: () =>
-        enqueueSnackbar("Failed to delete property", { variant: "error" }),
+        enqueueSnackbar("Failed to delete the property", { variant: "error" }),
     });
   };
 
+  let content;
   if (isLoading) {
-    return (
-      <Box p={3}>
-        <Stack direction="row" justifyContent="space-between" mb={3}>
-          <Skeleton width={250} height={40} />
-          <Skeleton width={140} height={36} variant="rounded" />
-        </Stack>
-        <Card>
-          {[...Array(4)].map((_, i) => (
-            <Stack
-              key={i}
-              direction="row"
-              spacing={2}
-              sx={{
-                px: 2,
-                py: 1.5,
-                borderBottom: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              <Skeleton width="30%" height={20} />
-              <Skeleton width="15%" height={20} />
-              <Skeleton width="15%" height={20} />
-              <Skeleton width="25%" height={20} />
-            </Stack>
-          ))}
-        </Card>
-      </Box>
+    content = (
+      <Stack spacing={1} data-testid="custom-properties-loading">
+        <Skeleton variant="rounded" height={32} width={320} />
+        <Skeleton variant="rounded" height={160} />
+      </Stack>
     );
-  }
-
-  if (error) {
-    return (
-      <Box p={3}>
-        <PageErrorState
-          message={`Failed to load custom properties: ${error.message}`}
-          onRetry={refetch}
+  } else if (error) {
+    content = (
+      <GatewayEmptyState
+        icon="properties"
+        title="Couldn't load custom properties"
+        description={error.message || "The custom properties request failed."}
+        actionLabel="Retry"
+        onAction={() => refetch?.()}
+      />
+    );
+  } else {
+    const none = all.length === 0;
+    content = (
+      <>
+        {!none && (
+          <GatewayFilterBar
+            search={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="Search properties"
+          />
+        )}
+        {all.some(hasRules) && (
+          <Typography typography="s2" color="text.secondary">
+            {RULES_CHECKED_BY_VALIDATE_API}
+          </Typography>
+        )}
+        <GatewayGrid
+          rowData={rows}
+          columnDefs={columns}
+          stateKey="gateway-custom-properties"
+          getRowId={(params) => params.data.id}
+          rowHeight={ROW_HEIGHT}
+          height={Math.max(rows.length, 1) * ROW_HEIGHT + 42}
+          context={{
+            canEdit,
+            onEdit: (property) => setDialog({ property }),
+            onDelete: setDeleteTarget,
+          }}
+          emptyState={
+            none
+              ? {
+                  icon: "properties",
+                  title: "No custom properties yet",
+                  description:
+                    "Declare the metadata your requests carry, such as tenant or feature, so it can be shown as a column in Logs.",
+                  actionLabel: canEdit ? "Add property" : undefined,
+                  onAction: canEdit
+                    ? () => setDialog({ property: null })
+                    : undefined,
+                }
+              : { variant: "no-results", onAction: () => setSearch("") }
+          }
         />
-      </Box>
+        {snippet.count > 0 && (
+          <SettingsPanel
+            title="Send them with a request"
+            description="Add the properties to the x-agentcc-metadata header, or to the request body's metadata. The gateway records each one on the request."
+          >
+            <CodeLine label="Header" code={snippet.header} />
+            <CodeLine label="Request body" code={snippet.body} />
+            <Typography typography="s2" color="text.secondary">
+              Show a property as a column in{" "}
+              <Link
+                component={RouterLink}
+                href={paths.dashboard.gateway.logs}
+                underline="hover"
+              >
+                Logs
+              </Link>{" "}
+              (Columns, Custom properties).
+            </Typography>
+          </SettingsPanel>
+        )}
+      </>
     );
   }
 
   return (
-    <Box p={3}>
-      <SectionHeader
-        icon={GATEWAY_ICONS.customProperties}
-        title="Custom Properties"
-        subtitle="Define custom metadata schemas for your request logs"
-        actions={[
-          {
-            label: "Add Property",
-            variant: "contained",
-            size: "small",
-            icon: "mdi:plus",
-            onClick: () => setCreateOpen(true),
-          },
-        ]}
-      />
-
-      <TextField
-        placeholder="Search properties..."
-        size="small"
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
-        sx={{ width: 300, mb: 3 }}
-        InputProps={{
-          startAdornment: (
-            <InputAdornment position="start">
-              <Iconify icon="eva:search-outline" width={18} />
-            </InputAdornment>
-          ),
-        }}
-      />
-
-      {filteredProperties.length === 0 ? (
-        <Box display="flex" flexDirection="column" alignItems="center" py={8}>
-          <Iconify
-            icon="mdi:form-textbox"
-            width={48}
-            sx={{ color: "text.disabled", mb: 2 }}
-          />
-          <Typography variant="h6" color="text.secondary" mb={1}>
-            {properties?.length === 0
-              ? "No custom properties defined"
-              : "No properties match your search"}
-          </Typography>
-          {properties?.length === 0 && (
-            <>
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                mb={2}
-                textAlign="center"
-              >
-                Custom properties let you attach structured metadata to request
-                logs.
-              </Typography>
-              <Button
-                variant="outlined"
-                startIcon={<Iconify icon="mdi:plus" width={20} />}
-                onClick={() => setCreateOpen(true)}
-              >
-                Define Your First Property
-              </Button>
-            </>
-          )}
-        </Box>
-      ) : (
-        <>
-          <TableContainer>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Name</TableCell>
-                  <TableCell>Type</TableCell>
-                  <TableCell>Required</TableCell>
-                  <TableCell>Allowed Values</TableCell>
-                  <TableCell>Default</TableCell>
-                  <TableCell align="right">Actions</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {filteredProperties.map((prop) => (
-                  <TableRow key={prop.id} hover>
-                    <TableCell>
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Iconify
-                          icon={
-                            TYPE_ICONS[prop.property_type] ||
-                            "mdi:help-circle-outline"
-                          }
-                          width={18}
-                          sx={{ color: "text.secondary" }}
-                        />
-                        <Box>
-                          <Typography variant="body2" fontWeight={500}>
-                            {prop.name}
-                          </Typography>
-                          {prop.description && (
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                            >
-                              {prop.description}
-                            </Typography>
-                          )}
-                        </Box>
-                      </Stack>
-                    </TableCell>
-                    <TableCell>
-                      <Chip
-                        label={prop.property_type}
-                        size="small"
-                        variant="outlined"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Chip
-                        label={prop.required ? "Required" : "Optional"}
-                        color={prop.required ? "warning" : "default"}
-                        size="small"
-                        variant="outlined"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      {prop.allowed_values?.length > 0 ? (
-                        <Stack
-                          direction="row"
-                          spacing={0.5}
-                          flexWrap="wrap"
-                          useFlexGap
-                        >
-                          {prop.allowed_values.slice(0, 3).map((v) => (
-                            <Chip
-                              key={v}
-                              label={v}
-                              size="small"
-                              sx={{ fontSize: "0.7rem" }}
-                            />
-                          ))}
-                          {prop.allowed_values.length > 3 && (
-                            <Chip
-                              label={`+${prop.allowed_values.length - 3}`}
-                              size="small"
-                              variant="outlined"
-                            />
-                          )}
-                        </Stack>
-                      ) : (
-                        <Typography variant="body2" color="text.secondary">
-                          {"\u2014"}
-                        </Typography>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ fontFamily: "monospace" }}
-                      >
-                        {prop.default_value != null
-                          ? String(prop.default_value)
-                          : "\u2014"}
-                      </Typography>
-                    </TableCell>
-                    <TableCell align="right">
-                      <Stack
-                        direction="row"
-                        spacing={0.5}
-                        justifyContent="flex-end"
-                      >
-                        <IconButton
-                          size="small"
-                          title="Edit"
-                          onClick={() => setEditProperty(prop)}
-                        >
-                          <Iconify icon="mdi:pencil-outline" width={20} />
-                        </IconButton>
-                        <IconButton
-                          size="small"
-                          title="Delete"
-                          color="error"
-                          onClick={() => setDeleteTarget(prop)}
-                        >
-                          <Iconify icon="mdi:delete-outline" width={20} />
-                        </IconButton>
-                      </Stack>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-          <Typography variant="body2" color="text.secondary" mt={2}>
-            Showing {filteredProperties.length} propert
-            {filteredProperties.length !== 1 ? "ies" : "y"}
-          </Typography>
-        </>
-      )}
-
-      {/* Preview card */}
-      {filteredProperties.length > 0 && (
-        <Card sx={{ mt: 3 }}>
-          <CardContent>
-            <Typography variant="subtitle2" mb={1}>
-              Log Preview
-            </Typography>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              display="block"
-              mb={1.5}
+    <GatewayPageFrame
+      title="Custom properties"
+      description="The metadata your requests carry, such as tenant or feature, declared so Logs can show it as a column."
+      actions={
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          <Button
+            variant="outlined"
+            onClick={() => setTestMetadataOpen(true)}
+            disabled={isLoading || Boolean(error)}
+          >
+            Test metadata
+          </Button>
+          <GatewayAdminOnly allowed={canEdit}>
+            <Button
+              variant="contained"
+              color="primary"
+              onClick={() => setDialog({ property: null })}
+              disabled={!canEdit}
             >
-              This is how custom properties would appear in a request log entry:
-            </Typography>
-            <Box
-              sx={{
-                bgcolor: "action.hover",
-                borderRadius: 1,
-                p: 2,
-                fontFamily: "monospace",
-                fontSize: "0.8rem",
-              }}
-            >
-              <pre style={{ margin: 0 }}>
-                {JSON.stringify(
-                  Object.fromEntries(
-                    filteredProperties.map((p) => [
-                      p.name,
-                      p.default_value != null
-                        ? p.default_value
-                        : `<${p.property_type}>`,
-                    ]),
-                  ),
-                  null,
-                  2,
-                )}
-              </pre>
-            </Box>
-          </CardContent>
-        </Card>
+              Add property
+            </Button>
+          </GatewayAdminOnly>
+        </Stack>
+      }
+    >
+      {content}
+
+      {testMetadataOpen && (
+        <TestMetadataDialog
+          open
+          onClose={() => setTestMetadataOpen(false)}
+          properties={all}
+        />
       )}
 
       <CreateEditPropertyDialog
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        onSubmit={handleCreate}
-        isPending={createMutation.isPending}
-      />
-
-      <CreateEditPropertyDialog
-        open={Boolean(editProperty)}
-        onClose={() => setEditProperty(null)}
-        onSubmit={handleUpdate}
-        property={editProperty}
-        isPending={updateMutation.isPending}
+        open={dialog !== null}
+        onClose={() => setDialog(null)}
+        onSubmit={save}
+        property={dialog?.property || null}
+        isPending={createMutation.isPending || updateMutation.isPending}
       />
 
       <Dialog
         open={Boolean(deleteTarget)}
         onClose={() => setDeleteTarget(null)}
-        maxWidth="xs"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 560 } }}
+        fullWidth
       >
-        <DialogTitle>Delete Property Schema</DialogTitle>
+        <DialogTitle>Delete property</DialogTitle>
         <DialogContent>
-          <Typography>
-            Delete <strong>{deleteTarget?.name}</strong>? Existing logs with
-            this property will not be affected.
+          <Typography typography="s1">
+            Delete <strong>{deleteTarget?.name}</strong>? Requests keep the
+            values they were logged with.
           </Typography>
         </DialogContent>
         <DialogActions>
@@ -424,15 +509,13 @@ const CustomPropertySection = () => {
           <Button
             variant="contained"
             color="error"
-            onClick={handleDelete}
+            onClick={remove}
             disabled={deleteMutation.isPending}
           >
-            {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            {deleteMutation.isPending ? "Deleting…" : "Delete"}
           </Button>
         </DialogActions>
       </Dialog>
-    </Box>
+    </GatewayPageFrame>
   );
-};
-
-export default CustomPropertySection;
+}

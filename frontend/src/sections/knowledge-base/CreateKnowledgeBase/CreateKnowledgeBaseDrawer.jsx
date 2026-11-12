@@ -6,7 +6,6 @@ import {
   Tab,
   Tabs,
   Typography,
-  useTheme,
   Link,
 } from "@mui/material";
 import PropTypes from "prop-types";
@@ -30,6 +29,8 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { RESPONSE_CODES } from "src/utils/constants";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { useBeforeUnload } from "src/hooks/useBeforeUnload";
+import { isPrototypeMode } from "src/utils/prototype";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const tabItems = [
   { label: "Upload", value: "Upload", disabled: false },
@@ -61,7 +62,6 @@ const CreateKnowledgeBaseDrawerChild = ({
   handleClose,
   name,
 }) => {
-  const theme = useTheme();
   const navigate = useNavigate();
   const [currentTab, setCurrentTab] = useState("Upload");
   const { refetch: refetchKnowledgeBaseList } = useKnowledgeBaseList();
@@ -80,7 +80,7 @@ const CreateKnowledgeBaseDrawerChild = ({
   });
 
   const deleteFile = (index, status) => {
-    if (status === "success") {
+    if (status === "success" && files?.file?.[index]?.id) {
       // @ts-ignore
       handleDelete({ ids: files?.file[index]?.id, index });
     } else {
@@ -127,7 +127,7 @@ const CreateKnowledgeBaseDrawerChild = ({
     onError: (data) => {
       if (data?.statusCode == RESPONSE_CODES.LIMIT_REACHED) return;
 
-      // Handle file upload errors - update file statuses and don't show generic error
+      // The whole batch was rejected before persistence; all files remain local.
       if (data?.result?.not_uploaded || data?.result?.notUploaded) {
         const file = data?.result?.files ?? [];
         setValue("file", {
@@ -142,7 +142,8 @@ const CreateKnowledgeBaseDrawerChild = ({
                     statusReason: result?.error,
                   }
                 : {
-                    status: "success",
+                    status: "not_started",
+                    statusReason: "",
                   }),
             };
           }),
@@ -191,11 +192,16 @@ const CreateKnowledgeBaseDrawerChild = ({
     setShowSdkInfo(false);
   };
 
+  // L7b absent-sweep (absent:sdk-doors): prototype builds have no SDK, so
+  // an oversized file only gets the `File size is too large` toast; no SDK
+  // dialog, no Python tab.
   const handleShowSdkInfo = () => {
+    if (isPrototypeMode()) return;
     setShowSdkInfo(true);
   };
 
   const handleOpenSDKTab = () => {
+    if (isPrototypeMode()) return;
     setCurrentTab("ImprortfromSDK");
     handleCloseSdkInfo();
   };
@@ -216,6 +222,7 @@ const CreateKnowledgeBaseDrawerChild = ({
         },
       }),
     select: (d) => d?.data?.result,
+    enabled: !isPrototypeMode(),
   });
 
   return (
@@ -257,7 +264,7 @@ const CreateKnowledgeBaseDrawerChild = ({
                 <Link
                   href="https://docs.futureagi.com/docs/knowledge-base"
                   underline="always"
-                  color="blue.500"
+                  color="status.info.fg"
                   target="_blank"
                   rel="noopener noreferrer"
                   fontWeight="fontWeightMedium"
@@ -279,7 +286,7 @@ const CreateKnowledgeBaseDrawerChild = ({
               onClick={handleConfirmCLose}
               sx={{ position: "absolute", top: "10px", right: "12px" }}
             >
-              <Iconify icon="mingcute:close-line" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
 
@@ -324,32 +331,26 @@ const CreateKnowledgeBaseDrawerChild = ({
                   onChange={(e, value) => {
                     setCurrentTab(value);
                   }}
-                  TabIndicatorProps={{
-                    style: { backgroundColor: theme.palette.primary.main },
+                  sx={{
+                    boxShadow: "none",
+                    borderBottom: "1px solid",
+                    borderColor: "divider",
                   }}
-                  sx={{ borderBottom: "1px solid", borderColor: "divider" }}
                 >
-                  {tabItems.map((tab) => (
-                    <Tab
-                      disabled={tab.disabled}
-                      key={tab.value}
-                      label={tab.label}
-                      value={tab.value}
-                      sx={{
-                        paddingLeft: "24px",
-                        paddingRight: "24px",
-                        ...theme.typography["s1"],
-                        fontWeight: theme.typography["fontWeightSemiBold"],
-                        "&:not(.Mui-selected)": {
-                          color: "text.disabled", // Color for unselected tabs
-                          fontWeight: theme.typography["fontWeightMedium"],
-                        },
-                        ["&:not(:last-of-type)"]: {
-                          marginRight: "4px",
-                        },
-                      }}
-                    />
-                  ))}
+                  {/* Prototype builds have no SDK: its import tab is absent. */}
+                  {tabItems
+                    .filter(
+                      (tab) =>
+                        !isPrototypeMode() || tab.value !== "ImprortfromSDK",
+                    )
+                    .map((tab) => (
+                      <Tab
+                        disabled={tab.disabled}
+                        key={tab.value}
+                        label={tab.label}
+                        value={tab.value}
+                      />
+                    ))}
                 </Tabs>
               </Box>
             </Box>
@@ -362,7 +363,7 @@ const CreateKnowledgeBaseDrawerChild = ({
                     control={control}
                   />
                 )}
-                {currentTab === "ImprortfromSDK" && (
+                {currentTab === "ImprortfromSDK" && !isPrototypeMode() && (
                   <UploadKnowledgeBaseSDK
                     pythonCode={sdkCode?.code}
                     action={knowledgeId ? "update" : "add"}
@@ -375,11 +376,7 @@ const CreateKnowledgeBaseDrawerChild = ({
                   fontWeight={"fontWeightMedium"}
                   color="text.disabled"
                 >
-                  Files uploaded:{" "}
-                  {files?.file?.length -
-                    (files?.file?.filter((file) => file?.status === "error")
-                      ?.length || 0)}
-                  /{files?.file?.length}
+                  Files selected: {files?.file?.length}
                 </Typography>
               )}
             </Box>
@@ -444,9 +441,6 @@ const CreateKnowledgeBaseDrawerChild = ({
               variant="contained"
               color="primary"
               onClick={handleSubmit(onCreate)}
-              sx={{
-                py: "8px",
-              }}
             >
               <Typography typography="s1" fontWeight={"fontWeightSemiBold"}>
                 {knowledgeId ? "Add" : "Create"}
@@ -455,11 +449,13 @@ const CreateKnowledgeBaseDrawerChild = ({
           </Box>
         )}
       </Box>
-      <SdkInfoDialog
-        onSubmit={handleOpenSDKTab}
-        open={showSdkInfo}
-        onClose={handleCloseSdkInfo}
-      />
+      {!isPrototypeMode() && (
+        <SdkInfoDialog
+          onSubmit={handleOpenSDKTab}
+          open={showSdkInfo}
+          onClose={handleCloseSdkInfo}
+        />
+      )}
       <ConfirmDialog
         content="Are you sure you want to close? Your work will be lost"
         action={
@@ -545,18 +541,20 @@ const CreateKnowledgeBaseDrawer = ({
     }
   };
 
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={handleConfirmCLose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          width: "570px",
-          borderRadius: "10px",
+          width: "640px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

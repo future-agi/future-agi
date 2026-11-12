@@ -1,0 +1,43 @@
+# Airtable's MCP server with a personal access token as the bearer.
+schema: "connector-manifest/v1#provider"
+app: airtable
+id: pat
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.airtable.com/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Personal access token
+      help: "An Airtable personal access token with the scopes Airtable's MCP guide lists, or fewer for narrower access."
+      helpUrl: https://airtable.com/developers/agents/mcp/getting-started
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://airtable.com/developers/agents/mcp/getting-started
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://airtable.com/developers/agents/mcp/getting-started
+    fetchedAt: 2026-10-20
+  - fact: auth.credentialParts
+    url: https://airtable.com/developers/agents/mcp/getting-started
+    fetchedAt: 2026-10-20
+  - fact: auth.credentialParts
+    url: https://mcp.airtable.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-20
+x-omega: { oss: exclude }

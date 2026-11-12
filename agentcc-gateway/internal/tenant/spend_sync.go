@@ -92,6 +92,9 @@ func runPeriodicSync(ctx context.Context, interval time.Duration, baseURL, admin
 	if interval <= 0 || baseURL == "" {
 		return
 	}
+	if keyStore != nil {
+		keyStore.SetDelegationSyncInterval(interval)
+	}
 	if loaded == nil {
 		loaded = &syncLoaded{}
 		loaded.orgs.Store(true)
@@ -111,19 +114,23 @@ func runPeriodicSync(ctx context.Context, interval time.Duration, baseURL, admin
 			slog.Info("periodic control plane sync stopped")
 			return
 		case <-ticker.C:
+			// Membership/revocation must not wait behind org-config latency or
+			// inherit an already expired org-fetch deadline.
+			if keyStore != nil {
+				syncCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+				if err := auth.SyncKeysFromControlPlane(syncCtx, baseURL, adminToken, keyStore); err != nil {
+					keys.failed(ctx, "periodic key sync failed", err)
+				} else {
+					keys.succeeded()
+				}
+				cancel()
+			}
 			syncCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			if err := SyncFromControlPlane(syncCtx, baseURL, adminToken, store); err != nil {
 				orgs.failed(ctx, "periodic sync failed", err)
 			} else {
 				orgs.succeeded()
 				slog.Debug("periodic sync completed", "orgs", store.Count())
-			}
-			if keyStore != nil {
-				if err := auth.SyncKeysFromControlPlane(syncCtx, baseURL, adminToken, keyStore); err != nil {
-					keys.failed(ctx, "periodic key sync failed", err)
-				} else {
-					keys.succeeded()
-				}
 			}
 			cancel()
 		}

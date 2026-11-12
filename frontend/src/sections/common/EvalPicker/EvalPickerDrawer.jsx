@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { useQueryClient } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { evalDetailQuery } from "src/sections/evals/hooks/useEvalDetail";
 import EvalPickerProvider from "./context/EvalPickerProvider";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
@@ -73,6 +74,9 @@ const EvalPickerContent = ({
           ...evalDetailQuery(templateId),
           staleTime: 30000,
         });
+        // L7c g7 (wiz:add-evaluation): a code check runs no judge, so it
+        // needs no model picked (Tool call accuracy attaches at once).
+        if (detail?.eval_type === "code") return false;
         return !detail?.model;
       } catch {
         // Fail toward the config screen: adding a child with no model fails
@@ -97,7 +101,32 @@ const EvalPickerContent = ({
             setStep("config");
             return;
           }
-          await onEvalAdded?.(normalizeEvalPickerEval(evalData));
+          // L7c g7 (wiz:add-evaluation): the keys an attached eval maps
+          // are its template's (Tool call accuracy's expected_tool_calls
+          // maps to the column of that name), read from its detail when
+          // the list row does not carry them.
+          const normalized = normalizeEvalPickerEval(evalData);
+          let description = normalized?.description ?? evalData?.description;
+          const tid =
+            normalized?.templateId || evalData?.template_id || evalData?.id;
+          const detail = tid
+            ? await queryClient
+                .fetchQuery({ ...evalDetailQuery(tid), staleTime: 30000 })
+                .catch(() => null)
+            : null;
+          // Every key the template reads (the list row may name only some).
+          const requiredKeys = [
+            ...new Set([
+              ...(normalized?.requiredKeys ?? []),
+              ...(detail?.required_keys ?? detail?.config?.required_keys ?? []),
+            ]),
+          ];
+          description = description || detail?.description || null;
+          await onEvalAdded?.({
+            ...normalized,
+            ...(requiredKeys?.length ? { requiredKeys } : {}),
+            ...(description ? { description } : {}),
+          });
           onClose?.();
         } catch {
           // Parent handles error display
@@ -116,6 +145,7 @@ const EvalPickerContent = ({
       onClose,
       setSelectedEval,
       setStep,
+      queryClient,
     ],
   );
 
@@ -148,8 +178,10 @@ const EvalPickerContent = ({
           // without re-opening the drawer.
           if (!keepOpenAfterSave) onClose?.();
         }
+        return true;
       } catch {
-        // Keep on config screen if save fails
+        // Keep on config screen and retain the comparison baseline on failure.
+        return false;
       } finally {
         setIsSaving(false);
       }
@@ -193,14 +225,13 @@ const EvalPickerContent = ({
             <Button
               variant="outlined"
               size="small"
-              startIcon={<Iconify icon="mingcute:add-line" width={16} />}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
               onClick={() => setStep("create")}
-              sx={{ textTransform: "none", fontSize: "12px" }}
             >
               Create New Eval
             </Button>
             <IconButton onClick={onClose} size="small" sx={{ p: 0.5 }}>
-              <Iconify icon="mingcute:close-line" width={20} />
+              <Iconify icon="solar:close-linear" width={20} />
             </IconButton>
           </Box>
         </Box>
@@ -222,7 +253,7 @@ const EvalPickerContent = ({
               }}
             >
               <Iconify
-                icon="mdi:alert-circle-outline"
+                icon="solar:danger-circle-linear"
                 width={40}
                 sx={{ color: "error.main" }}
               />
@@ -240,7 +271,6 @@ const EvalPickerContent = ({
                   handleBackToList();
                   resetErrorBoundary();
                 }}
-                sx={{ textTransform: "none" }}
               >
                 Back to list
               </Button>
@@ -310,7 +340,7 @@ const EvalPickerDrawer = ({
   onEvalAdded,
   existingEvals = [],
   drawerType = "temporary",
-  width = 900,
+  width = 960,
   // When editing an existing eval, pass its template info here to skip the
   // list step and open directly at the config step.
   initialEval = null,
@@ -365,8 +395,12 @@ const EvalPickerDrawer = ({
   // Opt-in: for hosts that can't grade a composite eval, "Create new" drops
   // its Composite mode.
   hideCompositeCreate = false,
+  // Opt-in (IT-R3 G5 P3): list rows read like the host (`Correctness`,
+  // not `correctness_vs_reference`). Default: the eval's own name.
+  formatEvalName = null,
 }) => {
   const [currentStep, setCurrentStep] = useState("list");
+  const covered = useDrawerCovered(open);
 
   return (
     <Drawer
@@ -374,6 +408,7 @@ const EvalPickerDrawer = ({
       open={open}
       variant={drawerType}
       onClose={onClose}
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: (theme) => ({
           width:
@@ -429,6 +464,7 @@ const EvalPickerDrawer = ({
         addedEvalAction={addedEvalAction}
         requireInputs={requireInputs}
         hideCompositeCreate={hideCompositeCreate}
+        formatEvalName={formatEvalName}
       >
         <EvalPickerContent
           onStepChange={setCurrentStep}
@@ -487,6 +523,7 @@ EvalPickerDrawer.propTypes = {
   }),
   requireInputs: PropTypes.bool,
   hideCompositeCreate: PropTypes.bool,
+  formatEvalName: PropTypes.func,
 };
 
 export default EvalPickerDrawer;

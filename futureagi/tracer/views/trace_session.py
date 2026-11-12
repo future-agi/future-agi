@@ -127,6 +127,9 @@ from tracer.services.clickhouse.query_builders.eval_status import (
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
 )
+from tracer.services.clickhouse.query_builders.trace_usage import (
+    capture_coverage_from_counts,
+)
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
     ReadDeadlineExceeded,
@@ -723,10 +726,17 @@ def _resolve_ch_session_fields(request, trace_session_id):
     the session is unknown or out of scope — callers map that to "not found"
     so the CH fallback enforces the same tenant gate as the PG queryset.
     """
+    from tracer.models.trace_session import TraceSessionOverlay
     from tracer.services.clickhouse.v2.trace_session_dict_reader import (
         resolve_session_fields,
     )
 
+    if (
+        TraceSessionOverlay._base_manager.using("default")
+        .filter(trace_session_id=trace_session_id, deleted=True)
+        .exists()
+    ):
+        return None
     # Workspace-scoped lookup — the project is discovered from the resolved
     # fields below, so there's no single project_id to scope the read by here.
     session_fields = resolve_session_fields([trace_session_id]).get(
@@ -840,6 +850,18 @@ def _soft_delete_trace_session_tree(trace_sessions):
         id__in=session_ids,
         deleted=False,
     ).update(deleted=True, deleted_at=now)
+    from tracer.services.analysis_retention import retire_analysis_sources
+
+    for project_id in sorted({session.project_id for session in sessions}):
+        selected = [
+            session.id for session in sessions if session.project_id == project_id
+        ]
+        project_trace_ids = Trace._base_manager.filter(
+            project_id=project_id, session_id__in=selected
+        ).values_list("id", flat=True)
+        retire_analysis_sources(
+            project_id=project_id, trace_ids=project_trace_ids, session_ids=selected
+        )
 
 
 class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
@@ -907,14 +929,17 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         """
         from tracer.models.trace_session import TraceSessionOverlay
 
-        TraceSessionOverlay.objects.update_or_create(
-            trace_session_id=trace_session_id,
-            defaults={
-                "project_id": project_id,
-                "bookmarked": bookmarked,
-                "display_name": display_name,
-            },
-        )
+        with transaction.atomic():
+            overlay, _ = TraceSessionOverlay._base_manager.select_for_update(
+                of=("self",)
+            ).get_or_create(
+                trace_session_id=trace_session_id, defaults={"project_id": project_id}
+            )
+            if overlay.deleted:
+                raise Http404("Trace session not found")
+            overlay.bookmarked = bookmarked
+            overlay.display_name = display_name
+            overlay.save(update_fields=["bookmarked", "display_name", "updated_at"])
 
     def perform_update(self, serializer):
         """Persist a TraceSession update AND mirror the UI overlay (slice 2b).
@@ -1035,7 +1060,18 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
         project_id = session_fields["project_id"]
 
-        TraceSessionOverlay.objects.filter(trace_session_id=trace_session_id).delete()
+        # Preserve an ID-only PG marker: stale CH spans must not be materialized
+        # into a new analysis after the CH-only session was deleted.
+        TraceSessionOverlay._base_manager.update_or_create(
+            trace_session_id=trace_session_id,
+            defaults={
+                "project_id": project_id,
+                "deleted": True,
+                "deleted_at": timezone.now(),
+                "display_name": None,
+                "bookmarked": False,
+            },
+        )
 
         # Mark as deleted in the CH trace_sessions RMT: INSERT a row with
         # is_deleted=1 and a newer version so FINAL picks it up.
@@ -1066,6 +1102,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 trace_session_id=str(trace_session_id),
                 error=str(e)[:200],
             )
+        # The PG marker is authoritative even if CH is temporarily unavailable.
+        from tracer.services.analysis_retention import retire_analysis_sources
+
+        retire_analysis_sources(project_id=project_id, session_ids=[trace_session_id])
 
         return Response(status=drf_status.HTTP_204_NO_CONTENT)
 
@@ -1182,6 +1222,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         )
 
         agg = agg_result.data[0] if agg_result.data else {}
+        capture = capture_coverage_from_counts(
+            source_summary_present=bool(agg.get("source_summary_present")),
+            request_count=int(agg.get("observed_request_count", 0)),
+        )
+        capture_fields = {"capture_coverage": capture} if capture is not None else {}
         session_start = agg.get("session_start")
         session_end = agg.get("session_end")
         duration = 0
@@ -1215,7 +1260,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         session_metadata = {
             "session_id": str(trace_session_id),
             "duration": duration,
-            "total_cost": agg.get("total_cost", 0) or 0,
+            "total_cost": agg.get("total_cost", 0),
             "total_traces": agg.get("total_traces", 0),
             "start_time": format_datetime_to_iso(session_start),
             "end_time": format_datetime_to_iso(session_end),
@@ -1249,6 +1294,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.success_response(
                 {
                     "session_metadata": session_metadata,
+                    **capture_fields,
                     "response": [],
                     "next": False,
                 }
@@ -1319,6 +1365,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 "input": trace_row.get("input"),
                 "output": trace_row.get("output"),
                 "system_metrics": {
+                    "project_id": str(project_id),
                     "total_latency_ms": trace_row.get("root_latency_ms", 0),
                     "user_id": user_id_label,
                     "total_cost": trace_row.get("total_cost", 0),
@@ -1376,6 +1423,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         return self._gm.success_response(
             {
                 "session_metadata": session_metadata,
+                **capture_fields,
                 "response": response,
                 "next": has_next,
             }

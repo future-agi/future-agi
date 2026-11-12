@@ -1,4 +1,5 @@
 import {
+  Alert,
   Box,
   Breadcrumbs,
   Button,
@@ -9,19 +10,30 @@ import {
   Link,
   Slider,
   Tab,
-  Tabs,
   TextField,
   Typography,
 } from "@mui/material";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
 import { useSnackbar } from "notistack";
-import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import {
+  useFeatureLocked,
+  CAPABILITY,
+  useFeatureDenied,
+} from "src/hooks/useCapabilities";
 import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
-import { FAGI_MODEL_VALUES } from "./ModelSelector";
+import { FAGI_MODEL_VALUES, JEV_MODEL_VALUES } from "./ModelSelector";
+import JevOutputConfig from "./JevOutputConfig";
+import {
+  buildJevMapping,
+  getJevValidationErrors,
+  hasExtraJevMessages,
+  orderChoiceScores,
+} from "../utils/jevMapping";
 
 import { useCreateEval } from "../hooks/useCreateEval";
 import { useUpdateEval } from "../hooks/useEvalDetail";
@@ -37,6 +49,7 @@ import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys
 import CodeEvalEditor, { PYTHON_CODE_TEMPLATE } from "./CodeEvalEditor";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
+import { useBeforeUnload } from "src/hooks/useBeforeUnload";
 import {
   extractVariables,
   extractVariablesFromMessages,
@@ -45,58 +58,89 @@ import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import {
+  EVAL_NAME_HINT,
+  createNameErrorOf,
+  evalNameFormatError,
+} from "./createNameError";
+import {
+  TYPED_EVAL_TYPES,
+  isTypedEvalType,
+} from "src/sections/common/EvalTypes/typedEvalTypes";
+import TypedEvalEditor from "../types/TypedEvalEditor";
+import { typedTabsOf } from "../types/typedViews";
+import {
+  compositeExtrasBody,
+  templateRowsOf,
+  validateComposite,
+} from "src/sections/common/EvalTypes/compositeModel";
 
 const ERROR_LOCALIZER_LOCKED_TOOLTIP =
   "Error Localization isn't enabled for this workspace.";
 
+// L7c g7 (evalcreate:type): no Code type in Create (workspace code is not
+// executed by the scorer); built-in code checks still score.
 const EVAL_TYPE_TABS = [
   { value: "agent", label: "Agents" },
   { value: "llm", label: "LLM-As-A-Judge" },
-  { value: "code", label: "Code" },
+  // W7: a typed type's tab shows once its editor is real.
+  ...typedTabsOf(TYPED_EVAL_TYPES),
 ];
 
 const EVAL_TAGS = [
   {
     value: "red_teaming",
     label: "Red Teaming",
-    icon: "mdi:shield-alert-outline",
+    icon: "solar:shield-warning-linear",
   },
   {
     value: "retrieval_systems",
     label: "Retrieval Systems",
-    icon: "mdi:database-search-outline",
+    icon: "solar:database-linear",
   },
   {
     value: "harmful_objects",
     label: "Harmful Objects",
-    icon: "mdi:alert-octagon-outline",
+    icon: "solar:danger-circle-linear",
   },
   {
     value: "chatbot_behaviors",
     label: "Chatbot behaviors",
-    icon: "mdi:robot-outline",
+    icon: "solar:bot-linear",
   },
   {
     value: "output_format",
     label: "Output Format",
-    icon: "mdi:format-list-bulleted",
+    icon: "solar:list-linear",
   },
-  { value: "nlp_metrics", label: "NLP Metrics", icon: "mdi:chart-bar" },
-  { value: "data_leakage", label: "Data Leakage", icon: "mdi:leak" },
+  { value: "nlp_metrics", label: "NLP Metrics", icon: "solar:chart-2-linear" },
+  {
+    value: "data_leakage",
+    label: "Data Leakage",
+    icon: "solar:waterdrop-linear",
+  },
   {
     value: "output_validation",
     label: "Output Validation",
-    icon: "mdi:check-decagram-outline",
+    icon: "solar:check-circle-linear",
   },
-  { value: "image", label: "Image", icon: "mdi:image-outline" },
-  { value: "audio", label: "Audio", icon: "mdi:volume-high" },
-  { value: "medical", label: "Medical", icon: "mdi:medical-bag" },
-  { value: "finance", label: "Finance", icon: "mdi:currency-usd" },
-  { value: "agents", label: "Agents", icon: "mdi:robot-excited-outline" },
-  { value: "compliance", label: "Compliance", icon: "mdi:scale-balance" },
-  { value: "insurance", label: "Insurance", icon: "mdi:umbrella-outline" },
-  { value: "sales", label: "Sales", icon: "mdi:handshake-outline" },
-  { value: "tools", label: "Tools", icon: "mdi:tools" },
+  { value: "image", label: "Image", icon: "solar:gallery-linear" },
+  { value: "audio", label: "Audio", icon: "solar:volume-loud-linear" },
+  { value: "medical", label: "Medical", icon: "solar:medical-kit-linear" },
+  {
+    value: "finance",
+    label: "Finance",
+    icon: "solar:dollar-minimalistic-linear",
+  },
+  { value: "agents", label: "Agents", icon: "solar:bot-linear" },
+  { value: "compliance", label: "Compliance", icon: "solar:scale-linear" },
+  { value: "insurance", label: "Insurance", icon: "solar:shield-linear" },
+  { value: "sales", label: "Sales", icon: "solar:hand-shake-linear" },
+  {
+    value: "tools",
+    label: "Tools",
+    icon: "solar:settings-minimalistic-linear",
+  },
 ];
 
 const extractSelectedTools = (tools) => {
@@ -147,6 +191,35 @@ const resolveContextOptions = (dataInjection) => {
   return ["variables_only"];
 };
 
+// What Jev's server check reads. While the setup can't run, autosave holds
+// these back, so the server keeps the last runnable setup, and saves the rest
+// (the prompt, threshold, template format).
+const JEV_CHECKED_FIELDS = [
+  "eval_type",
+  "model",
+  "output_type",
+  "choice_scores",
+  "multi_choice",
+  "check_internet",
+  "mode",
+  "tools",
+  "knowledge_bases",
+  "data_injection",
+  "few_shot_examples",
+  "jev_mapping",
+];
+
+const withoutJevFields = (payload) => {
+  // Messages beyond the system prompt need the confirmation that sits in the
+  // held mapping; a system prompt alone saves.
+  const held = hasExtraJevMessages(payload.messages)
+    ? [...JEV_CHECKED_FIELDS, "messages"]
+    : JEV_CHECKED_FIELDS;
+  return Object.fromEntries(
+    Object.entries(payload).filter(([key]) => !held.includes(key)),
+  );
+};
+
 const EvalCreatePage = () => {
   const { draftId: urlDraftId } = useParams();
   const navigate = useNavigate();
@@ -157,6 +230,9 @@ const EvalCreatePage = () => {
   // Fail closed while capabilities load (both flags true) so we never flash
   // Turing models or agent evals as available before the fetch resolves.
   const { locked: fagiLocked } = useFeatureLocked(CAPABILITY.TURING_MODELS);
+  // Only a confirmed denial locks Jev: not while capabilities load, and not
+  // when their fetch fails (self-hosted always allows Jev; the server checks).
+  const jevLocked = useFeatureDenied(CAPABILITY.JEV_MODELS);
   const { locked: agentEvalLocked, isLoading: capabilitiesLoading } =
     useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
@@ -176,18 +252,24 @@ const EvalCreatePage = () => {
   // --- Single eval state ---
   const [name, setName] = useState("");
   const [evalType, setEvalType] = useState("agent");
+  const [nameError, setNameError] = useState(null);
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState(PYTHON_CODE_TEMPLATE);
   const [codeLanguage, setCodeLanguage] = useState("python");
   const [model, setModel] = useState("turing_large");
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
+  // Jev question details (criteria, choice descriptions, score levels). The
+  // output category locks after save, so they must be editable here.
+  const [jevMapping, setJevMapping] = useState({});
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
   const [multiChoice, setMultiChoice] = useState(false);
   const [description, setDescription] = useState("");
   const [checkInternet, setCheckInternet] = useState(false);
   const [agentMode, setAgentMode] = useState("agent");
+  // The Agents editor unmounts on tab changes; keep its non-Jev mode here.
+  const previousAgentModeRef = useRef(null);
   const [summaryType, setSummaryType] = useState("concise");
   const [customSummary, setCustomSummary] = useState("");
   const [connectorIds, setConnectorIds] = useState([]);
@@ -229,7 +311,10 @@ const EvalCreatePage = () => {
   // Union of every child template's `required_keys`. Drives the
   // TestPlayground in composite mode so the user sees one input per
   // variable across all children.
-  const compositeUnionKeys = useCompositeChildrenUnionKeys(selectedChildren);
+  // W7-5: a task-suite check child has no template (and no keys) to read.
+  const compositeUnionKeys = useCompositeChildrenUnionKeys(
+    templateRowsOf(selectedChildren),
+  );
   const [aggregationEnabled, setAggregationEnabled] = useState(true);
   const [aggregationFunction, setAggregationFunction] =
     useState("weighted_avg");
@@ -238,7 +323,11 @@ const EvalCreatePage = () => {
 
   const [testPassed, setTestPassed] = useState(false);
   const [testError, setTestError] = useState(null);
-  const [draftId, setDraftId] = useState(urlDraftId || null);
+  // A URL ID is not ready for writes until its config has loaded.
+  const [draftId, setDraftId] = useState(null);
+  const [draftError, setDraftError] = useState(null);
+  const [draftAttempt, setDraftAttempt] = useState(0);
+  const [isDraftPending, setIsDraftPending] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const draftCreating = useRef(false);
 
@@ -290,23 +379,34 @@ const EvalCreatePage = () => {
 
     // If URL has a draft ID, load its config
     if (urlDraftId && !draftLoaded.current) {
-      draftLoaded.current = true;
+      draftCreating.current = true;
+      setIsDraftPending(true);
       (async () => {
         try {
           const { data } = await axios.get(
             endpoints.develop.eval.getEvalDetail(urlDraftId),
           );
           const d = data?.result;
+          if (!d) throw new Error("Failed to load evaluation");
           if (d) {
             const config = d.config || {};
-            setEvalType(d.eval_type || "agent");
+            setEvalType(
+              d.eval_type === "code" ? "llm" : d.eval_type || "agent",
+            );
             setInstructions(d.instructions || "");
             setCode(config.code || d.code || PYTHON_CODE_TEMPLATE);
             setCodeLanguage(config.language || "python");
             setModel(config.model || d.model || "turing_large");
             setOutputType(d.output_type_normalized || "pass_fail");
             setPassThreshold(d.pass_threshold ?? 0.5);
-            setChoiceScores(d.choice_scores || {});
+            // jsonb returns choice_scores keys shortest first; autosave them
+            // in the order the author saved.
+            setChoiceScores(
+              orderChoiceScores(
+                d.choice_scores || {},
+                config.jev_mapping?.choice?.labels || d.choices,
+              ),
+            );
             setMultiChoice(d.multi_choice ?? config.multi_choice ?? false);
             setDescription(d.description || "");
             setCheckInternet(config.check_internet ?? false);
@@ -330,13 +430,20 @@ const EvalCreatePage = () => {
               d.template_format || config.template_format || "mustache",
             );
             if (config.messages) setMessages(config.messages);
+            setJevMapping(config.jev_mapping || {});
             if (config.few_shot_examples) {
               setFewShotExamples(config.few_shot_examples || []);
             }
+            draftLoaded.current = true;
+            setDraftId(urlDraftId);
+            setDraftError(null);
           }
         } catch {
-          // Draft not found — create a new one
-          setDraftId(null);
+          // Retry the read, not a replacement draft; never save blank defaults.
+          setDraftError("Failed to load evaluation");
+        } finally {
+          draftCreating.current = false;
+          setIsDraftPending(false);
         }
       })();
       return;
@@ -345,6 +452,7 @@ const EvalCreatePage = () => {
     // No URL draft — create a new one
     if (!draftId) {
       draftCreating.current = true;
+      setIsDraftPending(true);
       (async () => {
         try {
           const { data } = await axios.post(
@@ -358,20 +466,54 @@ const EvalCreatePage = () => {
             },
           );
           const id = data?.result?.id;
-          if (id) {
-            setDraftId(id);
-            navigate(`/dashboard/evaluations/create/${id}`, { replace: true });
-          }
+          if (!id) throw new Error("Draft not ready yet, please try again");
+          setDraftId(id);
+          setDraftError(null);
+          navigate(`/dashboard/evaluations/create/${id}`, { replace: true });
         } catch {
-          // ignore — user can retry
+          setDraftError("Draft not ready yet, please try again");
+        } finally {
+          draftCreating.current = false;
+          setIsDraftPending(false);
         }
       })();
     }
-  }, [capabilitiesLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [capabilitiesLoading, draftAttempt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-save config to draft (debounced, skip initial load)
   const autoSaveTimer = useRef(null);
+  const autoSaveErrorRef = useRef(null);
   const autoSaveSkipFirst = useRef(!!urlDraftId); // skip first trigger when loading existing draft
+  const isJevModel = JEV_MODEL_VALUES.has(model);
+  const jevErrors = isJevModel
+    ? getJevValidationErrors({
+        mapping: buildJevMapping(outputType, choiceScores, jevMapping),
+        config: {
+          check_internet: checkInternet,
+          few_shot_examples: fewShotExamples,
+          ...(evalType === "agent"
+            ? {
+                agent_mode: agentMode,
+                tools: buildToolsPayload(connectorIds),
+                knowledge_bases: knowledgeBaseIds,
+                data_injection: buildDataInjection(contextOptions),
+              }
+            : {}),
+        },
+        multiChoice,
+        choiceScores,
+        messages: evalType === "llm" ? messages : [],
+      })
+    : [];
+  // The server refuses a Jev setup these rules reject (a Score with no levels
+  // yet, say). Until it is runnable, autosave holds back the fields Jev's
+  // check reads and saves the rest; the header says what is not saved yet.
+  const jevUnrunnable =
+    isJevModel && evalType !== "code" && jevErrors.length > 0;
+  const jevNotSavedReason = jevUnrunnable ? jevErrors[0] : null;
+  useBeforeUnload(Boolean(jevNotSavedReason));
+  const [confirmLeave, setConfirmLeave] = useState(false);
+
   const buildUpdatePayload = useCallback(() => {
     const dataInjection = buildDataInjection(contextOptions);
 
@@ -414,6 +556,12 @@ const EvalCreatePage = () => {
           ? fewShotExamples.map((ds) => ({ id: ds.id, name: ds.name }))
           : undefined,
       template_format: templateFormat,
+      // Without it the server would keep the draft's earlier mapping, which
+      // no longer matches the output type once the user changes it.
+      // A code eval runs no model: no Jev mapping for it.
+      ...(isJevModel && evalType !== "code"
+        ? { jev_mapping: buildJevMapping(outputType, choiceScores, jevMapping) }
+        : {}),
     };
   }, [
     evalType,
@@ -436,6 +584,8 @@ const EvalCreatePage = () => {
     messages,
     fewShotExamples,
     templateFormat,
+    jevMapping,
+    isJevModel,
   ]);
 
   useEffect(() => {
@@ -446,12 +596,28 @@ const EvalCreatePage = () => {
     }
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
-      updateDraft.mutate(buildUpdatePayload());
+      const payload = buildUpdatePayload();
+      updateDraft.mutate(jevUnrunnable ? withoutJevFields(payload) : payload, {
+        // A refused autosave used to leave later edits silently unsaved.
+        // Say why, once per reason.
+        onError: (error) => {
+          const message = getSafeActionErrorMessage(
+            error,
+            "Your latest changes couldn't be saved.",
+          );
+          if (autoSaveErrorRef.current === message) return;
+          autoSaveErrorRef.current = message;
+          enqueueSnackbar(message, { variant: "error" });
+        },
+        onSuccess: () => {
+          autoSaveErrorRef.current = null;
+        },
+      });
     }, 800);
     return () => {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     };
-  }, [draftId, buildUpdatePayload]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [draftId, buildUpdatePayload, jevUnrunnable]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Draft cleanup: drafts with visible_ui=False are hidden from the list.
   // No auto-delete — stale drafts can be cleaned up by a backend cron.
@@ -461,7 +627,7 @@ const EvalCreatePage = () => {
   const handleSaveSingle = useCallback(async () => {
     if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
-        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
+        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge instead.",
         { variant: "error" },
       );
       return;
@@ -498,8 +664,11 @@ const EvalCreatePage = () => {
       enqueueSnackbar("Evaluation saved successfully", { variant: "success" });
       navigate(`/dashboard/evaluations/${draftId}`);
     } catch (error) {
+      // L7c g7 (evalcreate:name): a refused name is said at the field.
+      const msg = createNameErrorOf(error);
+      setNameError(msg);
       enqueueSnackbar(
-        getSafeActionErrorMessage(error, "Failed to save evaluation"),
+        msg ?? getSafeActionErrorMessage(error, "Failed to save evaluation"),
         { variant: "error" },
       );
     }
@@ -545,6 +714,8 @@ const EvalCreatePage = () => {
         child_weights: Object.keys(weights).length > 0 ? weights : null,
         child_pinned_versions:
           Object.keys(pinnedVersions).length > 0 ? pinnedVersions : null,
+        // W7-5: jury seats, levels and checks.
+        ...compositeExtrasBody(selectedChildren, childWeights),
       };
       const result = await createComposite.mutateAsync(payload);
       enqueueSnackbar("Composite evaluation created successfully", {
@@ -572,6 +743,35 @@ const EvalCreatePage = () => {
     enqueueSnackbar,
     navigate,
   ]);
+
+  // W7: a typed eval saves through its own create route (its editor names
+  // the route and the definition; a 400 {errors} goes back to the editor).
+  const handleSaveTyped = useCallback(
+    async (route, body) => {
+      // FA-EVALS-02: the same naming rule as Save Evaluation; nothing is sent
+      // for a name the server refuses (the field already says what to change).
+      const formatError = evalNameFormatError(name);
+      if (formatError) throw new Error(formatError);
+      let data;
+      try {
+        ({ data } = await axios.post(route, {
+          ...body,
+          name: name.trim(),
+          description: description || "",
+        }));
+      } catch (error) {
+        // L7c g7 (evalcreate:name): a refused name is said at the field.
+        const msg = createNameErrorOf(error);
+        if (msg) setNameError(msg);
+        throw error;
+      }
+      const id = data?.result?.id;
+      enqueueSnackbar("Evaluation created", { variant: "success" });
+      if (id) navigate(`/dashboard/evaluations/${id}`);
+      return data?.result ?? null;
+    },
+    [name, description, enqueueSnackbar, navigate],
+  );
 
   // Test Evaluation: draft is always auto-saved, just run it
   const handleTestEvaluation = useCallback(async () => {
@@ -626,8 +826,10 @@ const EvalCreatePage = () => {
     enqueueSnackbar,
   ]);
 
+  // W7: a typed eval type has no model trace for the localizer either.
+  const localizerApplies = evalType !== "code" && !isTypedEvalType(evalType);
   const isLoading =
-    createEval.isLoading || createComposite.isLoading || updateDraft.isLoading;
+    createEval.isPending || createComposite.isPending || updateDraft.isPending;
 
   // Block mode switch when a test has run or is running. Save-in-flight is
   // excluded: the save button is already disabled while `isLoading`, so the
@@ -675,8 +877,19 @@ const EvalCreatePage = () => {
           .length > 0
       : !!instructions.trim() &&
         extractVariables(instructions, templateFormat).length > 0;
+  // What the detail page blocks on: a Jev setup Jev can't run, or Jev
+  // locked on the plan. Test and Save stay off until it is fixed.
+  const jevBlockedReason =
+    isJevModel && evalType !== "code"
+      ? jevErrors[0] ||
+        (jevLocked ? "Jev models aren't included in your plan." : "")
+      : "";
+  // A name the server's naming rule refuses: said at the field, Save stays off.
+  const nameFormatError = evalNameFormatError(name);
   const canSaveSingle =
     !!name.trim() &&
+    !nameFormatError &&
+    !jevBlockedReason &&
     (evalType === "code" ? !!code.trim() : singleHasInstructionVariables);
   const canSaveComposite = compositeName.trim() && selectedChildren.length > 0;
   // Single evals require a successful test run before save. Composites
@@ -689,6 +902,108 @@ const EvalCreatePage = () => {
     return null;
   }
 
+  const header = (
+    <Box
+      sx={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        mb: 2,
+        flexShrink: 0,
+      }}
+    >
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+        <Breadcrumbs>
+          <Link
+            underline="hover"
+            color="text.secondary"
+            sx={{ cursor: "pointer" }}
+            onClick={() =>
+              jevNotSavedReason
+                ? setConfirmLeave(true)
+                : navigate("/dashboard/evaluations")
+            }
+          >
+            Evals List
+          </Link>
+          <Typography color="text.primary" fontWeight={600}>
+            Create evaluation
+          </Typography>
+        </Breadcrumbs>
+        {draftId && (
+          <Typography
+            variant="caption"
+            sx={{
+              fontFamily: "monospace",
+              fontSize: "12px",
+              color: "text.disabled",
+              backgroundColor: "action.hover",
+              px: 0.75,
+              py: 0.25,
+              borderRadius: "4px",
+            }}
+          >
+            Draft
+          </Typography>
+        )}
+        {jevNotSavedReason && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            noWrap
+            title={jevNotSavedReason}
+            sx={{ maxWidth: 520 }}
+          >
+            Not saved yet: {jevNotSavedReason}
+          </Typography>
+        )}
+      </Box>
+    </Box>
+  );
+  const draftRecoveryAlert = draftError &&
+    mode === "single" &&
+    !isTypedEvalType(evalType) && (
+      <Alert
+        severity="error"
+        sx={{ mb: 2 }}
+        action={
+          <Button
+            color="inherit"
+            size="small"
+            disabled={isDraftPending}
+            onClick={() => setDraftAttempt((attempt) => attempt + 1)}
+          >
+            Retry
+          </Button>
+        }
+      >
+        {draftError}
+      </Alert>
+    );
+
+  // Do not mount editors against blank defaults for an unread URL draft.
+  // This covers the initial GET, failures, and pending retries, so hydration
+  // cannot overwrite local work. New-draft POSTs remain editable throughout.
+  if (urlDraftId && !draftId) {
+    return (
+      <Box>
+        {header}
+        {draftRecoveryAlert}
+        {(isDraftPending || !draftError) && (
+          <Box
+            role="status"
+            sx={{ display: "flex", alignItems: "center", gap: 1.5 }}
+          >
+            <CircularProgress size={20} aria-hidden="true" />
+            <Typography variant="body2" color="text.secondary">
+              Draft not ready yet, please wait
+            </Typography>
+          </Box>
+        )}
+      </Box>
+    );
+  }
+
   return (
     <Box
       sx={{
@@ -698,51 +1013,8 @@ const EvalCreatePage = () => {
         minHeight: 0,
       }}
     >
-      {/* Header — breadcrumb only */}
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          mb: 2,
-          flexShrink: 0,
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-          <Breadcrumbs>
-            <Link
-              underline="hover"
-              color="text.secondary"
-              sx={{ cursor: "pointer" }}
-              onClick={() => navigate("/dashboard/evaluations")}
-            >
-              Evals List
-            </Link>
-            <Typography color="text.primary" fontWeight={600}>
-              Create evaluation
-            </Typography>
-          </Breadcrumbs>
-          {draftId && (
-            <Typography
-              variant="caption"
-              sx={{
-                fontFamily: "monospace",
-                fontSize: "10px",
-                color: "text.disabled",
-                backgroundColor: (t) =>
-                  t.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.05)"
-                    : "action.hover",
-                px: 0.75,
-                py: 0.25,
-                borderRadius: "4px",
-              }}
-            >
-              Draft
-            </Typography>
-          )}
-        </Box>
-      </Box>
+      {header}
+      {draftRecoveryAlert}
 
       {/* Two-panel layout — resizable, fills remaining height */}
       <Box sx={{ flex: 1, minHeight: 0 }}>
@@ -774,80 +1046,18 @@ const EvalCreatePage = () => {
                 <Typography variant="subtitle1" fontWeight={600}>
                   Eval details
                 </Typography>
-                <Tabs
+                <SegmentedTabs
                   value={mode}
                   onChange={handleModeChange}
-                  TabIndicatorProps={{ style: { display: "none" } }}
                   sx={{
-                    minHeight: 28,
-                    "& .MuiTab-root": {
-                      minHeight: 28,
-                      px: 1.5,
-                      py: 0,
-                      mr: "0px !important",
-                      textTransform: "none",
-                      fontSize: "13px",
-                      borderRadius: "6px",
+                    "& .MuiTab-root:not(.Mui-selected)": {
+                      color: "text.secondary",
                     },
-                    border: "1px solid",
-                    borderColor: "divider",
-                    p: "2px",
-                    borderRadius: "8px",
-                    bgcolor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.04)"
-                        : "background.neutral",
                   }}
                 >
-                  <Tab
-                    value="single"
-                    label="Single"
-                    sx={{
-                      bgcolor:
-                        mode === "single"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "rgba(255,255,255,0.12)"
-                                : "background.paper"
-                          : "transparent",
-                      boxShadow:
-                        mode === "single"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "none"
-                                : "0 1px 3px rgba(0,0,0,0.08)"
-                          : "none",
-                      borderRadius: "6px",
-                      fontWeight: mode === "single" ? 600 : 400,
-                      color:
-                        mode === "single" ? "text.primary" : "text.disabled",
-                    }}
-                  />
-                  <Tab
-                    value="composite"
-                    label="Composite"
-                    sx={{
-                      bgcolor:
-                        mode === "composite"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "rgba(255,255,255,0.12)"
-                                : "background.paper"
-                          : "transparent",
-                      boxShadow:
-                        mode === "composite"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "none"
-                                : "0 1px 3px rgba(0,0,0,0.08)"
-                          : "none",
-                      borderRadius: "6px",
-                      fontWeight: mode === "composite" ? 600 : 400,
-                      color:
-                        mode === "composite" ? "text.primary" : "text.disabled",
-                    }}
-                  />
-                </Tabs>
+                  <Tab value="single" label="Single" />
+                  <Tab value="composite" label="Composite" />
+                </SegmentedTabs>
               </Box>
 
               {mode === "single" ? (
@@ -863,29 +1073,30 @@ const EvalCreatePage = () => {
                       Eval Name
                       <Box
                         component="span"
-                        sx={{ color: "error.main", ml: 0.25 }}
+                        sx={{ color: "status.danger.fg", ml: 0.25 }}
                       >
                         *
                       </Box>
                     </Typography>
                     <TextField
+                      id="eval-create-name"
                       fullWidth
                       size="small"
-                      placeholder="Eg: Hallucination detector"
+                      placeholder="e.g. hallucination_detector"
                       value={name}
-                      onChange={(e) =>
-                        setName(
-                          e.target.value
-                            .toLowerCase()
-                            .replace(/[^a-z0-9_-]/g, ""),
-                        )
+                      onChange={(e) => {
+                        setName(e.target.value);
+                        setNameError(null);
+                      }}
+                      error={Boolean(nameError || nameFormatError)}
+                      helperText={
+                        nameError || nameFormatError || EVAL_NAME_HINT
                       }
-                      helperText="Enter unique evaluation name"
                     />
                   </Box>
 
                   {/* Eval Type Toggle — pill tabs (same as EvalAccordion Text/Image/Audio) */}
-                  <Tabs
+                  <SegmentedTabs
                     value={evalType}
                     onChange={(_, val) => {
                       if (agentEvalLocked && val === "agent") {
@@ -896,31 +1107,15 @@ const EvalCreatePage = () => {
                         return;
                       }
                       setEvalType(val);
+                      if (val === "code") setModel("");
                     }}
-                    variant="standard"
-                    scrollButtons={false}
-                    TabIndicatorProps={{ style: { display: "none" } }}
+                    variant="scrollable"
+                    scrollButtons="auto"
                     sx={{
-                      minHeight: 28,
-                      "& .MuiTabs-scroller": { overflow: "visible !important" },
-                      "& .MuiTab-root": {
-                        minHeight: 28,
-                        px: 1.5,
-                        py: 0,
-                        mr: "0px !important",
-                        textTransform: "none",
-                        fontSize: "13px",
-                        borderRadius: "6px",
-                      },
-                      border: "1px solid",
-                      borderColor: "divider",
-                      p: "2px",
-                      borderRadius: "8px",
                       width: "fit-content",
-                      bgcolor: (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.04)"
-                          : "background.neutral",
+                      "& .MuiTab-root:not(.Mui-selected)": {
+                        color: "text.secondary",
+                      },
                     }}
                   >
                     {EVAL_TYPE_TABS.map((tab) => {
@@ -945,40 +1140,20 @@ const EvalCreatePage = () => {
                                   }}
                                 >
                                   {tab.label}
-                                  <Iconify icon="mdi:lock-outline" width={14} />
+                                  <Iconify
+                                    icon="solar:lock-linear"
+                                    width={14}
+                                  />
                                 </Box>
                               </CustomTooltip>
                             ) : (
                               tab.label
                             )
                           }
-                          sx={{
-                            bgcolor:
-                              evalType === tab.value
-                                ? (theme) =>
-                                    theme.palette.mode === "dark"
-                                      ? "rgba(255,255,255,0.12)"
-                                      : "background.paper"
-                                : "transparent",
-                            boxShadow:
-                              evalType === tab.value
-                                ? (theme) =>
-                                    theme.palette.mode === "dark"
-                                      ? "none"
-                                      : "0 1px 3px rgba(0,0,0,0.08)"
-                                : "none",
-                            borderRadius: "6px",
-                            fontWeight: evalType === tab.value ? 600 : 400,
-                            opacity: locked ? 0.6 : 1,
-                            color:
-                              evalType === tab.value
-                                ? "text.primary"
-                                : "text.disabled",
-                          }}
                         />
                       );
                     })}
-                  </Tabs>
+                  </SegmentedTabs>
 
                   {/* ═══ Tab-specific content ═══ */}
 
@@ -999,6 +1174,7 @@ const EvalCreatePage = () => {
                       modelSelectorDisabled={false}
                       mode={agentMode}
                       onModeChange={setAgentMode}
+                      previousModeRef={previousAgentModeRef}
                       useInternet={checkInternet}
                       onUseInternetChange={setCheckInternet}
                       activeSummary={summaryType}
@@ -1037,6 +1213,7 @@ const EvalCreatePage = () => {
 
                       {/* Few-shot examples — dataset selector */}
                       <FewShotExamples
+                        isJevModel={isJevModel}
                         selectedDatasets={fewShotExamples}
                         onChange={setFewShotExamples}
                       />
@@ -1054,8 +1231,19 @@ const EvalCreatePage = () => {
                     />
                   )}
 
+                  {/* W7: a typed eval type's own editor (its definition,
+                      output type, Test and Save). */}
+                  {isTypedEvalType(evalType) && (
+                    <TypedEvalEditor
+                      evalType={evalType}
+                      name={name}
+                      onSave={handleSaveTyped}
+                      saving={isLoading}
+                    />
+                  )}
+
                   {/* Output Type — Code evals only have scoring (0-1) with pass threshold */}
-                  {evalType === "code" ? (
+                  {isTypedEvalType(evalType) ? null : evalType === "code" ? (
                     <Box>
                       <Typography
                         variant="body2"
@@ -1117,12 +1305,25 @@ const EvalCreatePage = () => {
                       onPassThresholdChange={setPassThreshold}
                       multiChoice={multiChoice}
                       onMultiChoiceChange={setMultiChoice}
+                      isJevModel={isJevModel}
+                    />
+                  )}
+
+                  {isJevModel && evalType !== "code" && (
+                    <JevOutputConfig
+                      outputType={outputType}
+                      choiceScores={choiceScores}
+                      mapping={jevMapping}
+                      onChange={setJevMapping}
+                      errors={jevErrors}
+                      hasExtraMessages={hasExtraJevMessages(messages)}
+                      locked={jevLocked}
                     />
                   )}
 
                   {/* LLM/Agent only — code evals don't produce model traces for
                       the localizer to introspect. */}
-                  {errorLocalizerAvailable && evalType !== "code" && (
+                  {errorLocalizerAvailable && localizerApplies && (
                     <Box>
                       <CustomTooltip
                         show={agentEvalLocked}
@@ -1215,11 +1416,7 @@ const EvalCreatePage = () => {
                                   : [...prev, tag.value],
                               )
                             }
-                            sx={{
-                              fontSize: "12px",
-                              cursor: "pointer",
-                              "& .MuiChip-icon": { fontSize: "14px" },
-                            }}
+                            sx={{ cursor: "pointer" }}
                           />
                         );
                       })}
@@ -1257,18 +1454,35 @@ const EvalCreatePage = () => {
                 flexDirection: "column",
               }}
             >
+              {/* W7: a typed eval type tests in its own editor; its graph
+                  and Test on a row show here instead of the playground. */}
+              {isTypedEvalType(evalType) && !isComposite ? (
+                <Box
+                  id="typed-eval-aside"
+                  sx={{ flex: 1, overflow: "auto", minHeight: 0 }}
+                />
+              ) : null}
               {/* Composite mode reuses the same TestPlayground as single
                   evals — the playground's own tabs let users test against
                   a dataset / tracing / simulation source. The required
                   keys are the deduplicated union of all child variables,
                   which is what the composite itself will need mapped at
                   bind time. */}
-              <Box sx={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+              <Box
+                sx={{
+                  flex: 1,
+                  overflow: "auto",
+                  minHeight: 0,
+                  ...(isTypedEvalType(evalType) && !isComposite
+                    ? { display: "none" }
+                    : {}),
+                }}
+              >
                 <TestPlayground
                   key={mode}
                   ref={testPlaygroundRef}
                   templateId={draftId}
-                  model={model}
+                  model={evalType === "code" ? "" : model}
                   evalName={name || ""}
                   instructions={
                     mode === "composite" || evalType === "code"
@@ -1300,6 +1514,11 @@ const EvalCreatePage = () => {
                               ? childWeights
                               : null,
                           pass_threshold: passThreshold ?? 0.5,
+                          // W7-5: jury seats, levels and checks.
+                          ...compositeExtrasBody(
+                            selectedChildren,
+                            childWeights,
+                          ),
                         }
                       : null
                   }
@@ -1327,13 +1546,17 @@ const EvalCreatePage = () => {
                   borderColor: "divider",
                   flexShrink: 0,
                   pb: 0.5,
+                  // W7: a typed eval type has its own Test and Save.
+                  ...(isTypedEvalType(evalType) && !isComposite
+                    ? { display: "none" }
+                    : {}),
                 }}
               >
                 {/* Test status indicator */}
                 {testError && (
                   <Typography
                     variant="caption"
-                    color="error.main"
+                    color="status.danger.fg"
                     sx={{ mr: "auto", fontSize: "12px", maxWidth: 300 }}
                     noWrap
                   >
@@ -1350,13 +1573,13 @@ const EvalCreatePage = () => {
                     }}
                   >
                     <Iconify
-                      icon="mdi:check-circle"
+                      icon="solar:check-circle-bold"
                       width={16}
-                      sx={{ color: "success.main" }}
+                      sx={{ color: "status.success.fg" }}
                     />
                     <Typography
                       variant="caption"
-                      color="success.main"
+                      color="status.success.fg"
                       sx={{ fontSize: "12px" }}
                     >
                       Test completed
@@ -1398,12 +1621,17 @@ const EvalCreatePage = () => {
                         ? hasCode
                         : instructionsReady;
                   const testDisabled =
-                    isTesting || !hasTestInput || !canEditEvals;
+                    isTesting ||
+                    !hasTestInput ||
+                    !canEditEvals ||
+                    (mode !== "composite" && !!jevBlockedReason);
 
                   let testDisabledReason = "";
                   if (!canEditEvals) {
                     testDisabledReason =
                       "You don't have permission to create or edit evaluations.";
+                  } else if (mode !== "composite" && jevBlockedReason) {
+                    testDisabledReason = jevBlockedReason;
                   } else if (isTesting) {
                     testDisabledReason = "Test is already running.";
                   } else if (mode === "composite" && !hasCompositeChildren) {
@@ -1452,12 +1680,11 @@ const EvalCreatePage = () => {
                               <CircularProgress size={14} />
                             ) : (
                               <Iconify
-                                icon="mdi:play-circle-outline"
+                                icon="solar:play-circle-linear"
                                 width={16}
                               />
                             )
                           }
-                          sx={{ textTransform: "none" }}
                         >
                           {isTesting ? "Testing..." : "Test Evaluation"}
                         </Button>
@@ -1466,7 +1693,18 @@ const EvalCreatePage = () => {
                   );
                 })()}
                 {(() => {
-                  const saveDisabled = isLoading || !canSave;
+                  const compositeErrors =
+                    mode === "composite"
+                      ? validateComposite({
+                          aggregation: aggregationEnabled
+                            ? aggregationFunction
+                            : null,
+                          children: selectedChildren,
+                          weights: childWeights,
+                        })
+                      : [];
+                  const saveDisabled =
+                    isLoading || !canSave || compositeErrors.length > 0;
                   let saveDisabledReason = "";
                   if (!canEditEvals) {
                     saveDisabledReason =
@@ -1480,10 +1718,17 @@ const EvalCreatePage = () => {
                     } else if (selectedChildren.length === 0) {
                       saveDisabledReason =
                         "Add at least one child evaluation before saving.";
+                    } else if (compositeErrors.length) {
+                      // W7-5: seats need a judge; vote rules need weights.
+                      saveDisabledReason = compositeErrors.join(" · ");
                     }
+                  } else if (jevBlockedReason) {
+                    saveDisabledReason = jevBlockedReason;
                   } else if (!name.trim()) {
                     saveDisabledReason =
                       "Give this evaluation a name before saving.";
+                  } else if (nameFormatError) {
+                    saveDisabledReason = nameFormatError;
                   } else if (evalType === "code" && !code.trim()) {
                     saveDisabledReason = "Write some code before saving.";
                   } else if (
@@ -1524,12 +1769,8 @@ const EvalCreatePage = () => {
                           }
                           disabled={saveDisabled}
                           startIcon={
-                            <Iconify
-                              icon="mdi:content-save-outline"
-                              width={16}
-                            />
+                            <Iconify icon="solar:diskette-linear" width={16} />
                           }
-                          sx={{ textTransform: "none" }}
                         >
                           {isLoading ? "Saving..." : "Save Evaluation"}
                         </Button>
@@ -1542,6 +1783,17 @@ const EvalCreatePage = () => {
           }
         />
       </Box>
+      <UnsavedChangesDialog
+        open={confirmLeave}
+        onClose={() => setConfirmLeave(false)}
+        onConfirm={() => {
+          setConfirmLeave(false);
+          navigate("/dashboard/evaluations");
+        }}
+        title="Leave without the Jev settings?"
+        message={`The Jev settings can't be saved yet: ${jevNotSavedReason}. If you leave now, they are lost.`}
+        confirmLabel="Leave"
+      />
       <UnsavedChangesDialog
         open={pendingMode !== null}
         onClose={handleCancelModeSwitch}

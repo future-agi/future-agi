@@ -1,0 +1,63 @@
+# Stripe's MCP server with OAuth on behalf of a Stripe user. Stripe's
+# authorization server registers public clients dynamically and takes no
+# client secret; EE takes pre-registered clients only, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: stripe
+id: oauth
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.stripe.com
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://access.stripe.com/mcp/oauth2/authorize
+    tokenUrl: https://access.stripe.com/mcp/oauth2/token
+    scopes: [mcp]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://access.stripe.com/mcp/oauth2/revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.stripe.com/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.kind
+    url: https://docs.stripe.com/mcp
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp.stripe.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.tokenUrl
+    url: https://mcp.stripe.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.scopes
+    url: https://mcp.stripe.com/.well-known/oauth-protected-resource
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.pkce
+    url: https://mcp.stripe.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.revocation.url
+    url: https://mcp.stripe.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+  - fact: auth.oauth2.registration
+    url: https://mcp.stripe.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-20
+x-omega: { oss: exclude, ee: exclude }

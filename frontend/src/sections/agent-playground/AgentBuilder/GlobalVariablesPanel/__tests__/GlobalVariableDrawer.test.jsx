@@ -23,11 +23,24 @@ vi.mock("src/api/agent-playground/agent-playground", () => ({
 }));
 
 // ---- Mock child components ----
-vi.mock("../ManualVariablesForm", () => ({
-  default: ({ formValues }) => (
-    <div data-testid="manual-form">{JSON.stringify(formValues)}</div>
-  ),
-}));
+// Renders one input per variable, registered on the drawer's form like the
+// real form, so typing makes the form dirty.
+vi.mock("../ManualVariablesForm", async () => {
+  const { useFormContext } = await vi.importActual("react-hook-form");
+  return {
+    default: function MockManualVariablesForm({ formValues, variables = {} }) {
+      const { register } = useFormContext();
+      return (
+        <div data-testid="manual-form">
+          {JSON.stringify(formValues)}
+          {Object.keys(variables).map((key) => (
+            <input key={key} aria-label={key} {...register(key)} />
+          ))}
+        </div>
+      );
+    },
+  };
+});
 
 vi.mock("../UploadedJSON", () => ({
   default: ({ uploadedJson }) => (
@@ -238,6 +251,85 @@ describe("GlobalVariableDrawer", () => {
       expect(onClose).toHaveBeenCalled();
       const state = useGlobalVariablesDrawerStore.getState();
       expect(state.pendingRun).toBe(false);
+    });
+  });
+
+  // AUD-AGENTS-02: closing once moved the view to ACTIONS, which still shows
+  // the editable form but skipped the unsaved-changes prompt from then on.
+  describe("unsaved changes guard after the drawer was closed once (AUD-AGENTS-02)", () => {
+    const topicDataset = {
+      columns: [{ id: "col-1", name: "topic" }],
+      rows: [{ cells: [{ columnId: "col-1", value: "cats" }] }],
+    };
+
+    // The X button, found by its icon so these tests do not depend on its name.
+    const closeButton = () =>
+      screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector("[data-testid='svg-icon']"));
+
+    const drawerAt = (open, onClose) => (
+      <QueryClientProvider client={queryClient}>
+        <GlobalVariableDrawer open={open} onClose={onClose} />
+      </QueryClientProvider>
+    );
+
+    // Close once without typing, then reopen the same mounted drawer, as
+    // GlobalVariablePanel does when "Add input variables" is clicked again.
+    const closeCleanAndReopen = (rerender, onClose) => {
+      fireEvent.click(closeButton());
+      expect(onClose).toHaveBeenCalledTimes(1);
+      rerender(drawerAt(false, onClose));
+      rerender(drawerAt(true, onClose));
+    };
+
+    beforeEach(() => {
+      mockDatasetData = topicDataset;
+    });
+
+    it("asks before discarding typed values on the first open", async () => {
+      const { onClose } = renderDrawer();
+
+      fireEvent.change(screen.getByLabelText("topic"), {
+        target: { value: "dogs" },
+      });
+      fireEvent.click(closeButton());
+
+      expect(await screen.findByTestId("confirm-dialog")).toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it("still asks before discarding typed values when X is clicked after a reopen", async () => {
+      const { onClose, rerender } = renderDrawer();
+      closeCleanAndReopen(rerender, onClose);
+
+      fireEvent.change(screen.getByLabelText("topic"), {
+        target: { value: "dogs" },
+      });
+      fireEvent.click(closeButton());
+
+      expect(await screen.findByTestId("confirm-dialog")).toBeInTheDocument();
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("still asks before discarding typed values when Esc is pressed after a reopen", async () => {
+      const { onClose, rerender } = renderDrawer();
+      closeCleanAndReopen(rerender, onClose);
+
+      const input = screen.getByLabelText("topic");
+      fireEvent.change(input, { target: { value: "dogs" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+
+      expect(await screen.findByTestId("confirm-dialog")).toBeInTheDocument();
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("close button name (AUD-AGENTS-03)", () => {
+    it("names the icon-only close button", () => {
+      renderDrawer();
+
+      expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
     });
   });
 });

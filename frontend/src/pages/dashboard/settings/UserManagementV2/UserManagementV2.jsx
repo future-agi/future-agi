@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { Box, Button, Typography } from "@mui/material";
+import PageHeader from "src/components/page-header";
+import { Box, Button } from "@mui/material";
 import React, {
   useCallback,
   useEffect,
@@ -22,6 +23,7 @@ import {
   OrgRoleCell,
   WorkspaceRoleCell,
   WorkspaceChipsCell,
+  canManageUsersFor,
   useCanSendInvite,
 } from "./CellRender";
 import AllActionForm from "./AllActionForm";
@@ -30,7 +32,6 @@ import { useAuthContext } from "src/auth/hooks";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useLocation, useNavigate, useParams } from "react-router";
 import BackButton from "src/sections/develop-detail/Common/BackButton";
-import { LEVELS } from "./constant";
 import { useUserManagementStore } from "./UserManagementStore";
 import { endpoints } from "src/utils/axios";
 import { gridSortModelToMemberListSort } from "./memberListGridQuery";
@@ -52,14 +53,23 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
   const [selectedRole, setSelectedRole] = useState("");
   const { setUsersList } = useUserManagementStore();
   workspaceId = workspaceId ?? currentWorkspaceId ?? user?.default_workspace_id;
+  // The form a row's menu opened, that row, and the workspace it opened in.
+  // It lives here, not in the row's cell: a table reload builds the cells
+  // again, which would close a form held there. It acts on the workspace it
+  // opened in, and a workspace change closes it with nothing sent.
+  const [rowAction, setRowAction] = useState(null);
+  const openRowAction = useCallback(
+    (form, userData) => setRowAction({ form, userData, workspaceId }),
+    [workspaceId],
+  );
+  useEffect(() => {
+    setRowAction((open) => {
+      if (open && open.workspaceId !== workspaceId) return null;
+      return open;
+    });
+  }, [workspaceId]);
 
-  // Use integer levels when available, fall back to string role check
-  const canManageUsers =
-    (orgLevel != null && orgLevel >= LEVELS.ADMIN) ||
-    (effectiveLevel != null && effectiveLevel >= LEVELS.ADMIN) ||
-    role === "Owner" ||
-    role === "Admin" ||
-    role === "workspace_admin";
+  const canManageUsers = canManageUsersFor({ orgLevel, effectiveLevel, role });
 
   const { allowed: canSendInvite } = useCanSendInvite(orgLevel, effectiveLevel);
 
@@ -78,7 +88,7 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
         ...(!workspaceScope ? { cellRenderer: "agGroupCellRenderer" } : {}),
       },
       {
-        headerName: "Organisation Role",
+        headerName: "Organization role",
         field: "org_role",
         colId: "org_level",
         flex: 1,
@@ -88,7 +98,7 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
       ...(workspaceScope
         ? [
             {
-              headerName: "Workspace Role",
+              headerName: "Workspace role",
               field: "ws_role",
               colId: "ws_level",
               flex: 1,
@@ -145,13 +155,16 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
               field: "action",
               width: 50,
               cellRenderer: ActionRender,
-              cellRendererParams: { workspaceScope, workspaceId },
+              cellRendererParams: {
+                workspaceScope,
+                onOpenActionForm: openRowAction,
+              },
               sortable: false,
             },
           ]
         : []),
     ],
-    [canManageUsers, workspaceScope, workspaceId, useInviteLinks],
+    [canManageUsers, workspaceScope, useInviteLinks, openRowAction],
   );
 
   // When workspaceScope is true, use workspace-specific member endpoint
@@ -274,34 +287,21 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
             <BackButton onBack={() => navigate(-1)} />
           </Box>
         )}
-        <Box>
-          <Typography
-            sx={{
-              typography: "m2",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.primary",
-            }}
-          >
-            {pageTitle}
-          </Typography>
-          <Typography
-            sx={{
-              typography: "s1",
-              fontWeight: "fontWeightRegular",
-              color: "text.primary",
-              marginTop: (theme) => theme.spacing(0.5),
-            }}
-          >
-            {workspaceScope
+        <PageHeader
+          title={pageTitle}
+          description={
+            workspaceScope
               ? "Manage workspace members and their roles"
-              : "Manage who has access to workspace"}
-          </Typography>
-        </Box>
+              : "Manage who has access to your organization"
+          }
+          sx={{ mb: 0 }}
+        />
         <Box
           sx={{
             paddingX: 0,
             paddingY: 2,
             display: "flex",
+            flexWrap: { xs: "wrap", md: "nowrap" },
             gap: 2,
             width: "100%",
             justifyContent: "space-between",
@@ -331,6 +331,16 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
           gridApi={gridApiRef?.current?.api}
           workspaceId={workspaceId}
         />
+        {rowAction && (
+          <AllActionForm
+            key={`${rowAction.userData?.id}:${rowAction.form.action}`}
+            openActionForm={rowAction.form}
+            onClose={() => setRowAction(null)}
+            userData={rowAction.userData}
+            gridApi={gridApiRef?.current?.api}
+            workspaceId={rowAction.workspaceId}
+          />
+        )}
         {/* table data */}
         <Box
           sx={{

@@ -29,6 +29,7 @@ import { useModelParams } from "src/api/develop/prompt";
 import { useVoiceOptions } from "src/api/develop/develop-detail";
 import ResponseFormatSelector from "./ResponseFormatSelector";
 import TemplateFormatSelector from "./TemplateFormatSelector";
+import ToolChoiceSelect from "./ToolChoiceSelect";
 import { ShowComponent } from "../../../../components/show";
 
 const ModelContainer = ({
@@ -247,7 +248,7 @@ const ModelContainer = ({
         <Box
           display={"flex"}
           flexDirection={"row"}
-          borderRadius={0.5}
+          borderRadius="4px"
           gap={1}
           ref={modelContainerRef}
           sx={{
@@ -274,7 +275,7 @@ const ModelContainer = ({
             }
             buttonIcon={
               <Iconify
-                icon="radix-icons:box-model"
+                icon="solar:graph-linear"
                 width="16px"
                 height="16px"
                 sx={{
@@ -326,6 +327,7 @@ const ModelContainer = ({
         <Box sx={{ flexShrink: 0 }}>
           <CustomModelTools
             isModalContainer={true}
+            namesInLabel
             handleApply={handleApplyTool}
             tools={modelConfig?.tools || []}
             disableClick={!RolePermission.PROMPTS[PERMISSIONS.DELETE][userRole]}
@@ -341,6 +343,14 @@ const ModelContainer = ({
             }}
           />
         </Box>
+        <ToolChoiceSelect
+          value={modelConfig?.tool_choice}
+          tools={modelConfig?.tools}
+          onChange={(v) =>
+            setModelConfig((pre) => ({ ...pre, tool_choice: v }))
+          }
+          disabled={!RolePermission.PROMPTS[PERMISSIONS.DELETE][userRole]}
+        />
         <CustomTooltip
           show
           arrow
@@ -352,20 +362,19 @@ const ModelContainer = ({
           }
         >
           <IconButton
+            aria-label="Import template"
             size="small"
             sx={{
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: "4px",
-              padding: "5px 10px",
               flexShrink: 0,
             }}
             onClick={handleUseTemplate}
           >
             <SvgColor
               sx={{
-                height: 20,
-                width: 20,
+                height: 16,
+                width: 16,
                 color: "text.primary",
               }}
               src={"/assets/icons/ic_import.svg"}

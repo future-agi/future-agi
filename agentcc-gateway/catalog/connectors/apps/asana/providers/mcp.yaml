@@ -1,0 +1,97 @@
+# Asana's V2 MCP server (the V1 beta at /sse is deprecated). Asana takes no
+# dynamic client registration: a client is an "MCP app" pre-registered in
+# Asana's developer console, which gives its client id and secret and whose
+# distribution can be set to any workspace. Tokens issued to an MCP app work
+# only with the MCP server. MCP apps need no scope, and Asana's fix for an
+# "Invalid scope(s) requested" error is to drop the scope parameter, so the
+# request carries none; the optional resource parameter is not sent.
+# Asana's Command MCP server (/v2/command/mcp) needs a Command license per
+# user and is not in this record.
+schema: "connector-manifest/v1#provider"
+app: asana
+id: mcp
+version: 1.0.1
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: ga
+  source: https://developers.asana.com/docs/integrating-with-asanas-mcp-server
+transport:
+  kind: http
+  url: https://mcp.asana.com/v2/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://app.asana.com/-/oauth_authorize
+    tokenUrl: https://app.asana.com/-/oauth_token
+    scopes: []
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://app.asana.com/-/oauth_revoke
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [preregistered]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.asana.com/docs/integrating-with-asanas-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://mcp.asana.com/.well-known/oauth-protected-resource/v2/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://developers.asana.com/docs/integrating-with-asanas-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://developers.asana.com/docs/integrating-with-asanas-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://app.asana.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://app.asana.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://developers.asana.com/docs/integrating-with-asanas-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://developers.asana.com/docs/integrating-with-asanas-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://app.asana.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://app.asana.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.revocation.url
+    url: https://app.asana.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://developers.asana.com/docs/integrating-with-asanas-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://app.asana.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+x-omega:
+  publicClient:
+    supported: false
+    evidence:
+      - url: https://developers.asana.com/docs/integrating-with-asanas-mcp-server
+        fetchedAt: 2026-10-21
+        sha256: 5e64eb855ebf4e79ed1f4a6eaffc8e868b857b6dfd1331b3b806a5f1c594042c
+        quote: "You'll see your app's Client ID and Client secret. Keep these handy"
+      - url: https://app.asana.com/.well-known/oauth-authorization-server
+        fetchedAt: 2026-10-21
+        sha256: f60d41a5138f3e07b86b06f4f5ac4a2d8c325657ebc0384274648a70ee01f024
+        quote: '"token_endpoint_auth_methods_supported":["client_secret_post","client_secret_basic"]'

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
+	"github.com/future-agi/future-agi/fi-collector/pkg/normalization"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc/codes"
 )
@@ -20,11 +21,30 @@ type preparedExport struct {
 	req                     ptraceotlp.ExportRequest
 	routed                  auth.RouteOutcome
 	rejectedSpans           int64
+	originalSpans           int64
+	ingestionHold           string
 	organization, workspace string
 	projects, hidden        map[string]struct{}
 }
 
 type exportDecoder func() (ptraceotlp.ExportRequest, error)
+
+type expectedTargetKey struct{}
+
+// withExpectedTarget carries an exporter's expected-target assertion to the
+// stamp (auth.StampResourceAttrsExpected), including across an auth restart,
+// which derives its context from this one. A nil assertion adds nothing.
+func withExpectedTarget(ctx context.Context, expected *auth.ExpectedTarget) context.Context {
+	if expected == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, expectedTargetKey{}, expected)
+}
+
+func expectedTargetFrom(ctx context.Context) *auth.ExpectedTarget {
+	expected, _ := ctx.Value(expectedTargetKey{}).(*auth.ExpectedTarget)
+	return expected
+}
 
 // prepareExport owns the pre-enqueue boundary for both transports. decode must
 // return a new request from the original, immutable wire bytes on EVERY call:
@@ -72,7 +92,7 @@ func (s *Server) prepareExportAttempt(ctx context.Context, decode exportDecoder,
 	if _, err := auth.ApplyProjectNameHeader(req.Traces(), headers); err != nil {
 		return preparedExport{}, &rejection{reason: "project", msg: err.Error()}
 	}
-	out := preparedExport{ctx: ctx, req: req}
+	out := preparedExport{ctx: ctx, req: req, originalSpans: int64(req.Traces().SpanCount()), ingestionHold: normalization.IngestionHold(req.Traces())}
 	if result := auth.FromContext(ctx); result != nil {
 		out.organization, out.workspace = result.OrgID, result.WorkspaceID
 		ck := auth.CacheKeyFromContext(ctx)
@@ -90,7 +110,7 @@ func (s *Server) prepareExportAttempt(ctx context.Context, decode exportDecoder,
 			return preparedExport{}, &rejection{reason: "routing", kind: rejectBusy, retryAfter: "5", logged: true, msg: "simulation routing temporarily unavailable"}
 		}
 		before := req.Traces().SpanCount()
-		dropped, err := auth.StampResourceAttrs(ctx, s.auth, ck, req.Traces(), result)
+		dropped, err := auth.StampResourceAttrsExpected(ctx, s.auth, ck, req.Traces(), result, expectedTargetFrom(ctx))
 		if err != nil {
 			return preparedExport{}, err
 		}
@@ -131,6 +151,8 @@ func projectPreparationRejection(err error) *rejection {
 	switch {
 	case errors.As(err, &rej):
 		return rej
+	case errors.Is(err, auth.ErrExpectedTargetMismatch):
+		return &rejection{reason: "expected_target", status: http.StatusForbidden, code: codes.PermissionDenied, msg: auth.ErrExpectedTargetMismatch.Error()}
 	case errors.Is(err, auth.ErrProjectResolutionUnavailable), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return rejectProjectUnavailable
 	case errors.Is(err, auth.ErrTooManyNewProjects):

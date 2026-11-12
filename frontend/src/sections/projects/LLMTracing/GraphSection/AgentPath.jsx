@@ -84,8 +84,9 @@ const SankeyChart = ({ layout, width, height, zoom, onNodeClick, theme }) => {
         <div style={{ fontSize: 12, fontWeight: 600, color: color.text }}>
           {node.name}
         </div>
-        <div style={{ fontSize: 10, color: "var(--text-disabled)" }}>
-          {(node.span_count || 0).toLocaleString()} spans
+        <div style={{ fontSize: 12, color: "var(--text-disabled)" }}>
+          {(node.span_count || 0).toLocaleString()}{" "}
+          {(node.span_count || 0) === 1 ? "span" : "spans"}
         </div>
       </div>
     );
@@ -151,14 +152,15 @@ const SankeyChart = ({ layout, width, height, zoom, onNodeClick, theme }) => {
                 </div>
                 <div
                   style={{
-                    fontSize: 10,
+                    fontSize: 12,
                     color: "var(--text-disabled)",
                     whiteSpace: "nowrap",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                   }}
                 >
-                  {(node.span_count || 0).toLocaleString()} spans
+                  {(node.span_count || 0).toLocaleString()}{" "}
+                  {(node.span_count || 0) === 1 ? "span" : "spans"}
                 </div>
               </div>
             </div>
@@ -374,8 +376,6 @@ const AgentPathInner = ({
             border: "1px solid",
             borderColor: "divider",
             borderRadius: "6px",
-            boxShadow: (t) =>
-              `0 1px 3px ${alpha(t.palette.common.black, 0.06)}`,
             overflow: "hidden",
           }}
         >
@@ -385,7 +385,7 @@ const AgentPathInner = ({
             onClick={() => setZoom((value) => Math.min(MAX_ZOOM, value + 0.2))}
             sx={btnSx}
           >
-            <Iconify icon="mdi:plus" width={14} />
+            <Iconify icon="solar:add-linear" width={14} />
           </IconButton>
           <IconButton
             size="small"
@@ -393,7 +393,7 @@ const AgentPathInner = ({
             onClick={() => setZoom((value) => Math.max(MIN_ZOOM, value - 0.2))}
             sx={btnSx}
           >
-            <Iconify icon="mdi:minus" width={14} />
+            <Iconify icon="solar:minus-linear" width={14} />
           </IconButton>
           <IconButton
             size="small"
@@ -401,7 +401,7 @@ const AgentPathInner = ({
             onClick={() => setZoom(fitZoom)}
             sx={btnSx}
           >
-            <Iconify icon="mdi:crosshairs-gps" width={14} />
+            <Iconify icon="solar:target-linear" width={14} />
           </IconButton>
           <IconButton
             size="small"
@@ -410,7 +410,11 @@ const AgentPathInner = ({
             sx={btnSx}
           >
             <Iconify
-              icon={isFullscreen ? "mdi:fullscreen-exit" : "mdi:fullscreen"}
+              icon={
+                isFullscreen
+                  ? "solar:quit-full-screen-linear"
+                  : "solar:full-screen-linear"
+              }
               width={14}
             />
           </IconButton>
@@ -421,7 +425,11 @@ const AgentPathInner = ({
             sx={btnSx}
           >
             <Iconify
-              icon={isCollapsed ? "mdi:chevron-up" : "mdi:chevron-down"}
+              icon={
+                isCollapsed
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
+              }
               width={14}
             />
           </IconButton>

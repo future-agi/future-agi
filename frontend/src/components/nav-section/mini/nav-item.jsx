@@ -15,6 +15,15 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 // ----------------------------------------------------------------------
 
+// Match vertical navigation: the anchor owns keyboard focus, not its visual row.
+const NAV_LINK_FOCUS = {
+  outline: "none",
+  "&:focus-visible": {
+    outline: (theme) => `2px solid ${theme.palette.primary.main}`,
+    outlineOffset: "-2px",
+  },
+};
+
 /**
  * @typedef {Object} NavItemProps
  * @property {string} title
@@ -53,6 +62,7 @@ const NavItem = forwardRef(
       open,
       depth,
       active,
+      "aria-current": ariaCurrent,
       hasChild,
       externalLink,
       currentRole = "admin",
@@ -75,23 +85,28 @@ const NavItem = forwardRef(
           }
         }}
         {...other}
+        {...(!disabled && { tabIndex: -1, role: "presentation" })}
         sx={{
-          backgroundColor: "transparent",
+          /* Design system: the current item is grey (bg.selected), never purple. */
+          backgroundColor: active ? "action.selected" : "transparent",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-
-          color: active ? "primary.main" : "text.secondary",
+          color: active ? "text.primary" : "text.secondary",
+          "&:hover": {
+            backgroundColor: active ? "action.selected" : "action.hover",
+          },
         }}
       >
         {icon && (
           <Box className="icon">
             {React.cloneElement(icon, {
+              // Same 14px monochrome icon as the expanded sidebar.
               sx: {
-                height: "20px",
-                width: "20px",
-                color: active ? "primary.main" : "text.secondary",
+                height: "14px",
+                width: "14px",
+                color: active ? "text.primary" : "text.secondary",
               },
             })}
           </Box>
@@ -105,7 +120,11 @@ const NavItem = forwardRef(
 
         {caption && (
           <Tooltip title={caption} arrow placement="right">
-            <Iconify width={16} icon="eva:info-outline" className="caption" />
+            <Iconify
+              width={16}
+              icon="solar:info-circle-linear"
+              className="caption"
+            />
           </Tooltip>
         )}
 
@@ -119,7 +138,7 @@ const NavItem = forwardRef(
           <Iconify
             width={16}
             className="arrow"
-            icon="eva:arrow-ios-forward-fill"
+            icon="solar:alt-arrow-right-linear"
           />
         )}
       </StyledNavItem>
@@ -138,7 +157,7 @@ const NavItem = forwardRef(
           placement="right"
           arrow
         >
-          <Box sx={{ width: 1, minHeight: "30px", height: "30px" }}>
+          <Box sx={{ width: 1, minHeight: "24px", height: "24px" }}>
             {renderContent}
           </Box>
         </CustomTooltip>
@@ -156,8 +175,9 @@ const NavItem = forwardRef(
             underline="none"
             sx={{
               width: 1,
-              minHeight: "30px",
-              height: "30px",
+              minHeight: "24px",
+              height: "24px",
+              ...NAV_LINK_FOCUS,
               ...(disabled && {
                 cursor: "default",
               }),
@@ -173,12 +193,14 @@ const NavItem = forwardRef(
         <Link
           component={RouterLink}
           href={path}
+          aria-current={ariaCurrent || (active ? "page" : undefined)}
           color="inherit"
           underline="none"
           sx={{
             width: 1,
-            minHeight: "30px",
-            height: "30px",
+            minHeight: "24px",
+            height: "24px",
+            ...NAV_LINK_FOCUS,
             ...(disabled && {
               cursor: "default",
             }),
@@ -194,6 +216,7 @@ const NavItem = forwardRef(
 NavItem.propTypes = {
   open: PropTypes.bool,
   active: PropTypes.bool,
+  "aria-current": PropTypes.string,
   path: PropTypes.string,
   depth: PropTypes.number,
   icon: PropTypes.element,
@@ -232,14 +255,14 @@ const StyledNavItem = styled(ListItemButton, {
   const baseStyles = {
     item: {
       borderRadius: 6,
-      height: "32px",
-      width: "32px",
+      height: "24px",
+      width: "36px",
       color: theme.palette.text.secondary,
     },
     icon: {
       flexShrink: 0,
-      height: "16px",
-      width: "16px",
+      height: "14px",
+      width: "14px",
     },
     label: {
       textTransform: "capitalize",
@@ -253,10 +276,10 @@ const StyledNavItem = styled(ListItemButton, {
     // Root item
     ...(!subItem && {
       ...baseStyles.item,
-      fontSize: 10,
+      fontSize: 11,
       lineHeight: "16px",
       textAlign: "center",
-      padding: theme.spacing(1, 2),
+      padding: 0,
       fontWeight: theme.typography.fontWeightBold,
       "& .icon": {
         ...baseStyles.icon,
@@ -295,7 +318,7 @@ const StyledNavItem = styled(ListItemButton, {
     ...(subItem && {
       ...baseStyles.item,
       ...theme.typography.body2,
-      minHeight: 34,
+      minHeight: 24,
       padding: theme.spacing(0, 1),
       fontWeight: theme.typography.fontWeightBold,
       "& .icon": {

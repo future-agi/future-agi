@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:futureagi:omega-deploy-run-event:v1:error",
+  "type": "object",
+  "required": ["error"],
+  "properties": {
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {"type": "string", "pattern": "^[a-z_]{1,64}$"},
+        "message": {"type": "string", "maxLength": 500},
+        "field": {"type": "string", "maxLength": 200},
+        "reason": {"type": "string", "pattern": "^[a-z_]{1,64}$"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

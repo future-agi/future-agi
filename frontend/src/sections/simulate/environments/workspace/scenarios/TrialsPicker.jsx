@@ -1,8 +1,8 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Button, Tooltip, Popover, TextField,
+  MenuList, MenuItem, Divider,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 
@@ -13,7 +13,7 @@ import Iconify from "src/components/iconify";
 const TRIAL_PRESETS = [1, 3, 5, 8];
 const DEFAULT_TRIALS_LABEL = 1;
 
-export default function TrialsPicker({ trials, onChange, scenarioCount = 0, size = "sm" }) {
+export default function TrialsPicker({ trials, onChange, scenarioCount = 0 }) {
   const [anchor, setAnchor] = useState(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [customValue, setCustomValue] = useState(String(trials || 1));
@@ -35,28 +35,19 @@ export default function TrialsPicker({ trials, onChange, scenarioCount = 0, size
     apply(n);
   };
 
-  const compact = size === "xs";
-
   return (
     <>
       <Tooltip arrow title="How many times to run each scenario (reliability across trials)">
         <Button
           size="small"
           variant="outlined"
+          color="inherit"
           onClick={(e) => setAnchor(e.currentTarget)}
-          endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={11} />}
-          startIcon={<Iconify icon="solar:repeat-linear" width={13} />}
-          sx={{
-            typography: "s2", fontWeight: 600, fontSize: compact ? 12 : 12.5,
-            color: "text.primary",
-            borderColor: "divider",
-            px: compact ? 1 : 1.25, py: compact ? 0.375 : 0.5, minWidth: 0,
-            whiteSpace: "nowrap",
-            "&:hover": {
-              borderColor: (t) => alpha(t.palette.text.primary, 0.4),
-              bgcolor: "action.hover",
-            },
-          }}
+          aria-haspopup="menu"
+          aria-expanded={!!anchor}
+          endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
+          startIcon={<Iconify icon="solar:repeat-linear" width={14} />}
+          sx={{ whiteSpace: "nowrap", flexShrink: 0 }}
         >
           Repeats: {k}
         </Button>
@@ -71,110 +62,107 @@ export default function TrialsPicker({ trials, onChange, scenarioCount = 0, size
         slotProps={{ paper: { sx: { minWidth: 240, p: 0.5, mt: 0.5 } } }}
       >
         <Box sx={{ px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
-          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.primary" }}>
+          <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium", color: "text.primary" }}>
             Repeats per scenario
           </Typography>
           {scenarioCount > 0 && (
-            <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 11.5, mt: 0.25 }}>
+            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
               {scenarioCount} {scenarioCount === 1 ? "scenario" : "scenarios"} × {k} {k === 1 ? "repeat" : "repeats"} = {totalRuns} runs
             </Typography>
           )}
-          <Typography sx={{ typography: "s3", color: k < 3 ? "warning.main" : "text.subtitle", fontSize: 11.5, mt: 0.25 }}>
+          <Typography sx={{ typography: "s3", color: k < 3 ? "status.warning.fg" : "text.subtitle", mt: 0.25 }}>
             Use 3 or more for a result you&apos;d base a decision on.
           </Typography>
         </Box>
-        {TRIAL_PRESETS.map((v) => {
-          const active = v === k;
-          return (
-            <Box
-              key={v}
-              role="menuitemradio"
-              aria-checked={active}
-              onClick={() => apply(v)}
-              sx={{
-                display: "flex", alignItems: "center", gap: 1,
-                px: 1.5, py: 0.875, borderRadius: 0.75, cursor: "pointer",
-                bgcolor: active ? "action.hover" : "transparent",
-                "&:hover": { bgcolor: "action.hover" },
-              }}
-            >
-              <Box sx={{
-                width: 34, textAlign: "left",
-                typography: "s2", fontWeight: active ? 700 : 600,
-                color: active ? "primary.main" : "text.primary",
-                fontVariantNumeric: "tabular-nums",
-              }}>
-                {v}×
-              </Box>
-              {v === DEFAULT_TRIALS_LABEL && (
-                <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
-                  Default
-                </Typography>
-              )}
-              <Box sx={{ flex: 1 }} />
-              {active && <Iconify icon="eva:checkmark-fill" width={14} sx={{ color: "primary.main" }} />}
-            </Box>
-          );
-        })}
-        <Box sx={{ borderTop: "1px solid", borderColor: "divider", mt: 0.5, pt: 0.5 }}>
-          {!customOpen ? (
-            <Box
+        {/* A real menu: the chosen row takes focus on open, the arrow keys
+            move between rows, Enter or Space picks one and Escape closes.
+            Every option is a direct child so arrow-key navigation reaches
+            Custom too. */}
+        <MenuList
+          autoFocusItem={!customOpen}
+          aria-label="Repeats per scenario"
+          disablePadding
+        >
+          {TRIAL_PRESETS.map((v) => {
+            const active = v === k;
+            return (
+              <MenuItem
+                key={v}
+                role="menuitemradio"
+                aria-checked={active}
+                selected={active}
+                onClick={() => apply(v)}
+                sx={{ gap: 1, px: 1.5 }}
+              >
+                <Box sx={{
+                  width: 34, textAlign: "left",
+                  typography: "s1", fontWeight: active ? "fontWeightMedium" : "fontWeightRegular",
+                  color: "text.primary",
+                  fontVariantNumeric: "tabular-nums",
+                }}>
+                  {v}×
+                </Box>
+                {v === DEFAULT_TRIALS_LABEL && (
+                  <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
+                    Default
+                  </Typography>
+                )}
+                <Box sx={{ flex: 1 }} />
+                {active && <Iconify icon="solar:check-linear" width={14} sx={{ color: "text.primary" }} />}
+              </MenuItem>
+            );
+          })}
+          <Divider component="li" />
+          {!customOpen && (
+            <MenuItem
               role="menuitemradio"
               aria-checked={isCustom}
+              selected={isCustom}
               onClick={() => setCustomOpen(true)}
-              sx={{
-                display: "flex", alignItems: "center", gap: 1,
-                px: 1.5, py: 0.875, borderRadius: 0.75, cursor: "pointer",
-                bgcolor: isCustom ? "action.hover" : "transparent",
-                "&:hover": { bgcolor: "action.hover" },
-              }}
+              sx={{ gap: 1, px: 1.5 }}
             >
               <Iconify icon="solar:pen-2-linear" width={13} sx={{ color: "text.subtitle" }} />
-              <Typography sx={{ typography: "s2", fontWeight: 600, color: "text.primary" }}>
+              <Typography sx={{ typography: "s1", fontWeight: isCustom ? "fontWeightMedium" : "fontWeightRegular", color: "text.primary" }}>
                 Custom…
               </Typography>
               {isCustom && (
                 <Typography sx={{
-                  typography: "s2", fontWeight: 700, color: "primary.main",
+                  typography: "s1", fontWeight: "fontWeightMedium", color: "text.primary",
                   fontVariantNumeric: "tabular-nums",
                 }}>
                   {k}×
                 </Typography>
               )}
               <Box sx={{ flex: 1 }} />
-              {isCustom && <Iconify icon="eva:checkmark-fill" width={14} sx={{ color: "primary.main" }} />}
-            </Box>
-          ) : (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ px: 1.5, py: 0.75 }}>
-              <TextField
-                size="small"
-                type="number"
-                autoFocus
-                value={customValue}
-                onChange={(e) => setCustomValue(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") commitCustom(); }}
-                inputProps={{ min: 1, max: 20, style: { padding: "6px 8px", fontSize: 13, width: 56 } }}
-                sx={{ "& .MuiOutlinedInput-root": { fontVariantNumeric: "tabular-nums" } }}
-              />
-              <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
-                1 – 20 repeats
-              </Typography>
-              <Button
-                size="small" variant="contained"
-                onClick={commitCustom}
-                sx={{
-                  typography: "s3", fontWeight: 700,
-                  bgcolor: "text.primary",
-                  color: (t) => (t.palette.mode === "dark" ? "background.default" : "background.paper"),
-                  boxShadow: "none", minWidth: 0, px: 1.25, py: 0.375,
-                  "&:hover": { bgcolor: "text.primary", opacity: 0.92, boxShadow: "none" },
-                }}
-              >
-                Set
-              </Button>
-            </Stack>
+              {isCustom && <Iconify icon="solar:check-linear" width={14} sx={{ color: "text.primary" }} />}
+            </MenuItem>
           )}
-        </Box>
+        </MenuList>
+        {/* The number field sits outside the menu so typing digits is not
+            read as jumping to the "1×", "3×"… rows. Tab reaches Set. */}
+        {customOpen && (
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ px: 1.5, py: 0.75 }}>
+            <TextField
+              size="small"
+              type="number"
+              autoFocus
+              value={customValue}
+              onChange={(e) => setCustomValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") commitCustom(); }}
+              inputProps={{ min: 1, max: 20, "aria-label": "Custom repeats", style: { width: 56 } }}
+              sx={{ "& .MuiOutlinedInput-root": { fontVariantNumeric: "tabular-nums" } }}
+            />
+            <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
+              1 – 20 repeats
+            </Typography>
+            <Button
+              size="small" variant="contained"
+              onClick={commitCustom}
+            >
+              Set
+            </Button>
+          </Stack>
+        )}
       </Popover>
     </>
   );
@@ -183,5 +171,6 @@ TrialsPicker.propTypes = {
   trials: PropTypes.number,
   onChange: PropTypes.func,
   scenarioCount: PropTypes.number,
+  // Accepted for existing callers; the button now follows the theme size.
   size: PropTypes.oneOf(["sm", "xs"]),
 };

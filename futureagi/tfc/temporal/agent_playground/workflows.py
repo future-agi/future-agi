@@ -98,6 +98,14 @@ class GraphExecutionWorkflow:
     @workflow.run
     async def run(self, input: ExecuteGraphInput) -> ExecuteGraphOutput:
         self._graph_execution_id = input.graph_execution_id
+        if input.native_context is not None:
+            result = await workflow.execute_activity(
+                'execute_native_graph_activity',
+                {'native_context': input.native_context, 'graph_execution_id': input.graph_execution_id,
+                 'graph_version_id': input.graph_version_id, 'input_payload': input.input_payload},
+                start_to_close_timeout=timedelta(hours=12), heartbeat_timeout=timedelta(minutes=5),
+                retry_policy=NODE_EXECUTION_RETRY_POLICY)
+            return ExecuteGraphOutput(**result)
 
         # Phase 1: Analyze graph topology
         analyze_result = await workflow.execute_activity(

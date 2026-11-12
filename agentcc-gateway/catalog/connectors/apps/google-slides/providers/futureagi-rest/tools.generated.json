@@ -1,0 +1,603 @@
+{
+  "schema": "connector-manifest/v1#tools-generated",
+  "spec": {
+    "url": "https://raw.githubusercontent.com/googleapis/google-api-go-client/b2487a489315d16e91d98a8d940dca2e59e0bd9d/slides/v1/slides-api.json",
+    "sha256": "bd90d71780ec5c30e9679d381d22dd99de24be6f67aff169f85d93350c7265a8"
+  },
+  "tools": [
+    {
+      "name": "get_presentation",
+      "title": "Read presentation",
+      "description": "Read the complete app-authorized presentation, including slide text and structure, for example presentationId=deck-fixture.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1/presentations/{+presentationId}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "pattern": "^[^/]+$",
+            "description": "The ID of the presentation to retrieve."
+          },
+          "commentsViewMode": {
+            "type": "string",
+            "enum": [
+              "COMMENTS_VIEW_MODE_UNSPECIFIED",
+              "COMMENTS_VIEW_MODE_DEFAULT_FOR_CURRENT_ACCESS",
+              "COMMENTS_VIEW_MODE_OMITTED",
+              "COMMENTS_VIEW_MODE_INCLUDED"
+            ],
+            "description": "The comments view mode to apply to the presentation. This allows viewing the presentation with comments omitted or included. If one is not specified, COMMENTS_VIEW_MODE_OMITTED is used."
+          }
+        },
+        "required": ["presentationId"],
+        "additionalProperties": false,
+        "x-origin": "https://slides.googleapis.com"
+      },
+      "response": {
+        "fields": ["presentationId", "title", "slides"],
+        "maxBytes": 100000
+      }
+    },
+    {
+      "name": "get_page",
+      "title": "Get page",
+      "description": "Read a slide page by presentationId and pageObjectId, for example deck-fixture and slide-fixture.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1/presentations/{presentationId}/pages/{pageObjectId}"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "description": "The ID of the presentation to retrieve."
+          },
+          "pageObjectId": {
+            "type": "string",
+            "description": "The object ID of the page to retrieve."
+          },
+          "commentsViewMode": {
+            "type": "string",
+            "enum": [
+              "COMMENTS_VIEW_MODE_UNSPECIFIED",
+              "COMMENTS_VIEW_MODE_DEFAULT_FOR_CURRENT_ACCESS",
+              "COMMENTS_VIEW_MODE_OMITTED",
+              "COMMENTS_VIEW_MODE_INCLUDED"
+            ],
+            "description": "The comments view mode to apply to the page. This allows viewing the page with comments omitted or included. If one is not specified, COMMENTS_VIEW_MODE_OMITTED is used."
+          }
+        },
+        "required": ["presentationId", "pageObjectId"],
+        "additionalProperties": false,
+        "x-origin": "https://slides.googleapis.com"
+      }
+    },
+    {
+      "name": "get_thumbnail",
+      "title": "Get thumbnail",
+      "description": "Get the temporary thumbnail URL for a slide. The URL is returned, not downloaded.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "posture": "auto",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "GET",
+        "path": "/v1/presentations/{presentationId}/pages/{pageObjectId}/thumbnail"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "description": "The ID of the presentation to retrieve."
+          },
+          "pageObjectId": {
+            "type": "string",
+            "description": "The object ID of the page whose thumbnail to retrieve."
+          },
+          "thumbnailProperties.mimeType": {
+            "type": "string",
+            "enum": ["PNG"],
+            "description": "The optional mime type of the thumbnail image. If you don't specify the mime type, the mime type defaults to PNG."
+          },
+          "thumbnailProperties.thumbnailSize": {
+            "type": "string",
+            "enum": [
+              "THUMBNAIL_SIZE_UNSPECIFIED",
+              "LARGE",
+              "MEDIUM",
+              "SMALL",
+              "WIDTH2000_PX"
+            ],
+            "description": "The optional thumbnail image size. If you don't specify the size, the server chooses a default size of the image."
+          }
+        },
+        "required": ["presentationId", "pageObjectId"],
+        "additionalProperties": false,
+        "x-origin": "https://slides.googleapis.com"
+      }
+    },
+    {
+      "name": "create_presentation",
+      "title": "Create presentation",
+      "description": "Create a blank presentation with title=\"Quarterly review\".",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1/presentations"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "object",
+            "description": "Create a blank presentation with title=\"Quarterly review\".",
+            "properties": {
+              "title": {
+                "type": "string",
+                "description": "The title of the presentation."
+              }
+            },
+            "additionalProperties": false,
+            "required": ["title"]
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "x-origin": "https://slides.googleapis.com"
+      }
+    },
+    {
+      "name": "create_slide",
+      "title": "Create slide",
+      "description": "Create a slide with a caller-selected objectId, for example new_slide, and predefinedLayout=\"BLANK\".",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1/presentations/{presentationId}:batchUpdate"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "description": "The presentation to apply the updates to."
+          },
+          "body": {
+            "type": "object",
+            "description": "Create a slide with a caller-selected objectId, for example new_slide, and predefinedLayout=\"BLANK\".",
+            "properties": {
+              "requests": {
+                "type": "array",
+                "description": "A list of updates to apply to the presentation.",
+                "items": {
+                  "type": "object",
+                  "description": "A single kind of update to apply to a presentation.",
+                  "properties": {
+                    "createSlide": {
+                      "type": "object",
+                      "description": "Creates a new slide.",
+                      "properties": {
+                        "insertionIndex": {
+                          "type": "integer",
+                          "format": "int32",
+                          "description": "The optional zero-based index indicating where to insert the slides. If you don't specify an index, the slide is created at the end."
+                        },
+                        "objectId": {
+                          "type": "string",
+                          "description": "A user-supplied object ID. If you specify an ID, it must be unique among all pages and page elements in the presentation. The ID must start with an alphanumeric character or an underscore (matches regex `[a-zA-Z0-9_]`); remaining characters may include those as well as a hyphen or colon (matches regex `[a-zA-Z0-9_-:]`). The ID length must be between 5 and 50 characters, inclusive. If you don't specify an ID, a unique one is generated."
+                        },
+                        "placeholderIdMappings": {
+                          "type": "array",
+                          "description": "An optional list of object ID mappings from the placeholder(s) on the layout to the placeholders that are created on the slide from the specified layout. Can only be used when `slide_layout_reference` is specified.",
+                          "items": {
+                            "type": "object",
+                            "description": "The user-specified ID mapping for a placeholder that will be created on a slide from a specified layout.",
+                            "properties": {
+                              "layoutPlaceholder": {
+                                "type": "object",
+                                "description": "The placeholder on a layout that will be applied to a slide. Only type and index are needed. For example, a predefined `TITLE_AND_BODY` layout may usually have a TITLE placeholder with index 0 and a BODY placeholder with index 0.",
+                                "properties": {
+                                  "index": {
+                                    "type": "integer",
+                                    "description": "The index of the placeholder. If the same placeholder types are present in the same page, they would have different index values."
+                                  },
+                                  "parentObjectId": {
+                                    "type": "string",
+                                    "description": "The object ID of this shape's parent placeholder. If unset, the parent placeholder shape does not exist, so the shape does not inherit properties from any other shape."
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "description": "The type of the placeholder."
+                                  }
+                                }
+                              },
+                              "layoutPlaceholderObjectId": {
+                                "type": "string",
+                                "description": "The object ID of the placeholder on a layout that will be applied to a slide."
+                              },
+                              "objectId": {
+                                "type": "string",
+                                "description": "A user-supplied object ID for the placeholder identified above that to be created onto a slide. If you specify an ID, it must be unique among all pages and page elements in the presentation. The ID must start with an alphanumeric character or an underscore (matches regex `[a-zA-Z0-9_]`); remaining characters may include those as well as a hyphen or colon (matches regex `[a-zA-Z0-9_-:]`). The length of the ID must not be less than 5 or greater than 50. If you don't specify an ID, a unique one is generated."
+                              }
+                            }
+                          }
+                        },
+                        "slideLayoutReference": {
+                          "type": "object",
+                          "description": "Layout reference of the slide to be inserted, based on the *current master*, which is one of the following: - The master of the previous slide index. - The master of the first slide, if the insertion_index is zero. - The first master in the presentation, if there are no slides. If the LayoutReference is not found in the current master, a 400 bad request error is returned. If you don't specify a layout reference, the slide uses the predefined `BLANK` layout.",
+                          "properties": {
+                            "layoutId": {
+                              "type": "string",
+                              "description": "Layout ID: the object ID of one of the layouts in the presentation."
+                            },
+                            "predefinedLayout": {
+                              "type": "string",
+                              "enum": [
+                                "PREDEFINED_LAYOUT_UNSPECIFIED",
+                                "BLANK",
+                                "CAPTION_ONLY",
+                                "TITLE",
+                                "TITLE_AND_BODY",
+                                "TITLE_AND_TWO_COLUMNS",
+                                "TITLE_ONLY",
+                                "SECTION_HEADER",
+                                "SECTION_TITLE_AND_DESCRIPTION",
+                                "ONE_COLUMN_TEXT",
+                                "MAIN_POINT",
+                                "BIG_NUMBER"
+                              ],
+                              "description": "Predefined layout."
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": ["createSlide"]
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": ["requests"]
+          }
+        },
+        "required": ["presentationId", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://slides.googleapis.com"
+      }
+    },
+    {
+      "name": "insert_text",
+      "title": "Insert text",
+      "description": "Insert text into an existing shape objectId at insertionIndex=0, for example text=\"Quarterly review\".",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1/presentations/{presentationId}:batchUpdate"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "description": "The presentation to apply the updates to."
+          },
+          "body": {
+            "type": "object",
+            "description": "Insert text into an existing shape objectId at insertionIndex=0, for example text=\"Quarterly review\".",
+            "properties": {
+              "requests": {
+                "type": "array",
+                "description": "A list of updates to apply to the presentation.",
+                "items": {
+                  "type": "object",
+                  "description": "A single kind of update to apply to a presentation.",
+                  "properties": {
+                    "insertText": {
+                      "type": "object",
+                      "description": "Inserts text into a shape or table cell.",
+                      "properties": {
+                        "cellLocation": {
+                          "type": "object",
+                          "description": "The optional table cell location if the text is to be inserted into a table cell. If present, the object_id must refer to a table.",
+                          "properties": {
+                            "columnIndex": {
+                              "type": "integer",
+                              "format": "int32",
+                              "description": "The 0-based column index."
+                            },
+                            "rowIndex": {
+                              "type": "integer",
+                              "format": "int32",
+                              "description": "The 0-based row index."
+                            }
+                          }
+                        },
+                        "insertionIndex": {
+                          "type": "integer",
+                          "format": "int32",
+                          "description": "The index where the text will be inserted, in Unicode code units, based on TextElement indexes. The index is zero-based and is computed from the start of the string. The index may be adjusted to prevent insertions inside Unicode grapheme clusters. In these cases, the text will be inserted immediately after the grapheme cluster."
+                        },
+                        "objectId": {
+                          "type": "string",
+                          "description": "The object ID of the shape or table where the text will be inserted."
+                        },
+                        "text": {
+                          "type": "string",
+                          "description": "The text to be inserted. Inserting a newline character will implicitly create a new ParagraphMarker at that index. The paragraph style of the new paragraph will be copied from the paragraph at the current insertion index, including lists and bullets. Text styles for inserted text will be determined automatically, generally preserving the styling of neighboring text. In most cases, the text will be added to the TextRun that exists at the insertion index. Some control characters (U+0000-U+0008, U+000C-U+001F) and characters from the Unicode Basic Multilingual Plane Private Use Area (U+E000-U+F8FF) will be stripped out of the inserted text."
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": ["insertText"]
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": ["requests"]
+          }
+        },
+        "required": ["presentationId", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://slides.googleapis.com"
+      }
+    },
+    {
+      "name": "replace_text",
+      "title": "Replace text",
+      "description": "Replace matching text across slides, for example containsText.text=\"PLACEHOLDER\".",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "deny",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1/presentations/{presentationId}:batchUpdate"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "description": "The presentation to apply the updates to."
+          },
+          "body": {
+            "type": "object",
+            "description": "Replace matching text across slides, for example containsText.text=\"PLACEHOLDER\".",
+            "properties": {
+              "requests": {
+                "type": "array",
+                "description": "A list of updates to apply to the presentation.",
+                "items": {
+                  "type": "object",
+                  "description": "A single kind of update to apply to a presentation.",
+                  "properties": {
+                    "replaceAllText": {
+                      "type": "object",
+                      "description": "Replaces all instances of specified text.",
+                      "properties": {
+                        "containsText": {
+                          "type": "object",
+                          "description": "Finds text in a shape matching this substring.",
+                          "properties": {
+                            "matchCase": {
+                              "type": "boolean",
+                              "description": "Indicates whether the search should respect case: - `True`: the search is case sensitive. - `False`: the search is case insensitive."
+                            },
+                            "searchByRegex": {
+                              "type": "boolean",
+                              "description": "Optional. True if the find value should be treated as a regular expression. Any backslashes in the pattern should be escaped. - `True`: the search text is treated as a regular expressions. - `False`: the search text is treated as a substring for matching."
+                            },
+                            "text": {
+                              "type": "string",
+                              "description": "The text to search for in the shape or table."
+                            }
+                          }
+                        },
+                        "pageObjectIds": {
+                          "type": "array",
+                          "description": "If non-empty, limits the matches to page elements only on the given pages. Returns a 400 bad request error if given the page object ID of a notes master, or if a page with that object ID doesn't exist in the presentation.",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "replaceText": {
+                          "type": "string",
+                          "description": "The text that will replace the matched text."
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": ["replaceAllText"]
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": ["requests"]
+          }
+        },
+        "required": ["presentationId", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://slides.googleapis.com"
+      }
+    },
+    {
+      "name": "delete_object",
+      "title": "Delete object",
+      "description": "Delete a slide or page element by objectId, for example slide-fixture. This is destructive.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "deny",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1/presentations/{presentationId}:batchUpdate"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "description": "The presentation to apply the updates to."
+          },
+          "body": {
+            "type": "object",
+            "description": "Delete a slide or page element by objectId, for example slide-fixture. This is destructive.",
+            "properties": {
+              "requests": {
+                "type": "array",
+                "description": "A list of updates to apply to the presentation.",
+                "items": {
+                  "type": "object",
+                  "description": "A single kind of update to apply to a presentation.",
+                  "properties": {
+                    "deleteObject": {
+                      "type": "object",
+                      "description": "Deletes a page or page element from the presentation.",
+                      "properties": {
+                        "objectId": {
+                          "type": "string",
+                          "description": "The object ID of the page or page element to delete. If after a delete operation a group contains only 1 or no page elements, the group is also deleted. If a placeholder is deleted on a layout, any empty inheriting placeholders are also deleted."
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": ["deleteObject"]
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": ["requests"]
+          }
+        },
+        "required": ["presentationId", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://slides.googleapis.com"
+      }
+    },
+    {
+      "name": "duplicate_object",
+      "title": "Duplicate object",
+      "description": "Duplicate a slide or shape by objectId, for example slide-fixture.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "posture": "ask",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "operation": {
+        "method": "POST",
+        "path": "/v1/presentations/{presentationId}:batchUpdate"
+      },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "presentationId": {
+            "type": "string",
+            "description": "The presentation to apply the updates to."
+          },
+          "body": {
+            "type": "object",
+            "description": "Duplicate a slide or shape by objectId, for example slide-fixture.",
+            "properties": {
+              "requests": {
+                "type": "array",
+                "description": "A list of updates to apply to the presentation.",
+                "items": {
+                  "type": "object",
+                  "description": "A single kind of update to apply to a presentation.",
+                  "properties": {
+                    "duplicateObject": {
+                      "type": "object",
+                      "description": "Duplicates a slide or page element.",
+                      "properties": {
+                        "objectId": {
+                          "type": "string",
+                          "description": "The ID of the object to duplicate."
+                        },
+                        "objectIds": {
+                          "type": "object",
+                          "description": "The object being duplicated may contain other objects, for example when duplicating a slide or a group page element. This map defines how the IDs of duplicated objects are generated: the keys are the IDs of the original objects and its values are the IDs that will be assigned to the corresponding duplicate object. The ID of the source object's duplicate may be specified in this map as well, using the same value of the `object_id` field as a key and the newly desired ID as the value. All keys must correspond to existing IDs in the presentation. All values must be unique in the presentation and must start with an alphanumeric character or an underscore (matches regex `[a-zA-Z0-9_]`); remaining characters may include those as well as a hyphen or colon (matches regex `[a-zA-Z0-9_-:]`). The length of the new ID must not be less than 5 or greater than 50. If any IDs of source objects are omitted from the map, a new random ID will be assigned. If the map is empty or unset, all duplicate objects will receive a new random ID.",
+                          "additionalProperties": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": ["duplicateObject"]
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": ["requests"]
+          }
+        },
+        "required": ["presentationId", "body"],
+        "additionalProperties": false,
+        "x-origin": "https://slides.googleapis.com"
+      }
+    }
+  ]
+}

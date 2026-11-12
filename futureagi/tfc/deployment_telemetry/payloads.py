@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 from uuid import UUID
 
 from django.db.models import F, Q
@@ -13,6 +13,7 @@ from tfc.constants.roles import OrganizationRoles
 from tfc.deployment_telemetry.config import (
     detect_deployment_type,
     get_version,
+    telemetry_shares_admin_emails,
 )
 from tfc.deployment_telemetry.schema import (
     MAX_PAYLOAD_BYTES,
@@ -28,7 +29,7 @@ class _RegistrationUser(TypedDict):
 
 
 class MinimalRegistrationPayload(TypedDict):
-    """Wire shape sent when telemetry is disabled (census ping only)."""
+    """Legacy minimal wire shape; disabled telemetry no longer sends it."""
 
     schema_version: int
     instance_id: str
@@ -39,7 +40,11 @@ class MinimalRegistrationPayload(TypedDict):
 
 
 class FullRegistrationPayload(TypedDict):
-    """Wire shape sent on enabled registration (with admin user emails)."""
+    """Wire shape sent on enabled registration.
+
+    ``users`` (admin/owner emails and domains) is present only when
+    FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS opts in.
+    """
 
     schema_version: int
     instance_id: str
@@ -47,7 +52,11 @@ class FullRegistrationPayload(TypedDict):
     deployment_type: str
     timestamp: str
     telemetry_disabled: bool
-    users: list[_RegistrationUser]
+    # Omitted unless the opt-in is on; SCHEMA_VERSION stays 1. The v1
+    # receiver accepts the omission: DeploymentRegistrationSerializer declares
+    # users required=False, default=list (checked against a local clone of the
+    # receiver repo at 10-12, not the live receiver).
+    users: NotRequired[list[_RegistrationUser]]
 
 
 class HeartbeatPayload(TypedDict, total=False):
@@ -86,10 +95,43 @@ def build_minimal_registration_payload(
     }
 
 
+def _eligible_admin_users():
+    """Active owner/admin, staff and superuser accounts.
+
+    One filter decides both when an install registers (the first such account
+    exists) and, with the opt-in on, whose emails the registration carries.
+    """
+    return User.objects.filter(is_active=True).filter(
+        Q(is_staff=True)
+        | Q(is_superuser=True)
+        | Q(organization_role=OrganizationRoles.OWNER)
+        | Q(organization_role=OrganizationRoles.ADMIN)
+        | Q(
+            organization_memberships__is_active=True,
+            organization_memberships__level__gte=Level.ADMIN,
+        )
+        | Q(
+            organization_memberships__is_active=True,
+            organization_memberships__level__isnull=True,
+            organization_memberships__role__in=[
+                OrganizationRoles.OWNER,
+                OrganizationRoles.ADMIN,
+            ],
+        )
+    )
+
+
 def build_full_registration_payload(
     instance_id: UUID,
     timestamp: datetime | None = None,
 ) -> FullRegistrationPayload | None:
+    """The enabled registration, or None while it must wait.
+
+    Registration waits (None) until an eligible account exists, whatever the
+    opt-in says. Without FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS the payload
+    has no ``users`` key and no email is read; with it, ``users`` lists the
+    eligible accounts' emails and domains and None means none was usable.
+    """
     payload: FullRegistrationPayload = {
         "schema_version": SCHEMA_VERSION,
         "instance_id": str(instance_id),
@@ -97,35 +139,19 @@ def build_full_registration_payload(
         "deployment_type": detect_deployment_type(),
         "timestamp": format_utc(timestamp or datetime.now(UTC)),
         "telemetry_disabled": False,
-        "users": [],
     }
+    eligible = _eligible_admin_users()
 
-    users = (
-        User.objects.filter(is_active=True)
-        .filter(
-            Q(is_staff=True)
-            | Q(is_superuser=True)
-            | Q(organization_role=OrganizationRoles.OWNER)
-            | Q(organization_role=OrganizationRoles.ADMIN)
-            | Q(
-                organization_memberships__is_active=True,
-                organization_memberships__level__gte=Level.ADMIN,
-            )
-            | Q(
-                organization_memberships__is_active=True,
-                organization_memberships__level__isnull=True,
-                organization_memberships__role__in=[
-                    OrganizationRoles.OWNER,
-                    OrganizationRoles.ADMIN,
-                ],
-            )
-        )
-        .distinct()
-        .order_by(
-            F("last_login").desc(nulls_last=True),
-            "-created_at",
-        )[:MAX_REGISTRATION_USERS]
-    )
+    if not telemetry_shares_admin_emails():
+        # Only whether an eligible account exists is read: the registration
+        # still happens when the first account is created.
+        return payload if eligible.exists() else None
+
+    payload["users"] = []
+    users = eligible.distinct().order_by(
+        F("last_login").desc(nulls_last=True),
+        "-created_at",
+    )[:MAX_REGISTRATION_USERS]
 
     # Re-encoding the whole payload after every appended user is O(N²) in
     # both the user count and the average entry size; at the 500-user cap

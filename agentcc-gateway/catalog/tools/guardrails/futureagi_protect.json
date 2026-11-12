@@ -1,0 +1,33 @@
+{
+  "vendor": "futureagi_protect",
+  "capability": "guardrails",
+  "skus": [
+    {
+      "sku": "futureagi_protect.flash",
+      "unit": "request",
+      "usd_per_unit": 0.0,
+      "free_on_failure": true
+    },
+    {
+      "sku": "futureagi_protect.full",
+      "unit": "request",
+      "usd_per_unit": 0.0,
+      "free_on_failure": true
+    }
+  ],
+  "resale_status": "native",
+  "owner_price_pending": true,
+  "resale_terms_ref": "",
+  "terms_url": "https://futureagi.com/pricing",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": false,
+  "trains_on_input": "no",
+  "improvement_license": false,
+  "regions": [],
+  "results_retention": "full",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}

@@ -7,10 +7,10 @@ import {
   IconButton,
   Slider,
   Tab,
-  Tabs,
   TextField,
   Typography,
 } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { LoadingButton } from "@mui/lab";
 import PropTypes from "prop-types";
 import React, {
@@ -51,6 +51,9 @@ import DatasetTestMode from "src/sections/evals/components/DatasetTestMode";
 import TracingTestMode from "src/sections/evals/components/TracingTestMode";
 import SimulationTestMode from "src/sections/evals/components/SimulationTestMode";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
+import AllowNaSwitch from "./AllowNaSwitch";
+import { createNameErrorOf } from "src/sections/evals/components/createNameError";
+import { allowNaApplies } from "./allowNaModel";
 import { buildCompositeChildConfigs } from "src/sections/evals/Helpers/compositeRuntimeConfig";
 import {
   contextOptionsForRowType,
@@ -90,10 +93,12 @@ def evaluate(input: Any, output: Any, expected: Any, context: dict, **kwargs):
     return {"score": 1.0, "reason": "Evaluation passed"}
 `;
 
+// L7c g7 (evalcreate:type): a Code evaluator cannot be created here: the
+// scorer does not execute workspace code, so the type is absent (built-in
+// code checks still score).
 const EVAL_TYPE_TABS = [
   { value: "agent", label: "Agents" },
   { value: "llm", label: "LLM-As-A-Judge" },
-  { value: "code", label: "Code" },
 ];
 
 // Top-level mode toggle — mirrors EvalCreatePage so the drawer and the
@@ -153,6 +158,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
+  // W1-4: the judge may answer N/A (saved on the template as allow_na).
+  const [allowNa, setAllowNa] = useState(false);
   const [choiceScores, setChoiceScores] = useState({});
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState([]);
@@ -321,7 +328,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
       messages: evalType === "llm" ? messages : undefined,
       few_shot_examples:
-        evalType === "llm" && fewShotExamples.length > 0
+        evalType === "llm"
           ? fewShotExamples.map((ds) => ({ id: ds.id, name: ds.name }))
           : undefined,
       template_format: templateFormat,
@@ -329,8 +336,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         evalType === "agent"
           ? dataInjectionFromContextOptions(contextOptions)
           : undefined,
+      ...(allowNaApplies({ evalType }) ? { allow_na: allowNa } : {}),
     }),
     [
+      allowNa,
       evalType,
       instructions,
       code,
@@ -365,6 +374,16 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
 
   // Test
   const handleTestEvaluation = useCallback(async () => {
+    // options-truth L3 G2 (evals:create-new): a composite tests its unsaved
+    // children, weights and aggregation (execute-adhoc), no draft needed.
+    if (mode === "composite") {
+      setIsTesting(true);
+      setTestError(null);
+      setTestPassed(false);
+      sourceRef.current?.runTest?.();
+      setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
+      return;
+    }
     if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
@@ -386,6 +405,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     }
   }, [
     draftId,
+    mode,
     fagiLocked,
     evalType,
     model,
@@ -525,7 +545,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const handleSaveAndAdd = useCallback(async () => {
     if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
-        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
+        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge instead.",
         { variant: "error" },
       );
       return;
@@ -585,15 +605,25 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         evalType,
         outputType,
         instructions,
+        ...(allowNaApplies({ evalType })
+          ? { config: { allow_na: allowNa } }
+          : {}),
         data_injection:
           evalType === "agent"
             ? dataInjectionFromContextOptions(contextOptions)
             : undefined,
       });
     } catch (error) {
-      enqueueSnackbar(getSafeActionErrorMessage(error, "Failed to save"), {
-        variant: "error",
-      });
+      // L7c g7 (evalcreate:name): a name the workspace already uses (or
+      // one the rules refuse) is said at the field, not only in a toast.
+      const msg = createNameErrorOf(error);
+      if (msg) setErrors((prev) => ({ ...prev, name: msg }));
+      enqueueSnackbar(
+        msg ?? getSafeActionErrorMessage(error, "Failed to save"),
+        {
+          variant: "error",
+        },
+      );
     } finally {
       setIsSaving(false);
     }
@@ -612,6 +642,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     evalType,
     outputType,
     instructions,
+    allowNa,
     contextOptions,
     enqueueSnackbar,
     agentEvalLocked,
@@ -783,7 +814,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <IconButton size="small" onClick={onBack} sx={{ p: 0.5 }}>
-            <Iconify icon="solar:arrow-left-linear" width={18} />
+            <Iconify icon="solar:arrow-left-linear" width={20} />
           </IconButton>
           <Typography variant="subtitle1" fontWeight={600}>
             Create New Evaluation
@@ -793,7 +824,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
               variant="caption"
               sx={{
                 fontFamily: "monospace",
-                fontSize: "10px",
+                fontSize: "12px",
                 color: "text.disabled",
                 bgcolor: "action.hover",
                 px: 0.75,
@@ -839,61 +870,18 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   Eval details
                 </Typography>
                 {!hideCompositeCreate && (
-                  <Tabs
+                  <SegmentedTabs
                     value={mode}
                     onChange={(_, val) => setMode(val)}
-                    TabIndicatorProps={{ style: { display: "none" } }}
-                    sx={{
-                      minHeight: 28,
-                      "& .MuiTab-root": {
-                        minHeight: 28,
-                        px: 1.5,
-                        py: 0,
-                        mr: "0px !important",
-                        textTransform: "none",
-                        fontSize: "13px",
-                        borderRadius: "6px",
-                      },
-                      border: "1px solid",
-                      borderColor: "divider",
-                      p: "2px",
-                      borderRadius: "8px",
-                      bgcolor: (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.04)"
-                          : "background.neutral",
-                    }}
                   >
                     {MODE_TABS.map((tab) => (
                       <Tab
                         key={tab.value}
                         value={tab.value}
                         label={tab.label}
-                        sx={{
-                          bgcolor:
-                            mode === tab.value
-                              ? (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "rgba(255,255,255,0.12)"
-                                    : "background.paper"
-                              : "transparent",
-                          boxShadow:
-                            mode === tab.value
-                              ? (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "none"
-                                    : "0 1px 3px rgba(0,0,0,0.08)"
-                              : "none",
-                          borderRadius: "6px",
-                          fontWeight: mode === tab.value ? 600 : 400,
-                          color:
-                            mode === tab.value
-                              ? "text.primary"
-                              : "text.disabled",
-                        }}
                       />
                     ))}
-                  </Tabs>
+                  </SegmentedTabs>
                 )}
               </Box>
 
@@ -964,7 +952,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
 
               {/* Single branch: eval-type tabs + the matching editor */}
               {!isComposite && (
-                <Tabs
+                <SegmentedTabs
                   value={evalType}
                   onChange={(_, val) => {
                     if (agentEvalLocked && val === "agent") {
@@ -976,32 +964,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     }
                     setEvalType(val);
                   }}
-                  variant="standard"
-                  TabIndicatorProps={{ style: { display: "none" } }}
-                  sx={{
-                    width: "fit-content",
-                    minHeight: 32,
-                    "& .MuiTab-root": {
-                      height: 28,
-                      minHeight: 28,
-                      maxHeight: 28,
-                      px: 1.5,
-                      py: 0,
-                      mr: "0px !important",
-                      textTransform: "none",
-                      fontSize: "13px",
-                      lineHeight: "28px",
-                      borderRadius: "6px",
-                    },
-                    border: "1px solid",
-                    borderColor: "divider",
-                    p: "2px",
-                    borderRadius: "8px",
-                    bgcolor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.04)"
-                        : "background.neutral",
-                  }}
+                  sx={{ width: "fit-content" }}
                 >
                   {EVAL_TYPE_TABS.map((tab) => {
                     const locked = agentEvalLocked && tab.value === "agent";
@@ -1025,40 +988,17 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                                 }}
                               >
                                 {tab.label}
-                                <Iconify icon="mdi:lock-outline" width={14} />
+                                <Iconify icon="solar:lock-linear" width={14} />
                               </Box>
                             </CustomTooltip>
                           ) : (
                             tab.label
                           )
                         }
-                        sx={{
-                          bgcolor:
-                            evalType === tab.value
-                              ? (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "rgba(255,255,255,0.12)"
-                                    : "background.paper"
-                              : "transparent",
-                          boxShadow:
-                            evalType === tab.value
-                              ? (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "none"
-                                    : "0 1px 3px rgba(0,0,0,0.08)"
-                              : "none",
-                          borderRadius: "6px",
-                          fontWeight: evalType === tab.value ? 600 : 400,
-                          opacity: locked ? 0.6 : 1,
-                          color:
-                            evalType === tab.value
-                              ? "text.primary"
-                              : "text.disabled",
-                        }}
                       />
                     );
                   })}
-                </Tabs>
+                </SegmentedTabs>
               )}
 
               {/* Agent type */}
@@ -1189,6 +1129,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                       passThreshold={passThreshold}
                       onPassThresholdChange={handlePassThresholdChange}
                     />
+                    {allowNaApplies({ evalType }) && (
+                      <AllowNaSwitch checked={allowNa} onChange={setAllowNa} />
+                    )}
                     {errors.choiceScores && (
                       <Typography variant="caption" color="error.main">
                         {errors.choiceScores}
@@ -1243,15 +1186,18 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   fontWeight={600}
                   sx={{ fontSize: "13px" }}
                 >
-                  {`${SOURCE_LABELS[source] || "Preview"} — ${isComposite ? "Composite Test" : "Variable Mapping"}`}
+                  {[
+                    SOURCE_LABELS[source],
+                    isComposite ? "Composite Test" : "Variable mapping",
+                  ]
+                    .filter(Boolean)
+                    .join(" — ")}
                 </Typography>
                 {source === "task" && ROW_TYPE_LABELS[sourceRowType] && (
                   <Chip
                     label={ROW_TYPE_LABELS[sourceRowType]}
                     size="small"
                     sx={{
-                      height: 18,
-                      fontSize: "10px",
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.75 },
@@ -1415,7 +1361,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
             sx={{ display: "flex", alignItems: "center", gap: 0.5, mr: "auto" }}
           >
             <Iconify
-              icon="mdi:check-circle"
+              icon="solar:check-circle-bold"
               width={16}
               sx={{ color: "success.main" }}
             />
@@ -1432,7 +1378,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ mr: "auto", fontSize: "11px" }}
+            sx={{ mr: "auto", fontSize: "12px" }}
           >
             Map all variables to enable{" "}
             {source === "workbench" ? "saving" : "testing & saving"}
@@ -1457,18 +1403,17 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   isTesting ||
                   !!disabledReason ||
                   !sourceReady ||
-                  !draftId ||
-                  isComposite ||
+                  (!draftId && !isComposite) ||
+                  (isComposite && !selectedChildren.length) ||
                   source === "workbench"
                 }
                 startIcon={
                   isTesting ? (
                     <CircularProgress size={14} />
                   ) : (
-                    <Iconify icon="mdi:play-circle-outline" width={16} />
+                    <Iconify icon="solar:play-circle-linear" width={16} />
                   )
                 }
-                sx={{ textTransform: "none" }}
               >
                 {isTesting ? "Testing..." : "Test Evaluation"}
               </Button>
@@ -1493,7 +1438,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
               onClick={
                 isComposite ? handleSaveAndAddComposite : handleSaveAndAdd
               }
-              sx={{ textTransform: "none" }}
             >
               {isComposite ? "Create & Configure" : "Save & Add Evaluation"}
             </LoadingButton>

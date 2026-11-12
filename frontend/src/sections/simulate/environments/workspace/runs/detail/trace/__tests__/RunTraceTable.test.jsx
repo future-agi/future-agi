@@ -1251,6 +1251,10 @@ describe("RunTraceTable", () => {
         withNames();
         renderTable();
         await openPicker(user);
+        // CustomTooltip opens on hover intent: after the click that opened
+        // the picker the pointer must really move. jsdom puts every pointer
+        // event at (0, 0), so move it the way a mouse would.
+        await user.pointer({ coords: { clientX: 30, clientY: 30 } });
         await user.hover(within(screen.getByRole("menu")).getByText(LONG));
 
         expect(await screen.findByRole("tooltip")).toHaveTextContent(LONG);

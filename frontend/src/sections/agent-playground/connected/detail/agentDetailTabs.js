@@ -7,7 +7,9 @@ export const DETAIL_TABS = [
   { id: "environments", label: "Environments" },
 ];
 
-export const COMING_SOON_TABS = ["Constraints", "Improvements", "Connections"];
+// Tabs for areas not built in this release: shown, disabled, with the shared
+// line beside the name (a short chip, the whole line in its tooltip).
+export const UNRELEASED_TABS = ["Constraints", "Improvements", "Connections"];
 
 export const agentDetailPath = (agentId, tab = "overview") =>
   `${CONNECTED_AGENTS_PATH}/${agentId}/${tab}`;

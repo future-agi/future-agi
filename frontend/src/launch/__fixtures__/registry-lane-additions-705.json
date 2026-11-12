@@ -1,0 +1,117 @@
+[
+  {
+    "id": "exp.runControl",
+    "slot": "XP",
+    "ships": "hidden",
+    "experiments": true,
+    "splitFrom": "exp.results.matrix",
+    "options": ["action:resume:*", "action:stop-resume"]
+  },
+  {
+    "id": "evals.groups",
+    "slot": "EVAL",
+    "ships": "hidden",
+    "splitFrom": "evals.extras",
+    "options": ["groups:create", "groups:detail"]
+  },
+  {
+    "id": "evals.createName",
+    "slot": "EVAL",
+    "ships": "hidden",
+    "splitFrom": "evals.extras",
+    "options": ["evalcreate:name"]
+  },
+  {
+    "id": "evals.createOutputType",
+    "slot": "EVAL",
+    "ships": "hidden",
+    "splitFrom": "evals.extras",
+    "options": ["evalcreate:output-type"]
+  },
+  {
+    "id": "evals.editorPassThreshold",
+    "slot": "EVAL",
+    "ships": "hidden",
+    "splitFrom": "evals.extras",
+    "options": ["editor:pass-threshold"]
+  },
+  {
+    "id": "evals.editorHeader",
+    "slot": "EVAL",
+    "ships": "hidden",
+    "splitFrom": "evals.extras",
+    "options": ["editor:header"]
+  },
+  {
+    "id": "exp.new.splitScope",
+    "slot": "XP",
+    "ships": "hidden",
+    "splitFrom": "dataset.splits",
+    "options": [
+      "data:rows:split",
+      "estimate:smoke-split-suggestion",
+      "entry:run-on-rows:training-split"
+    ]
+  },
+  {
+    "id": "exp.new.evalCardChips",
+    "slot": "EVAL",
+    "ships": "hidden",
+    "splitFrom": "dataset.evalVersionNotice",
+    "options": ["wiz:card-chips"],
+    "parent": "exp.new",
+    "experiments": true
+  },
+  {
+    "id": "exp.new.savedInputReads",
+    "slot": "EVAL",
+    "ships": "hidden",
+    "splitFrom": "exp.new.readsTable",
+    "options": ["wiz:reads-table"],
+    "parent": "exp.new",
+    "experiments": true
+  },
+  {
+    "id": "evals.agreementTools",
+    "slot": "EVAL",
+    "ships": "hidden",
+    "splitFrom": "evals.agreement",
+    "options": [],
+    "parent": "evals.agreement"
+  },
+  {
+    "id": "dataset.duplicateMove",
+    "slot": "ORG",
+    "ships": "hidden",
+    "splitFrom": "dataset.switcher",
+    "options": ["copy:duplicate-move"]
+  },
+  {
+    "id": "dataset.list.columns",
+    "slot": "ORG",
+    "ships": "hidden",
+    "splitFrom": "list.organize.query",
+    "options": []
+  },
+  {
+    "id": "shell.notFound.page",
+    "slot": "EVAL",
+    "ships": "hidden",
+    "splitFrom": "shell.notFound",
+    "options": ["state:not-found"]
+  },
+  {
+    "id": "dataset.rowApiPath",
+    "slot": "GRID",
+    "ships": "hidden",
+    "splitFrom": "dataset.rowExtras.runs",
+    "options": ["rowview:open-nav"]
+  },
+  {
+    "id": "dataset.imports.pasteRows",
+    "slot": "IN",
+    "ships": "hidden",
+    "splitFrom": "dataset.addRows",
+    "options": ["rows:paste"]
+  }
+]

@@ -1,0 +1,83 @@
+{
+  "schema": "k2-replay-expectations/v1",
+  "app": "google-meet",
+  "source": "Pinned Meet v2 paths; synthetic, not live acceptance",
+  "test_account": "v10-synthetic-unverified-google-meet",
+  "tools": 10,
+  "vendor_404": "Google meet.googleapis.com 404",
+  "drive_checks": [
+    {
+      "name": "transcript_text",
+      "jq": ".calls[9].result.content[0].text | fromjson | .transcriptEntries[0].text",
+      "want": "Synthetic meeting text"
+    },
+    {
+      "name": "end_is_destructive",
+      "jq": ".tools[] | select(.name == \"end_conference\") | .annotations.destructiveHint",
+      "want": "true"
+    },
+    {
+      "name": "get_is_read_only",
+      "jq": ".tools[] | select(.name == \"get_space\") | .annotations.readOnlyHint",
+      "want": "true"
+    }
+  ],
+  "vendor_request_checks": [
+    {
+      "name": "get_space_wire",
+      "index": 0,
+      "want": "GET /v2/spaces/space-fixture?"
+    },
+    {
+      "name": "create_space_wire",
+      "index": 1,
+      "want": "POST /v2/spaces?"
+    },
+    {
+      "name": "end_conference_wire",
+      "index": 2,
+      "want": "POST /v2/spaces/space-fixture:endActiveConference?"
+    },
+    {
+      "name": "list_conferences_wire",
+      "index": 3,
+      "want": "GET /v2/conferenceRecords?pageSize=10"
+    },
+    {
+      "name": "get_conference_wire",
+      "index": 4,
+      "want": "GET /v2/conferenceRecords/conf-fixture?"
+    },
+    {
+      "name": "list_participants_wire",
+      "index": 5,
+      "want": "GET /v2/conferenceRecords/conf-fixture/participants?pageSize=10"
+    },
+    {
+      "name": "get_participant_wire",
+      "index": 6,
+      "want": "GET /v2/conferenceRecords/conf-fixture/participants/person-fixture?"
+    },
+    {
+      "name": "list_recordings_wire",
+      "index": 7,
+      "want": "GET /v2/conferenceRecords/conf-fixture/recordings?pageSize=10"
+    },
+    {
+      "name": "list_transcripts_wire",
+      "index": 8,
+      "want": "GET /v2/conferenceRecords/conf-fixture/transcripts?pageSize=10"
+    },
+    {
+      "name": "list_transcript_entries_wire",
+      "index": 9,
+      "want": "GET /v2/conferenceRecords/conf-fixture/transcripts/transcript-fixture/entries?pageSize=10"
+    }
+  ],
+  "every_vendor_request": [
+    {
+      "name": "meet_v2_only",
+      "jq": ".path | startswith(\"/v2/\")"
+    }
+  ]
+}

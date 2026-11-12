@@ -1,0 +1,13 @@
+{
+  "pages": [
+    {
+      "index": 0,
+      "markdown": "# Capmock document\n\nExample page text.",
+      "images": [],
+      "dimensions": { "dpi": 200, "height": 2200, "width": 1700 }
+    }
+  ],
+  "model": "mistral-ocr-latest",
+  "document_annotation": null,
+  "usage_info": { "pages_processed": 1, "doc_size_bytes": 2048 }
+}

@@ -105,13 +105,21 @@ def _raw_builder(
 @pytest.mark.parametrize(
     ("output_type", "canonical_type", "metric_expression"),
     [
-        ("SCORE", SCORE, "avg(output_float)"),
-        ("score", SCORE, "avg(output_float)"),
+        ("SCORE", SCORE, "sumIf(ifNull(output_float, 0), nk_valid)"),
+        ("score", SCORE, "sumIf(ifNull(output_float, 0), nk_valid)"),
         ("PASS_FAIL", PASS_FAIL, "output_bool = 1"),
         ("Pass/Fail", PASS_FAIL, "output_bool = 1"),
         ("pass-fail", PASS_FAIL, "output_bool = 1"),
-        ("CHOICES", CHOICES, "JSONExtract(output_str_list, 'Array(String)')"),
-        ("choices", CHOICES, "JSONExtract(output_str_list, 'Array(String)')"),
+        (
+            "CHOICES",
+            CHOICES,
+            "JSONExtract(ifNull(output_str_list, '[]'), 'Array(String)')",
+        ),
+        (
+            "choices",
+            CHOICES,
+            "JSONExtract(ifNull(output_str_list, '[]'), 'Array(String)')",
+        ),
     ],
 )
 @pytest.mark.parametrize(
@@ -146,10 +154,17 @@ def test_v2_raw_terminal_graph_uses_configured_authoritative_logger(
 
     settings.CH25_EVAL_LOGGER_TABLE = logger_table
 
+    if logger_table.endswith("_v2"):
+        from tracer.services.clickhouse.exact_graph_reads import ExactGraphReadError
+
+        with pytest.raises(ExactGraphReadError, match="lifecycle columns") as failure:
+            _raw_builder(output_type).build()
+        assert failure.value.error_code == "eval_lifecycle_unavailable"
+        return
     query, params = _raw_builder(output_type).build()
     normalized = " ".join(query.split())
 
-    assert f"FROM {logger_table} AS raw_eval_logger FINAL" in normalized
+    assert f"FROM {logger_table} FINAL) AS raw_eval_logger" in normalized
     assert live_predicate in normalized
     for foreign_live_column in foreign_live_columns:
         assert foreign_live_column not in normalized
@@ -157,7 +172,8 @@ def test_v2_raw_terminal_graph_uses_configured_authoritative_logger(
     assert normalize_eval_output_type(output_type) == canonical_type
     # Neither physical logger has project_id. The config UUID is the authorized
     # tenant anchor for this unfiltered raw query.
-    assert "project_id" not in normalized
+    assert "%(project_id)s" in normalized
+    assert "target_type" in normalized
     assert "custom_eval_config_id = toUUID(%(eval_config_id)s)" in normalized
     assert "created_at >= %(start_date)s" in normalized
     assert "created_at < %(end_date)s" in normalized
@@ -186,7 +202,7 @@ def test_v2_eval_graph_uses_raw_authoritative_table_even_when_rollup_requested(
 
     query, _ = builder.build()
 
-    assert "FROM tracer_eval_logger AS raw_eval_logger FINAL" in query
+    assert "FROM tracer_eval_logger FINAL) AS raw_eval_logger" in query
     assert "raw_eval_logger._peerdb_is_deleted = 0" in query
     assert "eval_metrics_hourly" not in query
 
@@ -197,7 +213,7 @@ def test_v2_eval_graph_defaults_to_legacy_authoritative_table(settings):
 
     query, _ = _raw_builder("SCORE").build()
 
-    assert "FROM tracer_eval_logger AS raw_eval_logger FINAL" in query
+    assert "FROM tracer_eval_logger FINAL) AS raw_eval_logger" in query
     assert "raw_eval_logger._peerdb_is_deleted = 0" in query
     assert "raw_eval_logger.is_deleted = 0" not in query
 
@@ -257,9 +273,9 @@ def test_filtered_raw_graph_freezes_membership_window_across_partitions(settings
 
 @pytest.mark.unit
 def test_preaggregated_eval_graph_remains_directly_project_scoped(settings):
-    """Only raw logger reads omit project_id; the rollup owns that column."""
+    """Raw quality reads resolve project through the target dimensions."""
 
-    settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_v2"
+    settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
     builder = EvalMetricsQueryBuilder(
         custom_eval_config_id=EVAL_CONFIG_ID,
         project_id=PROJECT_ID,
@@ -273,7 +289,7 @@ def test_preaggregated_eval_graph_remains_directly_project_scoped(settings):
     query, params = builder.build()
     normalized = " ".join(query.split())
 
-    assert "FROM eval_metrics_hourly" in normalized
-    assert "WHERE project_id = %(project_id)s" in normalized
-    assert "tracer_eval_logger" not in normalized
+    assert "FROM eval_metrics_hourly" not in normalized
+    assert "= toUUID(%(project_id)s)" in normalized
+    assert "tracer_eval_logger" in normalized
     assert params["project_id"] == PROJECT_ID

@@ -1,3 +1,4 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import { getExactAggregationReadState } from "src/utils/queryReadState";
 
 export const DEFAULT_DECIMALS = 2;
@@ -25,7 +26,22 @@ export const getDashboardMetricSeriesState = (metrics = []) => {
     : metricReadStates.filter(({ readState }) => readState === "complete");
   const series = [];
 
-  for (const [metricIndex, { metric }] of renderableMetrics.entries()) {
+  // Rank each copy of a repeated metric (same id and aggregation) by how many
+  // copies follow it in the response, which keeps query order. See
+  // makeSeriesKey for why the last copy gets rank 0.
+  const duplicateRanks = new Map();
+  const laterCopies = new Map();
+  for (let i = metricReadStates.length - 1; i >= 0; i -= 1) {
+    const entry = metricReadStates[i];
+    const identity = makeSeriesKey(entry.metric, "");
+    const rank = laterCopies.get(identity) ?? 0;
+    laterCopies.set(identity, rank + 1);
+    duplicateRanks.set(entry, rank);
+  }
+
+  for (const [metricIndex, entry] of renderableMetrics.entries()) {
+    const { metric } = entry;
+    const duplicateRank = duplicateRanks.get(entry);
     for (const metricSeries of metric.series || []) {
       const isSingleMetric = renderableMetrics.length === 1;
       let name;
@@ -38,11 +54,16 @@ export const getDashboardMetricSeriesState = (metrics = []) => {
       }
       series.push({
         name,
-        key: makeSeriesKey(metric, metricSeries.name),
+        key: makeSeriesKey(metric, metricSeries.name, duplicateRank),
+        // The key a selection saved before ranks existed holds for this series.
+        legacyKey: makeSeriesKey(metric, metricSeries.name),
         metricIndex,
         metricName: metric.name,
         aggregation: metric.aggregation,
-        unit: metric.unit ?? "",
+        aggregateValue: metricSeries.aggregate_value,
+        unit: UNIT_LESS_AGGREGATIONS.has(metric.aggregation)
+          ? ""
+          : metric.unit ?? "",
         breakdownName: metricSeries.name,
         data: (metricSeries.data || []).map((point) => ({
           x: new Date(point.timestamp).getTime(),
@@ -384,15 +405,19 @@ const ADDITIVE_AGGREGATIONS = new Set([
 export const isAdditiveAggregation = (aggregation) =>
   ADDITIVE_AGGREGATIONS.has(aggregation);
 
-// Collapse an already-bucketed series to a single scalar, honouring the
-// metric's own aggregation. The backend aggregates *within* each time bucket
-// and sends no period total, so any single-number view (pie slice, metric
-// card, table Agg column) has to recombine the buckets here.
-//
-// Exact for sum/count/min/max. For avg, median and percentiles this is an
-// approximation: recombining correctly needs per-bucket row counts the API
-// does not send, so an unweighted mean is the closest available answer.
-export const getSeriesScalar = (points = [], aggregation = "avg") => {
+// Exact trace responses carry a full-period scalar. Use it even when it is
+// zero or null: a missing scalar must not silently turn into a bucket mean.
+// The two-argument fallback remains for legacy/dataset/simulation responses.
+export const getSeriesScalar = (
+  points = [],
+  aggregation = "avg",
+  aggregateValue = undefined,
+) => {
+  if (aggregateValue !== undefined) {
+    if (aggregateValue === null) return null;
+    const value = Number(aggregateValue);
+    return Number.isFinite(value) ? value : null;
+  }
   const values = [];
   for (const pt of points) {
     if (pt?.y == null) continue;
@@ -440,7 +465,7 @@ export const groupPieSeries = (series = []) => {
       });
     }
     const group = byMetric.get(s.metricIndex);
-    const value = getSeriesScalar(s.data, s.aggregation);
+    const value = getSeriesScalar(s.data, s.aggregation, s.aggregateValue);
     if (value == null) continue;
     group.hasValues = true;
     if (value <= 0) continue;
@@ -515,6 +540,17 @@ export const getUnitRendering = (unit) => {
   if (!unit) return { unit: "", prefixSuffix: "prefix" };
   const r = UNIT_RENDERING[unit];
   return r ? { unit, ...r } : { unit, prefixSuffix: "suffix", separator: " " };
+};
+
+export const getSeriesFormatConfig = (series, baseConfig = {}) => {
+  // Counts measure records, not the metric's dollars, time or tokens. An
+  // empty series unit must not fall back to a saved/shared monetary axis unit.
+  if (UNIT_LESS_AGGREGATIONS.has(series?.aggregation)) {
+    return { ...baseConfig, ...getUnitRendering("") };
+  }
+  return series?.unit
+    ? { ...baseConfig, ...getUnitRendering(series.unit) }
+    : baseConfig;
 };
 
 export const getSuggestedUnitConfig = (metricConfigs = []) => {
@@ -982,6 +1018,11 @@ export const formatValueWithConfig = (
   { fallbackDecimals = DEFAULT_DECIMALS, includeUnit = true } = {},
 ) => {
   if (val == null) return "-";
+  if (["$", "usd", "USD"].includes(cfg?.unit)) {
+    const unit = includeUnit ? cfg.unit : "";
+    const text = formatExactMoney(val, { prefix: "", missing: "-" });
+    return cfg?.prefixSuffix === "suffix" ? `${text}${unit}` : `${unit}${text}`;
+  }
   const num = Number(val);
   if (!Number.isFinite(num)) return "-";
   const dec = Math.max(0, Math.min(6, cfg?.decimals ?? fallbackDecimals));
@@ -1005,8 +1046,22 @@ export const formatValueWithConfig = (
 
 // Stable identity for a chart series: metric id + aggregation + raw bucket
 // name. Survives metric renames and series reordering, unlike the display label.
-export const makeSeriesKey = (metric, bucketName) =>
-  `${metric?.id ?? ""}|${metric?.aggregation ?? ""}|${bucketName ?? ""}`;
+//
+// One property can be added twice with different per-metric filters (Cost/Sum
+// for project A and for project B), and those copies would share every key.
+// `duplicateRank` is how many later copies share the id and aggregation. The
+// last copy (rank 0) keeps the bare key, so a selection saved before ranks
+// existed (last duplicate wins) still names it exactly. Earlier copies mark the
+// aggregation segment ("cost|sum#1|total"): aggregations are a fixed set of
+// names without "#", so a marked key never equals a bare one. The rank depends
+// only on the order of the copies, not on which buckets each copy returns, so a
+// saved key keeps naming the same copy as buckets come and go. A bare key that
+// an earlier copy owned before ranks existed is mapped back to it by
+// resolveVisibleSeries.
+export const makeSeriesKey = (metric, bucketName, duplicateRank = 0) => {
+  const rank = duplicateRank > 0 ? `#${duplicateRank}` : "";
+  return `${metric?.id ?? ""}|${metric?.aggregation ?? ""}${rank}|${bucketName ?? ""}`;
+};
 
 /**
  * Original indices of the currently visible series, in ascending order — the
@@ -1024,12 +1079,50 @@ export const getVisibleIndices = (series = [], visibleSeries = null) => {
   return visibleSeries === null ? all : all.filter((i) => visibleSeries.has(i));
 };
 
+// A series ranks by its exact full-period value. Summing its bucket points
+// ranks an average or percentile by how many buckets it spans: a series at 50
+// over two buckets outranked one at 99 over one. A series without a finite
+// period value (dataset and simulation reads) ranks by its summed points.
+const getSeriesRankValue = (s) => {
+  if (s?.aggregateValue != null) {
+    const value = Number(s.aggregateValue);
+    if (Number.isFinite(value)) return value;
+  }
+  return (s?.data || []).reduce((sum, pt) => sum + (pt.y || 0), 0);
+};
+
+/**
+ * The default visible set when a chart has more series than it shows: the
+ * original indices of the `limit` highest-ranked series, in rank order. Ties
+ * keep response order.
+ */
+export const getTopSeriesIndices = (series = [], limit = 10) =>
+  new Set(
+    series
+      .map((s, i) => ({ i, rank: getSeriesRankValue(s) }))
+      .sort((a, b) => b.rank - a.rank || a.i - b.i)
+      .slice(0, limit)
+      .map((r) => r.i),
+  );
+
 // Resolve a saved key list to the current series' indices. null => all visible.
+//
+// A key saved before repeated metrics were ranked (see makeSeriesKey) is a bare
+// id|aggregation|bucket, and the last series carrying it won. If the last copy
+// returns that bucket, its own key is that bare key. If only an earlier copy
+// does (copies are filtered and capped on their own, so their buckets differ),
+// nothing matches exactly and the key resolves through `legacyKey`, last series
+// winning as before, so the saved selection keeps showing what it showed.
 export const resolveVisibleSeries = (savedKeys, series) => {
   if (savedKeys === null) return null;
   const keyToIndex = new Map(series.map((s, i) => [s.key, i]));
+  const legacyKeyToIndex = new Map(
+    series.map((s, i) => [s.legacyKey ?? s.key, i]),
+  );
   return new Set(
-    savedKeys.map((k) => keyToIndex.get(k)).filter((i) => i !== undefined),
+    savedKeys
+      .map((k) => keyToIndex.get(k) ?? legacyKeyToIndex.get(k))
+      .filter((i) => i !== undefined),
   );
 };
 

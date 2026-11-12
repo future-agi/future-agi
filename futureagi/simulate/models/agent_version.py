@@ -183,8 +183,7 @@ class AgentVersion(BaseModel):
                 # retell), so the snapshot mirrors the live credential column
                 # regardless of provider — the runner reads it generically.
                 livekit_max_concurrency = (
-                    creds.max_concurrency
-                    or settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
+                    creds.max_concurrency or settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
                 )
                 if creds.provider_type == "livekit":
                     livekit_url = creds.server_url or ""
@@ -235,14 +234,32 @@ class AgentVersion(BaseModel):
             "workspace": "workspace_id",
         }
 
-        skip = {"id", "created_at", "updated_at", "deleted", "deleted_at"}
+        skip = {
+            "id",
+            "created_at",
+            "updated_at",
+            "deleted",
+            "deleted_at",
+            "api_key",
+            "encrypted_api_key",
+            "api_secret",
+            "encrypted_api_secret",
+            "livekit_api_key",
+            "livekit_api_secret",
+            "credential_storage_version",
+            "credentials",
+            "credentials_legacy",
+        }
 
+        restored_fields = []
         for field, value in self.configuration_snapshot.items():
             attr = _FK_REMAP.get(field, field)
             if attr in skip:
                 continue
             if hasattr(self.agent_definition, attr):
                 setattr(self.agent_definition, attr, value)
+                restored_fields.append(attr)
 
-        self.agent_definition.save()
+        # Never rewrite a credential from a stale loaded agent during restore.
+        self.agent_definition.save(update_fields=[*restored_fields, "updated_at"])
         return self.agent_definition

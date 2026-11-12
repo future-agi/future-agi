@@ -177,7 +177,7 @@ describe("NudgeCard", () => {
 
   it.each([
     ["nudge_closed", "This update was already answered or closed."],
-    ["nudges_disabled", "Rebuild isn't available yet."],
+    ["nudges_disabled", "Rebuild is turned off."],
     ["rebuild_running", "An update is running; try again when it finishes"],
     ["environment_building", "The environment is still being built"],
     ["nudge_not_found", "This update no longer exists."],

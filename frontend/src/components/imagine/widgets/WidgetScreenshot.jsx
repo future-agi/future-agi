@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Typography } from "@mui/material";
+import { Box, Typography, useTheme } from "@mui/material";
+import { statusColors } from "src/utils/runStatus";
 
 /**
  * Screenshot with click position overlays.
@@ -17,32 +18,19 @@ import { Box, Typography } from "@mui/material";
  *   - clicksFromSpans: { xPath, yPath, labelPath?, actionPath? }
  */
 
-const STATUS_COLORS = {
-  OK: "#16a34a",
-  ERROR: "#dc2626",
-  ok: "#16a34a",
-  error: "#dc2626",
-  default: "#7B56DB",
+// Marker status -> role in the one status map; no status stays brand.
+const STATUS_ROLE = {
+  OK: "success",
+  ERROR: "danger",
+  ok: "success",
+  error: "danger",
 };
 
-function ClickMarker({
-  x,
-  y,
-  step,
-  label,
-  action,
-  status,
-  containerWidth,
-  containerHeight,
-  imageWidth,
-  imageHeight,
-}) {
-  // Scale coordinates if image dimensions are known
-  const scaleX = imageWidth ? containerWidth / imageWidth : 1;
-  const scaleY = imageHeight ? containerHeight / imageHeight : 1;
-  const cx = x * scaleX;
-  const cy = y * scaleY;
-  const color = STATUS_COLORS[status] || STATUS_COLORS.default;
+function ClickMarker({ x, y, cx, cy, step, label, action, status }) {
+  const theme = useTheme();
+  const color = STATUS_ROLE[status]
+    ? statusColors(theme, STATUS_ROLE[status]).solid
+    : theme.palette.primary.main;
 
   const [hovered, setHovered] = useState(false);
 
@@ -60,7 +48,7 @@ function ClickMarker({
         cy={cy}
         r={10}
         fill={color}
-        stroke="#fff"
+        stroke={theme.palette.common.white}
         strokeWidth={2}
       />
       {/* Step number */}
@@ -69,9 +57,9 @@ function ClickMarker({
         y={cy + 1}
         textAnchor="middle"
         dominantBaseline="middle"
-        fill="#fff"
-        fontSize={9}
-        fontWeight={700}
+        fill={theme.palette.common.white}
+        fontSize={11}
+        fontWeight={600}
         fontFamily="Inter, sans-serif"
       >
         {step ?? "•"}
@@ -91,7 +79,7 @@ function ClickMarker({
           <text
             x={cx + 20}
             y={cy - 4}
-            fill="#fff"
+            fill={theme.palette.common.white}
             fontSize={11}
             fontFamily="Inter, sans-serif"
           >
@@ -100,12 +88,12 @@ function ClickMarker({
           <text
             x={cx + 20}
             y={cy + 10}
-            fill="#aaa"
-            fontSize={9}
+            fill={theme.palette.grey[400]}
+            fontSize={11}
             fontFamily="Inter, sans-serif"
           >
             Step {step} · ({Math.round(x)}, {Math.round(y)})
-            {status === "ERROR" ? " · FAILED" : ""}
+            {status === "ERROR" ? " · Failed" : ""}
           </text>
         </g>
       )}
@@ -116,14 +104,12 @@ function ClickMarker({
 ClickMarker.propTypes = {
   x: PropTypes.number.isRequired,
   y: PropTypes.number.isRequired,
+  cx: PropTypes.number.isRequired,
+  cy: PropTypes.number.isRequired,
   step: PropTypes.number,
   label: PropTypes.string,
   action: PropTypes.string,
   status: PropTypes.string,
-  containerWidth: PropTypes.number,
-  containerHeight: PropTypes.number,
-  imageWidth: PropTypes.number,
-  imageHeight: PropTypes.number,
 };
 
 export default function WidgetScreenshot({ config }) {
@@ -131,6 +117,7 @@ export default function WidgetScreenshot({ config }) {
 
   const containerRef = React.useRef(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const [loadedImage, setLoadedImage] = useState(null);
 
   // Track container size for coordinate scaling
   React.useEffect(() => {
@@ -160,6 +147,32 @@ export default function WidgetScreenshot({ config }) {
     );
   }
 
+  // Natural dimensions belong only to the URL that finished loading.
+  const imageDimensions =
+    loadedImage && loadedImage.url === screenshotUrl
+      ? loadedImage
+      : { width: imageWidth, height: imageHeight };
+  const hasImageDimensions =
+    imageDimensions.width > 0 && imageDimensions.height > 0;
+  // Match the image's centered object-fit:contain transform for every overlay.
+  const scale = hasImageDimensions
+    ? Math.min(
+        dimensions.width / imageDimensions.width,
+        dimensions.height / imageDimensions.height,
+      )
+    : 1;
+  const offsetX = hasImageDimensions
+    ? (dimensions.width - imageDimensions.width * scale) / 2
+    : 0;
+  const offsetY = hasImageDimensions
+    ? (dimensions.height - imageDimensions.height * scale) / 2
+    : 0;
+  const positionedClicks = clicks.map((click) => ({
+    ...click,
+    cx: click.x * scale + offsetX,
+    cy: click.y * scale + offsetY,
+  }));
+
   return (
     <Box
       ref={containerRef}
@@ -176,6 +189,16 @@ export default function WidgetScreenshot({ config }) {
           component="img"
           src={screenshotUrl}
           alt="Agent screenshot"
+          onLoad={(event) => {
+            const { naturalWidth, naturalHeight } = event.currentTarget;
+            if (naturalWidth > 0 && naturalHeight > 0) {
+              setLoadedImage({
+                url: screenshotUrl,
+                width: naturalWidth,
+                height: naturalHeight,
+              });
+            }
+          }}
           sx={{
             width: "100%",
             height: "100%",
@@ -199,18 +222,16 @@ export default function WidgetScreenshot({ config }) {
           viewBox={`0 0 ${dimensions.width} ${dimensions.height}`}
         >
           {/* Connection lines between clicks */}
-          {clicks.length > 1 &&
-            clicks.slice(1).map((click, i) => {
-              const prev = clicks[i];
-              const scaleX = imageWidth ? dimensions.width / imageWidth : 1;
-              const scaleY = imageHeight ? dimensions.height / imageHeight : 1;
+          {positionedClicks.length > 1 &&
+            positionedClicks.slice(1).map((click, i) => {
+              const prev = positionedClicks[i];
               return (
                 <line
                   key={`line-${i}`}
-                  x1={prev.x * scaleX}
-                  y1={prev.y * scaleY}
-                  x2={click.x * scaleX}
-                  y2={click.y * scaleY}
+                  x1={prev.cx}
+                  y1={prev.cy}
+                  x2={click.cx}
+                  y2={click.cy}
                   stroke="rgba(123,86,219,0.3)"
                   strokeWidth={1.5}
                   strokeDasharray="4 3"
@@ -219,19 +240,17 @@ export default function WidgetScreenshot({ config }) {
             })}
 
           {/* Click markers */}
-          {clicks.map((click, i) => (
+          {positionedClicks.map((click, i) => (
             <ClickMarker
               key={click.id || i}
               x={click.x}
               y={click.y}
+              cx={click.cx}
+              cy={click.cy}
               step={click.step ?? i + 1}
               label={click.label}
               action={click.action}
               status={click.status}
-              containerWidth={dimensions.width}
-              containerHeight={dimensions.height}
-              imageWidth={imageWidth}
-              imageHeight={imageHeight}
             />
           ))}
         </svg>
@@ -245,7 +264,7 @@ export default function WidgetScreenshot({ config }) {
             top: 8,
             right: 8,
             bgcolor: "rgba(0,0,0,0.7)",
-            color: "#fff",
+            color: "common.white",
             px: 1,
             py: 0.25,
             borderRadius: "4px",
@@ -255,7 +274,10 @@ export default function WidgetScreenshot({ config }) {
         >
           {clicks.length} click{clicks.length !== 1 ? "s" : ""}
           {clicks.some((c) => c.status === "ERROR") && (
-            <Box component="span" sx={{ color: "#ef4444", ml: 0.5 }}>
+            <Box
+              component="span"
+              sx={{ color: (t) => statusColors(t, "danger").fg, ml: 0.5 }}
+            >
               · {clicks.filter((c) => c.status === "ERROR").length} failed
             </Box>
           )}

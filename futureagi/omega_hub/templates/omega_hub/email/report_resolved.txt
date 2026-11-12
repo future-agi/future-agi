@@ -1,0 +1,3 @@
+We looked at your report about {{ ref }}: {% if action_taken %}action taken{% else %}no action{% endif %}.
+
+Thank you for telling us.

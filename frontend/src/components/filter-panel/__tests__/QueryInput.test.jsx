@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createRef } from "react";
 import { act, fireEvent, render, waitFor } from "src/utils/test-utils";
-import { QueryInput } from "../FilterPanel";
+import { QueryInput } from "../QueryInput";
 
 const selectPhaseOption = async (utils, typed, nextPlaceholder) => {
   const input = utils.getByRole("combobox");
@@ -480,5 +480,132 @@ describe("QueryInput explicit values", () => {
       { field: "status", operator: "is_not", value: "OK" },
     ]);
     expect(onApply).not.toHaveBeenCalled();
+  });
+});
+
+// W10-FILTERS-U03: a committed filter must read with the labels the user
+// picked, not the keys sent to the API.
+describe("QueryInput chip labels", () => {
+  // What the shared Filter panel passes for an object-filter field: choices as
+  // { value, label } and its own operator labels.
+  const agentTypeField = {
+    value: "simulation_type",
+    label: "Agent Type",
+    type: "categorical",
+    choices: [
+      { value: "voice", label: "Voice" },
+      { value: "text", label: "Chat" },
+    ],
+  };
+  const isOperators = () => [
+    { value: "equals", label: "is" },
+    { value: "not_equals", label: "is not" },
+  ];
+  const outputTypeField = {
+    value: "output_type",
+    label: "Output Type",
+    type: "string",
+    choices: [
+      { value: "pass_fail", label: "Pass/fail" },
+      { value: "percentage", label: "Percentage" },
+      { value: "deterministic", label: "Choices" },
+    ],
+  };
+  const listOperators = () => [
+    { value: "in", label: "equals" },
+    { value: "not_in", label: "not equals" },
+  ];
+
+  it("shows the picked label, not the stored key, after a value is chosen", async () => {
+    const { onApply, utils } = renderQueryInput({
+      field: agentTypeField,
+      getOperators: isOperators,
+    });
+
+    await selectPhaseOption(utils, "Agent Type", "pick operator...");
+    const input = utils.getByRole("combobox");
+    fireEvent.change(input, { target: { value: "is" } });
+    fireEvent.click(await utils.findByRole("option", { name: /^is$/i }));
+    await waitFor(() =>
+      expect(input).toHaveAttribute("placeholder", "pick value..."),
+    );
+    fireEvent.change(input, { target: { value: "cha" } });
+    fireEvent.click(await utils.findByRole("option", { name: "Chat" }));
+
+    await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
+    expect(onApply).toHaveBeenLastCalledWith([
+      { field: "simulation_type", operator: "equals", value: "text" },
+    ]);
+    expect(utils.getByText("Agent Type is Chat")).toBeInTheDocument();
+    expect(utils.queryByText("Agent Type is text")).not.toBeInTheDocument();
+  });
+
+  it("shows labels for a filter set in the Basic tab", () => {
+    const { utils } = renderQueryInput({
+      field: agentTypeField,
+      getOperators: isOperators,
+      initialTokens: [
+        { field: "simulation_type", operator: "equals", value: ["text"] },
+      ],
+    });
+
+    expect(utils.getByText("Agent Type is Chat")).toBeInTheDocument();
+  });
+
+  it("lists several picked values by label, separated by commas", () => {
+    const { utils } = renderQueryInput({
+      field: outputTypeField,
+      getOperators: listOperators,
+      initialTokens: [
+        {
+          field: "output_type",
+          operator: "in",
+          value: ["pass_fail", "deterministic"],
+        },
+      ],
+    });
+
+    expect(
+      utils.getByText("Output Type equals Pass/fail, Choices"),
+    ).toBeInTheDocument();
+  });
+
+  it("lists and shows the labels of keyed string choices", async () => {
+    const field = {
+      value: "status",
+      label: "Status",
+      type: "enum",
+      choices: ["in_progress", "failed"],
+      choiceLabels: { in_progress: "In progress", failed: "Failed" },
+    };
+    const { onApply, utils } = renderQueryInput({ field });
+
+    await selectPhaseOption(utils, "Status", "pick operator...");
+    const input = utils.getByRole("combobox");
+    fireEvent.change(input, { target: { value: "is" } });
+    fireEvent.click(await utils.findByRole("option", { name: /^is$/i }));
+    await waitFor(() =>
+      expect(input).toHaveAttribute("placeholder", "pick value..."),
+    );
+    fireEvent.change(input, { target: { value: "progress" } });
+    fireEvent.click(await utils.findByRole("option", { name: "In progress" }));
+
+    await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
+    expect(onApply).toHaveBeenLastCalledWith([
+      { field: "status", operator: "is", value: "in_progress" },
+    ]);
+    expect(utils.getByText("Status Is In progress")).toBeInTheDocument();
+  });
+
+  it("keeps a range as from – to", () => {
+    const { utils } = renderQueryInput({
+      field: { value: "latency", label: "Latency", type: "number" },
+      getOperators: () => [{ value: "between", label: "between", range: true }],
+      initialTokens: [
+        { field: "latency", operator: "between", value: ["1", "5"] },
+      ],
+    });
+
+    expect(utils.getByText("Latency between 1 – 5")).toBeInTheDocument();
   });
 });

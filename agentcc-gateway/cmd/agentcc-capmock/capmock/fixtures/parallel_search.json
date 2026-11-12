@@ -1,0 +1,12 @@
+{
+  "search_id": "search_{{id}}",
+  "results": [
+    {
+      "url": "https://example.com/capmock",
+      "title": "Capmock result for {{query}}",
+      "excerpts": ["Example excerpt."]
+    }
+  ],
+  "warnings": null,
+  "usage": [{ "name": "sku_search", "count": 1 }]
+}

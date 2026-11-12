@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import yaml
+from rendered_omega_checks import check_omega, check_omega_absent, check_sender_label
 
 WORKLOADS = ("Deployment", "StatefulSet", "Job", "Pod")
 REFERENCE = re.compile(r"\$\(([A-Za-z_][A-Za-z0-9_]*)\)")
@@ -81,6 +82,7 @@ COMPOSE_BACKEND_DEFAULTS = (
     "DJANGO_SETTINGS_MODULE",
     "EXACT_AGGREGATION_TASK_QUEUE",
     "FI_SKIP_CH25_MIGRATION",
+    "FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS",
     "NO_STARTUP_DB_MUTATIONS",
     "PROPERTY_CATALOG_CH_USER",
     "PROPERTY_CATALOG_DATABASE",
@@ -466,7 +468,7 @@ def check_gateway_api(docs: list[dict]) -> list[str]:
         rule
         for rule in api["spec"]["rules"]
         if {m["path"]["value"] for m in rule["matches"]}
-        == {"/v1/traces", "/tracer/v1/traces"}
+        == {"/v1/traces", "/tracer/v1/traces", "/api/public/otel/v1/traces"}
     ]
     if (
         not otlp
@@ -486,6 +488,19 @@ def check_gateway_api(docs: list[dict]) -> list[str]:
     llm = next((r for n, r in routes.items() if n.endswith("-llm-gateway")), None)
     if not llm or llm["spec"]["hostnames"] != ["llm.futureagi.example.com"]:
         failed.append("gateway-api: no LLM gateway route")
+    # Omega EE's virtual-server urls (CN22) are built on the LLM gateway's
+    # public origin, which the backend reads as AGENTCC_GATEWAY_PUBLIC_URL.
+    public_url = {
+        env_values(c).get("AGENTCC_GATEWAY_PUBLIC_URL")
+        for d in docs
+        if d["kind"] == "Deployment" and component(d) == "backend"
+        for c in containers(d)
+    }
+    if public_url != {"https://llm.futureagi.example.com"}:
+        failed.append(
+            "gateway-api: the backend's AGENTCC_GATEWAY_PUBLIC_URL is "
+            f"{sorted(map(str, public_url))}, not the LLM gateway route's https origin"
+        )
     public = next(
         d
         for d in docs
@@ -798,12 +813,37 @@ def check_render(name: str, docs: list[dict]) -> list[str]:
         failed.append(
             f"{name}: the gateway and the backend do not share AGENTCC_WEBHOOK_SECRET"
         )
+    # The chart derives the backend's public gateway origin only from the LLM
+    # gateway's route (gatewayApi.llmGateway); an operator who exposes the
+    # gateway another way sets it in config.extraEnv, which no render here
+    # does. Never an in-cluster or local address (CN22 R4).
+    routed = any(
+        d["kind"] == "HTTPRoute" and d["metadata"]["name"].endswith("-llm-gateway")
+        for d in docs
+    )
+    for doc in workloads:
+        if component(doc) != "backend":
+            continue
+        for container in containers(doc):
+            url = env_values(container).get("AGENTCC_GATEWAY_PUBLIC_URL")
+            if url is not None and not routed:
+                failed.append(
+                    f"{name}: the backend sets AGENTCC_GATEWAY_PUBLIC_URL {url!r} "
+                    "with no LLM gateway route"
+                )
+            if url is not None and not (url.startswith("https://") and is_public(url)):
+                failed.append(
+                    f"{name}: the backend's AGENTCC_GATEWAY_PUBLIC_URL {url!r} is not "
+                    "a public https origin"
+                )
     # The gateway and the backend refuse or allow private provider URLs alike.
     private_urls = {
         component(doc): env_values(container).get("AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS")
         for doc in workloads
         for container in containers(doc)
+        # The application container itself, not a sidecar (omega.internalTls).
         if component(doc) in ("agentcc-gateway", "backend")
+        and container["name"] == component(doc)
     }
     if len(private_urls) == 2 and len(set(private_urls.values())) != 1:
         failed.append(
@@ -1533,6 +1573,13 @@ def main() -> int:
         failed += check_alb_health_checks(name, docs)
         # ci/all-components.yaml turns serviceAccount.automountServiceAccountToken on.
         failed += check_token_mounts(name, docs, mounted=name == "all-components")
+        # ci/omega.yaml turns omega.enabled on; every other set must hold
+        # nothing of Omega's.
+        failed += (
+            check_omega(docs) if name == "omega" else check_omega_absent(name, docs)
+        )
+        # Omega EE admits host-event senders by a pod label: on them alone, everywhere.
+        failed += check_sender_label(name, docs)
     # examples/cloud/gke.yaml: the UI, API and collector; ci/gateway-api.yaml
     # adds the LLM gateway.
     for render, wanted in (("cloud-gke", 3), ("gateway-api", 4)):

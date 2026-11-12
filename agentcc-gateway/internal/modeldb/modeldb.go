@@ -1,9 +1,7 @@
 package modeldb
 
 import (
-	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -18,9 +16,7 @@ const (
 	ModeAudioSpeech        ModelMode = "audio_speech"
 	ModeRerank             ModelMode = "rerank"
 	ModeModeration         ModelMode = "moderation"
-	ModeOCR                ModelMode = "ocr"
-	ModeVideoGeneration    ModelMode = "video_generation"
-	ModeSearch             ModelMode = "search"
+	ModeDecision           ModelMode = "decision"
 )
 
 // ModelInfo contains all metadata for a single model.
@@ -193,115 +189,6 @@ func (db *ModelDB) CharacterCost(modelID string, characters int) (float64, bool)
 	return float64(characters) * m.Pricing.InputPerCharacter, true
 }
 
-// QueryCost returns the cost of the given number of queries, the unit rerank
-// is billed in. Returns 0, false if the model has no per-query price.
-func (db *ModelDB) QueryCost(modelID string, queries int) (float64, bool) {
-	m, ok := db.Get(modelID)
-	if !ok || m.Pricing.InputPerQuery == 0 {
-		return 0, false
-	}
-	return float64(queries) * m.Pricing.InputPerQuery, true
-}
-
-// PageCost returns the cost of reading the given number of document pages.
-// Returns 0, false if the model has no per-page price.
-func (db *ModelDB) PageCost(modelID string, pages int) (float64, bool) {
-	m, ok := db.Get(modelID)
-	if !ok || m.Pricing.PerPage == 0 {
-		return 0, false
-	}
-	return float64(pages) * m.Pricing.PerPage, true
-}
-
-// VideoCost returns the cost of generating the given seconds of video.
-// Returns 0, false if the model has no per-second output price.
-func (db *ModelDB) VideoCost(modelID string, seconds float64) (float64, bool) {
-	m, ok := db.Get(modelID)
-	if !ok || m.Pricing.OutputPerSecond == 0 {
-		return 0, false
-	}
-	return seconds * m.Pricing.OutputPerSecond, true
-}
-
-// ImageCost returns the cost of n images generated at the given size and
-// quality. The price table keys a model priced per pixel by quality and size,
-// as "hd/1024-x-1024/dall-e-3", so those keys are tried first; then the
-// model's own price per image. Returns 0, false if neither has a price.
-//
-// The keys are looked up exactly: Get would strip "1792-x-1024/" and answer
-// with the model's flat price, half the real one at that size. A request that
-// names no quality gets the API's default, standard.
-func (db *ModelDB) ImageCost(modelID, size, quality string, n int) (float64, bool) {
-	if n <= 0 {
-		n = 1
-	}
-	if quality == "" {
-		quality = "standard"
-	}
-	width, height, sized := parseImageSize(size)
-	if sized {
-		sizeKey := fmt.Sprintf("%d-x-%d", width, height)
-		for _, key := range []string{quality + "/" + sizeKey + "/" + modelID, sizeKey + "/" + modelID} {
-			m, ok := db.models[key]
-			if !ok {
-				continue
-			}
-			if perPixel := max(m.Pricing.InputPerPixel, m.Pricing.OutputPerPixel); perPixel > 0 {
-				return perPixel * float64(width*height) * float64(n), true
-			}
-			if perImage := imagePrice(m); perImage > 0 {
-				return perImage * float64(n), true
-			}
-		}
-	}
-	if m, ok := db.Get(modelID); ok {
-		if perImage := imagePrice(m); perImage > 0 {
-			return perImage * float64(n), true
-		}
-	}
-	return 0, false
-}
-
-// ImageTokenCost returns the cost of an image call billed in tokens, as the
-// gpt-image models are: text and image tokens in, image tokens out. Returns
-// 0, false if the model has no token price.
-func (db *ModelDB) ImageTokenCost(modelID string, textIn, imageIn, out int) (float64, bool) {
-	m, ok := db.Get(modelID)
-	if !ok || (m.Pricing.InputPerToken == 0 && m.Pricing.OutputPerImageToken == 0) {
-		return 0, false
-	}
-	imageInRate := m.Pricing.InputPerImageToken
-	if imageInRate == 0 {
-		imageInRate = m.Pricing.InputPerToken
-	}
-	outRate := m.Pricing.OutputPerImageToken
-	if outRate == 0 {
-		outRate = m.Pricing.OutputPerToken
-	}
-	return float64(textIn)*m.Pricing.InputPerToken + float64(imageIn)*imageInRate + float64(out)*outRate, true
-}
-
-// imagePrice is a model's price for one generated image. The table states it
-// as output_cost_per_image for most models and as input_cost_per_image for
-// some OpenAI ones, dall-e-3 among them.
-func imagePrice(m *ModelInfo) float64 {
-	return max(m.Pricing.OutputPerImage, m.Pricing.InputPerImage)
-}
-
-// parseImageSize reads an image size such as "1024x1024".
-func parseImageSize(size string) (width, height int, ok bool) {
-	w, h, found := strings.Cut(size, "x")
-	if !found {
-		return 0, 0, false
-	}
-	width, errW := strconv.Atoi(w)
-	height, errH := strconv.Atoi(h)
-	if errW != nil || errH != nil || width <= 0 || height <= 0 {
-		return 0, 0, false
-	}
-	return width, height, true
-}
-
 // ModelOverride defines config-level overrides for a model entry.
 // Pointer fields are optional — nil means "don't override".
 type ModelOverride struct {
@@ -389,12 +276,15 @@ func mergeOverride(m *ModelInfo, ov ModelOverride) {
 		}
 		if p.InputPerQuery != nil {
 			m.Pricing.InputPerQuery = *p.InputPerQuery
+			m.Pricing.inputPerQuerySet = true
 		}
 		if p.PerPage != nil {
 			m.Pricing.PerPage = *p.PerPage
+			m.Pricing.perPageSet = true
 		}
 		if p.OutputPerImage != nil {
 			m.Pricing.OutputPerImage = *p.OutputPerImage
+			m.Pricing.outputPerImageSet = true
 		}
 		if p.OutputPerSecond != nil {
 			m.Pricing.OutputPerSecond = *p.OutputPerSecond
@@ -439,4 +329,20 @@ func mergeOverride(m *ModelInfo, ov ModelOverride) {
 			m.Capabilities.Reasoning = *c.Reasoning
 		}
 	}
+}
+
+// WithExtra returns the bundled models plus extra, extra winning on a shared
+// ID. Neither input is modified.
+func WithExtra(bundled, extra map[string]*ModelInfo) map[string]*ModelInfo {
+	if len(extra) == 0 {
+		return bundled
+	}
+	out := make(map[string]*ModelInfo, len(bundled)+len(extra))
+	for id, m := range bundled {
+		out[id] = m
+	}
+	for id, m := range extra {
+		out[id] = m
+	}
+	return out
 }

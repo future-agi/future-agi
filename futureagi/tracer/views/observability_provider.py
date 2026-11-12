@@ -3,12 +3,13 @@ import math
 import structlog
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.utils import get_request_organization
+from common.utils.page_limits import enforce_page_size, page_bounds
 from simulate.models import AgentDefinition
 from simulate.services.agent_definition import (
     is_masked,
@@ -56,14 +57,14 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
 
     def list(self, request, *args, **kwargs):
         try:
+            enforce_page_size(request.query_params.get("page_size"))
             queryset = self.get_queryset()
             total_count = queryset.count()
 
             page_number = int(request.query_params.get("page_number", 0))
             page_size = int(request.query_params.get("page_size", 20))
 
-            start = page_number * page_size
-            end = start + page_size
+            start, end = page_bounds(page_number, page_size, total_count)
 
             total_pages = math.ceil(total_count / page_size)
             next_page_number = (
@@ -85,6 +86,8 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             }
 
             return self._gm.success_response(response)
+        except APIException:
+            raise
         except Exception as e:
             logger.exception(f"Error listing observability providers: {e}")
             return self._gm.bad_request(

@@ -350,6 +350,10 @@ class AdditionalOrganizationCreateResponseSerializer(serializers.Serializer):
     result = AdditionalOrganizationCreateResultSerializer()
 
 
+class AWSOnboardingExchangeResponseSerializer(serializers.Serializer):
+    onboarding_attempt = serializers.CharField()
+
+
 class AWSMarketplaceSignupResultSerializer(serializers.Serializer):
     message = serializers.CharField()
     user_email = serializers.EmailField()
@@ -409,6 +413,15 @@ class PasswordResetInitiateResultSerializer(serializers.Serializer):
             "that account's password."
         ),
     )
+    email_unavailable = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "True when this self-hosted deployment cannot send email, so no "
+            "reset link went out; message then tells the caller to ask their "
+            "administrator. Absent on every other answer, and the same for "
+            "every address."
+        ),
+    )
 
 
 class PasswordResetInitiateResponseSerializer(serializers.Serializer):
@@ -422,8 +435,9 @@ class PasswordResetConfirmRequestSerializer(serializers.Serializer):
 
 
 class AcceptInvitationRequestSerializer(serializers.Serializer):
-    new_password = serializers.CharField(write_only=True)
-    repeat_password = serializers.CharField(write_only=True)
+    # Required by the handler only when this invitation activates the identity.
+    new_password = serializers.CharField(write_only=True, required=False)
+    repeat_password = serializers.CharField(write_only=True, required=False)
 
 
 class UserIdsRequestSerializer(serializers.Serializer):
@@ -454,6 +468,10 @@ class AWSMarketplaceTokenFormSerializer(serializers.Serializer):
     x_amzn_marketplace_token = serializers.CharField()
     x_amzn_marketplace_product_id = serializers.CharField(required=False)
     x_amzn_marketplace_agreement_id = serializers.CharField(required=False)
+
+
+class AWSOnboardingExchangeRequestSerializer(serializers.Serializer):
+    code = serializers.CharField()
 
 
 class AWSMarketplaceSignupRequestSerializer(serializers.Serializer):
@@ -597,15 +615,9 @@ class PasskeyRenameResponseSerializer(serializers.Serializer):
     name = serializers.CharField()
 
 
-class SecretKeyDataResponseSerializer(serializers.Serializer):
-    id = serializers.UUIDField()
-    api_key = serializers.CharField()
-    secret_key = serializers.CharField()
-
-
-class SecretKeysResponseSerializer(serializers.Serializer):
-    status = serializers.CharField()
-    data = SecretKeyDataResponseSerializer()
+class SecretKeysRetiredResponseSerializer(serializers.Serializer):
+    code = serializers.CharField(default="org_keys_retired")
+    create_url = serializers.CharField()
 
 
 class SecretKeyListMetadataSerializer(serializers.Serializer):
@@ -654,6 +666,8 @@ class AcceptInvitationPreviewResponseSerializer(serializers.Serializer):
     valid = serializers.BooleanField()
     email = serializers.EmailField()
     org_name = serializers.CharField()
+    requires_password = serializers.BooleanField()
+    requires_login = serializers.BooleanField()
 
 
 class UserInfoOrganizationSerializer(serializers.Serializer):

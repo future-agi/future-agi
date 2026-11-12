@@ -1,8 +1,7 @@
 import structlog
 from django.db import transaction
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import F
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.error_localizer_model import (
     ErrorLocalizerStatus,
 )
@@ -15,6 +14,24 @@ from tracer.models.custom_eval_config import (
 )
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 
+logger = structlog.get_logger(__name__)
+
+
+INLINE_EVAL_TARGET_NOT_IN_SCOPE = "inline_eval_target_not_in_scope"
+
+
+def _target_spans(organization_id, workspace_id):
+    """Resolve targets only with an explicit, complete persisted tenant binding."""
+    if organization_id is None or workspace_id is None:
+        return ObservationSpan.objects.none()
+    return ObservationSpan.objects.filter(
+        project__organization_id=organization_id,
+        project__workspace_id=workspace_id,
+        project__deleted=False,
+        trace__project_id=F("project_id"),
+        trace__deleted=False,
+    )
+
 
 @temporal_activity(
     max_retries=0,
@@ -22,99 +39,93 @@ from tracer.models.observation_span import EvalLogger, ObservationSpan
     queue="tasks_s",
 )
 def process_in_line_evals():
-    """
-    Process all pending inline evaluations that have a corresponding ObservationSpan.
-    For evaluations with error_localizer_enabled=True, wait until the error_localizer task is completed.
-    """
-    evals_to_process = []
+    """Validate pending targets before writing results or waiting for a localizer."""
+    # Keep the claim, target validation and result writes in one transaction.
+    # Target/project/trace locks prevent a tenant or parent change between the
+    # scoped read and the writes. A failed batch rolls back its claims as well.
     with transaction.atomic():
-        processible_eval_ids = (
-            InlineEval.objects.filter(
-                status=InLineEvalStatus.PENDING,
-            )
-            .filter(evaluation__isnull=False)
-            .filter(
-                Exists(
-                    ObservationSpan.objects.filter(
-                        id=OuterRef("span_id"), deleted=False
-                    )
-                )
-            )
-            .filter(
-                # Either error_localizer is not enabled, or it's enabled and in a final state (completed/failed/skipped)
-                Q(evaluation__error_localizer_enabled=False)
-                | Q(evaluation__error_localizer_enabled__isnull=True)
-                | Q(
-                    evaluation__error_localizer_enabled=True,
-                    evaluation__error_localizer__status__in=[
-                        ErrorLocalizerStatus.COMPLETED,
-                        ErrorLocalizerStatus.FAILED,
-                        ErrorLocalizerStatus.SKIPPED,
-                    ],
-                )
-            )
-            .values_list("id", flat=True)
-        )
-
-        # Now lock and fetch the objects
         evals_to_process = list(
             InlineEval.objects.prefetch_related(
                 "evaluation", "evaluation__error_localizer"
             )
             .select_for_update(skip_locked=True)
-            .filter(id__in=processible_eval_ids, status=InLineEvalStatus.PENDING)
+            .filter(status=InLineEvalStatus.PENDING, evaluation__isnull=False)
         )
 
         if not evals_to_process:
             logger.info("No pending inline evaluations found after locking")
             return
 
-        eval_ids = [e.id for e in evals_to_process]
+        span_ids_by_scope = {}
+        for inline_eval in evals_to_process:
+            scope = (inline_eval.organization_id, inline_eval.workspace_id)
+            span_ids_by_scope.setdefault(scope, set()).add(inline_eval.span_id)
 
-        InlineEval.objects.filter(id__in=eval_ids).update(
-            status=InLineEvalStatus.PROCESSING
-        )
-
-    span_ids = [eval.span_id for eval in evals_to_process]
-    spans = ObservationSpan.objects.filter(id__in=span_ids).select_related(
-        "project", "trace"
-    )
-    spans_map = {str(span.id): span for span in spans}
-
-    eval_loggers_to_create = []
-    inline_evals_to_update = []
-
-    for inline_eval in evals_to_process:
-        span = spans_map.get(str(inline_eval.span_id))
-
-        # this case should not happen, but just in case
-        if not span:
-            logger.warning(
-                f"Span for inline eval {inline_eval.id} disappeared during processing."
+        # A span found for one tenant must never satisfy another tenant's job,
+        # including jobs for the same span in a mixed-tenant batch.
+        spans_map = {}
+        for scope, span_ids in span_ids_by_scope.items():
+            spans = (
+                _target_spans(*scope)
+                .filter(id__in=span_ids)
+                .select_related("project", "trace")
+                .order_by("project_id", "id")
+                .select_for_update(of=("self", "project", "trace"))
             )
-            inline_eval.status = InLineEvalStatus.FAILED
+            for span in spans:
+                spans_map[(*scope, str(span.id))] = span
+
+        eval_loggers_to_create = []
+        inline_evals_to_update = []
+
+        for inline_eval in evals_to_process:
+            span = spans_map.get(
+                (
+                    inline_eval.organization_id,
+                    inline_eval.workspace_id,
+                    str(inline_eval.span_id),
+                )
+            )
+            if span is None:
+                logger.warning(
+                    "Skipping inline eval with unavailable target",
+                    reason=INLINE_EVAL_TARGET_NOT_IN_SCOPE,
+                    inline_eval_id=str(inline_eval.id),
+                )
+                inline_eval.status = InLineEvalStatus.FAILED
+                inline_evals_to_update.append(inline_eval)
+                continue
+
+            evaluation = inline_eval.evaluation
+            if evaluation.error_localizer_enabled and (
+                not evaluation.error_localizer
+                or evaluation.error_localizer.status
+                not in (
+                    ErrorLocalizerStatus.COMPLETED,
+                    ErrorLocalizerStatus.FAILED,
+                    ErrorLocalizerStatus.SKIPPED,
+                )
+            ):
+                # Valid targets retain the existing localizer wait behavior.
+                # Invalid targets above must not remain pending indefinitely.
+                continue
+
+            try:
+                logger_kwargs = _get_logger_kwargs(inline_eval, span)
+                eval_loggers_to_create.append(EvalLogger(**logger_kwargs))
+                inline_eval.status = InLineEvalStatus.COMPLETED
+            except Exception as e:
+                logger.error(f"Failed to process inline eval {inline_eval.id}: {e}")
+                inline_eval.status = InLineEvalStatus.FAILED
             inline_evals_to_update.append(inline_eval)
-            continue
 
-        try:
-            logger_kwargs = _get_logger_kwargs(inline_eval, span)
-            eval_loggers_to_create.append(EvalLogger(**logger_kwargs))
+        if eval_loggers_to_create:
+            EvalLogger.objects.bulk_create(eval_loggers_to_create)
 
-            inline_eval.status = InLineEvalStatus.COMPLETED
-            inline_evals_to_update.append(inline_eval)
+        if inline_evals_to_update:
+            InlineEval.objects.bulk_update(inline_evals_to_update, ["status"])
 
-        except Exception as e:
-            logger.error(f"Failed to process inline eval {inline_eval.id}: {e}")
-            inline_eval.status = InLineEvalStatus.FAILED
-            inline_evals_to_update.append(inline_eval)
-
-    if eval_loggers_to_create:
-        EvalLogger.objects.bulk_create(eval_loggers_to_create)
-
-    if inline_evals_to_update:
-        InlineEval.objects.bulk_update(inline_evals_to_update, ["status"])
-
-    logger.info(f"Processed {len(evals_to_process)} inline evaluations")
+    logger.info(f"Processed {len(inline_evals_to_update)} inline evaluations")
 
 
 def _get_logger_kwargs(inline_eval: InlineEval, span: ObservationSpan):
@@ -136,7 +147,6 @@ def _get_logger_kwargs(inline_eval: InlineEval, span: ObservationSpan):
         and inline_eval.evaluation.error_localizer.status
         == ErrorLocalizerStatus.COMPLETED
     ):
-
         error_localizer_task = inline_eval.evaluation.error_localizer
         output_metadata.update(
             {
@@ -180,9 +190,21 @@ def trigger_inline_eval(evaluation: Evaluation):
         )
         return
 
+    if (
+        not _target_spans(evaluation.organization_id, evaluation.workspace_id)
+        .filter(id=span_id)
+        .exists()
+    ):
+        logger.warning(
+            "Skipping inline eval creation with unavailable target",
+            reason=INLINE_EVAL_TARGET_NOT_IN_SCOPE,
+            evaluation_id=str(evaluation.id),
+        )
+        return
+
     inline_eval = InlineEval.objects.create(
-        organization=evaluation.organization,
-        workspace=evaluation.workspace,
+        organization_id=evaluation.organization_id,
+        workspace_id=evaluation.workspace_id,
         span_id=span_id,
         custom_eval_name=custom_eval_name,
         evaluation=evaluation,

@@ -1,0 +1,92 @@
+# Intercom's MCP server (US host) with OAuth from its own authorization
+# server, which registers clients dynamically. Every redirect URI a client
+# registers is checked against Intercom's allowlist: callbacks on localhost
+# are allowed, and any other callback needs an entry that Intercom Customer
+# Support adds on request (one entry covers the US and EU hosts). FutureAGI's
+# callback is not on the list yet, so clientApproval has no approvedAt. An
+# EU-hosted workspace signs in at mcp.eu.intercom.com, which this record does
+# not cover. The scopes are the two the server advertises; Use Fin Operator
+# is requested on every connection, and its tools appear only in workspaces
+# that have Fin Operator. EE and OSS get none: neither is an allowlisted
+# client.
+schema: "connector-manifest/v1#provider"
+app: intercom
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.intercom.com/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://mcp.intercom.com/authorize
+    tokenUrl: https://mcp.intercom.com/token
+    scopes: [mcp, operator]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    revocation:
+      url: https://mcp.intercom.com/token
+      method: POST
+      tokenBody: form
+      tokenField: token
+      clientAuth: body
+    registration: [dcr]
+  clientApproval:
+    required: true
+    program: "Intercom MCP redirect-URI allowlist (entries added by Intercom Customer Support)"
+    url: https://developers.intercom.com/docs/guides/mcp
+    source: https://developers.intercom.com/docs/guides/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developers.intercom.com/docs/guides/mcp
+    fetchedAt: 2026-11-11
+  - fact: transport.url
+    url: https://mcp.intercom.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: transport.variant
+    url: https://developers.intercom.com/docs/guides/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://developers.intercom.com/docs/guides/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp.intercom.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.tokenUrl
+    url: https://mcp.intercom.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.scopes
+    url: https://mcp.intercom.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.scopes
+    url: https://developers.intercom.com/docs/guides/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.pkce
+    url: https://mcp.intercom.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.revocation.url
+    url: https://mcp.intercom.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.registration
+    url: https://mcp.intercom.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-11-11
+  - fact: auth.oauth2.registration
+    url: https://developers.intercom.com/docs/guides/mcp
+    fetchedAt: 2026-11-11
+  - fact: auth.clientApproval
+    url: https://developers.intercom.com/docs/guides/mcp
+    fetchedAt: 2026-11-11
+x-omega: { ee: exclude, oss: exclude }

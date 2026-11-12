@@ -17,6 +17,9 @@ const (
 	keyTypeIngest = "ingest"
 	// KeyTypeIngest is the type of a sandbox key.
 	KeyTypeIngest = keyTypeIngest
+	// keyTypeCodingAgent is a coding agent's key: it makes only its fix loop's
+	// API calls and never sends traces.
+	keyTypeCodingAgent = "coding_agent"
 
 	// resourceMarkKey is written on every routed resource so that downstream
 	// conversion treats the spans as simulated; its value is resourceMarkValue.
@@ -143,7 +146,7 @@ func (a *Authenticator) RouteSimulation(
 	ctx context.Context, cacheKey string, traces ptrace.Traces, result *ResolveResult,
 ) (RouteOutcome, error) {
 	var out RouteOutcome
-	if a == nil || result == nil || result.KeyType != keyTypeIngest {
+	if a == nil || result == nil || result.Principal != PrincipalSandbox {
 		return out, nil
 	}
 	rss := traces.ResourceSpans()
@@ -228,9 +231,7 @@ func (a *Authenticator) RouteSimulation(
 	for i := 0; i < rss.Len(); i++ {
 		attrs := rss.At(i).Resource().Attributes()
 		attrs.PutStr("project_name", name)
-		if _, marked := attrs.Get(resourceMarkKey); !marked {
-			attrs.PutStr(resourceMarkKey, resourceMarkValue)
-		}
+		attrs.PutStr(resourceMarkKey, resourceMarkValue)
 	}
 	out.Hidden = projectID
 	return out, nil

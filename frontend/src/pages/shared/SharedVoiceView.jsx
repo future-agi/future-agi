@@ -7,6 +7,16 @@ import VoiceAudioBridge from "src/components/VoiceDetailDrawerV2/VoiceAudioBridg
 import CallDetailsBar from "src/components/VoiceDetailDrawerV2/CallDetailsBar";
 import { getSpanAttributes } from "src/components/traceDetailDrawer/DrawerRightRenderer/getSpanData";
 import { findConversationSpan } from "./sharedViewHelpers";
+import { normalizeRecordings } from "src/utils/utils";
+
+function decodeJsonValue(value) {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Extract voice-shaped data from the shared trace payload. The backend may
@@ -24,19 +34,29 @@ function extractVoiceData(resourceData) {
   const conversationSpan = found?.span;
 
   const attrs = getSpanAttributes(conversationSpan);
-  const rawLog = attrs?.rawLog || attrs?.raw_log || {};
+  const rawLog = decodeJsonValue(attrs?.rawLog || attrs?.raw_log) || {};
 
-  // Transcript — try top-level, then conversation span's rawLog, then attrs
+  // Collector attributes may be JSON strings. Prefer the normalized transcript
+  // over provider-native text, and do not let invalid/empty values hide it.
   const transcript =
-    resourceData.transcript ||
-    rawLog.transcript ||
-    attrs.transcript ||
-    conversationSpan?.transcript ||
-    null;
+    [
+      resourceData.transcript,
+      attrs["fi.conversation.transcript"],
+      rawLog.transcript,
+      attrs.transcript,
+      conversationSpan?.transcript,
+    ]
+      .map(decodeJsonValue)
+      .find((value) => Array.isArray(value) && value.length > 0) || null;
 
-  // Recordings — support multiple shapes
   const recordings =
-    resourceData.recordings || rawLog.recordings || attrs.recordings || null;
+    resourceData.recording ||
+    resourceData.recordings ||
+    rawLog.recording ||
+    rawLog.recordings ||
+    attrs.recording ||
+    attrs.recordings ||
+    null;
 
   const audioUrl =
     resourceData.audio_url ||
@@ -44,6 +64,31 @@ function extractVoiceData(resourceData) {
     rawLog.audio_url ||
     attrs.audio_url ||
     null;
+
+  const legacyRecordings = normalizeRecordings(decodeJsonValue(recordings));
+  // Project-mode audio consumes `recording`, not `recordings`/`audio_url`.
+  // Use the accepted flat input shape (without the normalizer's `mono` alias).
+  const recording = {
+    stereo: attrs["conversation.recording.stereo"] || legacyRecordings.stereo,
+    combined:
+      attrs["conversation.recording.mono.combined"] ||
+      legacyRecordings.combined ||
+      audioUrl ||
+      "",
+    assistant:
+      attrs["conversation.recording.mono.assistant"] ||
+      legacyRecordings.assistant,
+    customer:
+      attrs["conversation.recording.mono.customer"] ||
+      legacyRecordings.customer,
+    stereo_channels: legacyRecordings.stereoChannels,
+  };
+  const recordingAvailable = Boolean(
+    recording.stereo ||
+      recording.combined ||
+      recording.assistant ||
+      recording.customer,
+  );
 
   // Build a data object matching what VoiceDetailDrawerV2 expects
   return {
@@ -53,6 +98,8 @@ function extractVoiceData(resourceData) {
     module: "project",
     // Voice fields
     transcript,
+    recording,
+    recording_available: recordingAvailable,
     recordings,
     audio_url: audioUrl,
     audioUrl,
@@ -96,12 +143,14 @@ const SharedVoiceView = ({ resourceData, voiceData }) => {
   }
 
   const hasAudio =
-    data.audio_url ||
-    data.audioUrl ||
-    data.recordings?.stereo ||
-    data.recordings?.assistant ||
-    data.recordings?.customer ||
-    data.recordings?.combined;
+    data.module === "project"
+      ? data.recording_available
+      : data.audio_url ||
+        data.audioUrl ||
+        data.recordings?.stereo ||
+        data.recordings?.assistant ||
+        data.recordings?.customer ||
+        data.recordings?.combined;
 
   const hasTranscript =
     Array.isArray(data.transcript) && data.transcript.length > 0;
@@ -147,8 +196,8 @@ const SharedVoiceView = ({ resourceData, voiceData }) => {
                 fontSize: 11,
                 fontWeight: 600,
                 color: "text.secondary",
-                textTransform: "uppercase",
-                letterSpacing: "0.04em",
+                textTransform: "none",
+                letterSpacing: 0,
                 mb: 0.75,
               }}
             >
@@ -157,7 +206,10 @@ const SharedVoiceView = ({ resourceData, voiceData }) => {
             <VoiceAudioBridge data={data} />
           </Box>
         ) : (
-          <Alert severity="info" icon={<Iconify icon="mdi:volume-off" />}>
+          <Alert
+            severity="info"
+            icon={<Iconify icon="solar:volume-cross-linear" />}
+          >
             Audio recording is not available in this shared view.
           </Alert>
         )}

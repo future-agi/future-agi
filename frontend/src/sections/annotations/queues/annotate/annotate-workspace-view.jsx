@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, {
   useState,
   useCallback,
@@ -38,6 +39,8 @@ import {
   useItemDiscussion,
 } from "src/api/annotation-queues/annotation-queues";
 import AnnotateHeader from "./annotate-header";
+import AnnotateEndScreen from "./annotate-end-screen";
+import ExportToDatasetDialog from "../view/export-to-dataset-dialog";
 import AnnotateFooter from "./annotate-footer";
 import ContentPanel from "./content-panel";
 import LabelPanel from "./label-panel";
@@ -59,21 +62,44 @@ import {
   resolveSelectedAnnotatorScope,
 } from "./annotation-view-mode";
 import useKeyboardShortcuts from "./use-keyboard-shortcuts";
+import notify from "src/sections/common/ux/toast";
+import useShortcuts from "src/sections/common/ux/useShortcuts";
+import { savedChoiceText } from "src/sections/develop-detail/Review/reviewModel";
+import PropTypes from "prop-types";
+import ShortcutSheet from "src/sections/common/RowPanel/ShortcutSheet";
+import ExperimentReviewSummary from "src/sections/develop-detail/Review/ExperimentReviewSummary";
+// W4 C2: viewers inspect, members score; W4 C1/C3: the summary at any time.
+import RoleNotice from "./RoleNotice";
+import { useViewOnlyReviewer } from "./useViewOnlyReviewer";
+import ReviewSummaryButton from "./ReviewSummaryDrawer";
 import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
 import { SS_KEY_USER_ID } from "src/utils/sessionKeys";
+import { paths } from "src/routes/paths";
 
 const MAX_HISTORY = 50;
 
 function historyReducer(state, action) {
   switch (action.type) {
     case "init": {
-      return { history: [action.id], index: 0, currentItemId: action.id };
+      return {
+        history: [action.id],
+        index: 0,
+        currentItemId: action.id,
+        finished: false,
+        endCheck: null,
+      };
     }
     case "push": {
       const next = [...state.history.slice(0, state.index + 1), action.id];
       if (next.length > MAX_HISTORY) next.shift();
       const newIndex = next.length - 1;
-      return { history: next, index: newIndex, currentItemId: action.id };
+      return {
+        history: next,
+        index: newIndex,
+        currentItemId: action.id,
+        finished: false,
+        endCheck: null,
+      };
     }
     case "prev": {
       if (state.index <= 0) return state;
@@ -94,11 +120,45 @@ function historyReducer(state, action) {
       };
     }
     case "clear": {
-      return { history: [], index: -1, currentItemId: null };
+      // Re-resolve the first item for the current mode.
+      return {
+        history: [],
+        index: -1,
+        currentItemId: null,
+        finished: false,
+        endCheck: null,
+      };
+    }
+    case "finish": {
+      // No row after the work cursor. Stay on the end
+      // screen instead of re-resolving (which would reopen a skipped row);
+      // `endCheck` stays null until the whole queue has been checked.
+      return {
+        history: [],
+        index: -1,
+        currentItemId: null,
+        finished: true,
+        endCheck: null,
+      };
+    }
+    case "endChecked": {
+      // A check that lands after the annotator left the end screen (Undo,
+      // a row opened from it) is dropped.
+      if (!state.finished) return state;
+      return { ...state, endCheck: action.result };
     }
     default:
       return state;
   }
+}
+
+// The end-screen check asks for open rows only, so a
+// done row means the server walked a completed queue (next-item forces
+// include_completed there), where only a skipped row can be reopened.
+function openableRow(row, queueClosed) {
+  if (!row?.id || row.status === "completed") return null;
+  if (queueClosed && row.status !== "skipped") return null;
+  return { id: row.id, status: row.status };
 }
 
 function normalizeReviewPayload(payload) {
@@ -128,6 +188,68 @@ function isOpenBlockingReviewFeedback(comment) {
     isBlockingReviewFeedback(comment) &&
     (!comment?.thread_status || isOpenReviewStatus(comment.thread_status))
   );
+}
+
+function errorStatus(error) {
+  return Number(error?.statusCode ?? error?.response?.status) || null;
+}
+
+// W10-ANNOTATIONS-U04: what the annotator sees when the queue or the item
+// can't load. Fixed copy; the server's text is never shown.
+function queueLoadErrorCopy(status) {
+  if (status === 404) {
+    return {
+      icon: "solar:archive-linear",
+      title: "Queue not available",
+      description:
+        "This queue is no longer available. It may have been archived or deleted.",
+      canRetry: false,
+    };
+  }
+  if (status === 403) {
+    return {
+      icon: "solar:lock-linear",
+      title: "No access to this queue",
+      description:
+        "You no longer have access to this queue. Ask a queue manager to add you.",
+      canRetry: false,
+    };
+  }
+  return {
+    icon: "solar:danger-triangle-linear",
+    title: "Couldn't load this queue",
+    description:
+      "Something went wrong while loading this queue. Check your connection and retry.",
+    canRetry: true,
+  };
+}
+
+function itemLoadErrorCopy(status) {
+  if (status === 404) {
+    return {
+      icon: "solar:inbox-linear",
+      title: "This item is no longer in the queue",
+      description:
+        "A queue manager may have removed it. Skip to the next item to keep going.",
+      canRetry: false,
+    };
+  }
+  if (status === 403) {
+    return {
+      icon: "solar:lock-linear",
+      title: "Couldn't load this item",
+      description:
+        "You don't have access to this item. Skip to the next item to keep going.",
+      canRetry: false,
+    };
+  }
+  return {
+    icon: "solar:danger-triangle-linear",
+    title: "Couldn't load this item",
+    description:
+      "Something went wrong while loading this item. Retry, or skip to the next item.",
+    canRetry: true,
+  };
 }
 
 function shortId(value) {
@@ -226,8 +348,18 @@ function isLockedForReview({
   return currentUserHasAnnotations && !hasOpenReworkForCurrentUser;
 }
 
-export default function AnnotateWorkspaceView() {
+/**
+ * The annotate workspace. Mounted by the queue route (default exit: the
+ * queue page, "Back to Queue") and by the Develop review page
+ * (`/dashboard/develop/:dataset/review/:queueId`), which passes `exitTo` /
+ * `exitLabel` (PRODUCT-SPEC §3.12).
+ */
+export default function AnnotateWorkspaceView({ exitTo, exitLabel } = {}) {
   const { queueId } = useParams();
+  const exitPath = exitTo || `/dashboard/annotations/queues/${queueId}`;
+  const backLabel = exitLabel || "Back to Queue";
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuthContext();
@@ -240,8 +372,16 @@ export default function AnnotateWorkspaceView() {
     history: initialItemId ? [initialItemId] : [],
     index: initialItemId ? 0 : -1,
     currentItemId: initialItemId || null,
+    finished: false,
+    endCheck: null,
   });
-  const { history: itemHistory, index: historyIndex, currentItemId } = navState;
+  const {
+    history: itemHistory,
+    index: historyIndex,
+    currentItemId,
+    finished: isQueueFinished,
+    endCheck,
+  } = navState;
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [focusedCommentScope, setFocusedCommentScope] = useState(null);
   const focusTimeoutRef = useRef(null);
@@ -253,13 +393,17 @@ export default function AnnotateWorkspaceView() {
     [],
   );
 
-  const { data: progress } = useQueueProgress(queueId, {
-    staleTime: 0,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: "always",
-  });
+  const { data: progress, refetch: refetchProgress } = useQueueProgress(
+    queueId,
+    {
+      staleTime: 0,
+      refetchOnMount: "always",
+      refetchOnWindowFocus: "always",
+    },
+  );
   const {
     data: queueDetail,
+    error: queueDetailError,
     isFetching: isQueueDetailFetching,
     refetch: refetchQueueDetail,
   } = useAnnotationQueueDetail(queueId, {
@@ -282,11 +426,15 @@ export default function AnnotateWorkspaceView() {
   );
 
   const { canReview, canAnnotate } = queueRoleAccess(myQueueMembership);
+  const viewOnly = useViewOnlyReviewer();
   const canManageAssignments = hasQueueRole(
     myQueueMembership,
     QUEUE_ROLES.MANAGER,
   );
   const requiresReview = queueDetail?.requires_review === true;
+  // Experiment review queues (metadata.kind, PRODUCT-SPEC C9) end on a summary.
+  const isExperimentReview =
+    queueDetail?.metadata?.kind === "experiment_review";
   const requestedMode = searchParams.get("mode");
   const workspaceMode = resolveAnnotationWorkspaceMode({
     requestedMode,
@@ -353,7 +501,8 @@ export default function AnnotateWorkspaceView() {
         : {},
     [isReviewWorkspaceMode, requiresReview],
   );
-  const isResolvingInitialItem = !initialItemId && !currentItemId;
+  const isResolvingInitialItem =
+    !initialItemId && !currentItemId && !isQueueFinished;
 
   // Fetch next item on mount (only if no specific item was requested).
   const {
@@ -687,6 +836,7 @@ export default function AnnotateWorkspaceView() {
     queueStatus: effectiveQueueStatus,
   });
   const labelPanelReadOnly =
+    viewOnly ||
     !canAnnotate ||
     isViewOnlyForReviewer ||
     isViewingOtherAnnotator ||
@@ -1011,6 +1161,7 @@ export default function AnnotateWorkspaceView() {
     setSearchParams(nextParams, { replace: true });
   }, [canUseCompletedControls, queueDetail, searchParams, setSearchParams]);
 
+  const lastUndoRef = useRef(null);
   const handleSubmitAndNext = useCallback(
     ({ annotations, notes, itemNotes }) => {
       if (!currentItemId || isSubmittingRef.current) return;
@@ -1029,24 +1180,66 @@ export default function AnnotateWorkspaceView() {
                 excludeReviewStatus: requiresReview
                   ? "pending_review"
                   : undefined,
-                includeCompleted: includeCompletedItems,
+                // Show completed lets the annotator
+                // step through done rows, but saving a row that still needed
+                // an answer moves to the next row that still needs one (or
+                // the end screen), never to an already-done row.
+                includeCompleted:
+                  includeCompletedItems && isCurrentItemCompleted,
               },
               {
                 onSuccess: (data) => {
                   isSubmittingRef.current = false;
                   const result = data?.data?.result || data?.data;
                   const nextItem = result?.nextItem || result?.next_item;
-                  enqueueSnackbar(
-                    annotationSubmitSuccessMessage({
-                      requiresReview,
-                      hasNextItem: Boolean(nextItem?.id),
-                    }),
-                    { variant: "success" },
+                  // RW#5/#6: one toast naming the vote, with Undo (Z / ⌘Z)
+                  // that returns to the saved row to change it.
+                  const savedId = currentItemId;
+                  const said = savedChoiceText(
+                    annotations,
+                    detail?.review_context,
                   );
+                  const back = () => dispatch({ type: "push", id: savedId });
+                  // KH B3: a row waiting for more reviewers says so.
+                  const waiting =
+                    result?.item_status === "in_progress" && result?.coverage
+                      ? ` This row stays open: ${result.coverage} so far.`
+                      : "";
+                  // With no next row the end screen
+                  // says what is left (rows above the cursor may still be
+                  // open), so the toast only confirms the save.
+                  let savedText;
+                  if (said) {
+                    savedText = `Saved: ${said}.${nextItem?.id ? " Next row." : ""}`;
+                  } else if (nextItem?.id) {
+                    savedText = annotationSubmitSuccessMessage({
+                      requiresReview,
+                      hasNextItem: true,
+                    });
+                  } else {
+                    savedText = requiresReview
+                      ? "Submitted for review."
+                      : "Saved.";
+                  }
+                  const toast = notify(savedText + waiting, {
+                    variant: "success",
+                    key: "annotate-saved",
+                    undo: { onUndo: back, ms: 8000 },
+                  });
+                  lastUndoRef.current = () => {
+                    lastUndoRef.current = null;
+                    toast.close();
+                    back();
+                  };
+                  toast.undone.then(() => {
+                    if (lastUndoRef.current) lastUndoRef.current = null;
+                  });
                   if (nextItem?.id) {
                     dispatch({ type: "push", id: nextItem.id });
                   } else {
-                    navigate(`/dashboard/annotations/queues/${queueId}`);
+                    // The queue ends on its end screen
+                    // in place (experiment reviews add their summary there).
+                    dispatch({ type: "finish" });
                   }
                 },
                 onError: () => {
@@ -1069,8 +1262,8 @@ export default function AnnotateWorkspaceView() {
       completeItem,
       requiresReview,
       includeCompletedItems,
-      enqueueSnackbar,
-      navigate,
+      isCurrentItemCompleted,
+      detail?.review_context,
     ],
   );
 
@@ -1081,13 +1274,15 @@ export default function AnnotateWorkspaceView() {
       isChangingCompletedVisibility
     )
       return;
+    // A done row can't be skipped, so Skip always
+    // moves to the next open row (or the end screen), never to a done row,
+    // even with Show completed on — the same open-only walk as Submit.
     skipItem(
       {
         queueId,
         itemId: currentItemId,
         exclude: itemHistory,
         excludeReviewStatus: requiresReview ? "pending_review" : undefined,
-        includeCompleted: includeCompletedItems,
       },
       {
         onSuccess: (data) => {
@@ -1096,7 +1291,7 @@ export default function AnnotateWorkspaceView() {
           if (nextItem?.id) {
             dispatch({ type: "push", id: nextItem.id });
           } else {
-            dispatch({ type: "clear" });
+            dispatch({ type: "finish" });
           }
         },
       },
@@ -1109,7 +1304,6 @@ export default function AnnotateWorkspaceView() {
     requiresReview,
     isAnnotateLockedForReview,
     isChangingCompletedVisibility,
-    includeCompletedItems,
   ]);
 
   const handleReviewSuccess = useCallback(
@@ -1120,10 +1314,10 @@ export default function AnnotateWorkspaceView() {
       if (nextItem?.id) {
         dispatch({ type: "push", id: nextItem.id });
       } else {
-        navigate(`/dashboard/annotations/queues/${queueId}`);
+        navigate(exitPath);
       }
     },
-    [navigate, queueId],
+    [navigate, exitPath],
   );
 
   const handleApprove = useCallback(
@@ -1167,8 +1361,8 @@ export default function AnnotateWorkspaceView() {
   const handleBack = useCallback(() => {
     if (!confirmDiscardUnsaved("You have unsaved changes. Leave anyway?"))
       return;
-    navigate(`/dashboard/annotations/queues/${queueId}`);
-  }, [navigate, queueId, confirmDiscardUnsaved]);
+    navigate(exitPath);
+  }, [navigate, exitPath, confirmDiscardUnsaved]);
 
   const [isFetchingPrev, setIsFetchingPrev] = useState(false);
   // Direction of the in-flight navigation, so the footer can show the spinner
@@ -1292,6 +1486,147 @@ export default function AnnotateWorkspaceView() {
     isChangingCompletedVisibility,
   ]);
 
+  // W10-ANNOTATIONS-U04: an item that failed to load can't be skipped on the
+  // server (a removed item answers 404), so move to the next item this user
+  // can open, or to the end-of-queue screen when none is left.
+  const handleSkipUnavailableItem = useCallback(async () => {
+    if (isFetchingNext) return;
+    setIsFetchingNext(true);
+    try {
+      const res = await axios.get(annotationQueueEndpoints.nextItem(queueId), {
+        params: { exclude: itemHistory.join(","), ...navigationModeParams },
+      });
+      const nextItem =
+        res?.data?.data?.item || res?.data?.result?.item || res?.data?.item;
+      if (nextItem?.id) {
+        dispatch({ type: "push", id: nextItem.id });
+      } else {
+        dispatch({ type: "finish" });
+      }
+    } catch (err) {
+      if (errorStatus(err) === 404) {
+        dispatch({ type: "finish" });
+      } else {
+        enqueueSnackbar("Couldn't load the next item. Try again.", {
+          variant: "error",
+        });
+      }
+    } finally {
+      setIsFetchingNext(false);
+    }
+  }, [
+    isFetchingNext,
+    itemHistory,
+    navigationModeParams,
+    queueId,
+    enqueueSnackbar,
+  ]);
+
+  // The first row this annotator can still open, from
+  // the top of the queue (no cursor). Skipped rows are open work, so this
+  // finds them without Show completed; a row sent back for rework comes first.
+  const fetchFirstOpenRow = useCallback(async () => {
+    const res = await axios.get(annotationQueueEndpoints.nextItem(queueId), {
+      params: openOnlyNavigationParams,
+    });
+    return (
+      res?.data?.data?.item ||
+      res?.data?.result?.item ||
+      res?.data?.item ||
+      null
+    );
+  }, [queueId, openOnlyNavigationParams]);
+
+  // Before the end screen shows: is any row open anywhere in the queue? The
+  // work cursor never wraps, so a walk that started partway down (a row link
+  // from the queue page, a rework row first) leaves open rows above it. The
+  // counts are refetched in the same step so the screen renders once, with
+  // its final heading.
+  const checkQueueEnd = useCallback(async () => {
+    if (isReviewWorkspaceMode) return { openRow: null };
+    const [rowResult, , queueResult] = await Promise.allSettled([
+      fetchFirstOpenRow(),
+      refetchProgress(),
+      refetchQueueDetail(),
+    ]);
+    if (rowResult.status === "rejected") return { openRow: null, failed: true };
+    const row = rowResult.value;
+    const queueClosed =
+      row?.status === "completed" ||
+      queueResult.value?.data?.status === "completed";
+    return { openRow: openableRow(row, queueClosed), queueClosed };
+  }, [
+    isReviewWorkspaceMode,
+    fetchFirstOpenRow,
+    refetchProgress,
+    refetchQueueDetail,
+  ]);
+
+  const endCheckRunRef = useRef(0);
+  const runEndCheck = useCallback(() => {
+    endCheckRunRef.current += 1;
+    const run = endCheckRunRef.current;
+    checkQueueEnd().then((result) => {
+      if (run === endCheckRunRef.current) {
+        dispatch({ type: "endChecked", result });
+      }
+    });
+  }, [checkQueueEnd]);
+
+  useEffect(() => {
+    if (isQueueFinished && !endCheck) runEndCheck();
+  }, [isQueueFinished, endCheck, runEndCheck]);
+
+  // Rows can be added (or opened up) while the end screen is open; check
+  // again when the annotator comes back to the tab.
+  const hasEndCheck = Boolean(endCheck);
+  useEffect(() => {
+    if (!isQueueFinished || !hasEndCheck) return undefined;
+    const recheck = () => {
+      if (document.visibilityState !== "hidden") runEndCheck();
+    };
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
+    return () => {
+      window.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", recheck);
+    };
+  }, [isQueueFinished, hasEndCheck, runEndCheck]);
+
+  // From the end screen, open the first open row (looked up again on click).
+  const [isOpeningOpenRows, setIsOpeningOpenRows] = useState(false);
+  const handleAnnotateOpenRows = useCallback(async () => {
+    if (isOpeningOpenRows) return;
+    setIsOpeningOpenRows(true);
+    try {
+      const row = await fetchFirstOpenRow();
+      const openRow = openableRow(
+        row,
+        row?.status === "completed" || queueDetail?.status === "completed",
+      );
+      if (openRow) {
+        dispatch({ type: "init", id: openRow.id });
+      } else {
+        runEndCheck();
+        enqueueSnackbar("No open rows are left in this queue.", {
+          variant: "info",
+        });
+      }
+    } catch (err) {
+      enqueueSnackbar("Couldn't open the next open row. Try again.", {
+        variant: "error",
+      });
+    } finally {
+      setIsOpeningOpenRows(false);
+    }
+  }, [
+    isOpeningOpenRows,
+    fetchFirstOpenRow,
+    queueDetail?.status,
+    runEndCheck,
+    enqueueSnackbar,
+  ]);
+
   const handleKeyboardSubmit = useCallback(() => {
     if (
       isViewOnlyForReviewer ||
@@ -1334,12 +1669,20 @@ export default function AnnotateWorkspaceView() {
     isChangingCompletedVisibility ||
     (detailFetching && navDirection === "next");
 
+  // Review surface keys (G0 keymap): Z undoes the last submit while its toast
+  // shows, C opens comments.
+  useShortcuts("review", {
+    undo: () => lastUndoRef.current?.(),
+    comments: () => setCommentsOpen(true),
+  });
+
   useKeyboardShortcuts({
     onSubmit: handleKeyboardSubmit,
-    onSkip: handleSkip,
+    onSkip: viewOnly ? undefined : handleSkip,
     onPrev: handlePrev,
     onNext: handleNext,
-    onEscape: handleBack,
+    onEscape: shortcutsOpen || exportDialogOpen ? null : handleBack,
+    onHelp: () => setShortcutsOpen((open) => !open),
     canPrev: canNavigatePrev,
     canNext: canNavigateNext,
   });
@@ -1415,6 +1758,50 @@ export default function AnnotateWorkspaceView() {
     [],
   );
 
+  // W10-ANNOTATIONS-U04: a queue that can't load (archived, deleted, access
+  // removed, server error) says so instead of loading forever.
+  if (!queueDetail && queueDetailError) {
+    const copy = queueLoadErrorCopy(errorStatus(queueDetailError));
+    const backButton = (
+      <Button
+        variant={copy.canRetry ? "outlined" : "contained"}
+        color="primary"
+        size="small"
+        onClick={
+          exitTo
+            ? handleBack
+            : () => navigate(paths.dashboard.annotations.queues)
+        }
+      >
+        {exitTo ? backLabel : "Back to queues"}
+      </Button>
+    );
+    return (
+      <EmptyState
+        icon={copy.icon}
+        title={copy.title}
+        description={copy.description}
+        action={
+          copy.canRetry ? (
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              onClick={() => refetchQueueDetail()}
+              disabled={isQueueDetailFetching}
+            >
+              Retry
+            </Button>
+          ) : (
+            backButton
+          )
+        }
+        secondaryAction={copy.canRetry ? backButton : null}
+        sx={{ minHeight: "80vh" }}
+      />
+    );
+  }
+
   // Loading state
   if (
     isInitialItemLoading ||
@@ -1447,7 +1834,7 @@ export default function AnnotateWorkspaceView() {
           gap: 2,
         }}
       >
-        <Iconify icon="mingcute:lock-fill" width={64} color="warning.main" />
+        <Iconify icon="solar:lock-linear" width={64} color="warning.main" />
         <Typography variant="h5">Item Reserved</Typography>
         <Alert severity="warning" sx={{ maxWidth: 480 }}>
           {msg}
@@ -1455,7 +1842,7 @@ export default function AnnotateWorkspaceView() {
         <Button variant="outlined" onClick={handleSkip}>
           Skip to Next Item
         </Button>
-        <Button onClick={handleBack}>Back to Queue</Button>
+        <Button onClick={handleBack}>{backLabel}</Button>
       </Box>
     );
   }
@@ -1475,11 +1862,18 @@ export default function AnnotateWorkspaceView() {
     queueStatus === "completed" && detail?.item?.status === "skipped";
   const canEditCompletedItem =
     queueStatus === "completed" && detail?.item?.status === "completed";
+  const isAtEndOfQueue = !currentItemId && !isInitialItemLoading;
+  // The last save completes the queue on the server; a completed queue with
+  // nothing left to open ends on the end screen, not "Queue Not Active".
+  const endsCompletedQueue =
+    isAtEndOfQueue &&
+    (queueStatus === "completed" || queueDetail?.status === "completed");
   if (
     queueStatus &&
     queueStatus !== "active" &&
     !canResumeCompletedSkipped &&
-    !canEditCompletedItem
+    !canEditCompletedItem &&
+    !endsCompletedQueue
   ) {
     return (
       <Box
@@ -1492,72 +1886,100 @@ export default function AnnotateWorkspaceView() {
           gap: 2,
         }}
       >
-        <Iconify icon="mingcute:lock-fill" width={64} color="warning.main" />
+        <Iconify icon="solar:lock-linear" width={64} color="warning.main" />
         <Typography variant="h5">Queue Not Active</Typography>
         <Typography color="text.secondary">
           This queue is currently <strong>{queueStatus}</strong>. Annotations
           can only be submitted when the queue is active.
         </Typography>
         <Button variant="outlined" color="primary" onClick={handleBack}>
-          Back to Queue
+          {backLabel}
         </Button>
       </Box>
     );
   }
 
-  // No items / all done
-  if (!currentItemId && !isInitialItemLoading) {
-    const userProgress = progress?.user_progress;
-    const hasUserProgress = userProgress && userProgress.total > 0;
-    const skippedCount = hasUserProgress
-      ? userProgress.skipped ?? 0
-      : progress?.skipped ?? 0;
-    const completedCount = hasUserProgress
-      ? userProgress.completed ?? 0
-      : progress?.completed ?? 0;
-    const totalCount = hasUserProgress
-      ? userProgress.total ?? 0
-      : progress?.total ?? 0;
-
+  // No items / all done: the end screen.
+  if (isAtEndOfQueue) {
+    // Hold it until the whole-queue check and the fresh counts land, so it
+    // shows (and announces) one final heading instead of stale counts. This
+    // also takes the last row's form away while the check runs.
+    if (isQueueFinished && !endCheck) {
+      return <LoadingScreen sx={{ height: "80vh" }} />;
+    }
     return (
-      <Box
-        sx={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "80vh",
-          gap: 2,
-        }}
-      >
-        <Iconify
-          icon="eva:checkmark-circle-2-fill"
-          width={64}
-          color="success.main"
+      <>
+        <AnnotateEndScreen
+          isReviewMode={isReviewWorkspaceMode}
+          progress={progress}
+          endCheck={isQueueFinished ? endCheck : null}
+          onAnnotateOpenRows={handleAnnotateOpenRows}
+          isOpeningOpenRows={isOpeningOpenRows}
+          onExport={() => setExportDialogOpen(true)}
+          backLabel={backLabel}
+          onBack={handleBack}
+          summary={
+            isExperimentReview ? (
+              <ExperimentReviewSummary
+                queueId={queueId}
+                datasetId={queueDetail?.metadata?.dataset_id}
+                from={searchParams.get("from") ?? undefined}
+              />
+            ) : null
+          }
         />
-        <Typography variant="h5">All Done!</Typography>
-        <Typography color="text.secondary">
-          {isReviewWorkspaceMode
-            ? "No items are waiting for review."
-            : completedCount > 0 &&
-              `${completedCount} of ${totalCount} items completed.`}
-          {!isReviewWorkspaceMode &&
-            completedCount === 0 &&
-            "No more pending items in this queue."}
-        </Typography>
-
-        {skippedCount > 0 && (
-          <Alert severity="info" sx={{ maxWidth: 480 }}>
-            You have {skippedCount} skipped{" "}
-            {skippedCount === 1 ? "item" : "items"}. You can review them from
-            the queue items list.
-          </Alert>
+        {exportDialogOpen && (
+          <ExportToDatasetDialog
+            open
+            onClose={() => setExportDialogOpen(false)}
+            queueId={queueId}
+          />
         )}
+      </>
+    );
+  }
 
-        <Button variant="outlined" onClick={handleBack} sx={{ mt: 1 }}>
-          Back to Queue
-        </Button>
-      </Box>
+  // W10-ANNOTATIONS-U04: an item that can't load (removed, no access, server
+  // error) says so instead of an empty item with a disabled Submit. A loaded
+  // item whose background refresh fails keeps its form.
+  if (detailError && !detail) {
+    const copy = itemLoadErrorCopy(errorStatus(detailError));
+    return (
+      <EmptyState
+        icon={copy.icon}
+        title={copy.title}
+        description={copy.description}
+        action={
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            onClick={handleSkipUnavailableItem}
+            disabled={isFetchingNext}
+          >
+            Skip to next item
+          </Button>
+        }
+        secondaryAction={
+          <>
+            {copy.canRetry && (
+              <Button
+                variant="outlined"
+                color="primary"
+                size="small"
+                onClick={() => refetchAnnotateDetail()}
+                disabled={detailFetching}
+              >
+                Retry
+              </Button>
+            )}
+            <Button size="small" onClick={handleBack}>
+              {backLabel}
+            </Button>
+          </>
+        }
+        sx={{ minHeight: "80vh" }}
+      />
     );
   }
 
@@ -1574,16 +1996,29 @@ export default function AnnotateWorkspaceView() {
         // pagination row.
         height: "100%",
         minHeight: 0,
+        // RW#2: the rail never pushes <main> wider than the shell.
+        width: "100%",
+        minWidth: 0,
       }}
     >
       <AnnotateHeader
         queueName={detail?.queue?.name}
         progress={detail?.progress}
         onBack={handleBack}
+        backLabel={backLabel}
         onSkip={handleSkip}
         isSkipping={isSkipping}
-        isReviewMode={isReviewWorkspaceMode}
+        isReviewMode={isReviewWorkspaceMode || viewOnly}
         isAssignedToOther={isAssignedToOther}
+        extraActions={
+          isExperimentReview ? (
+            <ReviewSummaryButton
+              queueId={queueId}
+              datasetId={queueDetail?.metadata?.dataset_id}
+              from={searchParams.get("from") ?? undefined}
+            />
+          ) : null
+        }
         isSkipDisabled={
           isAnnotateLockedForReview || isChangingCompletedVisibility
         }
@@ -1601,6 +2036,7 @@ export default function AnnotateWorkspaceView() {
         addressedFeedbackCount={addressedFeedbackCount}
         resolvedFeedbackCount={resolvedFeedbackCount}
       />
+      <RoleNotice />
 
       <ResizableSplit
         storageKey={
@@ -1615,7 +2051,12 @@ export default function AnnotateWorkspaceView() {
         rightBackground={
           isReviewWorkspaceMode ? "background.default" : "background.paper"
         }
-        left={<ContentPanel item={detail?.item} />}
+        left={
+          <ContentPanel
+            item={detail?.item}
+            reviewContext={detail?.review_context}
+          />
+        }
         right={
           <Box
             sx={{
@@ -1629,7 +2070,7 @@ export default function AnnotateWorkspaceView() {
               <Box sx={{ p: 1.5, pb: 0 }}>
                 <Typography
                   variant="caption"
-                  fontWeight={700}
+                  fontWeight={600}
                   color="text.secondary"
                   sx={{ display: "block", mb: 0.75 }}
                 >
@@ -1658,7 +2099,7 @@ export default function AnnotateWorkspaceView() {
                 annotators={queueAnnotators}
                 currentUserId={currentUserId}
                 canAnnotate={canAnnotate}
-                canManageAssignments={canManageAssignments}
+                canManageAssignments={canManageAssignments && !viewOnly}
                 onAssign={handleAssignCurrentItem}
                 isPending={isAssigningItem}
               />
@@ -1718,7 +2159,7 @@ export default function AnnotateWorkspaceView() {
                   sx={{ flex: 1, minHeight: 0, p: 3, textAlign: "center" }}
                 >
                   <Iconify
-                    icon="mingcute:lock-fill"
+                    icon="solar:lock-linear"
                     width={48}
                     color="text.disabled"
                   />
@@ -1774,6 +2215,7 @@ export default function AnnotateWorkspaceView() {
                     queueId={queueId}
                     itemId={currentItemId}
                     detailItemId={detail?.item?.id}
+                    reviewContext={detail?.review_context}
                     onDirtyChange={handleDirtyChange}
                     readOnly={labelPanelReadOnly}
                     readOnlyReason={labelPanelReadOnlyReason}
@@ -1826,6 +2268,18 @@ export default function AnnotateWorkspaceView() {
         canComment={canDiscuss}
         onFocusScope={handleFocusCommentScope}
       />
+      <ShortcutSheet
+        open={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+        surface="review"
+      />
     </Box>
   );
 }
+
+AnnotateWorkspaceView.propTypes = {
+  // where Back / Esc / the end of the queue go (default: the queue page)
+  exitTo: PropTypes.string,
+  // label of that button (default "Back to Queue")
+  exitLabel: PropTypes.string,
+};

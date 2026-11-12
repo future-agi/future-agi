@@ -5,7 +5,6 @@ import {
   IconButton,
   Skeleton,
   Typography,
-  useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
@@ -16,9 +15,54 @@ import SvgColor from "src/components/svg-color";
 import EditTool from "./EditTool";
 import { useRunPromptOptions } from "src/api/develop/develop-detail";
 import { ShowComponent } from "../show";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+
+/**
+ * `Look up an order by id. · order_id (string, required)` — a tool's
+ * description and a peek at its parameters (IT-R1 G4). Pure.
+ */
+export function toolPeek(tool) {
+  const fn = tool?.config?.function ?? tool?.function ?? {};
+  const desc = tool?.description ?? fn.description ?? "";
+  const props = fn.parameters?.properties ?? {};
+  const required = new Set(fn.parameters?.required ?? []);
+  const params = Object.entries(props)
+    .map(
+      ([k, v]) =>
+        `${k} (${v?.type ?? "any"}${required.has(k) ? ", required" : ""})`,
+    )
+    .join(", ");
+  return [desc, params].filter(Boolean).join(" · ");
+}
+
+/** A picker row: the tool's name, then its description and parameters. */
+function ToolOptionPeek({ tool }) {
+  const peek = toolPeek(tool);
+  return (
+    <Box sx={{ minWidth: 0, py: 0.25 }}>
+      <Typography
+        typography="s1"
+        color="text.primary"
+        noWrap
+        sx={{ fontFamily: "ui-monospace, SFMono-Regular, monospace" }}
+      >
+        {tool?.name}
+      </Typography>
+      {peek ? (
+        <Typography
+          typography="s3"
+          color="text.secondary"
+          sx={{ whiteSpace: "normal", wordBreak: "break-word" }}
+        >
+          {peek}
+        </Typography>
+      ) : null}
+    </Box>
+  );
+}
+ToolOptionPeek.propTypes = { tool: PropTypes.object };
 
 const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
-  const theme = useTheme();
   const [selectedTool, setSelectedTool] = useState(
     tools?.map((item) => {
       return Object.prototype.hasOwnProperty.call(item, "tool")
@@ -93,19 +137,18 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
             fontWeight={"fontWeightRegular"}
             color="text.secondary"
           >
-            Explore all actions taken and their outcomes during the tool run.
+            Pick tools this prompt can call.
           </Typography>
         </Box>
         <IconButton
           onClick={onClose}
           sx={{
-            borderRadius: "4px",
             position: "absolute",
             top: "16px",
             right: "16px",
           }}
         >
-          <Iconify icon="mingcute:close-line" color="text.primary" />
+          <Iconify icon="solar:close-linear" color="text.primary" />
         </IconButton>
       </Box>
       <Box
@@ -120,28 +163,8 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
         <Button
           onClick={handleCreateTool}
           variant="outlined"
-          startIcon={<Iconify icon="eva:plus-fill" />}
-          sx={{
-            width: "150px",
-            height: "38px",
-            border: "1px solid",
-            borderColor: "border.default",
-            color: "text.primary",
-            fontWeight: (theme) => theme.typography.fontWeightMedium,
-            ...theme.typography["s1"],
-            display: "flex",
-            alignItems: "center",
-            flexDirection: "row",
-            py: (theme) => theme.spacing(1),
-            px: (theme) => theme.spacing(3),
-            borderRadius: "8px",
-            "& .MuiButton-startIcon": {
-              marginRight: "4px",
-            },
-            // "&:hover": {
-            //   backgroundColor: "background.neutral",
-            // },
-          }}
+          startIcon={<Iconify icon="solar:add-linear" />}
+          sx={{ alignSelf: "flex-start" }}
         >
           Create tool
         </Button>
@@ -155,6 +178,8 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
           options={availableTools?.map((item) => ({
             label: item.name,
             value: item.id,
+            // IT-R2 G4 P3: what the tool does and takes, before you pick it.
+            component: <ToolOptionPeek tool={item} />,
           }))}
           multiple
           checkbox
@@ -191,25 +216,36 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
                 sx={{
                   padding: "8px",
                   borderRadius: "8px",
-                  height: "32px",
+                  minHeight: "32px",
                   backgroundColor: "background.neutral",
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
+                  gap: 1,
                 }}
               >
-                <Typography
-                  variant="s3"
-                  fontWeight={"fontWeightRegular"}
-                  color="text.primary"
-                >
-                  {item.name}
-                </Typography>
-                <Box sx={{ display: "flex", gap: "8px" }}>
-                  <IconButton
-                    onClick={() => handleEditTool(item)}
-                    sx={{ padding: "4px", height: "24px", borderRadius: "4px" }}
+                {/* IT-R1 G4: what the tool does and what it takes. */}
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography
+                    variant="s3"
+                    fontWeight={"fontWeightMedium"}
+                    color="text.primary"
                   >
+                    {item.name}
+                  </Typography>
+                  {toolPeek(item) ? (
+                    <Typography
+                      variant="s3"
+                      color="text.secondary"
+                      component="div"
+                      sx={{ wordBreak: "break-word" }}
+                    >
+                      {toolPeek(item)}
+                    </Typography>
+                  ) : null}
+                </Box>
+                <Box sx={{ display: "flex", gap: "8px" }}>
+                  <IconButton size="small" onClick={() => handleEditTool(item)}>
                     <SvgColor
                       src="/assets/prompt/editPencil.svg"
                       sx={{
@@ -220,11 +256,11 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
                     />
                   </IconButton>
                   <IconButton
+                    size="small"
                     onClick={() => handleDeleteTool(item)}
-                    sx={{ padding: "4px", height: "24px", borderRadius: "4px" }}
                   >
                     <Iconify
-                      icon="mingcute:close-line"
+                      icon="solar:close-linear"
                       color="text.primary"
                       width={16}
                       height={16}
@@ -249,14 +285,6 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
           onClick={handleApplyTool}
           variant="contained"
           color="primary"
-          sx={{
-            width: "200px",
-            height: "38px",
-            fontWeight: (theme) => theme.typography.fontWeightMedium,
-            ...theme.typography["s1"],
-            py: (theme) => theme.spacing(1),
-            px: (theme) => theme.spacing(3),
-          }}
         >
           Save
         </LoadingButton>
@@ -272,18 +300,20 @@ ShowModelToolsChild.propTypes = {
 };
 
 const ShowModelTools = ({ open, onClose, handleApply, tools }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={onClose}
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: {
           height: "100vh",
-          width: "550px",
+          width: "480px",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

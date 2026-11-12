@@ -1,4 +1,11 @@
-import { Box, Collapse, Drawer } from "@mui/material";
+import {
+  Box,
+  Button,
+  Collapse,
+  Drawer,
+  IconButton,
+  Typography,
+} from "@mui/material";
 import React, { useState } from "react";
 import { useConditionalNodeStore } from "../../states";
 import PropTypes from "prop-types";
@@ -20,19 +27,24 @@ import { RunPromptForm } from "../../RunPrompt/RunPrompt";
 import { RetrievalChild } from "../Retrieval/Retrieval";
 import { ExtractEntitiesChild } from "../ExtractEntities/ExtractEntities";
 import { ExtractJsonKeyChild } from "../ExtractJsonKey/ExtractJsonKey";
-import { ExecuteCodeChild } from "../ExecuteCode/ExecuteCode";
+import Iconify from "src/components/iconify";
+import {
+  CODE_COLUMNS_DISABLED_REASON,
+  conditionalConfigUsesCode,
+} from "../ExecuteCode/codeDisabled";
 import { ClassificationChild } from "../Classification/Classification";
 import { AddColumnApiCallChild } from "../AddColumnApiCall/AddColumnApiCall";
 import { zodResolver } from "@hookform/resolvers/zod";
 import _ from "lodash";
 import { transformParameterType } from "../../RunPrompt/common";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const FORM_COMPONENTS = {
   run_prompt: RunPromptForm,
   retrieval: RetrievalChild,
   extract_entities: ExtractEntitiesChild,
   extract_json: ExtractJsonKeyChild,
-  extract_code: ExecuteCodeChild,
+  // the capability contract: no Execute Custom Code branch form (custom code is off).
   classification: ClassificationChild,
   api_call: AddColumnApiCallChild,
 };
@@ -219,6 +231,48 @@ ConditionalNodeV2Child.propTypes = {
   initialData: PropTypes.object,
 };
 
+// the capability contract: a conditional column with a code branch cannot be tested,
+// edited or re-run (custom code is off); its values stay readable.
+const CodeBranchLocked = ({ onClose }) => (
+  <Box
+    data-testid="conditional-code-disabled"
+    sx={{
+      padding: "20px",
+      display: "flex",
+      flexDirection: "column",
+      gap: 2,
+      width: "550px",
+    }}
+  >
+    <Box
+      sx={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+      }}
+    >
+      <Typography fontWeight={700} color="text.secondary">
+        Edit Conditional Node
+      </Typography>
+      <IconButton aria-label="Close panel" onClick={onClose} size="small">
+        <Iconify icon="mingcute:close-line" />
+      </IconButton>
+    </Box>
+    <Typography role="status" typography="s1" color="text.primary">
+      {CODE_COLUMNS_DISABLED_REASON}
+    </Typography>
+    <Box>
+      <Button variant="outlined" size="small" onClick={onClose}>
+        Close
+      </Button>
+    </Box>
+  </Box>
+);
+
+CodeBranchLocked.propTypes = {
+  onClose: PropTypes.func,
+};
+
 const ConditionalNodeV2 = () => {
   const { openConditionalNode, setOpenConditionalNode } =
     useConditionalNodeStore();
@@ -239,18 +293,22 @@ const ConditionalNodeV2 = () => {
     staleTime: 0, // Consider data stale immediately
   });
 
+  const covered = useDrawerCovered(openConditionalNode);
   return (
     <Drawer
       anchor="right"
       open={openConditionalNode}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       PaperProps={{
+        role: "dialog",
+        "aria-modal": true,
+        "aria-label": "Conditional node",
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -266,7 +324,11 @@ const ConditionalNodeV2 = () => {
         </Box>
       )}
       <ShowComponent condition={!isLoadingColumnConfig}>
-        <ConditionalNodeV2Child editId={editId} initialData={columnConfig} />
+        {editId && conditionalConfigUsesCode(columnConfig?.config) ? (
+          <CodeBranchLocked onClose={onClose} />
+        ) : (
+          <ConditionalNodeV2Child editId={editId} initialData={columnConfig} />
+        )}
       </ShowComponent>
     </Drawer>
   );

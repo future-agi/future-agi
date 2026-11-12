@@ -1,3 +1,4 @@
+import { localProviderLogo } from "src/utils/localProviderLogo";
 import React from "react";
 import { Avatar, Box, IconButton, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
@@ -38,8 +39,6 @@ export const CustomCellRender = ({ value, data, column }) => {
                   sx={{
                     width: theme.spacing(3),
                     height: theme.spacing(3),
-                    bgcolor: "background.neutral",
-                    color: "pink.500",
                   }}
                 />
                 <Typography typography="s2" fontWeight={"fontWeightRegular"}>
@@ -69,12 +68,9 @@ export const CustomCellRender = ({ value, data, column }) => {
           {value && typeof value === "string" ? (
             <IconButton
               sx={{
-                borderRadius: theme.spacing(0.5),
                 backgroundColor: "background.paper",
                 border: "1px solid",
                 borderColor: "divider",
-                paddingY: theme.spacing(0.5),
-                paddingX: theme.spacing(1),
                 gap: theme.spacing(1),
                 display: "flex",
                 alignItems: "center",
@@ -86,14 +82,14 @@ export const CustomCellRender = ({ value, data, column }) => {
               {modelDetail?.logo_url ? (
                 <Box
                   component="img"
-                  src={modelDetail?.logo_url}
+                  src={localProviderLogo(modelDetail)}
                   alt={modelDetail?.model_name}
                   sx={{
                     width: theme.spacing(2),
                     height: theme.spacing(2),
                     objectFit: "cover",
                     ...(theme.palette.mode === "dark" &&
-                      isBlackBackgroundLogo(modelDetail?.logo_url) && {
+                      isBlackBackgroundLogo(localProviderLogo(modelDetail)) && {
                         filter: "invert(1) brightness(2)",
                       }),
                   }}

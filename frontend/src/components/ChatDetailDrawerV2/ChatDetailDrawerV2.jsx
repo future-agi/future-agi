@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Button, CircularProgress, Stack } from "@mui/material";
+import { Box, Button, Stack } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import { useParams } from "react-router";
@@ -11,21 +11,26 @@ import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { ShareDialog } from "src/components/share-dialog";
 import AddTagsPopover from "src/components/traceDetail/AddTagsPopover";
 import AddToQueueDialog from "src/sections/annotations/queues/components/add-to-queue-dialog";
-import AddDataset from "src/components/traceDetailDrawer/addToDataset/add-dataset";
-import { LLM_TABS } from "src/sections/projects/LLMTracing/common";
+import { openAddData } from "src/sections/common/AddData/addDataStore";
 import useImagineStore from "src/components/imagine/useImagineStore";
 import {
   useGetSavedViews,
   useDeleteSavedView,
   useReorderSavedViews,
 } from "src/api/project/saved-views";
+import { useGetTraceDetail } from "src/api/project/trace-detail";
 
 import VoiceDrawerHeader from "src/components/VoiceDetailDrawerV2/VoiceDrawerHeader";
 import { shareResourceFor } from "src/components/VoiceDetailDrawerV2/shareResource";
 import ChatLeftPanel from "./ChatLeftPanel";
 import ChatRightPanel from "./ChatRightPanel";
 import ChatCompareView from "./Compare/ChatCompareView";
-import { CHAT_IMAGINE_PROMPTS, CHAT_EXPORT_FIELDS } from "./constants";
+import {
+  CHAT_IMAGINE_PROMPTS,
+  CHAT_EXPORT_FIELDS,
+  DRAWER_MODULE,
+} from "./constants";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // Chat-specific peer of VoiceDetailDrawerV2 — content-only drawer body
 // (the header/width/fullscreen chrome is provided by TestDetailSideDrawer).
@@ -66,8 +71,22 @@ const ChatDetailDrawerV2 = ({
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [tagsAnchorEl, setTagsAnchorEl] = useState(null);
   const [queueAnchorEl, setQueueAnchorEl] = useState(null);
-  const [datasetDrawerOpen, setDatasetDrawerOpen] = useState(false);
   const [deleteTabId, setDeleteTabId] = useState(null);
+
+  // Observe chat payloads carry no tags, and Add tags saves the whole list,
+  // so the popover must start from the trace's stored tags. Same query and
+  // key as ChatDetailsBar's tag row, so this adds no request.
+  const traceTagsId =
+    data?.module === DRAWER_MODULE.OBSERVE ? data?.trace_id : null;
+  const { data: traceDetail } = useGetTraceDetail(traceTagsId, {
+    projectId: data?.project_id,
+  });
+  const chatTags =
+    traceDetail?.trace?.tags ||
+    traceDetail?.tags ||
+    data?.tags ||
+    data?.trace?.tags ||
+    [];
 
   // ── Saved views / Imagine tabs ───────────────────────────────────────
   const { data: savedViewsData } = useGetSavedViews(projectId);
@@ -90,7 +109,7 @@ const ChatDetailDrawerV2 = ({
       {
         id: "chat",
         label: "Chat",
-        icon: "mdi:message-text-outline",
+        icon: "solar:chat-round-line-linear",
         isDefault: true,
         visibility: "project",
       },
@@ -101,7 +120,7 @@ const ChatDetailDrawerV2 = ({
         tabs.push({
           id: v.id,
           label: v.name,
-          icon: "mdi:creation",
+          icon: "solar:stars-minimalistic-linear",
           isDefault: false,
           config: v.config,
           visibility: v.visibility,
@@ -112,7 +131,7 @@ const ChatDetailDrawerV2 = ({
       tabs.push({
         id: "__new_imagine__",
         label: "Imagine",
-        icon: "mdi:creation",
+        icon: "solar:stars-minimalistic-linear",
         isDefault: false,
         tabType: "imagine",
         visibility: "personal",
@@ -163,7 +182,10 @@ const ChatDetailDrawerV2 = ({
         .filter((v) => orderedSet.has(v.id))
         .map((v) => v.position)
         .sort((a, b) => (a ?? 0) - (b ?? 0));
-      const order = orderedIds.map((id, i) => ({ id, position: slots[i] ?? i }));
+      const order = orderedIds.map((id, i) => ({
+        id,
+        position: slots[i] ?? i,
+      }));
       reorderSavedViews({ project_id: projectId, order });
     },
     [customViews, projectId, reorderSavedViews],
@@ -251,13 +273,21 @@ const ChatDetailDrawerV2 = ({
           break;
         }
         case "dataset":
-          setDatasetDrawerOpen(true);
+          // R2 (P5): one way in; the global Add-data sheet.
+          if (data?.trace_id)
+            openAddData({
+              source: {
+                kind: "traces",
+                trace_ids: [data.trace_id],
+                project_id: projectId,
+              },
+            });
           break;
         default:
           break;
       }
     },
-    [onAnnotate, handleDownload],
+    [onAnnotate, handleDownload, data?.trace_id, projectId],
   );
 
   return (
@@ -369,7 +399,7 @@ const ChatDetailDrawerV2 = ({
               justifyContent: "center",
             }}
           >
-            <CircularProgress size={28} />
+            <ContentSkeleton variant="panel" />
           </Box>
         ) : compareReplay ? (
           // Compare body owns the whole content area; back-to-chat
@@ -502,7 +532,7 @@ const ChatDetailDrawerV2 = ({
           open={Boolean(tagsAnchorEl)}
           onClose={() => setTagsAnchorEl(null)}
           traceId={data.trace_id}
-          currentTags={data?.tags || data?.trace?.tags || []}
+          currentTags={chatTags}
           onSuccess={() =>
             queryClient.invalidateQueries({ queryKey: ["chatCallDetail"] })
           }
@@ -518,16 +548,6 @@ const ChatDetailDrawerV2 = ({
         sourceType={data?.trace_id ? "trace" : "call_execution"}
         sourceIds={data?.trace_id ? [data.trace_id] : data?.id ? [data.id] : []}
         itemName={data?.customer_name || "Chat"}
-      />
-
-      {/* Move to dataset — gated by ChatDetailsBar (action is hidden
-          when there's no trace_id). The drawer still mounts the dialog
-          unconditionally so opening it always works. */}
-      <AddDataset
-        handleClose={() => setDatasetDrawerOpen(false)}
-        actionToDataset={datasetDrawerOpen}
-        currentTab={LLM_TABS.TRACE}
-        selectedTraces={data?.trace_id ? [data.trace_id] : []}
       />
 
       {/* Delete saved-view confirmation */}

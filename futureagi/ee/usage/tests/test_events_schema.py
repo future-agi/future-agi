@@ -8,6 +8,7 @@ from datetime import datetime
 
 import pytest
 
+from ee.usage.schemas.event_types import BillingEventType
 from ee.usage.schemas.events import CheckResult, UpgradeCTA, UsageEvent
 from ee.usage.utils.event_properties import (
     llm_usage_properties,
@@ -81,6 +82,35 @@ class TestUsageEvent:
     def test_max_length_event_type_is_valid(self):
         event = UsageEvent(org_id="org-1", event_type="x" * 50)
         assert len(event.event_type) == 50
+
+
+class TestGatewayManagedSpendEventType:
+    def test_value_is_the_billing_yaml_key(self):
+        assert BillingEventType.GATEWAY_MANAGED_SPEND.value == "gateway_managed_spend"
+        assert BillingEventType("gateway_managed_spend") is (
+            BillingEventType.GATEWAY_MANAGED_SPEND
+        )
+
+    def test_usage_event_carries_it_as_a_plain_string(self):
+        event = UsageEvent(
+            org_id="org-1",
+            event_type=BillingEventType.GATEWAY_MANAGED_SPEND,
+            amount=12_345_678,
+        )
+        dumped = event.model_dump(mode="json")
+        assert dumped["event_type"] == "gateway_managed_spend"
+        assert dumped["amount"] == 12_345_678
+
+    def test_every_event_type_fits_usage_event(self):
+        for member in BillingEventType:
+            event = UsageEvent(org_id="org-1", event_type=member)
+            assert event.event_type == member.value
+
+    def test_event_type_values_are_unique(self):
+        # A duplicate value would silently turn the new member into an alias
+        # of an existing one, emitting under the wrong billing key.
+        values = [m.value for m in BillingEventType.__members__.values()]
+        assert len(values) == len(set(values))
 
 
 class TestUsageEventTokenProperties:

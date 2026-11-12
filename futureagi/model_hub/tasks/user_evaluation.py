@@ -3,34 +3,30 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from accounts.models import workspace
+from django.db import close_old_connections
+from django.db.models import Q
+
 from accounts.models.workspace import Workspace
 from agentic_eval.core.utils.functions import detect_input_type
-from django.db import close_old_connections
-
-logger = structlog.get_logger(__name__)
-try:
-    from ee.evals.localizer.claude_harness import create_localizer as ErrorLocalizer
-except ImportError:
-    # Activity-aware stub: runs inside Temporal evaluation activities.
-    from tfc.ee_stub import _ee_activity_stub
-
-    ErrorLocalizer = _ee_activity_stub("ErrorLocalizer")
 from analytics.utils import (
     MixpanelEvents,
     MixpanelSources,
     get_mixpanel_properties,
     track_mixpanel_event,
 )
-from evaluations.engine.instance import resolve_pass_threshold
+from evaluations.engine.instance import (
+    charged_model_for_metric,
+    resolve_pass_threshold,
+)
 from model_hub.models.choices import CellStatus, ModelChoices, SourceChoices, StatusType
-from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.error_localizer_model import (
     ErrorLocalizerSource,
     ErrorLocalizerStatus,
     ErrorLocalizerTask,
 )
 from model_hub.models.evals_metric import (
+    EXTERNAL_EVAL_TYPE,
     EvalTemplate,
     EvalTemplateVersion,
     UserEvalMetric,
@@ -45,12 +41,24 @@ from model_hub.views.experiment_runner import ExperimentRunner
 from sdk.utils.helpers import _get_api_call_type
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.temporal import temporal_activity
-from tfc.utils.distributed_locks import distributed_lock_manager
+
+# Not used in this module, but imported from it (test_user_evaluation_tasks.py
+# TestDistributedTrackerUsage); kept as part of the module's surface.
+from tfc.utils.distributed_locks import distributed_lock_manager  # noqa: F401
 
 # Distributed state management for tracking running evaluations across instances
 from tfc.utils.distributed_state import evaluation_tracker
 from tfc.utils.error_codes import get_error_for_api_status
 from tracer.models.observation_span import EvalLogger
+
+logger = structlog.get_logger(__name__)
+try:
+    from ee.evals.localizer.claude_harness import create_localizer as ErrorLocalizer
+except ImportError:
+    # Activity-aware stub: runs inside Temporal evaluation activities.
+    from tfc.ee_stub import _ee_activity_stub
+
+    ErrorLocalizer = _ee_activity_stub("ErrorLocalizer")
 
 if TYPE_CHECKING:
     from simulate.models.eval_config import SimulateEvalConfig
@@ -268,8 +276,10 @@ def process_single_evaluation(user_eval_metric):
     except ImportError:
         check_usage = None
 
+    # Limit-checked as the model that runs (a live pin's model, else the
+    # metric's own model as before).
     api_call_type = _get_api_call_type(
-        user_eval_metric.model or ModelChoices.TURING_LARGE.value
+        charged_model_for_metric(user_eval_metric) or ModelChoices.TURING_LARGE.value
     )
     if check_usage is not None:
         usage_check = check_usage(str(user_eval_metric.organization.id), api_call_type)
@@ -423,8 +433,10 @@ def process_experiment_evaluation(user_eval_metric):
     except ImportError:
         check_usage = None
 
+    # Limit-checked as the model that runs (a live pin's model, else the
+    # metric's own model as before).
     api_call_type = _get_api_call_type(
-        user_eval_metric.model or ModelChoices.TURING_LARGE.value
+        charged_model_for_metric(user_eval_metric) or ModelChoices.TURING_LARGE.value
     )
     if check_usage is not None:
         usage_check = check_usage(str(user_eval_metric.organization.id), api_call_type)
@@ -497,14 +509,17 @@ def process_experiment_evaluation(user_eval_metric):
 def execute_evaluation():
     close_old_connections()
     try:
-        # Get evaluations that need to be processed - single ORM call
+        # Get evaluations that need to be processed - single ORM call.
+        # External metrics are scored by the caller and never run here,
+        # even if some bulk .update() set an executing status on one.
         all_evaluations = list(
             UserEvalMetric.objects.filter(
+                ~Q(template__eval_type=EXTERNAL_EVAL_TYPE),
                 status__in=[
                     StatusType.NOT_STARTED.value,
                     StatusType.EXPERIMENT_EVALUATION.value,
                     StatusType.OPTIMIZATION_EVALUATION.value,
-                ]
+                ],
             ).all()[:30]
         )
 
@@ -980,9 +995,17 @@ def trigger_error_localization_for_standalone(evaluation: Evaluation):
             or evaluation.eval_template.description
         )
 
+        # A Choices result's resolved value ({"score", "choice"}) carries the
+        # score the binding's choice score override gave the label; the raw
+        # data holds only the label, which the worker's gate would re-score
+        # with the template's map. The other triggers store the value too.
+        eval_result = (
+            evaluation.value if isinstance(evaluation.value, dict) else evaluation.data
+        )
+
         # Validate required fields before creating task
         initial_status, error_message = _validate_error_localizer_fields(
-            rule_prompt, evaluation.input_data, evaluation.data
+            rule_prompt, evaluation.input_data, eval_result
         )
 
         error_localizer_task = ErrorLocalizerTask.objects.create(
@@ -992,7 +1015,7 @@ def trigger_error_localization_for_standalone(evaluation: Evaluation):
             input_data=evaluation.input_data,
             input_keys=input_keys,
             input_types=input_types,
-            eval_result=evaluation.data,
+            eval_result=eval_result,
             eval_explanation=evaluation.reason,
             rule_prompt=rule_prompt,
             organization=evaluation.organization,
@@ -1352,7 +1375,9 @@ def process_single_error_localization(task_id):
             try:
                 from ee.usage.utils.event_properties import llm_usage_properties
             except ImportError:
-                llm_usage_properties = lambda obj: {}
+
+                def llm_usage_properties(obj):
+                    return {}
 
             actual_cost = getattr(localizer, "cost", {}).get("total_cost", 0)
             if not actual_cost and hasattr(localizer, "llm"):

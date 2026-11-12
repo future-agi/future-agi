@@ -37,14 +37,14 @@ def backfill_org_memberships(apps, schema_editor):
     User = apps.get_model("accounts", "User")
     OrganizationMembership = apps.get_model("accounts", "OrganizationMembership")
 
-    users = User.objects.filter(
+    users = User.objects.using(schema_editor.connection.alias).filter(
         organization__isnull=False,
         is_active=True,
     ).select_related("organization")
 
     created = 0
     for user in users.iterator(chunk_size=500):
-        _, was_created = OrganizationMembership.objects.get_or_create(
+        _, was_created = OrganizationMembership.objects.using(schema_editor.connection.alias).get_or_create(
             user=user,
             organization=user.organization,
             defaults={
@@ -65,7 +65,7 @@ def backfill_org_membership_levels(apps, schema_editor):
     OrganizationMembership = apps.get_model("accounts", "OrganizationMembership")
 
     for role_str, level_int in STRING_TO_LEVEL.items():
-        OrganizationMembership.objects.filter(
+        OrganizationMembership.objects.using(schema_editor.connection.alias).filter(
             role=role_str,
             level__isnull=True,
         ).update(level=level_int)
@@ -76,7 +76,7 @@ def backfill_ws_membership_levels(apps, schema_editor):
     WorkspaceMembership = apps.get_model("accounts", "WorkspaceMembership")
 
     for role_str, level_int in STRING_TO_LEVEL.items():
-        WorkspaceMembership.objects.filter(
+        WorkspaceMembership.objects.using(schema_editor.connection.alias).filter(
             role=role_str,
             level__isnull=True,
         ).update(level=level_int)
@@ -111,7 +111,7 @@ def backfill_ws_org_membership_fk(apps, schema_editor):
 def backfill_ws_enabled(apps, schema_editor):
     """Enable workspaces for all existing organizations."""
     Organization = apps.get_model("accounts", "Organization")
-    updated = Organization.objects.filter(ws_enabled=False).update(ws_enabled=True)
+    updated = Organization.objects.using(schema_editor.connection.alias).filter(ws_enabled=False).update(ws_enabled=True)
     if updated:
         print(f"\n  Enabled workspaces for {updated} existing organizations")
 

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Box, useTheme } from "@mui/material";
+import { Box, useTheme, Button } from "@mui/material";
 import {
   DndContext,
   closestCenter,
@@ -23,12 +23,13 @@ import { getRandomId } from "src/utils/utils";
 import GeneratePromptDrawer from "src/components/GeneratePromptDrawer";
 import ImprovePromptDrawer from "src/components/ImprovePromptDrawer";
 import { PromptRoles } from "src/utils/constants";
+import { extractVariables } from "./common";
+import VariableValuesInline from "./VariableValuesInline";
 import PropTypes from "prop-types";
 import { useLocation, useParams } from "react-router";
 import { useSocket } from "src/hooks/use-socket";
 import LoadingPromptSection from "../LoadingSkeleton/LoadingPromptSection";
 import { usePromptWorkbenchContext } from "../WorkbenchContext";
-import { AddMessageButton } from "./PromptContainerStyleComponent";
 import ModelContainer from "./ModelContainer";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAuthContext } from "src/auth/hooks";
@@ -55,6 +56,7 @@ const SortablePromptCard = ({
   existingRoles,
   allowAttachment = false,
   jinjaMode = false,
+  variableOptions = [],
 }) => {
   const {
     attributes,
@@ -117,7 +119,22 @@ const SortablePromptCard = ({
           });
         }}
         hideExpandedHeader
-        showEditEmbed
+        // IT-R2 G4 P4: `{{` suggests the declared variables; a variable
+        // with a value is green, one without stays plain (its value is
+        // edited under the messages), and no pencil embed is inserted
+        // while typing (it ate the closing brace: `{{order_id}?}`).
+        mentionEnabled={variableOptions.length > 0}
+        dropdownOptions={variableOptions}
+        variableValidator={(word) => {
+          const key = String(word ?? "")
+            .replace(/[{}]/g, "")
+            .trim();
+          const v = appliedVariableData?.[key];
+          const has = (Array.isArray(v) ? v : [v]).some(
+            (x) => x != null && String(x).trim() !== "",
+          );
+          return has ? true : null;
+        }}
         jinjaMode={jinjaMode}
       />
     </Box>
@@ -143,6 +160,7 @@ SortablePromptCard.propTypes = {
   existingRoles: PropTypes.array,
   allowAttachment: PropTypes.bool,
   jinjaMode: PropTypes.bool,
+  variableOptions: PropTypes.array,
 };
 
 const PromptSection = ({
@@ -168,6 +186,7 @@ const PromptSection = ({
   const {
     setVariableDrawerOpen,
     variableData,
+    setVariableData,
     loadingPrompt,
     openSelectModel,
     setOpenSelectModel,
@@ -260,12 +279,24 @@ const PromptSection = ({
     return <LoadingPromptSection />;
   }
 
+  // IT-R1 G4: the variables the messages use (as typed), for the inline row.
+  const promptVariables = Array.from(
+    new Set(
+      (prompts ?? [])
+        .filter((p) => p?.role !== PromptRoles.ASSISTANT)
+        .flatMap((p) => extractVariables(p?.content ?? [], templateFormat)),
+    ),
+  );
   const validVariables =
     variableData &&
     typeof variableData === "object" &&
     !Array.isArray(variableData)
       ? Object.keys(variableData)
       : [];
+  // IT-R2 G4 P4: `{{` suggests these (declared + imported columns).
+  const variableOptions = [...new Set([...promptVariables, ...validVariables])]
+    .filter(Boolean)
+    .map((v) => ({ id: v, value: v }));
 
   const handleSubsribeToMessage = () => {
     if (socket) {
@@ -376,6 +407,7 @@ const PromptSection = ({
                 return (
                   <SortablePromptCard
                     key={id}
+                    variableOptions={variableOptions}
                     id={id}
                     role={role}
                     content={content}
@@ -489,21 +521,30 @@ const PromptSection = ({
           </DndContext>
 
           <Box sx={{ display: "flex", gap: 2 }}>
-            <AddMessageButton
+            <Button
               variant="outlined"
+              color="inherit"
               onClick={onAddPrompt}
               startIcon={
                 <SVGColor
                   src="/assets/icons/components/ic_add.svg"
-                  sx={{ width: 16, height: 16 }}
+                  width={16}
                 />
               }
               sx={{ "& .MuiButton-startIcon": { marginRight: "4px" } }}
               disabled={!RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]}
             >
               Add Message
-            </AddMessageButton>
+            </Button>
           </Box>
+          {/* IT-R2 G4 P4: the prompt's variables, edited in place. */}
+          <VariableValuesInline
+            names={promptVariables}
+            variableData={variableData}
+            setVariableData={setVariableData}
+            onOpenAll={() => setVariableDrawerOpen(true)}
+            disabled={!RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]}
+          />
 
           <GeneratePromptDrawer
             allColumns={validVariables?.map((v) => ({

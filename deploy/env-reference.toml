@@ -120,10 +120,18 @@ role = "generated"
 body = '''
 On a fresh install (no volumes of this Compose project yet) `./bin/install`
 fills every key below that is empty or still a `CHANGEME-` placeholder with a
-random value and writes it to `.env`. It never changes a value afterwards. On
-an existing install it fills only `INTEGRATION_ENCRYPTION_KEY`,
-`AGENTCC_WEBHOOK_SECRET` and, on Standalone, `REDIS_PASSWORD`, which is safe
-while they are unset, and warns about the rest.
+random value and writes it to `.env`. Generated values are kept on re-run. On
+an existing install it also rotates `FI_API_SECRET_PEPPER` when unset, empty or
+exactly the published default: it generates a new value and adds the published
+default to `FI_API_SECRET_PEPPERS_RETIRED`, deduplicated in existing order.
+Operator-set peppers are not changed. The app and collector receive both
+values, so keys sealed under the default still verify. Keep the retired value
+until `manage.py api_secrets status` shows `hashed_under_retired_pepper: 0`.
+This also applies to `bin/install.ps1`.
+The installer fills `INTEGRATION_ENCRYPTION_KEY`, `AGENTCC_WEBHOOK_SECRET`,
+`AGENTCC_ADMIN_TOKEN` (also when it is the published default),
+`OMEGA_HUB_CHECKER_TOKEN` and, on Standalone, `REDIS_PASSWORD`, which is safe
+while they are unset, and warns about the remaining unset secrets.
 `--wipe-volumes` and `./bin/uninstall --wipe-data` make the next install fresh
 again, and a value already in `.env` is kept even then.
 
@@ -135,8 +143,9 @@ below, which are published in the open-source repository and therefore not
 secret.
 
 Every secret below can change at any time (set it in `.env`, then
-`docker compose up -d`), except `PG_PASSWORD`, `INTEGRATION_ENCRYPTION_KEY`
-and `CH_PASSWORD` once in use: their rows say what breaks.
+`docker compose up -d`), except `PG_PASSWORD`, `FI_API_SECRET_PEPPER`,
+`INTEGRATION_ENCRYPTION_KEY` and `CH_PASSWORD` once in use: their rows say
+what breaks.
 '''
 
   [[part.section]]
@@ -147,7 +156,13 @@ and `CH_PASSWORD` once in use: their rows say what breaks.
     keys = ["SECRET_KEY"]
     default = "`local-dev-only-not-for-production-replace-me`"
     setups = ["S", "D", "H"]
-    text = "Signs logins, tokens and password-reset links. Changing it signs everyone out. With `ENV_TYPE` other than `local`, the app refuses to start on Django's built-in default."
+    text = "Protects sign-in tokens and password-reset links. Changing it invalidates existing sign-in tokens. With `ENV_TYPE` other than `local` or `test`, the app refuses to start on its built-in default or this published default."
+
+    [[part.section.row]]
+    keys = ["FI_API_SECRET_PEPPER"]
+    default = "`local-dev-only-api-secret-pepper-replace-me`"
+    setups = ["S", "D", "H"]
+    text = "New Future AGI API secrets are stored as HMAC-SHA256 hashes keyed by this value, not as plaintext. Use the same value in the app and collector, with at least 32 ASCII characters. Changing it invalidates hashes made under the previous value unless that value remains in `FI_API_SECRET_PEPPERS_RETIRED`. Successful authentication through the app attempts to rehash the key under the current value; keep retired values until their hashes have been migrated. With `ENV_TYPE` other than `local` or `test`, the app refuses a missing or published-default pepper. The collector applies the same rule, but also treats empty `ENV_TYPE` as local. Unset `ENV_TYPE` defaults to `local`. A nonempty pepper shorter than 32 characters stops the app; a nonempty pepper shorter than 32 UTF-8 bytes stops the collector. Helm generates this key into the release Secret and keeps it on upgrade; with `secrets.existingSecret`, supply it in that Secret."
 
     [[part.section.row]]
     keys = ["PG_PASSWORD"]
@@ -163,15 +178,15 @@ and `CH_PASSWORD` once in use: their rows say what breaks.
 
     [[part.section.row]]
     keys = ["AGENTCC_INTERNAL_API_KEY"]
-    default = "`local-dev-only-shared-secret-replace-me`"
+    default = { S = "`local-dev-only-shared-secret-replace-me`, which `bin/start` replaces with a random one on every start", D = "`local-dev-only-shared-secret-replace-me`, which the gateway refuses" }
     setups = ["S", "D", "H"]
-    text = "Shared secret for app-to-gateway calls, and through the gateway your provider keys. Both sides read the same value, so it can change at any time."
+    text = "Shared secret for app-to-gateway calls, and through the gateway your provider keys: the gateway lets it use the providers configured with this install's keys. Unless `AGENTCC_DEPLOYMENT_PROFILE` is `hosted`, the gateway refuses to start when this key is empty or blank, starts with `CHANGEME`, contains the text of an `openssl rand` command instead of its output (`.env` does not run commands) or contains a default published in this repository, this one included; no length rule applies. Left empty or unset in `.env`, the compose files pass the default shown. Standalone's `bin/start` replaces such a value with a random one at every start, before the gateway starts; a value that only the gateway's Unicode-aware check refuses still stops the container. Both sides read the same value and nothing stores it, so it can change at any time; run `docker compose up -d` after changing it."
 
     [[part.section.row]]
     keys = ["AGENTCC_ADMIN_TOKEN"]
-    default = "`local-dev-only-admin-token-replace-me`"
+    default = { S = "`local-dev-only-admin-token-replace-me`, which `bin/start` replaces with a random one on every start", D = "`local-dev-only-admin-token-replace-me`, which the gateway refuses" }
     setups = ["S", "D", "H"]
-    text = "Bearer token for the LLM gateway's admin API. The gateway also sends it when it loads keys from the app."
+    text = "Bearer token for the LLM gateway's admin API. The gateway also sends it when it loads keys from the app, whose admin endpoints accept it. Both refuse it when it is empty, shorter than 32 characters, a placeholder or a default published in this repository (or contains one), this one included: the gateway does not start and the app's admin endpoints deny every request, unless `AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN` is `1`. It holds no state, so the installer fills it on any install when it is empty or this default."
 
     [[part.section.row]]
     keys = ["AGENTCC_WEBHOOK_SECRET"]
@@ -180,10 +195,16 @@ and `CH_PASSWORD` once in use: their rows say what breaks.
     text = "Shared secret the LLM gateway sends its request logs to the app with. Both read it on start, so it can change at any time. Helm: `secrets.agentccWebhookSecret` when set, else the key of that name in `secrets.existingSecret` when that is set, else generated."
 
     [[part.section.row]]
-    keys = ["INTEGRATION_ENCRYPTION_KEY"]
-    default = "Empty. With `ENV_TYPE=local`, every process start makes a throwaway key, so saved integration credentials do not survive a restart. Other `ENV_TYPE`s: connecting an integration fails."
+    keys = ["OMEGA_HUB_CHECKER_TOKEN"]
+    default = "`local-dev-only-hub-checker-token-replace-me`"
     setups = ["S", "D", "H"]
-    text = "Fernet key (32 random bytes, URL-safe base64) that encrypts stored integration credentials. Changing it strands what was saved with the old key; those integrations must be connected again."
+    text = "Shared secret of the app and the Omega Hub checker (`hub-checker`), which claims uploads and posts their checks with it. Both read it on start, so it can change at any time; a check in flight when it changes is claimed again after its lease. The production overlay refuses to start without it, and `deploy/setup.sh` generates one. Helm: generated into the release Secret and kept on upgrade, or `hub.checker.tokenSecret`."
+
+    [[part.section.row]]
+    keys = ["INTEGRATION_ENCRYPTION_KEY"]
+    default = "Empty. With `ENV_TYPE=local`, every process start makes a throwaway key, so saved integration credentials do not survive a restart, and system API keys are encrypted under a key derived from `SECRET_KEY`. Other `ENV_TYPE`s: the app refuses to start. A value that is not a Fernet key stops the start in any `ENV_TYPE`."
+    setups = ["S", "D", "H"]
+    text = "Fernet key (32 random bytes, URL-safe base64) that encrypts stored integration credentials and each organization's system API key. Changing it strands what was saved with the old key: those integrations must be connected again, and the platform can no longer present the system keys it encrypted (trace export from the app, the gateway's eval guardrail). Setting it where it was empty is safe: system keys encrypted under the key derived from `SECRET_KEY` still decrypt, and `manage.py api_secrets backfill` moves them under it."
 
     [[part.section.row]]
     keys = ["REDIS_PASSWORD"]
@@ -200,9 +221,9 @@ and `CH_PASSWORD` once in use: their rows say what breaks.
   [[part.section]]
   heading = "Choices the installer records"
   after = '''
-The installer also writes `FUTURE_AGI_VERSION=local` (and, for Distributed,
-the other image tags) after `--from-source`, and a free host port when a
-default port is taken. See [Images](#images) and [Host ports](#host-ports).
+The installer also writes `FUTURE_AGI_VERSION=local` and
+`CODE_EXECUTOR_VERSION=local` (and, for Distributed, the other image tags)
+after `--from-source`, and a free host port when a default port is taken. See [Images](#images) and [Host ports](#host-ports).
 '''
 
     [[part.section.row]]
@@ -402,7 +423,81 @@ Each of these is off until you set it.
     keys = ["COMPOSE_PROFILES"]
     default = "empty"
     setups = ["S", "D"]
-    text = "Read by Docker Compose, comma-separated. Standalone: `sandbox` runs code evals in the privileged nsjail `code-executor` container instead of the app container (use it when people who write code evals must not trust one another; set it in `.env`, not only with `--profile`, because the app reads it to route evals); `ml` adds the `serving` embedding-model container (a few GB of RAM) for embedding-based evals and knowledge bases. Distributed: `all` adds the per-queue workers, the Temporal UI and the PeerDB UI; `workers`, `observability` and `peerdb` add one group each."
+    text = "Read by Docker Compose, comma-separated. Standalone and Distributed start the nsjail `code-executor` by default (privileged: false, non-root, NET_ADMIN, read-only root, unconfined seccomp/AppArmor; the host must allow unprivileged user namespaces). Standalone: `ml` adds the `serving` embedding-model container (a few GB of RAM) for embedding-based evals and knowledge bases. In both topologies, `hub` opts in to the Omega Hub's checker and privileged gVisor runner daemon (see [Omega Hub](#omega-hub)); set `COMPOSE_PROFILES=hub` in `.env` or the process environment so the backend receives the same selection, not only with `--profile`. Distributed: `all` adds the per-queue workers, the Temporal UI and the PeerDB UI; `workers`, `observability` and `peerdb` add one group each."
+
+  [[part.section]]
+  heading = "Omega Hub"
+  body = '''
+The Omega Hub is the registry of agents, tools and skills that people publish
+and install with `omega hub add`. It runs in the app; the `hub-checker`
+service checks every upload, and a maintainer approves it before anyone else
+can see it. Each upload's keyless test and demo run with the network off in a
+container on `hub-runner`, a Docker daemon whose only runtime is gVisor
+([`deploy/hub-runner`](repo:deploy/hub-runner/README.md)). The checker holds
+no database or storage credential and never this host's Docker.
+Standalone and Distributed run both services only with the opt-in
+`COMPOSE_PROFILES=hub` selection. Their backend profile marker prevents a generated
+checker token from enabling publishing when the profile is off. Turning the profile
+off does not stop already-running containers; the installer warns and prints a
+manual stop/remove command. The production overlay always runs the checker against
+a dedicated external runner, pins the backend marker to `hub` even with profiles
+`full`, and refuses to start without the settings below. The Hub stays hidden in the UI until you set
+`VITE_OMEGA_CONSOLE=1` and admit organisations with `manage.py omega_rollout`.
+'''
+
+    [[part.section.row]]
+    keys = ["VITE_OMEGA_CONSOLE"]
+    default = "empty: no Omega product shows"
+    setups = ["S", "D", "H"]
+    text = "`1` shows the Omega products, the Hub among them, to each organisation and workspace their rollout admits (`manage.py omega_rollout stage hub S0`, then `allow hub --org <id>`). A product nobody is admitted to stays hidden, so this alone shows nothing. Helm: set by `hub.enabled`."
+
+    [[part.section.row]]
+    keys = ["VITE_OMEGA_CLI_PACKAGE"]
+    default = "empty until the Omega CLI is published: no install step shows"
+    setups = ["S", "D", "H"]
+    text = "The npm package the Omega Studio tab's install step names: it shows `npm install -g <package>`, built from this value only (an exact version or dist-tag may follow, e.g. `@future-agi/omega@1.2.3`). Empty: the tab shows no install step (set it when the package is published, e.g. `@future-agi/omega`). Written into the UI's `config.js` at container start. Helm: `frontend.extraEnv`."
+
+    [[part.section.row]]
+    keys = ["OMEGA_HUB_MAINTAINER_ORG_ID"]
+    default = "empty: nobody can review, so nothing is ever listed"
+    setups = ["S", "D", "H"]
+    text = "Id of the organisation whose Admins and Owners can be Hub maintainers. Create that organisation, set its id here, restart the app, then grant each maintainer with `manage.py omega_hub_maintainer grant --email <maintainer> --by <you>`. Helm: `hub.maintainerOrgId`."
+
+    [[part.section.row]]
+    keys = ["OMEGA_HUB_APP_URL"]
+    default = "`http://localhost:<FRONTEND_PORT>/dashboard/hub`"
+    setups = ["S", "D", "H"]
+    text = "The Hub in the UI, for the links in its emails. Required by the production overlay. Helm: `hub.appUrl`, else derived from `urls.app`."
+
+    [[part.section.row]]
+    keys = ["OMEGA_HUB_PUBLIC_API_URL"]
+    default = "`http://localhost:<BACKEND_PORT>/omega-hub/v1`"
+    setups = ["S", "D", "H"]
+    text = "The Hub's API as `omega hub` reaches it, printed in install commands. Required by the production overlay. Helm: `hub.publicApiUrl`, else derived from `urls.api`."
+
+    [[part.section.row]]
+    keys = ["OMEGA_HUB_BUCKET"]
+    default = "`omega-hub`"
+    setups = ["S", "D", "H"]
+    text = "Private bucket of the Hub's uploads and bundles, in the install's object storage. Created on first use with no bucket policy: every byte reaches a client through the app, which serves only approved versions. Helm: `hub.bucket`."
+
+    [[part.section.row]]
+    keys = ["OMEGA_HUB_TRUSTED_PROXY_DEPTH", "OMEGA_HUB_CLIENT_IP_HEADER"]
+    default = "empty: the connection's address only"
+    setups = ["S", "D", "H"]
+    text = "How the Hub finds a client's address for its throttles and download counts: the number of proxies in front of the app that append to `X-Forwarded-For` (`1` behind one reverse proxy), or a header your edge proxy always overwrites. Unset behind a proxy, every anonymous client shares one throttle, and `manage.py check` warns (`omega_hub.W003`) outside `ENV_TYPE=local`. Helm: `hub.trustedProxyDepth`, `hub.clientIpHeader`."
+
+    [[part.section.row]]
+    keys = ["OMEGA_HUB_RUNNER_IMAGE"]
+    default = "`omega-hub-runner:881b05b` (the release manifest's `runtimes.hubRunner`)"
+    setups = ["S", "D", "H"]
+    text = "The image every upload runs in on the runner daemon. The checker pulls it there when it is missing. Until the release publishes it, build it with `services/omega-hub-checker/runner/build.sh` and load it onto `hub-runner` (see [`deploy/hub-runner`](repo:deploy/hub-runner/README.md#the-runner-image)). Without it the checker says why every minute and uploads wait in `received`. The production overlay requires a reviewed image pinned by digest. Helm: `hub.checker.runner.image`."
+
+    [[part.section.row]]
+    keys = ["OMEGA_HUB_RUNNER_DOCKER_HOST", "OMEGA_HUB_RUNNER_TLS_DIR"]
+    default = "unset (production overlay only, where both are required)"
+    setups = ["D", "H"]
+    text = "The dedicated runner host of a production install: its Docker as `tcp://<host>:2376`, and a directory on this host holding its client certificate (`ca.pem`, `cert.pem`, `key.pem`), which the checker mounts read-only. Set the host up with [`deploy/hub-runner`](repo:deploy/hub-runner/README.md): its own VM, gVisor as the only runtime, an egress firewall. The checker refuses a daemon whose default runtime is not gVisor. Helm: `hub.checker.runner.dockerHost` and `hub.checker.runner.tlsSecret`."
 
   [[part.section]]
   heading = "Google Cloud and Vertex AI"
@@ -502,6 +597,13 @@ which Standalone's app image leaves out; see
     default = "`300`"
     setups = ["S", "D", "H"]
     text = "Advanced: clock skew tolerated when checking a license's validity window."
+
+    [[part.section.row]]
+    keys = ["CLOUD_DEPLOYMENT"]
+    default = "empty: off"
+    setups = ["S", "D", "H"]
+    text = "Region of Future AGI's hosted service: `US`, `EU` or `DEV`. A region alone can turn on some hosted-service behaviour, such as public-only model endpoints, fi-collector billing enforcement and the `cloud` mode of `/api/deployment-info/`, while `DeploymentMode.is_cloud()` also needs a valid `CLOUD_DEPLOYMENT_SECRET`; leave empty when self-hosting."
+    audience = "internal"
 
   [[part.section]]
   heading = "Agent simulations in hosted sandboxes"
@@ -920,18 +1022,21 @@ Distributed's `backend` read them too.
   [[part.section]]
   heading = "Deployment telemetry"
   body = '''
-Deployment telemetry is **on** by default, so Future AGI knows how many
-installs run which version. It never sends traces, prompts, completions,
-datasets or any other content. What it sends and when, what the opt-out still
-sends, and how to see what your install sent:
-[Telemetry and outbound connections](/docs/self-hosting/configuration/telemetry).
+Deployment telemetry is on by default so Future AGI can count installs and plan release testing. Registration is attempted when the first owner/admin account exists (an eligible active owner/admin, staff or superuser account). By default the registration contains exactly `schema_version`, `instance_id`, `version`, `deployment_type`, `timestamp` and `telemetry_disabled=false`; the `users` key, email addresses and email domains are omitted. Set `FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true` (Helm: `config.telemetryShareAdminEmails=true`) to include `users[]` entries with `email` and `domain` for eligible accounts. Email sharing defaults to false; `1`, `true`, `yes` and `on` enable it. Deployment telemetry also sends usage-count heartbeats every 6 hours by default and content-free actor journey events. Deployment telemetry does not send prompts, completions, trace contents, dataset rows or API keys. Turn deployment telemetry off with `./bin/install --no-telemetry` (Windows: `-NoTelemetry`) or `FUTURE_AGI_TELEMETRY_DISABLED=true`. For Helm, `config.telemetry=false` or `global.airgap=true` disables deployment telemetry. With telemetry enabled and email sharing off, an install upgraded from a registration that included emails re-registers once without `users`. Failed attempts may be retried. Changing the email-sharing setting also triggers re-registration. [Telemetry and outbound connections](/docs/self-hosting/configuration/telemetry) describes the payloads and how to see what your install sent.
 '''
 
     [[part.section.row]]
     keys = ["FUTURE_AGI_TELEMETRY_DISABLED"]
     default = "`false`"
     setups = ["S", "D", "H"]
-    text = '`true` opts out (`1`, `yes` and `on` also work): no email addresses, heartbeats or journey events are sent, and buffered telemetry is deleted; one minimal registration remains ([what it contains](/docs/self-hosting/configuration/telemetry#turn-it-off)). `./bin/install --no-telemetry` (`.\bin\install.ps1 -NoTelemetry`) writes it before anything starts. Helm: `config.telemetry=false`.'
+    text = '`true` opts out (`1`, `yes` and `on` also work): deployment telemetry sends nothing to Future AGI, even from a previously registered instance: no registration, heartbeats, journey events or retries; buffered telemetry is deleted ([details](/docs/self-hosting/configuration/telemetry#turn-it-off)). `./bin/install --no-telemetry` (`.\bin\install.ps1 -NoTelemetry`) writes it before anything starts. Helm: `config.telemetry=false` or `global.airgap=true`.'
+    tag = "telemetry"
+
+    [[part.section.row]]
+    keys = ["FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "Registration is attempted when the first owner/admin account exists (an eligible active owner/admin, staff or superuser account). By default the registration contains exactly `schema_version`, `instance_id`, `version`, `deployment_type`, `timestamp` and `telemetry_disabled=false`; the `users` key, email addresses and email domains are omitted. Set `FUTURE_AGI_TELEMETRY_SHARE_ADMIN_EMAILS=true` (Helm: `config.telemetryShareAdminEmails=true`) to include `users[]` entries with `email` and `domain` for eligible accounts. Email sharing defaults to false; `1`, `true`, `yes` and `on` enable it. Deployment telemetry also sends usage-count heartbeats every 6 hours by default and content-free actor journey events. With telemetry enabled and email sharing off, an install upgraded from a registration that included emails re-registers once without `users`. Failed attempts may be retried. Changing the email-sharing setting also triggers re-registration. Turn deployment telemetry off with `./bin/install --no-telemetry` (Windows: `-NoTelemetry`) or `FUTURE_AGI_TELEMETRY_DISABLED=true`. For Helm, `config.telemetry=false` or `global.airgap=true` disables deployment telemetry."
     tag = "telemetry"
 
     [[part.section.row]]
@@ -1213,6 +1318,49 @@ values for these settings at startup. Deploy the backend and frontend together.
     setups = ["S", "D", "H"]
     text = "Where the sidebar's Help entry points."
 
+  [[part.section]]
+  heading = "Optional host update reporting"
+  body = '''
+Disabled by default; neither installer adds a mount or recreates an existing
+install. Run `./bin/install --host-status-help` (or
+`./deploy/setup.sh --host-status-help`) for explicit opt-in instructions.
+The host must register a dedicated public slot before overlay selection.
+`--prepare-host-status` only creates a NEW operator-owned 0755 slot directory
+under an existing trusted public parent outside the checkout; it does not
+register reporting, write status or change `.env`. Existing sources are refused
+unchanged, not repaired. The host publisher writes sanitized `status.json` as
+0644 and atomically replaces it. Never mount private updater state, retained
+environments, journals, a parent containing other slots or a Docker socket.
+
+Select [the Standalone overlay](repo:deploy/docker-compose.host-status.standalone.yml)
+after the Standalone base, or [the Distributed overlay](repo:deploy/docker-compose.host-status.distributed.yml)
+after the Distributed base (and AFTER the production overlay in production).
+Only `app` or `backend` receives the directory read-only. Missing source fails
+closed without Docker creating a root-owned directory; a missing status file
+reports unavailable without preventing app startup. Production stage,
+initialization and apply remain separate operator actions. Windows/PowerShell
+installation behavior is unchanged. Remote daemons, SELinux and rootless hosts
+require separate qualification.
+'''
+
+    [[part.section.row]]
+    keys = ["FI_HOST_UPDATE_STATUS_DIR"]
+    default = "unset; required only by the optional overlay"
+    setups = ["S", "D"]
+    text = "Host-only absolute path to the registered operator-owned public slot directory, ending in its 32-hex slot ID. Mounted at `/run/futureagi-host-update` read-only with automatic source creation disabled. It is not passed into the container environment. Never point it at private updater state, an env file or a parent containing other installations. Shell exports override the selected env file; verify the effective source with the host registration."
+
+    [[part.section.row]]
+    keys = ["FI_HOST_UPDATE_STATUS_SLOT"]
+    default = "empty; required only by the optional overlay"
+    setups = ["S", "D"]
+    text = "Public random 128-bit correlation slot from the host reporting registration, encoded as 32 lowercase hex characters. App/backend requires exact slot and runtime topology agreement. Production is reported by the host registration, not inferred from the app's unrelated `ENV_TYPE`; the app displays the host-reported boolean unchanged. A slot or topology mismatch returns unavailable without a snapshot; it never authorizes an update."
+
+    [[part.section.row]]
+    keys = ["FI_HOST_UPDATE_STATUS_FILE"]
+    default = "empty; overlay fixes it to `/run/futureagi-host-update/status.json`"
+    setups = ["S", "D"]
+    text = "App reader setting, supplied only to Standalone app or Distributed/production backend by the overlay. Arbitrary paths are refused. No overlay means unconfigured/unavailable, not healthy. Only a sanitized public file is read; the app cannot mutate host updater state."
+
 [[part]]
 heading = "4. Advanced tuning"
 body = '''
@@ -1236,7 +1384,7 @@ value `image.tag`. The keys below are the Compose equivalents.
     keys = ["FRONTEND_VERSION", "AGENTCC_GATEWAY_VERSION", "SERVING_VERSION", "CODE_EXECUTOR_VERSION"]
     default = "`latest`"
     setups = ["S", "D"]
-    text = "Tags of the UI, gateway, embedding-server and code-executor images. Standalone uses only `SERVING_VERSION` (`ml` profile) and `CODE_EXECUTOR_VERSION` (`sandbox` profile)."
+    text = "Tags of the UI, gateway, embedding-server and code-executor images. Standalone uses only `SERVING_VERSION` (`ml` profile) and `CODE_EXECUTOR_VERSION` (`sandbox` profile). Keep `AGENTCC_GATEWAY_VERSION` at the release `FUTURE_AGI_VERSION` names: the backend calls Jev evals through the gateway, and an older gateway fails every one (see `JEV_TRANSPORT`)."
 
     [[part.section.row]]
     keys = ["FI_COLLECTOR_VERSION"]
@@ -1245,10 +1393,22 @@ value `image.tag`. The keys below are the Compose equivalents.
     text = "Tag of the trace collector image. The production overlay requires a published, reviewed tag."
 
     [[part.section.row]]
+    keys = ["OMEGA_HUB_CHECKER_VERSION", "OMEGA_HUB_RUNNER_HOST_VERSION"]
+    default = "`local` (built from `./services/omega-hub-checker` and `./deploy/hub-runner`)"
+    setups = ["S", "D"]
+    text = "Tags of the Omega Hub checker and its runner daemon. Compose builds both from this checkout until the release publishes them. The production overlay requires a reviewed checker tag and runs no runner daemon on the app host."
+
+    [[part.section.row]]
     keys = ["SIMULATION_RUNNER_VERSION"]
     default = "`latest`"
     setups = ["D"]
     text = "Tag of the simulation runner image. Required by the production overlay."
+
+    [[part.section.row]]
+    keys = ["FUTURE_AGI_REVISION"]
+    default = "empty"
+    setups = ["S", "D"]
+    text = "Commit recorded in images built from this checkout. Compose passes it as the `REVISION` build argument and the `org.opencontainers.image.revision` label to the images it builds (the Omega Hub checker and runner, and in Distributed the trace collector); `./bin/install --from-source`, `./bin/dev` and `bin/e2e` record it instead of the checkout's commit in the images they build. A full lowercase 40-character commit SHA. Empty: Compose builds record none and those scripts record the checkout's `HEAD`."
 
   [[part.section]]
   heading = "Host ports"
@@ -1637,7 +1797,7 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     keys = ["AGENTCC_REDIS_ADDRESS", "AGENTCC_REDIS_PASSWORD", "AGENTCC_REDIS_DB"]
     default = "unset: state in memory"
     setups = ["D", "H"]
-    text = "Redis the LLM gateway keeps rate limits, budgets and other shared state in, as `host:port`; needed as soon as it runs more than one replica. No TLS. Helm: `agentccGateway.redis` (on by default with more than one replica, database 4); with `redis.external.tls`, a Redis without TLS set here through `agentccGateway.extraEnv`."
+    text = "Redis the LLM gateway keeps rate limits, budgets and other shared state in, as `host:port`; needed as soon as it runs more than one replica. No TLS. Helm: `agentccGateway.redis` (on by default with more than one replica, database 4); with `redis.external.tls`, a Redis without TLS set here through `agentccGateway.extraEnv`. The settlement drain reads Django's `REDIS_URL`: it MUST name the same Redis instance and billing database as the gateway, not the cache database (database 4 in `config.hosted.example.yaml`; database 0 silently finds no outbox). Pass the gateway's effective `AGENTCC_REDIS_DB` to hosted backend/worker/operator processes too: startup/check refuse a mismatched effective `REDIS_URL` database, including a query-string db override, naming fields only and never printing the URL or credentials. Hosted Compose pins the assertion and gateway to database 4; hosted Helm derives both the backend/worker/operator `REDIS_URL` default and the database assertion from the effective gateway database, including a gateway environment override. An explicit Python `REDIS_URL` override remains subject to the startup consistency check. Custom configurations must pass the matching declaration: an absent declaration cannot certify a remote gateway's database."
 
   [[part.section]]
   heading = "Application behaviour"
@@ -1646,7 +1806,13 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     keys = ["ENV_TYPE"]
     default = "`local`"
     setups = ["S", "D", "H"]
-    text = "`local` keeps the self-host fallbacks: the default `SECRET_KEY` is accepted, a throwaway `INTEGRATION_ENCRYPTION_KEY` is made, links use `http://`. Any other value (the production overlay uses `production`) turns them off: the app refuses to start without a real `SECRET_KEY`, and links use `https://`."
+    text = "`local` keeps the self-host fallbacks: the default `SECRET_KEY` is accepted, a throwaway `INTEGRATION_ENCRYPTION_KEY` is made, links use `http://`. Any other value (the production overlay uses `production`) turns them off: the app refuses to start without a real `SECRET_KEY`, `FI_API_SECRET_PEPPER` and `INTEGRATION_ENCRYPTION_KEY`, and links use `https://`."
+
+    [[part.section.row]]
+    keys = ["FI_API_SECRET_PEPPERS_RETIRED"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Comma-separated former values of `FI_API_SECRET_PEPPER`, for rotating it. API secrets stored under one still verify, in the app and the collector, and the app re-stores each under the current pepper on its next use. Remove a value once `manage.py api_secrets status` shows `hashed_under_retired_pepper: 0`: a key not used since then stops working. Helm: `secrets.extra.FI_API_SECRET_PEPPERS_RETIRED`."
 
     [[part.section.row]]
     keys = ["DEBUG"]
@@ -1691,16 +1857,107 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     text = "Extra trusted CSRF origins, comma-separated."
 
     [[part.section.row]]
+    keys = ["AGENTCC_DEPLOYMENT_PROFILE"]
+    default = "unset (ordinary self-hosted behavior)"
+    setups = ["S", "D", "H"]
+    text = "Operator-owned enum: unset or `self-hosted` preserves generic behavior; `hosted` selects the strict preparation contract. Gateway startup/reload requires authentication, guardrails, initial and periodic control-plane synchronization, explicit proxies and shared Redis. Backend/workers/operator jobs require stable encryption and shared credentials. Invalid values refuse startup; YAML, org and request data cannot select it. This profile refuses unqualified credits, tools and MCP activation; it is not hosted release acceptance. Product preparation manifests and the gate ledger are in `deploy/hosted-readiness.json`."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_HOSTED_ONEKEY_ACTIVATION"]
+    default = "false (also when unset)"
+    setups = ["D", "H"]
+    text = "Operator-only gateway flag, effective only with AGENTCC_DEPLOYMENT_PROFILE=hosted. A nonempty flag without that profile logs a warning without its value and leaves self-hosted behavior unchanged. Accepts exactly true or false; malformed hosted values refuse without echoing them. Helm hosted.onekeyActivation maps to this flag and ships false; YAML/org/request settings cannot activate it. With true, managed:true providers require api_format=openai, type unset or openrouter, credential-free HTTPS and normal CA/hostname verification; skip_tls, local/private/loopback/development URLs, native formats and model-fallback/failover/retry profiles remain refused. Activated hosted startup also refuses managed.require_credits=false, managed.require_redis=false, managed.spend_guard without an explicitly configured enforcing velocity cap (max_usd_per_minute or max_usd_per_hour), regardless of new_org_daily_cap_usd, alert_usd_per_hour or auto_pause. Velocity caps are not silently inherited on activation: ops must set at least one. An enforcing cap is finite and converts to positive micros by the shared billing half-up conversion (0.0000005 USD rounds to one micro); zero is unset. Every nonzero NaN, infinite, negative or sub-micro cap that rounds to zero is refused with its field and value class, even if another cap enforces. The new-org daily cap alone is insufficient because it expires after seven days. Helm checks the same velocity policy, is slightly stricter in the rounding band just below 0.0000005 USD, and rejects YAML .nan/.inf during parsing. Chart-owned spend_guard caps must be numeric int/int64/float64 values, never strings (including quoted NaN, Infinity or 5), booleans, lists or maps; refusals name the field without its value. Fractional caps require an unquoted number in a values file or --set-json 'agentccGateway.config.managed.spend_guard.max_usd_per_minute=0.5'; ordinary --set with a fraction produces a refused string, while integer --set ...max_usd_per_minute=5 works. These amounts illustrate syntax, not launch recommendations. Activated startup also refuses managed.grant_only_credits=true. Startup makes a bounded TLS-only preflight before discovery; untrusted certificates fail closed without an insecure fallback. -check-config remains network-free. The shipped hosted Compose config (config.hosted.example.yaml) has zero providers. Helm values retain the default non-managed openai provider unless ops overrides providers; the hosted example does not clear it. Neither default config enables a managed provider, org opt-in or MCP. Flip only after the money pair FINAL on the converged head, strict integrated walks, coordinated gateway+Django deployment/migrations, non-evicting shared Redis and owner go. Ops must also explicitly size max_concurrent and conn_pool_size for each funded provider and inherited BYOK instance, check upstream account limits against launch load, and install the reviewed CA trust. This flag is an activation mechanism, not release acceptance."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_HOSTED_RELEASE_REVISION"]
+    default = "unset"
+    setups = ["H"]
+    text = "Exact reviewed source revision for the explicitly invoked hosted operator job. An applied backfill also requires the matching compatible-runtime revision and operator quiescence assertion. No bootstrap hook, release activation, credential rotation or worker resumption follows automatically. Applied-state metadata, synthetic rehearsal, backups and ops go remain separate prerequisites."
+
+    [[part.section.row]]
+    keys = ["BACKEND_IMAGE", "BACKEND_DIGEST", "GATEWAY_IMAGE", "GATEWAY_DIGEST"]
+    default = "required by deploy/docker-compose.hosted.yml"
+    setups = ["D"]
+    text = "Repository and sha256 digest of the independently reviewed hosted preparation images. The dedicated Compose manifest has no local-image/tag fallback and publishes no admin ports. It is not an overlay on the local bootstrap stack or a record of an actual deployment."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_TRUSTED_PROXY_CIDR"]
+    default = "required by deploy/docker-compose.hosted.yml"
+    setups = ["D"]
+    text = "Exact operator-attested ingress proxy IP/CIDR expanded by config.hosted.example.yaml. A wildcard, missing proxy or trusted_hops is not accepted by the hosted profile. Additional explicit proxies belong in the operator's reviewed mounted config."
+
+    [[part.section.row]]
     keys = ["AGENTCC_CONFIG_PATH"]
     default = "`agentcc-gateway/config.example.yaml`"
     setups = ["S", "D"]
-    text = "Gateway provider config, relative to the repository root, mounted into the gateway. Copy the example to enable Anthropic, Gemini, Bedrock, Vertex and others; the copy is git-ignored. A path that does not exist stops the stack from starting."
+    text = "Gateway provider config, relative to the repository root, mounted into the gateway. Copy the example to enable Anthropic, Gemini, Bedrock, Vertex and others; the copy is git-ignored. The bundled self-hosted config explicitly sets `managed.grant_only_credits: true`, so credit refusals direct callers to the operator for a grant or to their own provider keys, not to a purchase page. The code default is `false` (hosted Settings Billing guidance); deployments with cloud checkout that copy the example must set it to `false`. This setting changes error guidance only, not whether billing is installed. A path that does not exist stops the stack from starting."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_MCP_UPSTREAM_OAUTH_ENABLED"]
+    default = "false"
+    setups = ["S", "D", "H"]
+    text = "Upstream per-user and shared OAuth apps, connect routes and OAuth app registrations. OFF hides its APIs and Console controls; MCP core and static-credential apps remain available."
+
+  [[part.section.row]]
+    keys = ["AGENTCC_MCP_CLIENT_OAUTH_ENABLED"]
+    default = "false"
+    setups = ["S", "D", "H"]
+    text = "MCP client OAuth sign-in, DCR, consent, tokens and well-known metadata. Set on both Django and gateway; the gateway also needs mcp.oauth.enabled and its issuer configuration. OFF hides its APIs and Console controls; MCP core and static-credential apps remain available."
+
+  [[part.section.row]]
+    keys = ["AGENTCC_MCP_K2_APPS_ENABLED"]
+    default = "false"
+    setups = ["S", "D", "H"]
+    text = "K2 Google, Microsoft and Arcade apps. OAuth-based apps also need the independent upstream OAuth gate. OFF hides its APIs and Console controls; MCP core and static-credential apps remain available."
+
+  [[part.section.row]]
+    keys = ["AGENTCC_MCP_CLIENT_INSTALLS_ENABLED"]
+    default = "false"
+    setups = ["S", "D"]
+    text = "Key-based MCP client installs: the Console's Connect tab with Claude, Claude Code, Cursor and VS Code setup for a virtual server. Read by Django only and independent of the OAuth and K2 gates; it never mints a key. OFF hides the tab and its links; MCP core remains available."
+
+  # NEW: W14 deployment switches; site gate review required.
+  [[part.section.row]]
+    keys = ["AGENTCC_MCP_TOOL_CALL_EXPLORER_ENABLED"]
+    default = "false"
+    setups = ["S", "D", "H"]
+    text = "Enables the MCP tool-call explorer API and UI: the Tool calls tab, call details, the Overview call count and recent calls, and recent calls in server details. Django reads this operator-only switch from its process environment. Only `true` (in any letter case) or `1` turns it on; unset or any other value, including `yes` or `on`, is off on hosted and self-hosted deployments. Standalone and Distributed Compose forward both keys to Django with false interpolation defaults. The Helm chart has no dedicated value: set both keys in `backend.extraEnv` and verify they reach the Django process before enabling. OFF refuses list/detail/download requests with HTTP 404 and a typed code, and hides explorer content. The SIEM export entry is in the MCP page header, outside this gate; destination inspection and controls remain available. Static custom servers, tools, playground, platform MCP OAuth, ingestion, shared traces and general exports are unchanged."
+
+  [[part.section.row]]
+    keys = ["AGENTCC_MCP_TOOL_CALL_DOWNLOAD_ENABLED"]
+    default = "false"
+    setups = ["S", "D", "H"]
+    text = "Enables the MCP tool-call downloads: Export as CSV and Export as JSON in the Tool calls tab, and `export_format=csv` or `export_format=json` on the export API. The JSON download is NDJSON, one call per line. Django reads this operator-only switch from its process environment. Only `true` (in any letter case) or `1` turns it on; unset or any other value, including `yes` or `on`, is off on hosted and self-hosted deployments. Environment forwarding is described with the explorer switch above. Requires `AGENTCC_MCP_TOOL_CALL_EXPLORER_ENABLED=true`. With explorer OFF, both are OFF regardless of this setting. With explorer ON and downloads OFF, list/detail remain available but downloads are hidden and the export endpoint refuses before querying, auditing or streaming. General exports are unchanged. SIEM destination management remains available from the MCP page header regardless of either tool-call switch; delivery remains controlled separately by `AGENTCC_SIEM_EXPORT_ENABLED`."
+
+  [[part.section.row]]
+    keys = ["AGENTCC_MANAGED_CATALOGUE_FAMILIES"]
+    default = "unset; `managed.catalogue_families: []` (off)"
+    setups = ["S", "D", "H"]
+    text = "Gateway startup override for `managed.catalogue_families`: exactly `cat2` enables the CAT-2 image-priced Gemini, dynamic-router and Lyria families. An explicitly empty value overrides YAML to off; unknown, duplicate or empty comma-separated entries fail startup. No org setting can enable it. ON moves every managed request, including token-only models, onto the durable owned-attempt protocol, which the ledger must support. Mixed catalogue/token chains remain refused; Fusion and retired models remain unavailable. Restart every gateway replica after changing it; catalogue refresh and org sync do not reload node configuration. In Standalone and Distributed, a .env entry reaches the gateway through Compose `env_file` (Standalone's supervised gateway inherits it); a Compose `environment` override also works. Check existing .env values: `cat2` enables it, and an explicitly empty value forces it off. For Helm, use `agentccGateway.extraEnv` for an environment override. Helm's preferred setting is `agentccGateway.config.managed.catalogue_families: [cat2]`, default `[]`. See the [CAT-2 operator guide](repo:agentcc-gateway/README.md#cat-2-catalogue-activation)."
 
     [[part.section.row]]
     keys = ["AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS"]
     default = "`false`; Helm: `agentccGateway.allowPrivateProviderURLs`"
     setups = ["S", "D", "H"]
-    text = "`true` lets org providers use base URLs on private networks (RFC 1918 addresses, Docker service names): a local Ollama or vLLM, see [INSTALLATION.md](repo:INSTALLATION.md#local-models-ollama-vllm). Read by the gateway and the API; a gateway or API from before this setting ignores it and refuses every private address. Loopback, link-local and cloud metadata addresses stay refused. Anyone who can add a provider can then reach every service on that network, ClickHouse included (its `default` user has no password while `CH_PASSWORD` is empty, as on installs made before the installer generated one), so turn it on only when they are all trusted."
+    text = "`true` lets org providers use base URLs on private networks (RFC 1918 addresses, Docker service names): a local Ollama or vLLM, see [INSTALLATION.md](repo:INSTALLATION.md#local-models-ollama-vllm). Read by the gateway and the API; a gateway or API from before this setting ignores it and refuses every private address. The API also lets email alerts use an SMTP host on those networks (a mail relay on the LAN); without it such a host is refused when the alert is saved and when it sends. Loopback, link-local and cloud metadata addresses stay refused. Anyone who can add a provider can then reach every service on that network, ClickHouse included (its `default` user has no password while `CH_PASSWORD` is empty, as on installs made before the installer generated one), so turn it on only when they are all trusted."
+
+    [[part.section.row]]
+    keys = ["CUSTOM_MODEL_DENY_PRIVATE_ENDPOINTS"]
+    default = "`false`; Helm: `config.extraEnv`"
+    setups = ["S", "D", "H"]
+    text = "`true` restricts custom model endpoints and the base URLs of OpenAI-compatible and Azure custom models to public addresses. It rejects loopback, RFC 1918, carrier-grade NAT, unique-local IPv6 and site-local IPv6 addresses. Without it, self-hosted installs allow those address classes, subject to the exclusions below. Future AGI Cloud uses the public-address policy regardless of this setting. The endpoint guard blocks `169.254.169.254`, `169.254.170.2`, `169.254.170.23`, `fd00:ec2::254` and `metadata.google.internal` regardless of this setting, among other addresses and names it refuses. Other link-local addresses require `CUSTOM_MODEL_ALLOWED_LINK_LOCAL_CIDRS` and the self-hosted private-address policy. Guarded calls use applicable environment proxies, including `HTTP_PROXY` and `HTTPS_PROXY`, subject to `NO_PROXY`. The guard checks address literals and locally resolved addresses before proxy forwarding. With the self-hosted private-address policy, names unresolved locally can pass to the proxy for resolution. The proxy resolves the target independently; the guard does not validate the proxy's DNS answer. The API checks supplied endpoint configuration on create and configuration edits. Model validation and the guarded custom-model, chat, image and audio-preview call paths apply this policy."
+
+    [[part.section.row]]
+    keys = ["CUSTOM_MODEL_ALLOWED_LINK_LOCAL_CIDRS"]
+    default = "empty; Helm: `config.extraEnv`"
+    setups = ["S", "D", "H"]
+    text = "Lists comma-separated link-local ranges inside `169.254.0.0/16` or `fe80::/10` for custom model endpoints and the base URLs of OpenAI-compatible and Azure custom models. Unset, it admits no link-local addresses. Invalid entries and ranges outside those networks are ignored. The guard never admits `169.254.169.0/24` or `169.254.170.0/24`, even when listed. This setting applies only under the self-hosted private-address policy. Future AGI Cloud and `CUSTOM_MODEL_DENY_PRIVATE_ENDPOINTS=true` ignore it. If your rootless Podman container resolves `host.containers.internal` to `169.254.1.2`, listing `169.254.1.2/32` admits just that address. Confirm the address in your container before listing its range. The endpoint guard reads this list when it checks an address under the self-hosted private-address policy."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN"]
+    default = "empty (off)"
+    setups = ["S", "D"]
+    text = "`1` starts the gateway although `AGENTCC_ADMIN_TOKEN` (or `AGENTCC_CONTROL_PLANE_TOKEN`) is empty, shorter than 32 characters, a placeholder or a default published in this repository, which it otherwise refuses at start-up, and makes the app's gateway admin endpoints accept such a token; on Standalone it also keeps `bin/start` from replacing the published default. Local development and the E2E stack only: with a published token, anyone who can reach the gateway or the app holds the admin API (keys, org settings, credits) and every org's provider credentials. Set a random `AGENTCC_ADMIN_TOKEN` instead (`openssl rand -hex 32`); `bin/install` fills one on any install. A gateway or app from before this check ignores it."
 
     [[part.section.row]]
     keys = ["AGENTCC_SYNC_INTERVAL"]
@@ -1718,7 +1975,7 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     keys = ["SIM_COLLECTOR_OTLP_ENDPOINT"]
     default = "`fi-collector:4317`"
     setups = ["D", "H"]
-    text = "OTLP/gRPC `host:port` where simulations and voice calls send their spans. Helm sets it to the release's collector."
+    text = "OTLP/gRPC `host:port` of the collector that platform-managed export of imported voice-provider calls uses; that export is off in 2.0.0 (see [2.0.0 release notes: Known issues](https://github.com/future-agi/future-agi/releases/tag/v2.0.0)). Helm sets it to the release's collector."
 
     [[part.section.row]]
     keys = ["OTEL_ENABLED"]
@@ -1781,6 +2038,12 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     text = "TCP ports code evals in the built-in sandbox may connect to, comma-separated; they can listen on none. Landlock enforces it where the Docker host runs Linux 6.7 or later; on older kernels evals reach every port, and the app's log says so at start. A malformed list stops the sandbox. The nsjail sandbox (`sandbox` profile) does not apply it. See [INSTALLATION.md](repo:INSTALLATION.md#code-evals-and-the-sandbox)."
 
     [[part.section.row]]
+    keys = ["CODE_EXECUTOR_INTERNAL_CIDRS"]
+    default = "empty (the built-in deny list only)"
+    setups = ["S", "D", "H"]
+    text = "Your deployment's own internal ranges (pod, service and node networks, including publicly numbered internal networks), as comma-separated IPv4 or IPv6 CIDRs that code evals in the nsjail `code-executor` may not reach. They are added to its built-in deny list of private, shared, loopback, metadata, multicast and reserved ranges; this setting never allows anything. DNS on port 53 to the resolvers in the container's `resolv.conf` is still allowed. Each entry must be a network address with no host bits: a malformed entry stops the executor at start, and its log names `EGRESS_POLICY_UNAVAILABLE`. Only the nsjail executor reads it: the Standalone and Distributed `code-executor` services and, on Helm, `codeExecutor.extraEnv`. The app's built-in sandbox does not."
+
+    [[part.section.row]]
     keys = ["CODE_EXECUTOR_LOCAL_FALLBACK"]
     default = "`false` (Standalone: fixed `false`)"
     setups = ["D", "H"]
@@ -1803,6 +2066,129 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     default = { S = "`http://127.0.0.1:8000`", D = "`http://backend`" }
     setups = ["S", "D", "H"]
     text = "Platform URL the simulation runner reports results to."
+
+  [[part.section]]
+  heading = "Jev evals, Instant eval and Insights"
+  body = '''
+Jev evals run on every edition, always on the organization's own TypeSafe key.
+Instant eval and Insights need an Enterprise license that lists `instant_eval`
+and `insights`; Future AGI Cloud plans include them. The API and the workers
+read these keys.
+'''
+
+    [[part.section.row]]
+    keys = ["JEV_TRANSPORT"]
+    default = "`gateway`"
+    setups = ["S", "D", "H"]
+    text = "How Jev evals reach TypeSafe. `gateway` sends them through the LLM gateway's `/v1/systemone`, so the gateway needs egress to `api.typesafe.ai` (behind a proxy, set `HTTPS_PROXY` on it) and the same release as the backend: an older gateway answers 404, and every Jev eval fails with `JEV_PROVIDER_ERROR`. `direct` calls TypeSafe from the API and workers instead, for development without a gateway or as a fallback. Any other value means `gateway`."
+
+    [[part.section.row]]
+    keys = ["JEV_MAX_CONCURRENT"]
+    default = "`8`"
+    setups = ["S", "D", "H"]
+    text = "Jev calls one worker process makes at once (at least `1`); the rest wait. An Instant eval run keeps up to 32 rows in flight, so workers that serve it want at least `32`."
+
+    [[part.section.row]]
+    keys = ["JEV_TOTAL_DEADLINE"]
+    default = "`90`"
+    setups = ["S", "D", "H"]
+    text = "Seconds one Jev eval may take, waiting for a free call and every retry included; past it the eval fails with `JEV_TIMEOUT`. It can only be lowered: values above `90` count as `90`."
+
+    [[part.section.row]]
+    keys = ["JEV_MAX_RETRIES"]
+    default = "`2`"
+    setups = ["S", "D", "H"]
+    text = "Retries of a Jev call that failed in a way a retry can fix (a timeout, a rate limit, TypeSafe briefly unavailable). A rejected key or a refused request is never retried. It can only be lowered: values above `2` count as `2`, and `0` turns retries off."
+
+    [[part.section.row]]
+    keys = ["TYPESAFE_BASE_URL"]
+    default = "`https://api.typesafe.ai`"
+    setups = ["S", "D", "H"]
+    text = "TypeSafe's API, for `JEV_TRANSPORT=direct` only (a sandbox or a proxy in front of TypeSafe). With the default `gateway` transport the gateway calls TypeSafe and this is not read."
+
+    [[part.section.row]]
+    keys = ["INSTANT_EVAL_MAX_ROWS"]
+    default = "`100000`"
+    setups = ["S", "D", "H"]
+    text = "Most rows one Instant eval run reads (a user counts as five sessions). Larger runs are refused. At least `1`."
+
+    [[part.section.row]]
+    keys = ["INSTANT_EVAL_CONFIRM_ROWS"]
+    default = "`5000`"
+    setups = ["S", "D", "H"]
+    text = "A run over this many rows waits for the person to confirm it before it starts. At least `1`."
+
+    [[part.section.row]]
+    keys = ["INSTANT_EVAL_MAX_ACTIVE_PER_ORG"]
+    default = "`2`"
+    setups = ["S", "D", "H"]
+    text = "Instant eval runs one organization can have going at once; another start is refused until one finishes. At least `1`."
+
+    [[part.section.row]]
+    keys = ["INSTANT_EVAL_ASSUMED_ROWS_PER_MIN"]
+    default = "`300`"
+    setups = ["S", "D", "H"]
+    text = "Rows a minute assumed for a run's time estimate before it starts. A running run shows its measured rate. At least `1`."
+
+    [[part.section.row]]
+    keys = ["INSTANT_EVAL_USERS_ESTIMATE_BUDGET_S"]
+    default = "`3`"
+    setups = ["S", "D", "H"]
+    text = "Seconds an estimate of a Users question may spend counting users that filters decide one by one; past it the count shows as a lower bound (\"1,500+\") and keeps going. Between `0.5` and `30`."
+
+    [[part.section.row]]
+    keys = ["INSTANT_EVAL_USERS_RUN_BUDGET_S"]
+    default = "`60`"
+    setups = ["S", "D", "H"]
+    text = "Seconds starting a Users run (or picking an Insights sample of users) may spend finishing that count before it says so; starting again carries on from what was counted. Between `1` and `600`."
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_FAST_MODEL", "INSIGHTS_THINKING_MODEL"]
+    default = "`turing_flash`, `turing_large`"
+    setups = ["S", "D", "H"]
+    text = "Models Insights uses: the fast one reads every trace or session, the thinking one names the categories and writes the report. The Turing defaults run on Future AGI's keys, which a licensed self-hosted install reaches through Future AGI's managed service; any other model goes through your gateway on your own provider key."
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_AGENT_URL", "INSIGHTS_AGENT_SECRET"]
+    default = "empty: the built-in engine"
+    setups = ["S", "D", "H"]
+    text = "Future AGI's separate Insights agent service and the bearer token it accepts. Set, every model step of an Insights run goes to that service; empty, the API and workers run the same steps themselves."
+    audience = "internal"
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_EVIDENCE_SECRET", "INSIGHTS_EVIDENCE_SECRET_PREVIOUS"]
+    default = "empty: runs stay on the agent's `insights-agent/v1` contract"
+    setups = ["S", "D", "H"]
+    text = "The secret the API signs the Insights agent's run-scoped evidence capabilities with, and the one it replaces while a new secret rolls out. Set, with an agent that serves `insights-agent/v2`, the agent reads each trace, session or user through the API's internal evidence endpoints instead of a clipped copy of its text."
+    audience = "internal"
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_EVIDENCE_STORE"]
+    default = "`local`"
+    setups = ["S", "D", "H"]
+    text = "Where the worker stores each Insights unit snapshot before the agent reads it, for the API to serve. `local` keeps them in `INSIGHTS_EVIDENCE_CACHE_DIR` on each host: fine for Standalone, where one container runs both, but with separate API and worker hosts every API pod reads ClickHouse again for what it serves. `object` keeps one copy per run in `INSIGHTS_EVIDENCE_BUCKET`, which every API pod reads. Any other value, `object` without its own bucket, or a bucket whose policy lets anyone in (asked when a report is started), keeps new reports on the agent's `insights-agent/v1` contract."
+    audience = "internal"
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_EVIDENCE_BUCKET"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "The bucket of the `object` evidence store, reached with the platform's storage credentials (`STORAGE_BACKEND`, `S3_*` or `GCS_*`) under `insights-evidence/<run>/`. It holds full trace content: create it yourself as a private bucket with no public or anonymous policy (a bucket whose policy lets anyone in is refused; never `UPLOAD_BUCKET_NAME`, whose objects anyone can read by URL, which is refused too), dedicated to this deployment (not shared with another environment or region: each deployment deletes the objects of runs its own database does not know), and add a lifecycle rule deleting objects under `insights-evidence/` after 2 days as a backstop: each run's objects are deleted when it ends and swept within minutes otherwise. S3 uploads ask for server-side encryption; GCS encrypts at rest itself; MinIO only with its KMS set up."
+    audience = "internal"
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_EVIDENCE_CACHE_DIR", "INSIGHTS_EVIDENCE_CACHE_MAX_BYTES"]
+    default = "`<tmp>/insights-evidence`, `2147483648`"
+    setups = ["S", "D", "H"]
+    text = "The directory of the `local` evidence store, on the worker and the API alike (owner-only files; a run's go when it ends, and each process sweeps within a minute or so what it missed: a finished report's five minutes after its questions last built one, anything after 6 hours), and the most bytes it may hold before the oldest files go. Keep it on the pod's own ephemeral disk. The API also keeps up to 128 MiB of recently read snapshots in memory with either store."
+    audience = "internal"
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "Lets the API fetch images and audio a trace links outside the platform's own storage (over https, through its SSRF guard, never following a redirect off the host) for the Insights agent to view. Off, such media is reported as not fetched."
+    audience = "internal"
 
   [[part.section]]
   heading = "Observed-attribute catalog"
@@ -1940,7 +2326,7 @@ in a compose override; the Helm chart sets them from `global.proxy`,
     label = "`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` (and lowercase)"
     default = "unset"
     setups = ["S", "D", "H"]
-    text = "Outbound proxy and the hosts that bypass it, object storage included; object storage on a loopback address (Standalone's) is always reached directly. On Distributed, list the internal hosts in `NO_PROXY` (`minio,code-executor,serving,agentcc-gateway,fi-collector,localhost,127.0.0.1`), or their calls go to the proxy. Helm: `global.proxy`, which builds `NO_PROXY` from the cluster's names, the release's Services and the datastore hosts plus `global.proxy.noProxy`. The LLM gateway does not use a proxy yet."
+    text = "Outbound proxy and the hosts that bypass it, object storage included; object storage on a loopback address (Standalone's) is always reached directly. On Distributed, list the internal hosts in `NO_PROXY` (`minio,code-executor,serving,agentcc-gateway,fi-collector,localhost,127.0.0.1`), or their calls go to the proxy. Helm: `global.proxy`, which builds `NO_PROXY` from the cluster's names, the release's Services and the datastore hosts plus `global.proxy.noProxy`. The LLM gateway uses the proxy for every decision call (System One and OpenAI-format models, from `config.yaml` providers, organization providers and calls made with the caller's own key) and its speech relay. An organization's own base URL is still checked for internal addresses before the call goes to the proxy. Its chat providers connect directly."
 
     [[part.section.row]]
     keys = ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"]
@@ -1960,10 +2346,46 @@ in a compose override; the Helm chart sets them from `global.proxy`,
     setups = ["S", "D", "H"]
     text = "`1` stops the model server from downloading models; pre-seed its cache first. Helm: on (serving only) with `global.airgap`."
 
+    [[part.section.row]]
+    keys = ["INTEGRATIONS_DATADOG_URL"]
+    default = "unset: the connection's Datadog site"
+    setups = ["S", "D", "H"]
+    text = "A test and self-hosted-proxy setting only. The base URL the Datadog export sends to in place of its site's API and log intake hosts (`https://api.datadoghq.com`, `https://http-intake.logs.datadoghq.com` and the other sites'), for a proxy you run in front of Datadog. Unset, the export calls Datadog itself. It is never shown in the console and never set per organization. When it is set, the API and the workers log one `integration_endpoint_override` line at start naming it and its host. The value must be an http or https URL with a host, optionally a port and a path, and no credentials, query or fragment; with any other value the API and the workers stop at start with an error naming the variable."
+
+    [[part.section.row]]
+    keys = ["INTEGRATIONS_MIXPANEL_URL"]
+    default = "unset: `https://api.mixpanel.com`"
+    setups = ["S", "D", "H"]
+    text = "A test and self-hosted-proxy setting only. The base URL the Mixpanel export sends `/track` and `/import` to in place of `https://api.mixpanel.com`. Unset, the export calls Mixpanel itself. It is never shown in the console and never set per organization; when it is set, the API and the workers log one `integration_endpoint_override` line at start. The value must be an http or https URL with a host, optionally a port and a path, and no credentials, query or fragment; with any other value the API and the workers stop at start with an error naming the variable."
+
+    [[part.section.row]]
+    keys = ["INTEGRATIONS_S3_ENDPOINT_URL"]
+    default = "unset: Amazon S3 in the bucket's region"
+    setups = ["S", "D", "H"]
+    text = "A test and self-hosted-proxy setting only. An S3-compatible endpoint the Cloud Storage export writes to, with path-style addressing, in place of Amazon S3. Unset, the export writes to Amazon S3 itself. The product's own object storage does not read it. It is never shown in the console and never set per organization; when it is set, the API and the workers log one `integration_endpoint_override` line at start. The value must be an http or https URL with a host, optionally a port and a path, and no credentials, query or fragment; with any other value the API and the workers stop at start with an error naming the variable."
+
+    [[part.section.row]]
+    keys = ["INTEGRATIONS_LINEAR_URL"]
+    default = "unset: `https://api.linear.app`"
+    setups = ["S", "D", "H"]
+    text = "A test and self-hosted-proxy setting only. The base URL the Linear integration sends its GraphQL requests (`/graphql`: the key check, the team list, issue and comment creation) to in place of `https://api.linear.app`. Unset, it calls Linear itself. It is never shown in the console and never set per organization; when it is set, the API and the workers log one `integration_endpoint_override` line at start. The value must be an http or https URL with a host, optionally a port and a path, and no credentials, query or fragment; with any other value the API and the workers stop at start with an error naming the variable."
+
   [[part.section]]
   heading = "Development overlays (`./bin/dev`)"
   body = '''
 Read only by `docker-compose.dev.yml` and `docker-compose.distributed.dev.yml`.
+'''
+  after = '''
+**Development machines only.** Code that the local sandbox server
+(`local-sandbox` profile) runs can reach the API key pair you give the server
+and can control Docker on your machine, so treat it as having access to your
+whole machine. With `./bin/dev --distributed`, every `up` also starts
+`docker-proxy`, which relays the host Docker socket, without authentication, to
+any container on the compose network. Run only code you trust: don't run
+untrusted workloads with this setup, including agent or connector code you
+didn't write. Give the server its own key pair, which you can disable or delete
+on the **Keys** page, and run the Distributed overlay only on your own
+development machine.
 '''
 
     [[part.section.row]]
@@ -2031,7 +2453,7 @@ Read only by `docker-compose.dev.yml` and `docker-compose.distributed.dev.yml`.
     keys = ["FI_API_KEY", "FI_SECRET_KEY"]
     default = "required by the local sandbox server"
     setups = ["dev"]
-    text = "Organization API key pair the local sandbox server files results with. Never set on the simulation runner."
+    text = "Personal API key pair created on the Keys page, which the local sandbox server files results with. Never set on the simulation runner."
 
 [[part]]
 heading = "5. Internal: set by the compose files"
@@ -2063,6 +2485,12 @@ nothing. Change what they are derived from instead, or use a
     default = "the bundled Redis, databases 0 to 3"
     setups = ["S", "D"]
     text = "`REDIS_PASSWORD` in Standalone."
+
+    [[part.section.row]]
+    keys = ["OMEGA_HUB_STORAGE", "OMEGA_HUB_URL", "OMEGA_HUB_RUNNER_RUNTIME", "OMEGA_HUB_RUNNER_WAIT", "DOCKER_HOST", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "DOCKER_TLS_SAN"]
+    default = "`object`; the app; `runsc`; `1` (`0` in production); `tcp://hub-runner:2376` with mutual TLS"
+    setups = ["S", "D"]
+    text = "The Omega Hub's wiring: its bundles go to object storage, the checker reaches the app and the `hub-runner` daemon, refuses a runtime other than gVisor, and waits for the runner image instead of exiting (the production overlay exits so `up --wait` fails loudly)."
 
     [[part.section.row]]
     keys = ["TEMPORAL_HOST"]
@@ -2130,6 +2558,24 @@ nothing. Change what they are derived from instead, or use a
     default = "`http://127.0.0.1:8080` (S), `http://agentcc-gateway:8080` (D)"
     setups = ["S", "D"]
     text = "The gateway's container port, where the app and workers call it. A host-facing URL (the published `AGENTCC_GATEWAY_PORT`, `:8090`) exported in the shell must not replace this service-to-service route. Helm sets both to the gateway's Service."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_MCP_EGRESS_PRIVATE_ALLOW"]
+    default = "`localhost:8000,127.0.0.1:8000` (S)"
+    setups = ["S"]
+    text = "Set by supervisord for the gateway: added to the gateway config's `mcp.egress.private_allow`, so an org's FutureAGI eval guardrail, whose `base_url` the API fills with its own `BASE_URL` (`http://localhost:8000` unless you set one), reaches the API in the same container. Only the API's port is listed; every other loopback port stays refused. A gateway from before this setting ignores it. Elsewhere, list such addresses in the gateway config (`mcp.egress.private_allow`)."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_GATEWAY_PUBLIC_URL"]
+    default = "unset (falls back to `AGENTCC_GATEWAY_URL`)"
+    setups = ["D"]
+    text = "The gateway's public HTTPS origin, which Omega EE calls. The app builds each virtual server's address for Omega EE on it (`<origin><AGENTCC_GATEWAY_MCP_ENDPOINT>/v/<id>`); while it is not a public HTTPS origin, provisioning answers 503 `gateway_url_not_public` and writes nothing. Helm sets it from the LLM gateway's route (`gatewayApi.llmGateway`); set it in `config.extraEnv` when the gateway is exposed another way."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_GATEWAY_MCP_ENDPOINT"]
+    default = "`/mcp`"
+    setups = ["D"]
+    text = "The gateway's MCP endpoint path, as its `mcp.endpoint` sets it; it must equal that setting, or the virtual-server addresses the app hands Omega EE point at a path the gateway does not serve."
 
     [[part.section.row]]
     keys = ["AGENTCC_CONTROL_PLANE_URL", "AGENTCC_CONTROL_PLANE_TOKEN", "AGENTCC_SYNC_ON_STARTUP"]

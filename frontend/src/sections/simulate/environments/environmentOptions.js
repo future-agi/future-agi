@@ -48,7 +48,7 @@ export const OPTIONS = [
     icon: "solar:cloud-linear",
     blurb:
       "Connect an agent living on a managed voice or chat platform by its ID. We handle the auth and route every simulated turn through the platform's own API.",
-    preview: ["Vapi", "Retell", "Bland", "ElevenLabs", "LiveKit"],
+    preview: ["Vapi", "Retell", "LiveKit"],
     setupSubtitle: "Point at an agent living on a managed platform.",
     status: OPTION_STATUS.LIVE,
   },
@@ -127,12 +127,22 @@ export const ENTRY_TAB = {
 };
 export const DEFAULT_ENTRY_TAB = ENTRY_TAB.BUILD;
 
+// "Start a new build" on a failed or canceled environment opens the Build tab
+// with `?rebuild=<envId>`. When the kept draft built that environment, its
+// source option reopens on that draft (keyed by the draft's `kind`).
+export const REBUILD_PARAM = "rebuild";
+export const DRAFT_KIND_OPTION = {
+  repo: OPTION_ID.SOURCE,
+  platform: OPTION_ID.HOSTED,
+  upload: OPTION_ID.UPLOAD,
+};
+
 // Matches the product tab rail (see HarnessDetail): the theme gives every tab a
 // 40px right margin, which spreads short labels apart and breaks the row into
 // separate boxes. Override it at the Tabs level so tabs sit flush and space
 // themselves with padding — the indicator then spans a whole tab as one rail.
 // The builder chat header shares ENV_TAB_RAIL_HEIGHT so the two line up.
-export const ENV_TAB_RAIL_HEIGHT = 38;
+export const ENV_TAB_RAIL_HEIGHT = 32;
 
 export const ENV_TABS_SX = {
   minHeight: ENV_TAB_RAIL_HEIGHT,
@@ -150,7 +160,7 @@ export const ENV_TABS_SX = {
 export const ENVIRONMENTS_HEADER = {
   title: "Environments",
   subtitle:
-    "An environment is the world your agent runs in: seeded state, tools, and rules. Pick how you want to bring your agent in and we take care of the rest.",
+    "Set up the world your agent is tested in: seeded data, tools and rules.",
   connectHeading: "Or connect your own agent",
   connectSub: "We work with what you already have: no rewrite, no adapter.",
 };

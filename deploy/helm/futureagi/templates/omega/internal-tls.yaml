@@ -1,0 +1,51 @@
+{{- /*
+The API pods' internal TLS listener (omega.internalTls): its certificate, when
+cert-manager issues it, and, with networkPolicy.enabled, who besides this
+release's pods may reach it (Omega EE, for the observe-target lookup).
+*/ -}}
+{{- if include "futureagi.omega.internalTls" . }}
+{{- $t := .Values.omega.internalTls -}}
+{{- $ctx := dict "root" . "component" "omega-internal-tls" -}}
+{{- if not $t.existingSecret }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "futureagi.omega.internalTls.secretName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  secretName: {{ include "futureagi.omega.internalTls.secretName" . }}
+  duration: {{ $t.certManager.duration }}
+  renewBefore: {{ $t.certManager.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  usages: [server auth, digital signature]
+  dnsNames: {{ include "futureagi.omega.internalTls.dnsNames" . }}
+  issuerRef:
+    {{- toYaml $t.certManager.issuerRef | nindent 4 }}
+{{- end }}
+{{- if and .Values.networkPolicy.enabled $t.allowFrom }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "futureagi.component" (dict "root" . "component" "omega-internal-tls") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" (dict "root" . "component" "backend") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        {{- toYaml $t.allowFrom | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: https-internal
+{{- end }}
+{{- end }}

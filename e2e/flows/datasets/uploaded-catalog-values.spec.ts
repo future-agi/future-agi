@@ -1,3 +1,6 @@
+// SELECTOR_RECHECK_AFTER_FE(FE-DSX-DATASETS-EVALS, FE-DSX-DEVELOP-DETAIL): WHOLE_FILE, not only conflict regions.
+// Recheck every selector, imported grid/picker helper, declaration and repeated use,
+// including all auto-merged hunks; change dependent references together after FE lands.
 import { test, expect } from '../../lib/fixtures';
 import { uploadFixture } from '../../lib/upload';
 import { POLL } from '../../lib/state-probe';
@@ -28,7 +31,8 @@ test('DATA-E2E-001: uploaded dataset values can be discovered and filtered', {
   page.setDefaultTimeout(UI_READY);
   const name = `e2e-data1-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   await page.goto('/dashboard/develop', { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: 'Add Dataset', exact: true }).first().click({ timeout: UI_READY });
+  // SELECTOR_RECHECK_AFTER_FE(FE-DSX-DATASETS-EVALS, FE-DSX-DEVELOP-DETAIL): dev labels (/^add dataset$/i, 'Upload a file (JSON, CSV)'); the candidate hunk used 'Add Dataset' exact and 'Upload a file' (candidate FE DevelopView.jsx)
+  await page.getByRole('button', { name: /^add dataset$/i }).first().click({ timeout: UI_READY });
   await page.getByText('Upload a file (JSON, CSV)', { exact: true }).click({ timeout: UI_READY });
   const dialog = page.getByRole('dialog').filter({ has: page.getByText('Upload a File', { exact: true }) });
   await uploadFixture(dialog.locator('input[type="file"]'), 'catalog-regions.csv');

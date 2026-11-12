@@ -1,6 +1,30 @@
+import { Buffer } from "node:buffer";
 import { apiPath, assert } from "../lib/api-client.mjs";
+import { historicalBoundaryPath } from "../lib/historical-boundary-paths.mjs";
+import {
+  isContractedApiPath,
+  isApiContractExceptionPath,
+} from "../../../src/api/contracts/api-surface.js";
 
 let publicApiRequestCounter = 0;
+
+// DRF auth-envelope codes pinned by accounts/tests/test_exception_handler.py
+// and assertLiveKitWebhookGuard below. Other probe families opt in separately.
+const AUTH_GUARD_CODES = [
+  "not_authenticated",
+  "authentication_failed",
+  "permission_denied",
+];
+
+function codeEvidence(result, expectedCodes = AUTH_GUARD_CODES) {
+  const code = result.body?.code;
+  return {
+    // Return an allowlist member, never an arbitrary server value (or its hash).
+    code_class:
+      expectedCodes.find((expected) => code === expected) ?? "UNEXPECTED",
+    code_present: code !== undefined && code !== null,
+  };
+}
 
 export const publicApiJourneys = [
   {
@@ -15,13 +39,15 @@ export const publicApiJourneys = [
         health.body?.status === true &&
           health.body?.result?.healthy === true &&
           Number.isFinite(Number(health.body?.result?.tool_count)),
-        `MCP health payload mismatch: ${JSON.stringify(health.body)}`,
+        `MCP health payload mismatch: ${formatResponse(health)}`,
       );
       assertNoSensitiveTokens(health.body, "MCP health");
       evidence.push({
         checkpoint: "mcp_health",
         status: health.status,
-        tool_count: health.body.result.tool_count,
+        tool_count: Number.isFinite(health.body.result.tool_count)
+          ? health.body.result.tool_count
+          : null,
       });
 
       const approveInfoMissing = await request(
@@ -98,15 +124,13 @@ export const publicApiJourneys = [
       evidence.push({
         checkpoint: "authorize_unknown_client",
         status: authorizeUnknown.status,
-        content_type: authorizeUnknown.contentType,
+        content_type: contentTypeClass(authorizeUnknown),
         body_kind: typeof authorizeUnknown.body,
       });
       assertNoHtml500(authorizeUnknown, "authorize unknown client");
       assert(
         [400, 503].includes(authorizeUnknown.status),
-        `authorize unknown client expected 400 or registry 503, saw ${authorizeUnknown.status}: ${formatBody(
-          authorizeUnknown.body,
-        )}`,
+        `authorize unknown client expected 400 or registry 503, saw ${authorizeUnknown.status}: ${formatResponse(authorizeUnknown)}`,
       );
       assertJsonError(
         authorizeUnknown,
@@ -128,9 +152,7 @@ export const publicApiJourneys = [
         String(tokenMissing.body?.error_description || "").includes(
           "grant_type",
         ),
-        `token missing fields did not mention grant_type: ${JSON.stringify(
-          tokenMissing.body,
-        )}`,
+        `token missing fields did not mention grant_type: ${formatResponse(tokenMissing)}`,
       );
 
       const tokenUnsupported = await request(
@@ -170,15 +192,13 @@ export const publicApiJourneys = [
       evidence.push({
         checkpoint: "token_unknown_client",
         status: tokenUnknownClient.status,
-        content_type: tokenUnknownClient.contentType,
+        content_type: contentTypeClass(tokenUnknownClient),
         body_kind: typeof tokenUnknownClient.body,
       });
       assertNoHtml500(tokenUnknownClient, "token unknown client");
       assert(
         [401, 503].includes(tokenUnknownClient.status),
-        `token unknown client expected 401 or registry 503, saw ${tokenUnknownClient.status}: ${formatBody(
-          tokenUnknownClient.body,
-        )}`,
+        `token unknown client expected 401 or registry 503, saw ${tokenUnknownClient.status}: ${formatResponse(tokenUnknownClient)}`,
       );
       assertOAuthError(
         tokenUnknownClient,
@@ -217,15 +237,13 @@ export const publicApiJourneys = [
       evidence.push({
         checkpoint: "refresh_token_unknown_client",
         status: refreshUnknownClient.status,
-        content_type: refreshUnknownClient.contentType,
+        content_type: contentTypeClass(refreshUnknownClient),
         body_kind: typeof refreshUnknownClient.body,
       });
       assertNoHtml500(refreshUnknownClient, "refresh token unknown client");
       assert(
         [401, 503].includes(refreshUnknownClient.status),
-        `refresh token unknown client expected 401 or registry 503, saw ${refreshUnknownClient.status}: ${formatBody(
-          refreshUnknownClient.body,
-        )}`,
+        `refresh token unknown client expected 401 or registry 503, saw ${refreshUnknownClient.status}: ${formatResponse(refreshUnknownClient)}`,
       );
       assertOAuthError(
         refreshUnknownClient,
@@ -254,7 +272,9 @@ export const publicApiJourneys = [
       assertJsonAuthGuard(consentUnauthenticated, "consent unauthenticated");
 
       evidence.push({
-        health_tool_count: health.body.result.tool_count,
+        health_tool_count: Number.isFinite(health.body.result.tool_count)
+          ? health.body.result.tool_count
+          : null,
         approve_info_missing_status: approveInfoMissing.status,
         approve_info_expired_status: approveInfoExpired.status,
         authorize_unknown_status: authorizeUnknown.status,
@@ -262,11 +282,13 @@ export const publicApiJourneys = [
         refresh_missing_token_status: refreshMissingToken.status,
         refresh_unknown_client_status: refreshUnknownClient.status,
         approve_unauthenticated_status: approveUnauthenticated.status,
-        approve_unauthenticated_content_type:
-          approveUnauthenticated.contentType,
+        approve_unauthenticated_content_type: contentTypeClass(
+          approveUnauthenticated,
+        ),
         consent_unauthenticated_status: consentUnauthenticated.status,
-        consent_unauthenticated_content_type:
-          consentUnauthenticated.contentType,
+        consent_unauthenticated_content_type: contentTypeClass(
+          consentUnauthenticated,
+        ),
       });
     },
   },
@@ -346,7 +368,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -609,7 +631,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -776,7 +798,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -784,7 +806,7 @@ export const publicApiJourneys = [
   {
     id: "PUBLIC-AUTH-004",
     title:
-      "Sensitive key, secret, billing, and provider APIs reject anonymous requests",
+      "Sensitive key and provider APIs refuse anonymous requests; retired license routes stay absent",
     tags: [
       "public",
       "auth",
@@ -830,7 +852,17 @@ export const publicApiJourneys = [
           body: { key_id: zeroUuid },
         },
         {
-          label: "system org keys",
+          label: "personal key issuance with a valid body",
+          method: "POST",
+          path: apiPath("/accounts/key/generate_secret_key/"),
+          body: {
+            key_name: "anonymous-personal-key-must-not-exist",
+            workspace_id: null,
+          },
+        },
+        {
+          // Retirement does not make the old route an anonymous credential door.
+          label: "retired bootstrap authentication boundary",
           method: "GET",
           path: apiPath("/accounts/keys/"),
         },
@@ -937,22 +969,86 @@ export const publicApiJourneys = [
         {
           label: "EE license list",
           method: "GET",
-          path: apiPath("/usage/ee/licenses/"),
+          kind: "absence",
+          template: "/usage/ee/licenses/",
+          path: historicalBoundaryPath("/usage/ee/licenses/"),
         },
         {
           label: "EE license create",
           method: "POST",
-          path: apiPath("/usage/ee/licenses/"),
+          kind: "absence",
+          template: "/usage/ee/licenses/",
+          path: historicalBoundaryPath("/usage/ee/licenses/"),
           body: {},
         },
         {
           label: "EE license revoke",
           method: "POST",
-          path: apiPath("/usage/ee/licenses/{grant_id}/revoke/", {
-            grant_id: zeroUuid,
-          }),
+          kind: "absence",
+          template: "/usage/ee/licenses/{grant_id}/revoke/",
+          path: historicalBoundaryPath(
+            "/usage/ee/licenses/{grant_id}/revoke/",
+            {
+              grant_id: zeroUuid,
+            },
+          ),
           body: {},
         },
+        {
+          label: "gateway API key list",
+          method: "GET",
+          path: apiPath("/agentcc/api-keys/"),
+        },
+        {
+          label: "gateway API key create",
+          method: "POST",
+          path: apiPath("/agentcc/api-keys/"),
+          body: {},
+        },
+        {
+          label: "gateway API key detail",
+          method: "GET",
+          path: apiPath("/agentcc/api-keys/{id}/", { id: zeroUuid }),
+        },
+        {
+          label: "gateway API key update",
+          method: "PATCH",
+          path: apiPath("/agentcc/api-keys/{id}/", { id: zeroUuid }),
+          body: {},
+        },
+        {
+          label: "gateway API key delete",
+          method: "DELETE",
+          path: apiPath("/agentcc/api-keys/{id}/", { id: zeroUuid }),
+          body: {},
+        },
+        {
+          label: "gateway API key revoke",
+          method: "POST",
+          path: apiPath("/agentcc/api-keys/{id}/revoke/", { id: zeroUuid }),
+          body: {},
+        },
+        {
+          label: "gateway API key sync",
+          method: "POST",
+          path: apiPath("/agentcc/api-keys/sync/"),
+          body: {},
+        },
+      ];
+
+      await assertAnonymousBoundaries(apiBase, endpoints, evidence);
+    },
+  },
+  {
+    id: "PUBLIC-AUTH-004-EE",
+    title: "Cloud billing APIs reject anonymous requests",
+    tags: ["public", "auth", "guard", "billing", "cloud", "nightly"],
+    public: true,
+    // Run against the integrated-staging image carrying the cloud billing routes.
+    // An absent route is a failure here, never a substitute for authentication.
+    async run({ apiBase, evidence }) {
+      const zeroUuid = "00000000-0000-0000-0000-000000000000";
+      const endpoints = [
         {
           label: "payment methods",
           method: "GET",
@@ -1002,64 +1098,8 @@ export const publicApiJourneys = [
           method: "GET",
           path: apiPath("/usage/v2/plans-and-addons/"),
         },
-        {
-          label: "gateway API key list",
-          method: "GET",
-          path: apiPath("/agentcc/api-keys/"),
-        },
-        {
-          label: "gateway API key create",
-          method: "POST",
-          path: apiPath("/agentcc/api-keys/"),
-          body: {},
-        },
-        {
-          label: "gateway API key detail",
-          method: "GET",
-          path: apiPath("/agentcc/api-keys/{id}/", { id: zeroUuid }),
-        },
-        {
-          label: "gateway API key update",
-          method: "PATCH",
-          path: apiPath("/agentcc/api-keys/{id}/", { id: zeroUuid }),
-          body: {},
-        },
-        {
-          label: "gateway API key delete",
-          method: "DELETE",
-          path: apiPath("/agentcc/api-keys/{id}/", { id: zeroUuid }),
-          body: {},
-        },
-        {
-          label: "gateway API key revoke",
-          method: "POST",
-          path: apiPath("/agentcc/api-keys/{id}/revoke/", { id: zeroUuid }),
-          body: {},
-        },
-        {
-          label: "gateway API key sync",
-          method: "POST",
-          path: apiPath("/agentcc/api-keys/sync/"),
-          body: {},
-        },
       ];
-
-      for (const endpoint of endpoints) {
-        const result = await request(
-          apiBase,
-          endpoint.method,
-          endpoint.path,
-          endpoint.body,
-        );
-        assertJsonAuthGuard(result, endpoint.label);
-        evidence.push({
-          label: endpoint.label,
-          method: endpoint.method,
-          path: endpoint.path,
-          status: result.status,
-          code: result.body?.code || null,
-        });
-      }
+      await assertAnonymousBoundaries(apiBase, endpoints, evidence);
     },
   },
   {
@@ -1157,7 +1197,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -1254,7 +1294,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -1283,7 +1323,7 @@ export const publicApiJourneys = [
         config.body?.status === true &&
           typeof config.body?.result?.cloud === "boolean" &&
           Array.isArray(config.body?.result?.available_regions),
-        `public config payload mismatch: ${formatBody(config.body)}`,
+        `public config payload mismatch: ${formatResponse(config)}`,
       );
       assertNoSensitiveTokens(config.body, "public config");
       evidence.push({
@@ -1392,7 +1432,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result, ["invalid", "required"]),
         });
       }
 
@@ -1407,7 +1447,7 @@ export const publicApiJourneys = [
         method: "GET",
         path: apiPath("/accounts/onboarding/"),
         status: onboardingRead.status,
-        code: onboardingRead.body?.code || null,
+        ...codeEvidence(onboardingRead),
       });
 
       const onboardingUpdate = await request(
@@ -1422,7 +1462,7 @@ export const publicApiJourneys = [
         method: "POST",
         path: apiPath("/accounts/onboarding/"),
         status: onboardingUpdate.status,
-        code: onboardingUpdate.body?.code || null,
+        ...codeEvidence(onboardingUpdate),
       });
 
       const passkeyOptions = await request(
@@ -1436,9 +1476,7 @@ export const publicApiJourneys = [
         typeof passkeyOptions.body?.challenge === "string" &&
           typeof passkeyOptions.body?.session_id === "string" &&
           Array.isArray(passkeyOptions.body?.allowCredentials),
-        `passkey authenticate options payload mismatch: ${formatBody(
-          passkeyOptions.body,
-        )}`,
+        `passkey authenticate options payload mismatch: ${formatResponse(passkeyOptions)}`,
       );
       assertNoSensitiveTokens(
         passkeyOptions.body,
@@ -1470,7 +1508,7 @@ export const publicApiJourneys = [
         assertStatus(result, 200, endpoint.label);
         assert(
           String(result.contentType).includes("text/html"),
-          `${endpoint.label} expected text/html, saw ${result.contentType}`,
+          `${endpoint.label} expected text/html, saw ${contentTypeClass(result)}`,
         );
         assert(
           typeof result.body === "string" &&
@@ -1484,7 +1522,7 @@ export const publicApiJourneys = [
           method: "GET",
           path: endpoint.path,
           status: result.status,
-          content_type: result.contentType,
+          content_type: contentTypeClass(result),
         });
       }
     },
@@ -1501,7 +1539,7 @@ export const publicApiJourneys = [
       assert(
         health.body?.status === true &&
           health.body?.result === "Server is up and running",
-        `root health payload mismatch: ${formatBody(health.body)}`,
+        `root health payload mismatch: ${formatResponse(health)}`,
       );
       assertNoSensitiveTokens(health.body, "root health");
       evidence.push({
@@ -1520,7 +1558,7 @@ export const publicApiJourneys = [
       assert(
         deployment.body?.status === true &&
           ["oss", "ee", "cloud"].includes(deployment.body?.result?.mode),
-        `deployment info payload mismatch: ${formatBody(deployment.body)}`,
+        `deployment info payload mismatch: ${formatResponse(deployment)}`,
       );
       assertNoSensitiveTokens(deployment.body, "deployment info");
       evidence.push({
@@ -1546,7 +1584,7 @@ export const publicApiJourneys = [
           typeof clickhouse.body.cdc_lag === "object" &&
           clickhouse.body?.routing &&
           typeof clickhouse.body.routing === "object",
-        `ClickHouse health payload mismatch: ${formatBody(clickhouse.body)}`,
+        `ClickHouse health payload mismatch: ${formatResponse(clickhouse)}`,
       );
       assertNoSensitiveTokens(clickhouse.body, "ClickHouse health");
       evidence.push({
@@ -1635,7 +1673,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -1719,7 +1757,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
 
@@ -1777,7 +1815,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result, ["invalid", "required"]),
         });
       }
 
@@ -1991,7 +2029,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -2181,7 +2219,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
 
@@ -2198,7 +2236,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result, ["permission_denied"]),
         });
       }
 
@@ -2217,7 +2255,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result, ["invalid"]),
         });
       }
     },
@@ -2286,7 +2324,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
 
@@ -2311,7 +2349,7 @@ export const publicApiJourneys = [
           pathParams,
         ),
         status: oauthCallback.status,
-        content_type: oauthCallback.contentType,
+        content_type: contentTypeClass(oauthCallback),
       });
     },
   },
@@ -2368,7 +2406,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -2387,7 +2425,7 @@ export const publicApiJourneys = [
       assert(
         health.body?.status === "healthy" &&
           health.body?.service === "otlp-trace-receiver",
-        `OTLP v1 health payload mismatch: ${formatBody(health.body)}`,
+        `OTLP v1 health payload mismatch: ${formatResponse(health)}`,
       );
       assertNoSensitiveTokens(health.body, "OTLP v1 health");
       evidence.push({
@@ -2424,7 +2462,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -2466,7 +2504,7 @@ export const publicApiJourneys = [
           method: "GET",
           path: endpoint.path,
           status: result.status,
-          content_type: result.contentType,
+          content_type: contentTypeClass(result),
         });
       }
 
@@ -2492,7 +2530,7 @@ export const publicApiJourneys = [
           method,
           path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
 
@@ -2615,7 +2653,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -2677,7 +2715,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -2837,7 +2875,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -2922,7 +2960,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -3034,7 +3072,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -3127,7 +3165,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -3194,7 +3232,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "internal_bearer_secret",
         });
       }
@@ -3217,7 +3255,7 @@ export const publicApiJourneys = [
           call_id: callId,
         }),
         status: listenerToken.status,
-        code: listenerToken.body?.code || null,
+        ...codeEvidence(listenerToken),
         auth_boundary: "user_session",
       });
 
@@ -3236,7 +3274,7 @@ export const publicApiJourneys = [
         method: "POST",
         path: apiPath("/simulate/api/livekit/validate-credentials/"),
         status: validateCredentials.status,
-        code: validateCredentials.body?.code || null,
+        ...codeEvidence(validateCredentials),
         auth_boundary: "user_session",
       });
 
@@ -3252,7 +3290,7 @@ export const publicApiJourneys = [
         method: "POST",
         path: apiPath("/simulate/api/livekit/webhook/"),
         status: webhook.status,
-        code: webhook.body?.code || null,
+        ...codeEvidence(webhook, ["not_authenticated"]),
         auth_boundary: "livekit_signed_webhook",
       });
     },
@@ -3351,7 +3389,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
         });
       }
     },
@@ -3519,7 +3557,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -3546,7 +3584,7 @@ export const publicApiJourneys = [
         method: "POST",
         path: apiPath("/usage/v2/stripe-webhook/"),
         status: stripeWebhook.status,
-        code: stripeWebhook.body?.code || null,
+        ...codeEvidence(stripeWebhook, ["invalid"]),
         auth_boundary: "stripe_signature",
       });
     },
@@ -3686,7 +3724,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "api_key_or_superuser",
         });
       }
@@ -3814,7 +3852,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -3832,7 +3870,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "api_key",
         });
       }
@@ -3848,15 +3886,15 @@ export const publicApiJourneys = [
         method: "GET",
         path: apiPath("/usage/get_latest_prices/"),
         status: pricing.status,
-        code: pricing.body?.code || null,
+        ...codeEvidence(pricing, pricing.status === 400 ? ["invalid"] : []),
         auth_boundary: "public_pricing_read",
         result_status: pricing.body?.status ?? null,
         result_key_count:
           pricing.status === 200 && pricing.body?.result
             ? Object.keys(pricing.body.result).length
             : 0,
-        error_detail:
-          pricing.status === 400 ? pricing.body?.detail || null : null,
+        error_detail_class:
+          pricing.status === 400 ? "PRICING_SOURCE_UNAVAILABLE" : null,
       });
 
       const webhook = await request(
@@ -3878,7 +3916,7 @@ export const publicApiJourneys = [
         method: "POST",
         path: apiPath("/usage/webhook/"),
         status: webhook.status,
-        code: webhook.body?.code || null,
+        ...codeEvidence(webhook, ["invalid"]),
         auth_boundary: "stripe_signature",
       });
     },
@@ -4040,7 +4078,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -4254,7 +4292,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -4459,7 +4497,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -4569,7 +4607,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -4671,7 +4709,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -4751,7 +4789,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -4818,7 +4856,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -4890,7 +4928,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -4965,7 +5003,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -5131,7 +5169,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -5242,7 +5280,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -5319,7 +5357,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -5398,7 +5436,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -5489,7 +5527,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -5540,7 +5578,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -5627,7 +5665,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -5702,7 +5740,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -5793,7 +5831,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -5862,7 +5900,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -5926,7 +5964,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session",
         });
       }
@@ -6030,7 +6068,7 @@ export const publicApiJourneys = [
           method: endpoint.method,
           path: endpoint.path,
           status: result.status,
-          code: result.body?.code || null,
+          ...codeEvidence(result),
           auth_boundary: "user_session_before_hidden_contract_guard",
         });
       }
@@ -6071,7 +6109,7 @@ export const publicApiJourneys = [
           { id: guardUuid },
         ),
         status: result.status,
-        code: result.body?.code || null,
+        ...codeEvidence(result),
         run_index: 0,
         auth_boundary: "user_session_before_prompt_eval_mutation",
       });
@@ -6104,7 +6142,7 @@ export const publicApiJourneys = [
         method: "POST",
         path: apiPath("/tracer/otlp/v1/traces"),
         status: otlp.status,
-        code: otlp.body?.code || null,
+        ...codeEvidence(otlp),
         auth_boundary: "api_key_or_langfuse_basic",
       });
 
@@ -6117,7 +6155,7 @@ export const publicApiJourneys = [
       assert(
         health.body?.status === "healthy" &&
           health.body?.service === "otlp-trace-receiver",
-        `GET /tracer/v1/health payload mismatch: ${formatBody(health.body)}`,
+        `GET /tracer/v1/health payload mismatch: ${formatResponse(health)}`,
       );
       assertNoSensitiveTokens(health.body, "GET /tracer/v1/health");
       evidence.push({
@@ -6144,13 +6182,61 @@ export const publicApiJourneys = [
           token: "fagi-api-journey-missing-token",
         }),
         status: shared.status,
-        code: shared.body?.code || null,
-        detail: shared.body?.detail || null,
+        ...codeEvidence(
+          shared,
+          shared.status === 404 ? ["not_found"] : ["service_unavailable"],
+        ),
+        detail_class:
+          shared.status === 404 ? "NOT_FOUND" : "SERVICE_UNAVAILABLE",
         auth_boundary: "public_share_token",
       });
     },
   },
 ];
+
+async function assertAnonymousBoundaries(apiBase, endpoints, evidence) {
+  const failures = [];
+  for (const endpoint of endpoints) {
+    const result = await request(
+      apiBase,
+      endpoint.method,
+      endpoint.path,
+      endpoint.body,
+    );
+    const absence = endpoint.kind === "absence";
+    const advertised =
+      absence &&
+      (isContractedApiPath(endpoint.template) ||
+        isApiContractExceptionPath(endpoint.template));
+    try {
+      if (absence) {
+        assert(result.status === 404, "Removed route must be absent");
+        assert(!advertised, "Removed route must not be advertised");
+        assertNoHtml500(result, endpoint.label);
+        assertNoSensitiveTokens(result.body, endpoint.label);
+      } else {
+        assertJsonAuthGuard(result, endpoint.label);
+      }
+    } catch {
+      // Evaluate every boundary, but never echo response bodies from key probes.
+      failures.push(
+        absence
+          ? `${endpoint.label} expected absent route 404, saw ${result.status}${advertised ? "; removed route is advertised" : ""} (absence/redaction contract failed)`
+          : `${endpoint.label} expected anonymous auth guard 401/403, saw ${result.status} (authentication/JSON/redaction contract failed)`,
+      );
+    }
+    evidence.push({
+      label: endpoint.label,
+      method: endpoint.method,
+      path: endpoint.path,
+      status: result.status,
+      ...codeEvidence(result, absence ? ["not_found"] : AUTH_GUARD_CODES),
+      kind: absence ? "absence" : "authentication",
+      ...(absence ? { advertised } : {}),
+    });
+  }
+  assert(failures.length === 0, failures.join("; "));
+}
 
 async function request(apiBase, method, pathName, body, options = {}) {
   const headers = {
@@ -6168,6 +6254,7 @@ async function request(apiBase, method, pathName, body, options = {}) {
   return {
     status: response.status,
     body: parseBody(responseText),
+    bodyBytes: Buffer.byteLength(responseText, "utf8"),
     contentType: response.headers.get("content-type") || "",
     location: response.headers.get("location") || "",
   };
@@ -6193,9 +6280,7 @@ function parseBody(text) {
 function assertStatus(result, expectedStatus, label) {
   assert(
     result.status === expectedStatus,
-    `${label} expected HTTP ${expectedStatus}, saw ${result.status}: ${formatBody(
-      result.body,
-    )}`,
+    `${label} expected HTTP ${expectedStatus}, saw ${result.status}: ${formatResponse(result)}`,
   );
 }
 
@@ -6209,37 +6294,35 @@ function assertNoHtml500(result, label) {
 function assertJsonError(result, expectedText, label) {
   assert(
     result.body && typeof result.body === "object",
-    `${label} returned non-JSON body: ${formatBody(result.body)}`,
+    `${label} returned non-JSON body: ${formatResponse(result)}`,
   );
   const haystack = jsonErrorHaystack(result);
   assert(
     haystack.includes(expectedText),
     `${label} missing expected error text ${JSON.stringify(
       expectedText,
-    )}: ${JSON.stringify(result.body)}`,
+    )}: ${formatResponse(result)}`,
   );
 }
 
 function assertJsonErrorCaseInsensitive(result, expectedText, label) {
   assert(
     result.body && typeof result.body === "object",
-    `${label} returned non-JSON body: ${formatBody(result.body)}`,
+    `${label} returned non-JSON body: ${formatResponse(result)}`,
   );
   const haystack = jsonErrorHaystack(result).toLowerCase();
   assert(
     haystack.includes(expectedText.toLowerCase()),
     `${label} missing expected error text ${JSON.stringify(
       expectedText,
-    )}: ${JSON.stringify(result.body)}`,
+    )}: ${formatResponse(result)}`,
   );
 }
 
 function assertJsonAuthGuard(result, label) {
   assert(
     [401, 403].includes(result.status),
-    `${label} expected anonymous auth guard 401/403, saw ${result.status}: ${formatBody(
-      result.body,
-    )}`,
+    `${label} expected anonymous auth guard 401/403, saw ${result.status}: ${formatResponse(result)}`,
   );
   assertJsonErrorOneOf(
     result,
@@ -6257,23 +6340,21 @@ function assertJsonAuthGuard(result, label) {
 function assertJsonErrorOneOf(result, expectedTexts, label) {
   assert(
     result.body && typeof result.body === "object",
-    `${label} returned non-JSON body: ${formatBody(result.body)}`,
+    `${label} returned non-JSON body: ${formatResponse(result)}`,
   );
   const haystack = jsonErrorHaystack(result);
   assert(
     expectedTexts.some((expectedText) => haystack.includes(expectedText)),
     `${label} missing any expected error text ${JSON.stringify(
       expectedTexts,
-    )}: ${JSON.stringify(result.body)}`,
+    )}: ${formatResponse(result)}`,
   );
 }
 
 function assertJsonPermissionGuard(result, label) {
   assert(
     result.status === 403,
-    `${label} expected anonymous permission guard 403, saw ${result.status}: ${formatBody(
-      result.body,
-    )}`,
+    `${label} expected anonymous permission guard 403, saw ${result.status}: ${formatResponse(result)}`,
   );
   assertJsonErrorCaseInsensitive(result, "permission", label);
   assertNoHtml500(result, label);
@@ -6283,13 +6364,11 @@ function assertJsonPermissionGuard(result, label) {
 function assertApiKeyOrPermissionGuard(result, label) {
   assert(
     [401, 403].includes(result.status),
-    `${label} expected API-key/superuser guard 401/403, saw ${result.status}: ${formatBody(
-      result.body,
-    )}`,
+    `${label} expected API-key/superuser guard 401/403, saw ${result.status}: ${formatResponse(result)}`,
   );
   assert(
     result.body && typeof result.body === "object",
-    `${label} returned non-JSON body: ${formatBody(result.body)}`,
+    `${label} returned non-JSON body: ${formatResponse(result)}`,
   );
   const haystack = jsonErrorHaystack(result).toLowerCase();
   assert(
@@ -6298,9 +6377,7 @@ function assertApiKeyOrPermissionGuard(result, label) {
       haystack.includes("authentication") ||
       haystack.includes("credentials") ||
       haystack.includes("not authenticated"),
-    `${label} missing expected API-key or permission error text: ${JSON.stringify(
-      result.body,
-    )}`,
+    `${label} missing expected API-key or permission error text: ${formatResponse(result)}`,
   );
   assertNoHtml500(result, label);
   assertNoSensitiveTokens(result.body, label);
@@ -6309,13 +6386,11 @@ function assertApiKeyOrPermissionGuard(result, label) {
 function assertJsonPublicBoundary(result, label) {
   assert(
     [200, 400].includes(result.status),
-    `${label} expected public JSON boundary 200/400, saw ${result.status}: ${formatBody(
-      result.body,
-    )}`,
+    `${label} expected public JSON boundary 200/400, saw ${result.status}: ${formatResponse(result)}`,
   );
   assert(
     result.body && typeof result.body === "object",
-    `${label} returned non-JSON body: ${formatBody(result.body)}`,
+    `${label} returned non-JSON body: ${formatResponse(result)}`,
   );
   assertNoHtml500(result, label);
   assertNoSensitiveTokens(result.body, label);
@@ -6325,34 +6400,30 @@ function assertUsageLatestPricesBoundary(result, label) {
   assertJsonPublicBoundary(result, label);
   assert(
     typeof result.body.status === "boolean",
-    `${label} missing boolean status: ${formatBody(result.body)}`,
+    `${label} missing boolean status: ${formatResponse(result)}`,
   );
 
   if (result.status === 200) {
     assert(
       result.body.status === true,
-      `${label} 200 response must set status=true: ${formatBody(result.body)}`,
+      `${label} 200 response must set status=true: ${formatResponse(result)}`,
     );
     assert(
       result.body.result &&
         typeof result.body.result === "object" &&
         !Array.isArray(result.body.result),
-      `${label} 200 response must include a result pricing map: ${formatBody(
-        result.body,
-      )}`,
+      `${label} 200 response must include a result pricing map: ${formatResponse(result)}`,
     );
     const entries = Object.entries(result.body.result);
     assert(entries.length > 0, `${label} returned an empty pricing map.`);
     for (const [key, value] of entries) {
       assert(
         typeof key === "string" && key.length > 0,
-        `${label} returned an invalid pricing key: ${formatBody(result.body)}`,
+        `${label} returned an invalid pricing key: ${formatResponse(result)}`,
       );
       assert(
         typeof value === "number" && Number.isFinite(value) && value >= 0,
-        `${label} returned non-numeric pricing for ${key}: ${formatBody(
-          result.body,
-        )}`,
+        `${label} returned non-numeric pricing value: ${formatResponse(result)}`,
       );
     }
     return;
@@ -6367,9 +6438,7 @@ function assertUsageLatestPricesBoundary(result, label) {
       result.body.code === "invalid" &&
       typeof result.body.detail === "string" &&
       result.body.detail.includes("Unable to fetch pricing data"),
-    `${label} 400 response must be the bounded pricing-source error envelope: ${formatBody(
-      result.body,
-    )}`,
+    `${label} 400 response must be the bounded pricing-source error envelope: ${formatResponse(result)}`,
   );
 }
 
@@ -6378,11 +6447,11 @@ function assertSharedMissingTokenBoundary(result, label) {
     [404, 503].includes(result.status),
     `${label} expected JSON 404 not_found or 503 service_unavailable, saw ${
       result.status
-    }: ${formatBody(result.body)}`,
+    }: ${formatResponse(result)}`,
   );
   assert(
     result.body && typeof result.body === "object",
-    `${label} returned non-JSON body: ${formatBody(result.body)}`,
+    `${label} returned non-JSON body: ${formatResponse(result)}`,
   );
   assertNoHtml500(result, label);
   assertNoSensitiveTokens(result.body, label);
@@ -6391,7 +6460,7 @@ function assertSharedMissingTokenBoundary(result, label) {
     assertJsonError(result, "Shared link not found", label);
     assert(
       result.body?.code === "not_found",
-      `${label} expected not_found code, saw ${formatBody(result.body)}`,
+      `${label} expected not_found code, saw ${formatResponse(result)}`,
     );
     return;
   }
@@ -6402,18 +6471,14 @@ function assertSharedMissingTokenBoundary(result, label) {
       String(result.body?.detail || "").includes(
         "Shared link resolver is temporarily unavailable",
       ),
-    `${label} expected bounded shared-link resolver outage envelope: ${formatBody(
-      result.body,
-    )}`,
+    `${label} expected bounded shared-link resolver outage envelope: ${formatResponse(result)}`,
   );
 }
 
 function assertWebhookSecretGuard(result, label) {
   assert(
     result.status === 400,
-    `${label} expected webhook secret validation 400, saw ${result.status}: ${formatBody(
-      result.body,
-    )}`,
+    `${label} expected webhook secret validation 400, saw ${result.status}: ${formatResponse(result)}`,
   );
   assertJsonErrorCaseInsensitive(result, "webhook secret", label);
   assertNoHtml500(result, label);
@@ -6423,9 +6488,7 @@ function assertWebhookSecretGuard(result, label) {
 function assertLiveKitInternalBearerGuard(result, label) {
   assert(
     result.status === 401,
-    `${label} expected internal bearer guard 401, saw ${result.status}: ${formatBody(
-      result.body,
-    )}`,
+    `${label} expected internal bearer guard 401, saw ${result.status}: ${formatResponse(result)}`,
   );
   assertJsonErrorCaseInsensitive(result, "Missing Bearer token", label);
   assertNoHtml500(result, label);
@@ -6435,16 +6498,12 @@ function assertLiveKitInternalBearerGuard(result, label) {
 function assertLiveKitWebhookGuard(result, label) {
   assert(
     result.status === 401,
-    `${label} expected signed webhook guard 401, saw ${result.status}: ${formatBody(
-      result.body,
-    )}`,
+    `${label} expected signed webhook guard 401, saw ${result.status}: ${formatResponse(result)}`,
   );
   assertJsonErrorCaseInsensitive(result, "Missing Authorization header", label);
   assert(
     !result.body?.code || result.body.code === "not_authenticated",
-    `${label} expected not_authenticated webhook code, saw ${JSON.stringify(
-      result.body?.code,
-    )}`,
+    `${label} expected not_authenticated webhook code, saw ${formatResponse(result)}`,
   );
   assertNoHtml500(result, label);
   assertNoSensitiveTokens(result.body, label);
@@ -6453,9 +6512,7 @@ function assertLiveKitWebhookGuard(result, label) {
 function assertSamlPublicRedirect(result, label) {
   assert(
     [302, 400].includes(result.status),
-    `${label} expected SAML redirect/client boundary 302/400, saw ${result.status}: ${formatBody(
-      result.body,
-    )}`,
+    `${label} expected SAML redirect/client boundary 302/400, saw ${result.status}: ${formatResponse(result)}`,
   );
   assertNoHtml500(result, label);
   if (result.status === 302) {
@@ -6463,7 +6520,7 @@ function assertSamlPublicRedirect(result, label) {
   } else {
     assert(
       result.body && typeof result.body === "object",
-      `${label} returned non-JSON client error: ${formatBody(result.body)}`,
+      `${label} returned non-JSON client error: ${formatResponse(result)}`,
     );
   }
   assertNoSensitiveTokens(
@@ -6475,20 +6532,18 @@ function assertSamlPublicRedirect(result, label) {
 function assertHtmlClientError(result, expectedText, label) {
   assert(
     [400, 401, 403, 404].includes(result.status),
-    `${label} expected HTML client error, saw ${result.status}: ${formatBody(
-      result.body,
-    )}`,
+    `${label} expected HTML client error, saw ${result.status}: ${formatResponse(result)}`,
   );
   assertNoHtml500(result, label);
   assert(
     String(result.contentType).includes("text/html"),
-    `${label} expected text/html response, saw ${result.contentType}`,
+    `${label} expected text/html response, saw ${contentTypeClass(result)}`,
   );
   assert(
     typeof result.body === "string" && result.body.includes(expectedText),
     `${label} missing expected text ${JSON.stringify(
       expectedText,
-    )}: ${formatBody(result.body)}`,
+    )}: ${formatResponse(result)}`,
   );
   assertNoSensitiveTokens(result.body, label);
 }
@@ -6496,9 +6551,7 @@ function assertHtmlClientError(result, expectedText, label) {
 function assertJsonClientError(result, expectedText, label) {
   assert(
     [400, 401, 403, 404].includes(result.status),
-    `${label} expected JSON client error, saw ${result.status}: ${formatBody(
-      result.body,
-    )}`,
+    `${label} expected JSON client error, saw ${result.status}: ${formatResponse(result)}`,
   );
   assertJsonError(result, expectedText, label);
   assertNoHtml500(result, label);
@@ -6520,9 +6573,7 @@ function jsonErrorHaystack(result) {
 function assertOAuthError(result, expectedError, label) {
   assert(
     result.body?.error === expectedError,
-    `${label} expected OAuth error ${expectedError}, saw ${JSON.stringify(
-      result.body,
-    )}`,
+    `${label} expected OAuth error ${expectedError}, saw ${formatResponse(result)}`,
   );
 }
 
@@ -6532,7 +6583,7 @@ function assertNoSensitiveTokens(value, label) {
     !/(access_token|refresh_token|client_secret|Bearer\s+[A-Za-z0-9._-]+)/i.test(
       serialized,
     ),
-    `${label} exposed token-like data: ${serialized}`,
+    `${label} exposed token-like data (redaction contract failed).`,
   );
 }
 
@@ -6542,7 +6593,30 @@ function redactSafeBearerErrorText(value) {
   );
 }
 
-function formatBody(body) {
-  if (typeof body === "string") return body.slice(0, 500);
-  return JSON.stringify(body).slice(0, 500);
+function contentTypeClass(result) {
+  const mediaType = String(result.contentType)
+    .split(";", 1)[0]
+    .trim()
+    .toLowerCase();
+  if (!mediaType) return "MISSING";
+  if (mediaType === "application/json" || mediaType.endsWith("+json"))
+    return "JSON";
+  if (mediaType === "text/html") return "HTML";
+  return "OTHER";
+}
+
+function formatResponse(result) {
+  // The runner persists message and stack as well as partially added receipts.
+  // Describe only shape/size and allowlisted classes, never values or key names.
+  const body = result.body;
+  return JSON.stringify({
+    status: result.status,
+    content_type_class: contentTypeClass(result),
+    body_kind:
+      body === null ? "null" : Array.isArray(body) ? "array" : typeof body,
+    json_key_count:
+      body && typeof body === "object" ? Object.keys(body).length : 0,
+    body_bytes: result.bodyBytes,
+    ...codeEvidence(result),
+  });
 }

@@ -1,4 +1,5 @@
-import { Box, Typography } from "@mui/material";
+import ExternalContentFrame from "src/components/external-content/ExternalContentFrame";
+import { Box, Button } from "@mui/material";
 import React, { useState } from "react";
 import HeaderContent from "./HeaderContent";
 import VideoContent from "./VideoContent";
@@ -28,18 +29,17 @@ const SetupObsabilityInApplication = ({ setCurrentLabel }) => {
     <Box sx={{ width: "100%" }}>
       <Box sx={{ display: "flex", justifyContent: "space-between" }}>
         <HeaderContent
-          title="Set observability in application"
-          description="This tour will guide you through the key features and functionalities"
+          title="Send your first trace"
+          description="Send traces from your application so you can follow each request and spot problems in production."
         />
-        <Typography
-          variant="s1"
-          fontWeight={"fontWeightSemiBold"}
-          color="text.disabled"
-          sx={{ cursor: "pointer" }}
+        <Button
+          variant="text"
+          size="small"
+          sx={{ color: "text.secondary" }}
           onClick={() => setCurrentLabel("inviteTeamMembers")}
         >
           Skip
-        </Typography>
+        </Button>
       </Box>
       <Box sx={{ height: "330px", overflowY: "auto" }}>
         <VideoContent
@@ -57,13 +57,13 @@ const SetupObsabilityInApplication = ({ setCurrentLabel }) => {
       <GetStartedDemoVideo
         showDemoModal={showDemoModal}
         handleClose={handleClose}
-        headingTitle={`Demo`}
+        headingTitle={`Video`}
         viewDockAction={() => {
           window.open(viewDocLink);
           handleOnDocsClicked("get_started_observe_demo_modal");
         }}
         viewDocTitle="View docs"
-        buttonTitle="Start experimenting"
+        buttonTitle="Close"
         buttonAction={handleClose}
         videoComponent={
           <div
@@ -74,7 +74,7 @@ const SetupObsabilityInApplication = ({ setCurrentLabel }) => {
               width: "100%",
             }}
           >
-            <iframe
+            <ExternalContentFrame
               src={iframeVideo}
               title="Observe: Future AGI"
               frameBorder="0"

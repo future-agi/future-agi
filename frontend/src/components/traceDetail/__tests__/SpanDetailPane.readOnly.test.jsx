@@ -60,13 +60,17 @@ describe("SpanDetailPane read-only", () => {
     ).toBeInTheDocument();
   });
 
-  it("hides the tag input and the Annotations tab when read-only", () => {
+  it("hides the tag input and shows Annotations without Add Label when read-only", async () => {
+    const user = userEvent.setup();
     renderPane({ readOnly: true, onAction: vi.fn() });
 
     expect(screen.getByText("billing")).toBeInTheDocument();
     expect(screen.queryByText("tag")).toBeNull();
-    expect(screen.queryByText("Annotations")).toBeNull();
-    expect(screen.queryByTestId("scores-list")).toBeNull();
+
+    await user.click(screen.getByText("Annotations"));
+    expect(screen.getByTestId("scores-list")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Label" })).toBeNull();
+    expect(screen.getByText("View only link")).toBeInTheDocument();
   });
 
   it("offers Fix with Falcon in the Evals tab only when it can act", async () => {

@@ -15,6 +15,7 @@ import { useRerunTest } from "src/api/tests/testDetails";
 import { LoadingButton } from "@mui/lab";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import CustomTooltip from "src/components/tooltip";
+import NotInReleaseButton from "src/components/NotInRelease/NotInReleaseButton";
 import { useTestRunSdkStoreShallow } from "../test/TestRuns/state";
 const NewVoiceSimulationDrawer = lazy(
   () => import("../test/TestRuns/NewVoiceSimulationDrawer"),
@@ -27,7 +28,10 @@ import CallStatus from "../test/CallLogs/CallStatus";
 import CallMetadataSection from "./components/CallMetadataSection";
 import { formatStartTimeByRequiredFormat } from "src/utils/utils";
 import { formatDurationSafe } from "src/components/CallLogsDrawer/CustomCallLogHeader";
-import { SourceType } from "../scenarios/common";
+import {
+  PROMPT_RERUN_NO_CALLS,
+  isPromptSimulation,
+} from "../test/promptSimulationRerun";
 
 const TestRunDetailHeader = () => {
   const theme = useTheme();
@@ -53,6 +57,7 @@ const TestRunDetailHeader = () => {
     },
   );
   const { data: testData } = useTestRunDetails(testId);
+  const promptSimulation = isPromptSimulation(testData);
   const { data: kpis } = useKpis(executionId);
   const agentType = kpis?.agent_type;
   const handleRerun = () => {
@@ -150,10 +155,9 @@ const TestRunDetailHeader = () => {
                 onClick={() => exportLogs()}
                 startIcon={
                   <SvgColor
+                    width={16}
                     src="/assets/icons/action_buttons/ic_download.svg"
                     sx={{
-                      width: 16,
-                      height: 16,
                       color: "text.primary",
                     }}
                   />
@@ -167,13 +171,12 @@ const TestRunDetailHeader = () => {
                   color="primary"
                   size="small"
                   sx={{
-                    borderRadius: "4px",
                     borderColor: "primary.main",
                   }}
                   onClick={() => setConfirmStop(true)}
                   startIcon={
                     <Iconify
-                      icon="bi:stop-circle"
+                      icon="solar:stop-circle-linear"
                       width="14px"
                       height="14px"
                       sx={{
@@ -188,13 +191,22 @@ const TestRunDetailHeader = () => {
                   </Typography>
                 </LoadingButton>
               </ShowComponent>
-              <ShowComponent
-                condition={
-                  !showStopButton &&
-                  (testData?.source_type ?? testData?.sourceType) !==
-                    SourceType.PROMPT
-                }
-              >
+              <ShowComponent condition={!showStopButton && promptSimulation}>
+                <NotInReleaseButton
+                  reason={PROMPT_RERUN_NO_CALLS}
+                  size="small"
+                  variant="outlined"
+                  sx={{
+                    ...theme.typography.s2_1,
+                  }}
+                  startIcon={
+                    <SvgColor src="/assets/icons/navbar/ic_get_started.svg" />
+                  }
+                >
+                  Re-run simulation
+                </NotInReleaseButton>
+              </ShowComponent>
+              <ShowComponent condition={!showStopButton && !promptSimulation}>
                 <CustomTooltip
                   show={kpis?.total_calls === 0}
                   title="No completed calls to re-simulate. Run a new simulation first."
@@ -214,7 +226,6 @@ const TestRunDetailHeader = () => {
                           name: "preventOverflow",
                           options: {
                             boundary: "viewport",
-                            padding: 12,
                           },
                         },
                       ],
@@ -227,8 +238,6 @@ const TestRunDetailHeader = () => {
                       variant="outlined"
                       sx={{
                         ...theme.typography.s2_1,
-                        fontWeight: 500,
-                        paddingX: 2,
                       }}
                       startIcon={
                         <SvgColor src="/assets/icons/navbar/ic_get_started.svg" />
@@ -356,7 +365,8 @@ const TestRunDetailHeader = () => {
                   {
                     id: "direction",
                     condition:
-                      agentType !== AGENT_TYPES.CHAT && kpis?.is_inbound != null,
+                      agentType !== AGENT_TYPES.CHAT &&
+                      kpis?.is_inbound != null,
                     value: kpis?.is_inbound === false ? "Outbound" : "Inbound",
                     variant: "chip",
                     iconSrc:

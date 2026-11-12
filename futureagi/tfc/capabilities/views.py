@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import structlog
 
+from django.conf import settings
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from model_hub.services.experiment_source_capabilities import get_experiment_run_sources
 from tfc.capabilities import service
 from tfc.capabilities.contracts import CapabilitiesResponseSerializer
 from tfc.capabilities.registry import FEATURE_REGISTRY
 from tfc.licensing.types import (
+    DenialReason,
     DeploymentFlavor,
     DeploymentLocation,
     LicenseState,
@@ -27,6 +30,9 @@ class CapabilitiesView(APIView):
     def get(self, request):
         org = getattr(request, "organization", None)
         org_id = str(org.id) if org else None
+        workspace = getattr(request, "workspace", None)
+        workspace_id = str(workspace.id) if workspace else None
+        rollout = self._rollout_admissions(org_id, workspace_id)
 
         flavor = service.get_deployment_flavor()
         location = service.get_deployment_location()
@@ -35,7 +41,19 @@ class CapabilitiesView(APIView):
 
         features = {}
         for feature_id, feature_def in FEATURE_REGISTRY.items():
-            decision = service.check(feature_id, org_id=org_id)
+            if feature_def.rollout_product is not None:
+                decision = service.check_rollout(
+                    feature_def,
+                    org_id=org_id,
+                    workspace_id=workspace_id,
+                    admission=(
+                        rollout.get(feature_def.rollout_product)
+                        if rollout is not None
+                        else service.ROLLOUT_UNREADABLE
+                    ),
+                )
+            else:
+                decision = service.check(feature_id, org_id=org_id)
             features[feature_id] = {
                 "display_name": feature_def.display_name,
                 "allowed": decision.allowed,
@@ -44,15 +62,27 @@ class CapabilitiesView(APIView):
                 "oss_baseline": feature_def.oss_baseline,
             }
 
+        # Personal stars use a deployment switch, not a license entitlement.
+        # Match DatasetStarView.initial exactly; do not enable writes here.
+        stars_enabled = getattr(settings, "DSX_DATASET_STARS_ENABLED", False) is True
+        features["dataset_stars"] = {
+            "display_name": "Star datasets",
+            "allowed": stars_enabled,
+            "reason_code": None if stars_enabled else DenialReason.SERVICE_UNAVAILABLE.value,
+            "requires_network": False,
+            "oss_baseline": True,
+        }
+
         response_data = {
             "deployment_flavor": flavor.value,
             "display_mode": display_mode.value,
             "license_state": license_state.value,
             "features": features,
+            "experiment_run_sources": get_experiment_run_sources(request),
         }
 
-        is_admin_view = (
-            location == DeploymentLocation.SELF_HOSTED and self._is_admin(request)
+        is_admin_view = location == DeploymentLocation.SELF_HOSTED and self._is_admin(
+            request
         )
         if is_admin_view:
             response_data["license"] = self._get_license_details()
@@ -68,7 +98,19 @@ class CapabilitiesView(APIView):
             # optional.
             data.pop("license", None)
             data.pop("instance_id", None)
-        return Response(data)
+        return Response(data, headers={"Cache-Control": "private, no-store"})
+
+    def _rollout_admissions(self, org_id, workspace_id):
+        """One read of the rollout store for all five products; None when it cannot be read, so
+        each product then answers RESOLVER_UNAVAILABLE (fail closed)."""
+        from omega_rollout import service as rollout
+        from omega_rollout.store import RolloutUnavailable
+
+        try:
+            return rollout.admissions(org_id, workspace_id)
+        except RolloutUnavailable:
+            logger.warning("capabilities_view_rollout_unavailable")
+            return None
 
     def _get_license_state(self) -> LicenseState:
         snapshot = service.get_license_snapshot()
@@ -87,9 +129,15 @@ class CapabilitiesView(APIView):
         return {
             "issued_to": snapshot.issued_to,
             "band": snapshot.band,
-            "license_type": snapshot.license_type.value if snapshot.license_type else None,
-            "expires_at": snapshot.expires_at.isoformat() if snapshot.expires_at else None,
-            "grace_ends_at": snapshot.grace_ends_at.isoformat() if snapshot.grace_ends_at else None,
+            "license_type": snapshot.license_type.value
+            if snapshot.license_type
+            else None,
+            "expires_at": snapshot.expires_at.isoformat()
+            if snapshot.expires_at
+            else None,
+            "grace_ends_at": snapshot.grace_ends_at.isoformat()
+            if snapshot.grace_ends_at
+            else None,
             "features_count": len(snapshot.features),
             "state": snapshot.state.value,
         }
@@ -118,9 +166,7 @@ class CapabilitiesView(APIView):
                 OrganizationRoles.OWNER,
                 OrganizationRoles.ADMIN,
             )
-            membership = user.organization_memberships.filter(
-                organization=org
-            ).first()
+            membership = user.organization_memberships.filter(organization=org).first()
             if membership and membership.role in admin_roles:
                 return True
         except Exception:

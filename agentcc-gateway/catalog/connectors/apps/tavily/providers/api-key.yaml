@@ -1,0 +1,42 @@
+# Tavily's remote MCP server with a Tavily API key in the tavilyApiKey query
+# parameter, the placement Tavily's page names exactly. The page also says a
+# key may go "in the Authorization header" without naming a scheme, so the
+# header form is not used.
+schema: "connector-manifest/v1#provider"
+app: tavily
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.tavily.com/mcp/
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: query
+      name: tavilyApiKey
+      secret: true
+      label: API key
+      help: "A Tavily API key, sent as the tavilyApiKey query parameter of the MCP URL."
+      helpUrl: https://docs.tavily.com/documentation/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.tavily.com/documentation/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.tavily.com/documentation/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://docs.tavily.com/documentation/mcp
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

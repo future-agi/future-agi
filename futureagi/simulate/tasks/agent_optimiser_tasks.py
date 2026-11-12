@@ -1,11 +1,11 @@
 import structlog
 
 logger = structlog.get_logger(__name__)
-from simulate.models import AgentOptimiserRun, AgentPromptOptimiserRun
-from simulate.utils.agent_optimiser import execute_simulation_analysis
-from simulate.utils.agent_prompt_optimiser import run_agent_prompt_optimiser
-from tfc.temporal.drop_in import temporal_activity
-from tfc.utils.error_codes import get_error_message
+from simulate.models import AgentOptimiserRun  # noqa: E402
+from simulate.utils.agent_optimiser import execute_simulation_analysis  # noqa: E402
+from simulate.utils.agent_prompt_optimiser import run_agent_prompt_optimiser  # noqa: E402
+from tfc.temporal.drop_in import temporal_activity  # noqa: E402
+from tfc.utils.error_codes import get_error_message  # noqa: E402
 
 
 @temporal_activity(
@@ -53,9 +53,9 @@ def run_agent_prompt_optimiser_task(prompt_optimiser_run_id: str):
     Temporal activity to run the agent prompt optimiser.
     """
 
-    prompt_optimiser_run = AgentPromptOptimiserRun.objects.get(
-        id=prompt_optimiser_run_id
-    )
+    from simulate.utils.prompt_optimizer_scope import load_scoped_prompt_run
+
+    prompt_optimiser_run = load_scoped_prompt_run(prompt_optimiser_run_id)
     prompt_optimiser_run.mark_as_running()
 
     try:

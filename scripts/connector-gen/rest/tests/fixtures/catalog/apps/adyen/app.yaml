@@ -1,0 +1,19 @@
+# Fixture for the REST generator's tests, not catalog data (see ../gmail/app.yaml).
+schema: "connector-manifest/v1#app"
+id: adyen
+version: 1.0.0
+name: Adyen
+description: "Balance platform transfers and transactions."
+vendor: { name: Adyen, domains: [adyen.com] }
+eeCategory: data
+group: other
+categories: [payments, finance]
+tags: [payments, transfers]
+docsUrl: https://docs.adyen.com/api-explorer/transfers/4/overview
+defaultProvider: futureagi-rest
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.adyen.com/api-explorer/transfers/4/overview
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude, oss: exclude }

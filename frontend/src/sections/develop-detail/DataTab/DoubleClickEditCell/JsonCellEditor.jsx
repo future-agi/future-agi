@@ -33,46 +33,31 @@ const imageType = defineDataType({
 
 const JsonCellEditor = forwardRef((props, ref) => {
   const theme = useTheme();
+  // The editor holds the cell's own value. Plain values, text and arrays are
+  // never wrapped, so both commit paths save the shape the cell already had.
   const initialValue = useMemo(() => {
-    // Helper to check if result needs root wrapper
-    const wrapIfNeeded = (parsed) => {
-      if (parsed === null) {
-        return { root: null };
-      }
-      if (typeof parsed !== "object") {
-        // Primitive values (numbers, strings, booleans) - wrap in root
-        return { root: parsed };
-      }
-      if (Array.isArray(parsed)) {
-        return parsed.length === 0 ? { root: [] } : parsed;
-      }
-      // It's an object
-      return Object.keys(parsed).length === 0 ? { root: {} } : parsed;
-    };
-
     // Handle empty/null/undefined values
     if (
       props.value === undefined ||
       props.value === null ||
       props.value === ""
     ) {
-      return { root: {} };
+      return {};
     }
 
     // If already an object, use directly
     if (typeof props.value === "object" && props.value !== null) {
-      return wrapIfNeeded(props.value);
+      return props.value;
     }
 
     const strValue = String(props.value);
 
     // Try JSON parse
     try {
-      const parsed = JSON.parse(strValue);
-      return wrapIfNeeded(parsed);
+      return JSON.parse(strValue);
     } catch {
-      // JSON parse failed, wrap the raw value as a string
-      return { root: strValue };
+      // Not JSON: edit the raw text as a string
+      return strValue;
     }
   }, [props.value]);
 
@@ -83,6 +68,16 @@ const JsonCellEditor = forwardRef((props, ref) => {
   const [newValue, setNewValue] = useState("");
   const originalValueRef = useRef(JSON.stringify(initialValue));
   const [keyExistsError, setKeyExistsError] = useState(false);
+
+  // Keep the empty-object editing affordance out of both commit paths.
+  const hasDisplayRoot =
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0;
+  const displayValue = hasDisplayRoot ? { root: value } : value;
+  const toValuePath = (path) =>
+    hasDisplayRoot && path[0] === "root" ? path.slice(1) : path;
 
   const triggerValueChange = () => {
     const jsonString = JSON.stringify(value);
@@ -116,7 +111,9 @@ const JsonCellEditor = forwardRef((props, ref) => {
 
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      // Enter belongs to the Add form while it is open; closing here would
+      // drop the field being added.
+      if (e.key === "Enter" && !e.shiftKey && !showAddField) {
         props.api.stopEditing();
       }
 
@@ -141,21 +138,27 @@ const JsonCellEditor = forwardRef((props, ref) => {
   }));
 
   const handleValueChange = (path, oldValue, newValue) => {
+    const valuePath = toValuePath(path);
+    if (valuePath.length === 0) {
+      setValue(newValue);
+      return;
+    }
+
     setValue((prev) => {
-      const newObj = { ...prev };
+      const newObj = Array.isArray(prev) ? [...prev] : { ...prev };
       let current = newObj;
 
-      for (let i = 0; i < path.length - 1; i++) {
-        current = current[path[i]];
+      for (let i = 0; i < valuePath.length - 1; i++) {
+        current = current[valuePath[i]];
       }
 
-      current[path[path.length - 1]] = newValue;
+      current[valuePath[valuePath.length - 1]] = newValue;
       return newObj;
     });
   };
 
   const handleInlineAdd = (path) => {
-    setAddPath(path);
+    setAddPath(toValuePath(path));
     setShowAddField(true);
   };
 
@@ -203,16 +206,29 @@ const JsonCellEditor = forwardRef((props, ref) => {
     setKeyExistsError(false);
   };
 
+  // Enter in the Key or Value field adds the field. Handle it while the event
+  // travels down, because the grid's popup editor ends editing on Enter
+  // before React's bubbling handlers run.
+  const handleAddFieldKeyDown = (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    e.stopPropagation();
+    handleAddFieldSubmit();
+  };
+
   const handleRemoveElement = (path) => {
+    const valuePath = toValuePath(path);
+    if (valuePath.length === 0) return;
+
     setValue((prev) => {
       const newObj = JSON.parse(JSON.stringify(prev));
       let current = newObj;
 
-      for (let i = 0; i < path.length - 1; i++) {
-        current = current[path[i]];
+      for (let i = 0; i < valuePath.length - 1; i++) {
+        current = current[valuePath[i]];
       }
 
-      const keyToDelete = path[path.length - 1];
+      const keyToDelete = valuePath[valuePath.length - 1];
 
       if (Array.isArray(current)) {
         current.splice(keyToDelete, 1);
@@ -246,7 +262,7 @@ const JsonCellEditor = forwardRef((props, ref) => {
             padding: "10px",
             border: "1px solid var(--border-default)",
             borderRadius: "4px",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+            boxShadow: theme.customShadows?.dropdown,
             zIndex: 1000,
           }}
         >
@@ -259,6 +275,7 @@ const JsonCellEditor = forwardRef((props, ref) => {
                 setNewKey(e.target.value);
                 setKeyExistsError(false); // Clear error on typing
               }}
+              onKeyDownCapture={handleAddFieldKeyDown}
               error={keyExistsError}
               helperText={keyExistsError ? "Key already exists" : ""}
             />
@@ -269,6 +286,7 @@ const JsonCellEditor = forwardRef((props, ref) => {
               size="small"
               value={newValue}
               onChange={(e) => setNewValue(e.target.value)}
+              onKeyDownCapture={handleAddFieldKeyDown}
             />
           </div>
           <div
@@ -310,7 +328,7 @@ const JsonCellEditor = forwardRef((props, ref) => {
         }}
       >
         <JsonViewer
-          value={value}
+          value={displayValue}
           theme={theme.palette.mode}
           displayDataTypes={false}
           displaySize={false}
@@ -326,7 +344,7 @@ const JsonCellEditor = forwardRef((props, ref) => {
           onChange={handleValueChange}
           valueTypes={[imageType]}
           sx={{
-            fontSize: "14px",
+            fontSize: "13px",
             "& .jv-edit-input": {
               border: "1px solid var(--border-default)",
               borderRadius: "4px",
@@ -349,7 +367,7 @@ const JsonCellEditor = forwardRef((props, ref) => {
             color="primary"
             startIcon={
               <Icon
-                icon="mdi:check-bold"
+                icon="solar:check-linear"
                 style={{
                   width: 16,
                   height: 16,
@@ -359,8 +377,6 @@ const JsonCellEditor = forwardRef((props, ref) => {
             }
             onClick={triggerValueChange}
             sx={{
-              fontSize: "12px",
-              fontWeight: 500,
               p: theme.spacing(2),
               whiteSpace: "nowrap",
             }}

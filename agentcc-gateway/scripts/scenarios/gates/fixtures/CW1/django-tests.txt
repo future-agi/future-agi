@@ -1,0 +1,74 @@
+# Connector gate part 5: every named Django test, one "<file>::<test function>" per line,
+# each asserted PASSED by name in every parametrization, none SKIPPED: each change's plan
+# acceptance names, then the merge's own tests (each red before its commit), then the
+# placement preamble's (below the first rows).
+agentcc/tests/test_connector_catalog.py::test_lists_by_category_and_search
+agentcc/tests/test_connector_catalog.py::test_connected_reflects_catalog_ref_and_user_rows
+agentcc/tests/test_connector_catalog.py::test_add_writes_server_with_catalog_ref_admin_only
+agentcc/tests/test_connector_catalog.py::test_url_variables_checked_against_pattern
+agentcc/tests/test_connector_catalog.py::test_write_tools_run_after_an_approval
+agentcc/tests/test_connector_catalog.py::test_member_cannot_add
+agentcc/tests/test_connector_catalog.py::test_no_secret_in_any_response
+agentcc/tests/test_mcp_credentials.py::test_query_placement_in_push_form
+agentcc/tests/test_mcp_credentials.py::test_value_never_returned_by_any_endpoint
+agentcc/tests/test_connector_oauth_clients_api.py::test_oauth_client_secret_write_only
+agentcc/tests/test_connector_oauth_clients_api.py::test_oauth_client_never_pushed
+agentcc/tests/test_connector_oauth_clients_api.py::test_resolver_sees_org_client
+agentcc/tests/test_mcp_credential_placement_vectors.py::test_check_secret_agrees_with_the_gateway
+agentcc/tests/test_mcp_credential_placement_vectors.py::test_the_vectors_cover_every_placement
+agentcc/tests/test_mcp_credential_placement_vectors.py::test_pushed_placement_problem
+agentcc/tests/test_mcp_credential_placement_vectors.py::test_reserved_headers_are_the_gateways
+agentcc/tests/test_mcp_credentials.py::test_placed_key_pushed_and_misplaced_keys_refused
+agentcc/tests/test_mcp_credentials.py::test_rest_create_and_rotate_take_in_and_name
+agentcc/tests/test_connector_oauth_clients_api.py::test_a_write_revokes
+agentcc/tests/test_connector_catalog.py::test_routes_and_the_generated_copy
+agentcc/tests/test_connector_catalog.py::test_constant_part_comes_from_the_catalog
+agentcc/tests/test_connector_catalog.py::test_query_key_pushed_whole
+agentcc/tests/test_connector_catalog.py::test_url_variable_key_stays_in_the_url
+agentcc/tests/test_connector_catalog.py::test_credential_parts_by_the_gateways_rule
+# Placement preamble: Django applies the catalog placement rules.
+agentcc/tests/test_mcp_credential_placement_vectors.py::test_the_django_copy_is_read_as_the_gateway_reads_its_catalog
+agentcc/tests/test_mcp_credential_placement_vectors.py::test_no_catalog_refuses_every_catalog_ref
+agentcc/tests/test_mcp_credential_placement_vectors.py::test_a_provider_record_that_cannot_be_read_is_left_out
+agentcc/tests/test_mcp_credential_placement_vectors.py::test_pushed_placement_problem_places_a_catalog_ref_by_the_catalog
+agentcc/tests/test_mcp_credential_placement.py::test_a_catalog_key_the_gateway_would_refuse_is_refused_at_push
+agentcc/tests/test_mcp_credential_placement.py::test_a_camel_spelled_catalog_ref_is_read
+agentcc/tests/test_mcp_credential_placement.py::test_the_close_key_pushes_without_its_constant
+agentcc/tests/test_mcp_credential_placement.py::test_the_bulk_payload_leaves_a_refused_catalog_key_out
+agentcc/tests/test_mcp_credential_placement.py::test_vault_create_of_the_close_key_pushes
+agentcc/tests/test_mcp_credential_placement.py::test_vault_create_of_a_refused_catalog_key
+agentcc/tests/test_mcp_credential_placement.py::test_vault_rotate_into_another_header
+agentcc/tests/test_mcp_credential_placement.py::test_update_config_of_a_refused_catalog_ref
+agentcc/tests/test_mcp_credential_placement.py::test_org_config_create_of_a_refused_catalog_ref
+agentcc/tests/test_mcp_credential_placement.py::test_org_config_activate_of_a_refused_catalog_ref
+# Placement preamble: the catalog routes are not mounted until a real provider is addable.
+agentcc/tests/test_connector_catalog.py::test_the_site_mounts_the_catalog_routes
+# EE provisioning integration: the agent-mode acceptance (its routes stay unmounted
+# until the mount and the live run), and the merge's own.
+agentcc/tests/test_mcp_service_provisioning.py::test_ensure_is_idempotent
+agentcc/tests/test_mcp_service_provisioning.py::test_two_workspaces_cannot_see_each_other
+agentcc/tests/test_mcp_service_provisioning.py::test_member_key_refused
+agentcc/tests/test_mcp_service_provisioning.py::test_matches_omega_ee_attach_fixtures
+agentcc/tests/test_mcp_service_provisioning.py::test_delete_detaches_only_this_connection
+agentcc/tests/test_mcp_credentials.py::test_pushed_placement_problem_with_a_catalog_ref_and_no_catalog_fails_closed
+# EE provisioning integration: the mount (after gates/CW2_ee_provisioning_live.sh).
+agentcc/tests/test_mcp_service_provisioning.py::test_the_site_mounts_the_provisioning_routes
+agentcc/tests/test_mcp_service_provisioning.py::test_declared_mode_is_agent_only_until_cn22b
+agentcc/tests/test_mcp_service_provisioning.py::test_url_not_public_is_a_contract_answer
+# EE agent key integration: the scoped EE agent key's acceptance (mint, cap, 90-day expiry and rotation by ensure,
+# per-key budget, audit, the Django-side 403), and the merge's own (the pilot connectors on the real copy, none addable).
+agentcc/tests/test_ee_agent_key_policy.py::test_mint_makes_a_scoped_key_with_a_budget_and_a_90_day_expiry
+agentcc/tests/test_ee_agent_key_policy.py::test_the_key_sync_carries_the_scope_and_budget_from_the_records
+agentcc/tests/test_ee_agent_key_policy.py::test_the_bulk_route_sends_every_ee_key_with_its_scope
+agentcc/tests/test_ee_agent_key_policy.py::test_a_failed_binding_leaves_no_key_behind
+agentcc/tests/test_ee_agent_key_policy.py::test_the_org_cap_on_live_agent_keys
+agentcc/tests/test_ee_agent_key_policy.py::test_ensure_rotates_the_key_and_answers_its_expiry
+agentcc/tests/test_ee_agent_key_policy.py::test_an_owner_or_admin_sets_the_workspace_agent_key_budget
+agentcc/tests/test_ee_agent_key_policy.py::test_usage_shows_each_agent_keys_budget_and_spend
+agentcc/tests/test_ee_agent_key_policy.py::test_gateway_refusals_are_audited_with_workspace_and_actor
+agentcc/tests/test_ee_agent_key_policy.py::test_django_routes_answer_an_agent_key_403_key_scope_denied
+agentcc/tests/test_ee_agent_key_policy.py::test_the_console_cannot_remove_or_extend_an_agent_keys_expiry
+agentcc/tests/test_ee_agent_key_policy.py::test_one_malformed_refusal_never_keeps_the_batch_out_of_the_audit_log
+agentcc/tests/test_ee_agent_key_policy.py::test_a_malformed_refusals_envelope_is_still_400
+agentcc/tests/test_ee_agent_key_policy.py::test_migration_gives_cn22_agent_keys_their_90_day_expiry
+agentcc/tests/test_connector_catalog.py::test_the_k2_pilots_are_in_the_copy_and_none_is_addable

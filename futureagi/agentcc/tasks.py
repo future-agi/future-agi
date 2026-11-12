@@ -1,6 +1,7 @@
 import structlog
 from celery import shared_task
 
+from agentcc.approval_tasks import reconcile_mcp_approvals  # noqa: F401
 from agentcc.services.webhook_delivery import deliver_webhook_events
 
 logger = structlog.get_logger(__name__)

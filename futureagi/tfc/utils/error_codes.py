@@ -1,3 +1,6 @@
+import re
+from decimal import Decimal, InvalidOperation
+
 err_dict = {
     "PROMPT_TEMPLATE_ID_REQUIRED": ["Prompt template ID is required."],
     "PROMPT_TEMPLATE_NOT_FOUND": ["Prompt template not found."],
@@ -675,7 +678,12 @@ err_dict = {
     "RATE_LIMIT_REACHED": [
         "Rate limit reached. Please try again later or upgrade your plan."
     ],
-    "INSUFFICIENT_CREDITS": ["Insufficient credits. Please recharge your account."],
+    # PROPOSED copy: site gate supplies final wording. The legacy key is unchanged.
+    # This normalizer also handles generic "insufficient" failures, not balances.
+    "INSUFFICIENT_CREDITS": [
+        "This request could not be completed. Try again later; "
+        "if it keeps happening, contact your administrator."
+    ],
     "INSUFFICIENT_VOICE_CALL_BALANCE": [
         "Insufficient balance for voice call. Please recharge your account to make calls."
     ],
@@ -735,6 +743,9 @@ err_dict = {
     "EMPTY_DATA": ["The provided data is empty."],
     "FAILED_TO_GET_DATA_FROM_HUGGINGFACE": [
         "Unable to get data from Hugging Face. Please try again later."
+    ],
+    "HUGGINGFACE_IMPORT_UNAVAILABLE": [
+        "Hugging Face import is not available in this build."
     ],
     "INVALID_ROW_ID": ["The provided row ID is invalid."],
     "UNSUPPORTED_AUDIO_FORMAT": ["The provided audio format is not supported."],
@@ -850,11 +861,14 @@ err_dict = {
     "MEMBER_ALREADY_ACTIVE": ["Cannot Update Role of Active User."],
     "ROLE_NOT_MENTIONED": ["Please mention the updated role of the user."],
     "USER_CANNOT_CHANGE_ROLE": ["You cannot change your own role."],
-    "MEMBER_NOT_IN_ORG": ["User not found in the organization."],
     "UNABLE_TO_UPDATE_ROLE": ["Unable to update role. Please try again."],
     "FAILED_TO_RUN_EVAL": ["Unable to run evaluation. Please try again."],
     "ERROR_AUDIO_UPLOAD": ["Audio upload failed. Try again."],
     "FAILED_TO_RERUN_OPERATION": ["Unable to rerun operation. Please try again."],
+    "CODE_EXECUTION_DISABLED": [
+        "Custom Python code is turned off. Existing values stay readable, but "
+        "code cannot be tested, added, edited or re-run."
+    ],
     "MONITOR_NOT_FOUND": ["Alert Monitor not found for the provided ID."],
     "MONITOR_PROJECT_REQUIRED": [
         "This alert is not linked to a project. Link it to a project to evaluate it."
@@ -1119,6 +1133,287 @@ err_dict = {
     "ANALYTICS_METRICS_ERROR": ["Unable to fetch simulation metrics."],
     "ANALYTICS_RUNS_ERROR": ["Unable to fetch simulation runs."],
     "ANALYTICS_ERROR": ["Unable to fetch simulation analytics."],
+    # --- Omega Hub ---
+    "OMEGA_HUB_UNAUTHENTICATED": [
+        "Sign in to Future AGI to do this.",
+        "Sign in, or send a Hub token in the X-Omega-Hub-Token header.",
+    ],
+    "OMEGA_HUB_FORBIDDEN": [
+        "You are not allowed to do this.",
+        "Ask an owner or admin of the publisher, or a Hub maintainer.",
+    ],
+    "OMEGA_HUB_NOT_FOUND": [
+        "Nothing on the Omega Hub matches this reference.",
+        "Check the publisher and name with omega hub search.",
+    ],
+    "OMEGA_HUB_GONE": [
+        "This entry was removed from the Omega Hub.",
+        "See the tombstone for the reason; run omega hub outdated in projects that use it.",
+    ],
+    "OMEGA_HUB_MOVED": [
+        "This entry moved to a new reference.",
+        "Use the reference in movedTo.",
+    ],
+    "OMEGA_HUB_INVALID": [
+        "The request is not valid.",
+        "Fix the fields named in the message and send it again.",
+    ],
+    "OMEGA_HUB_THROTTLED": [
+        "Too many requests.",
+        "Wait and try again later.",
+    ],
+    "OMEGA_HUB_TOKEN_SCOPE": [
+        "A Hub token cannot be used for this request.",
+        "Hub tokens can publish, read status and yank. Use the Future AGI app for everything else.",
+    ],
+    "OMEGA_HUB_LIKE_NEEDS_SESSION": [
+        "Likes need a signed-in Future AGI browser session.",
+        "Like the entry in the Future AGI app; API keys and Hub tokens cannot like.",
+    ],
+    "OMEGA_HUB_NOT_MAINTAINER": [
+        "Only Omega Hub maintainers can do this.",
+        "Ask a Hub maintainer.",
+    ],
+    "OMEGA_HUB_NOT_PUBLISHER_OWNER": [
+        "You cannot act for this publisher.",
+        "Use a publisher you own, or ask an owner or admin of its organisation.",
+    ],
+    "OMEGA_HUB_HANDLE_INVALID": [
+        "A handle is 2-39 lowercase letters, digits and hyphens, starting with a letter.",
+        "Choose another handle.",
+    ],
+    "OMEGA_HUB_HANDLE_RESERVED": [
+        "This handle is reserved.",
+        "Choose a handle without a reserved or trust word.",
+    ],
+    "OMEGA_HUB_HANDLE_TAKEN": [
+        "This handle is taken or was used before.",
+        "Choose another handle.",
+    ],
+    "OMEGA_HUB_DISPLAY_NAME_RESERVED": [
+        "The display name uses a reserved trust word.",
+        "Remove words such as official or verified from the display name.",
+    ],
+    "OMEGA_HUB_ONE_USER_PUBLISHER": [
+        "You already have a user publisher.",
+        "Use your existing publisher, or publish through an organisation publisher.",
+    ],
+    "OMEGA_HUB_PUBLISHER_SUSPENDED": [
+        "This publisher is suspended.",
+        "Reply to the moderation email to appeal.",
+    ],
+    "OMEGA_SESSION_VIEWER": [
+        "Viewers cannot open Omega.",
+        "Ask a workspace admin for member access.",
+    ],
+    "OMEGA_SESSION_THROTTLED": [
+        "Too many Omega sign-ins in a minute.",
+        "Wait for the time in Retry-After and try again.",
+    ],
+    "OMEGA_OBSERVE_TARGET_THROTTLED": [
+        "Too many Observe target lookups for this API key.",
+        "Wait for the time in Retry-After and try again.",
+    ],
+    "OMEGA_HUB_BUNDLE_TOO_LARGE": [
+        "The upload is larger than 2 MiB.",
+        "Remove large files; omega hub pack shows the bundle size.",
+    ],
+    "OMEGA_HUB_BODY_TOO_LARGE": [
+        "The request body is larger than this Hub endpoint accepts.",
+        "Send a smaller body; the API reference lists each endpoint's limit.",
+    ],
+    "OMEGA_HUB_EMAIL_UNVERIFIED": [
+        "Confirm your email address first.",
+        "Likes, reports and new publishers need a confirmed email. Send yourself the link from the Hub and open it while signed in.",
+    ],
+    "OMEGA_HUB_EMAIL_LINK_INVALID": [
+        "This confirmation link is not valid.",
+        "Send a new link from the Hub and open the newest one while signed in as the account it was sent to.",
+    ],
+    "OMEGA_HUB_EMAIL_LINK_EXPIRED": [
+        "This confirmation link has expired.",
+        "Links last 24 hours. Send a new one from the Hub.",
+    ],
+    "OMEGA_HUB_BUNDLE_TYPE": [
+        "The upload must be a .tar.gz or .zip file.",
+        "Pack the entry with omega hub pack.",
+    ],
+    "OMEGA_HUB_TOO_MANY_OPEN": [
+        "This publisher already has 3 submissions waiting for checks.",
+        "Wait for the open checks to finish.",
+    ],
+    "OMEGA_HUB_DAILY_LIMIT": [
+        "This publisher reached 10 submissions today.",
+        "Try again tomorrow.",
+    ],
+    "OMEGA_HUB_CHANNEL_NOT_ALLOWED": [
+        "The github channel is only for the Official publisher.",
+        "Publish with channel cli or web.",
+    ],
+    "OMEGA_HUB_VERSION_EXISTS": [
+        "This version is already published for this entry.",
+        "Bump version in omega.hub.json and publish again.",
+    ],
+    "OMEGA_HUB_REF_TAKEN": [
+        "This reference exists, existed or is reserved.",
+        "Choose another publisher or name.",
+    ],
+    "OMEGA_HUB_BAD_STATE": [
+        "The submission is not in a state that allows this.",
+        "Reload the submission and check its status.",
+    ],
+    "OMEGA_HUB_SELF_APPROVAL": [
+        "You cannot approve your own submission.",
+        "Another maintainer has to review it.",
+    ],
+    "OMEGA_HUB_RULES_CHANGED": [
+        "The Hub rules changed since this form was loaded.",
+        "Reload the review page and complete the current checklist.",
+    ],
+    "OMEGA_HUB_CHECKLIST_INCOMPLETE": [
+        "Every checklist item must be ticked to approve.",
+        "Tick each item, or request changes.",
+    ],
+    "OMEGA_HUB_FLAGS_UNACKNOWLEDGED": [
+        "Every flagged finding must be acknowledged to approve.",
+        "Acknowledge each flag id in acknowledgedFlags.",
+    ],
+    "OMEGA_HUB_DISCLOSURE_REQUIRED": [
+        "Approving needs a confirmed disclosure.",
+        "Confirm or rewrite the five disclosure parts and the summary.",
+    ],
+    "OMEGA_HUB_DISCLOSURE_INVALID": [
+        "The disclosure is not in the required shape.",
+        "Give summary (20-200 characters) and network, files, shell, background and credentials (4-300 each).",
+    ],
+    "OMEGA_HUB_DISCLOSURE_GAP": [
+        "A disclosure part is empty while the checks observed something for it.",
+        "Describe what the checks observed in that part.",
+    ],
+    "OMEGA_HUB_REASON_LENGTH": [
+        "A reason must be 20 to 2,000 characters.",
+        "Write a reason the submitter can act on.",
+    ],
+    "OMEGA_HUB_NOTES_INVALID": [
+        "Change notes are allowed only when requesting changes, at most 30, each with a file and a note of at most 500 characters.",
+        "Fix the notes and send the decision again.",
+    ],
+    "OMEGA_HUB_CHECKS_NOT_PASSED": [
+        "The latest automated checks did not pass.",
+        "Re-run the checks, or request changes.",
+    ],
+    "OMEGA_HUB_REVIEW_LOCKED": [
+        "Another maintainer is reviewing this submission.",
+        "Take over the review explicitly if you need to.",
+    ],
+    "OMEGA_HUB_CHECKER_DISABLED": [
+        "The checker endpoints are not configured.",
+        "Set OMEGA_HUB_CHECKER_TOKEN on the server.",
+    ],
+    "OMEGA_HUB_CHECKER_NOT_CONFIGURED": [
+        "This Hub cannot check uploads: its sandboxed checker is not configured. Nothing was stored.",
+        "Ask the Hub's administrator to run the checker with OMEGA_HUB_CHECKER_TOKEN set, then upload again.",
+    ],
+    "OMEGA_HUB_CHECKER_AUTH": [
+        "The checker token is missing or wrong.",
+        "Send X-Omega-Hub-Checker-Token.",
+    ],
+    "OMEGA_HUB_LEASE_LOST": [
+        "This check job is not leased to this checker.",
+        "Claim a new job.",
+    ],
+    "OMEGA_HUB_BUNDLE_MISMATCH": [
+        "The bundle does not match the report.",
+        "Re-run the check job.",
+    ],
+    "OMEGA_HUB_REPORT_INVALID": [
+        "The check report is not valid.",
+        "Send an omega-hub-check-report/v1 document.",
+    ],
+    "OMEGA_HUB_APPEAL_SELF": [
+        "You made the original decision, so another maintainer must handle the appeal.",
+        "Ask another maintainer.",
+    ],
+    "OMEGA_HUB_PICKS_FULL": [
+        "There are already 6 picks this week.",
+        "Remove a pick first.",
+    ],
+    "OMEGA_HUB_AVATAR_INVALID": [
+        "An avatar must be a PNG or JPEG of at most 256 KiB.",
+        "Upload a smaller PNG or JPEG.",
+    ],
+    "OMEGA_HUB_SESSION_REQUIRED": [
+        "An organisation API key cannot act on the Omega Hub; it stands for no one person.",
+        "Sign in to the Future AGI app, or use a Hub token for one publisher (omega hub login).",
+    ],
+    "AGENTCC_KEY_METADATA_RESERVED": [
+        "These metadata keys are reserved for the platform and cannot be set "
+        "on an API key: {}."
+    ],
+    "KEY_LIMIT_NOT_ENFORCED": [
+        "These API key settings are not enforced by the gateway yet, so "
+        "they cannot be set: {}."
+    ],
+    "AGENTCC_KEY_DELETE_GATEWAY_UNREACHABLE": [
+        "The API key was revoked but not deleted: the gateway could not revoke "
+        "it, so it keeps working there until the gateway's next key sync or "
+        "restart. Delete it again once the gateway is reachable."
+    ],
+    # Webhooks (webhooks/api_errors.py holds the same copy; DESIGN.md section 10).
+    "WEBHOOK_URL_NOT_HTTPS": ["Webhook URLs must use HTTPS."],
+    "WEBHOOK_URL_INVALID": [
+        "Use a host name or a standard IP address, with no user name, password or fragment."
+    ],
+    "WEBHOOK_URL_UNSAFE_ADDRESS": [
+        "This URL points to a private, local or internal address. Private, local and cloud metadata addresses are blocked."
+    ],
+    "WEBHOOK_HOST_NOT_ALLOWED": ["This host is not in the allowed hosts for webhooks."],
+    "WEBHOOK_HEADER_RESERVED": [
+        "This header name is reserved: Future AGI sets it on every request."
+    ],
+    "WEBHOOK_HEADER_INVALID": [
+        "Headers need RFC 7230 token names and values without control characters: at most 20, 4 KB in total."
+    ],
+    "WEBHOOK_SECRET_INVALID": [
+        "A signing secret is whsec_ followed by the base64 of 24 to 64 bytes."
+    ],
+    "WEBHOOK_EVENT_TYPE_UNKNOWN": [
+        "This event type is not in the webhooks event catalog."
+    ],
+    "WEBHOOK_FILTER_INVALID": ["This filter is not valid for the event type."],
+    "WEBHOOK_ENDPOINT_LIMIT": ["You have reached the limit of webhooks here."],
+    "WEBHOOK_ENDPOINT_DISABLED": ["Turn this webhook on first."],
+    "WEBHOOK_BODY_EXPIRED": [
+        "This delivery is older than 30 days, so its body is no longer kept."
+    ],
+    "WEBHOOK_PAYLOAD_FULL_NOT_ALLOWED": [
+        "Your organization doesn't allow prompt text in webhooks. An org admin can change this."
+    ],
+    "WEBHOOK_RATE_LIMITED": [
+        "Too many webhook changes in a short time. Wait a moment and try again."
+    ],
+    "WEBHOOK_TEST_RATE_LIMITED": ["Wait a moment before sending another test."],
+    "WEBHOOK_LISTEN_EXPIRED": ["This listen session has expired."],
+    "WEBHOOK_KIND_UNAVAILABLE": ["Only HTTPS endpoints can be created here."],
+    "WEBHOOK_SENDING_OFF": ["Sending is off on this install, so a test can't be sent."],
+    "WEBHOOK_KEYS_MISSING": [
+        "Webhooks can't store URLs or secrets on this install yet: WEBHOOKS_ENCRYPTION_KEYS is not set."
+    ],
+    "WEBHOOK_DELIVERY_IN_FLIGHT": [
+        "This delivery is being sent right now. Try again in a moment."
+    ],
+    "WEBHOOK_DELIVERY_NOT_REDELIVERABLE": [
+        "A cancelled delivery can't be redelivered."
+    ],
+    "WEBHOOK_BULK_TOO_LARGE": [
+        "A bulk redelivery takes at most 1,000 deliveries. Narrow the filter."
+    ],
+    "WEBHOOK_NAME_TAKEN": ["A webhook with this name already exists here."],
+    "WEBHOOK_POLICY_INVALID": [
+        "A workspace can narrow the organization's allowed hosts, never widen them."
+    ],
+    "WEBHOOK_NOT_FOUND": ["Not found."],
+    "WEBHOOK_FORBIDDEN": ["You don't have permission to do this with webhooks."],
 }
 
 
@@ -1129,17 +1424,1027 @@ def get_error_message(code, index=0):
         return "An unknown error occurred."
 
 
-def get_specific_error_message(error, is_llm_error=None):
+# ── One key: managed (Future AGI credits) refusals ──────────────────────────
+# ONEKEY-REAL-REFUSAL-CONTRACT-r1. The gateway's credit, budget and billing
+# refusals are keyed on error.code (never error.type). They are matched before
+# the generic substring and 429 rules below, so a budget refusal is never shown
+# as a retryable rate limit and a credit refusal is never FREE_TIER_LIMIT.
+# Errors without one of these codes keep their existing classification.
+# The copy avoids the words the generic rules match ("insufficient", "rate
+# limit", "429"), so normalising a message twice keeps its meaning.
+MANAGED_REFUSAL_ERROR_CODES = {
+    "MANAGED_CREDITS_EXHAUSTED": [
+        "Your organization is out of Future AGI credits. Add credits on the "
+        "Billing page, or use your own provider keys."
+    ],
+    "MANAGED_CREDITS_INSUFFICIENT": [
+        "Not enough Future AGI credits for this request. Add credits on the "
+        "Billing page, or use your own provider keys."
+    ],
+    "MANAGED_CREDITS_INSUFFICIENT_AMOUNTS": [
+        "Not enough Future AGI credits for this request: it needs ${required} "
+        "and ${available} is available. Add credits on the Billing page, or use "
+        "your own provider keys."
+    ],
+    "MANAGED_CREDITS_IN_FLIGHT": [
+        "Other requests are holding your Future AGI credits right now. "
+        "Try again in a few seconds."
+    ],
+    "MANAGED_AGENT_BUDGET_EXHAUSTED": [
+        "This run has used its budget. Raise the run budget to continue."
+    ],
+    "MANAGED_BUDGET_EXCEEDED": [
+        "A spending budget for this request has been reached. Raise or remove "
+        "the budget to continue."
+    ],
+    "MANAGED_ORG_BUDGET_EXCEEDED": [
+        "Your organization's spending budget has been reached. An admin can "
+        "raise or remove it in budget settings."
+    ],
+    "MANAGED_SPEND_VELOCITY": [
+        "Future AGI credits are being spent too quickly. Slow down and try "
+        "again shortly."
+    ],
+    "MANAGED_BILLING_UNAVAILABLE": [
+        "Billing is temporarily unavailable, so this request was not run. "
+        "Try again shortly."
+    ],
+    # The same refusal for a call that was already sent: its reservation was
+    # charged, so it must not be told it was not run.
+    "MANAGED_BILLING_UNAVAILABLE_AFTER_DISPATCH": [
+        "Billing became unavailable after this request was sent, so it may have "
+        "run and its Future AGI credits were charged. Check the result before "
+        "you try again."
+    ],
+    # A backoff refusal (in-flight credits, spend velocity, rate limit) for a
+    # call that was already sent and charged once: never "try again in a few
+    # seconds", which would charge again.
+    "MANAGED_REFUSED_AFTER_DISPATCH": [
+        "This request was refused after it was sent, so it may have run and "
+        "its Future AGI credits were charged. Check the result before you try "
+        "again."
+    ],
+    "MANAGED_FAILED_AFTER_DISPATCH": [
+        "This request failed after it was sent, so it may have run and its "
+        "Future AGI credits were charged. Check the result before you try again."
+    ],
+    "MANAGED_CALL_ALREADY_COMPLETED": [
+        "This call already ran or was refused and will not be sent again."
+    ],
+    "MANAGED_OUTCOME_PENDING_RECONCILE": [
+        "This request's outcome is being reconciled. Its credit hold remains open; "
+        "any charge will match the provider's usage record, up to the held amount. "
+        "Do not automatically retry this request."
+    ],
+    "MANAGED_SETTLEMENT_UNKNOWN": [
+        "The model call finished, but its Future AGI credit charge is not yet confirmed. "
+        "The charge is being reconciled; do not automatically retry this request."
+    ],
+    "MANAGED_REFUSED_NOT_CHARGED": [
+        "The gateway refused this request; it was not run or charged."
+    ],
+    "MANAGED_MODEL_NOT_AVAILABLE": [
+        "This model is not available with Future AGI credits."
+    ],
+}
+
+err_dict.update(MANAGED_REFUSAL_ERROR_CODES)
+
+# Contract-r3 display only. Never use this table as billing/dispatch evidence.
+# Source binding: d990a957da25bb121707408ccf0c14eeabeaa6ca2cae0320df2c78f4ad3768dd
+MANAGED_REFUSAL_CONTRACT = {(402, 'managed_credits_exhausted'): {'type': 'payment_required',
+                                      'types': ('payment_required',),
+                                      'category': 'out_of_credits',
+                                      'message_key': 'MANAGED_CREDITS_EXHAUSTED',
+                                      'retry': 'never',
+                                      'remedy': 'add_credits'},
+ (402, 'managed_credits_insufficient'): {'type': 'payment_required',
+                                         'types': ('payment_required',),
+                                         'category': 'out_of_credits',
+                                         'message_key': 'MANAGED_CREDITS_INSUFFICIENT',
+                                         'retry': 'in_flight',
+                                         'remedy': 'add_credits'},
+ (402, 'agent_budget_exhausted'): {'type': 'payment_required',
+                                   'types': ('payment_required',),
+                                   'category': 'agent_budget',
+                                   'message_key': 'MANAGED_AGENT_BUDGET_EXHAUSTED',
+                                   'retry': 'never',
+                                   'remedy': 'raise_run_budget'},
+ (429, 'budget_exceeded'): {'type': 'rate_limit_error',
+                            'types': ('rate_limit_error',),
+                            'category': 'budget_limit',
+                            'message_key': 'MANAGED_BUDGET_EXCEEDED',
+                            'retry': 'never',
+                            'remedy': 'contact_admin'},
+ (429, 'org_budget_exceeded'): {'type': 'rate_limit_error',
+                                'types': ('rate_limit_error',),
+                                'category': 'budget_limit',
+                                'message_key': 'MANAGED_ORG_BUDGET_EXCEEDED',
+                                'retry': 'never',
+                                'remedy': 'contact_admin'},
+ (429, 'managed_spend_velocity'): {'type': 'rate_limit_error',
+                                   'types': ('rate_limit_error',),
+                                   'category': 'rate_limit',
+                                   'message_key': 'MANAGED_SPEND_VELOCITY',
+                                   'retry': 'window',
+                                   'remedy': 'contact_admin'},
+ (429, 'rate_limit_exceeded'): {'type': 'rate_limit_error',
+                                'types': ('rate_limit_error',),
+                                'category': 'rate_limit',
+                                'message_key': 'MANAGED_RATE_LIMIT',
+                                'retry': 'after',
+                                'remedy': 'check_limit'},
+ (503, 'managed_billing_unavailable'): {'type': 'server_error',
+                                        'types': ('server_error',),
+                                        'category': 'billing_unavailable',
+                                        'message_key': 'MANAGED_BILLING_UNAVAILABLE',
+                                        'retry': 'after',
+                                        'remedy': 'contact_operator'},
+ (403, 'permission_denied'): {'type': 'permission_error',
+                              'types': ('permission_error',),
+                              'category': 'permission',
+                              'message_key': 'MANAGED_PERMISSION_DENIED',
+                              'retry': 'never',
+                              'remedy': 'check_access'},
+ (403, 'future_agi_credits_off'): {'type': 'permission_error',
+                                   'types': ('permission_error',),
+                                   'category': 'permission',
+                                   'message_key': 'MANAGED_CREDITS_OFF',
+                                   'retry': 'never',
+                                   'remedy': 'enable_credits'},
+ (401, 'invalid_api_key'): {'type': 'authentication_error',
+                            'types': ('authentication_error',),
+                            'category': 'invalid_key',
+                            'message_key': 'MANAGED_INVALID_GATEWAY_KEY',
+                            'retry': 'never',
+                            'remedy': 'rotate_gateway_key'},
+ (402, 'agent_call_cap_exceeded'): {'type': 'payment_required',
+                                    'types': ('payment_required',),
+                                    'category': 'agent_budget',
+                                    'message_key': 'MANAGED_CALL_CAP',
+                                    'retry': 'never',
+                                    'remedy': 'lower_max_tokens'},
+ (402, 'call_cap_unenforceable'): {'type': 'payment_required',
+                                   'types': ('invalid_request_error', 'payment_required'),
+                                   'category': 'agent_budget',
+                                   'message_key': 'MANAGED_CAP_UNENFORCEABLE',
+                                   'retry': 'never',
+                                   'remedy': 'use_priced_model'},
+ (402, 'agent_run_stopped'): {'type': 'payment_required',
+                              'types': ('payment_required',),
+                              'category': 'agent_budget',
+                              'message_key': 'MANAGED_RUN_STOPPED',
+                              'retry': 'never',
+                              'remedy': 'start_new_run'},
+ (503, 'budget_state_unavailable'): {'type': 'server_error',
+                                     'types': ('invalid_request_error', 'server_error'),
+                                     'category': 'billing_unavailable',
+                                     'message_key': 'MANAGED_BUDGET_STATE_UNAVAILABLE',
+                                     'retry': 'after',
+                                     'remedy': 'contact_admin'},
+ (402, 'managed_spend_paused'): {'type': 'payment_required',
+                                 'types': ('payment_required',),
+                                 'category': 'budget_limit',
+                                 'message_key': 'MANAGED_SPEND_PAUSED',
+                                 'retry': 'never',
+                                 'remedy': 'contact_admin'},
+ (402, 'payment_required'): {'type': 'insufficient_credits',
+                             'types': ('insufficient_credits',),
+                             'category': 'out_of_credits',
+                             'message_key': 'MANAGED_KEY_PAYMENT_REQUIRED',
+                             'retry': 'never',
+                             'remedy': 'top_up_key'},
+ (429, 'budget_throttled'): {'type': 'rate_limit_error',
+                             'types': ('rate_limit_error',),
+                             'category': 'rate_limit',
+                             'message_key': 'MANAGED_BUDGET_THROTTLED',
+                             'retry': 'after',
+                             'remedy': 'check_limit'},
+ (503, 'key_list_not_loaded'): {'type': 'server_error',
+                                'types': ('server_error',),
+                                'category': 'generic',
+                                'message_key': 'MANAGED_KEY_LIST_UNAVAILABLE',
+                                'retry': 'after',
+                                'remedy': 'contact_operator'},
+ (403, 'model_not_permitted'): {'type': 'permission_error',
+                                'types': ('permission_error',),
+                                'category': 'permission',
+                                'message_key': 'MANAGED_MODEL_NOT_PERMITTED',
+                                'retry': 'never',
+                                'remedy': 'choose_allowed_model'},
+ (403, 'managed_router_unbounded'): {'type': 'permission_error',
+                                     'types': ('permission_error',),
+                                     'category': 'permission',
+                                     'message_key': 'MANAGED_ROUTER_UNBOUNDED',
+                                     'retry': 'never',
+                                     'remedy': 'use_priced_model'},
+ (400, 'unsupported_field_for_managed'): {'type': 'invalid_request_error',
+                                          'types': ('invalid_request_error',),
+                                          'category': 'generic',
+                                          'message_key': 'MANAGED_UNSUPPORTED_FIELD',
+                                          'retry': 'never',
+                                          'remedy': 'correct_request'},
+ (400, 'unsupported_routing_field'): {'type': 'invalid_request_error',
+                                      'types': ('invalid_request_error',),
+                                      'category': 'generic',
+                                      'message_key': 'MANAGED_UNSUPPORTED_ROUTING_FIELD',
+                                      'retry': 'never',
+                                      'remedy': 'correct_request'},
+ (403, 'key_scope_denied'): {'type': 'permission_error',
+                             'types': ('permission_error',),
+                             'category': 'permission',
+                             'message_key': 'MANAGED_KEY_SCOPE_DENIED',
+                             'retry': 'never',
+                             'remedy': 'check_access'},
+ (402, 'agent_key_budget_exhausted'): {'type': 'payment_required',
+                                       'types': ('payment_required',),
+                                       'category': 'agent_budget',
+                                       'message_key': 'MANAGED_AGENT_KEY_BUDGET',
+                                       'retry': 'never',
+                                       'remedy': 'raise_key_budget'},
+ (429, 'token_rate_limit_exceeded'): {'type': 'rate_limit_error',
+                                      'types': ('rate_limit_error',),
+                                      'category': 'rate_limit',
+                                      'message_key': 'MANAGED_TOKEN_LIMIT',
+                                      'retry': 'after',
+                                      'remedy': 'check_limit'},
+ (429, 'usage_paused'): {'type': 'rate_limit_error',
+                         'types': ('rate_limit_error',),
+                         'category': 'budget_limit',
+                         'message_key': 'MANAGED_USAGE_PAUSED',
+                         'retry': 'never',
+                         'remedy': 'contact_admin'},
+ (429, 'quota_exceeded'): {'type': 'rate_limit_error',
+                           'types': ('rate_limit_error',),
+                           'category': 'budget_limit',
+                           'message_key': 'MANAGED_QUOTA_EXCEEDED',
+                           'retry': 'never',
+                           'remedy': 'increase_quota'},
+ (400, 'usage_unavailable'): {'type': 'invalid_request_error',
+                              'types': ('invalid_request_error',),
+                              'category': 'generic',
+                              'message_key': 'MANAGED_USAGE_UNAVAILABLE',
+                              'retry': 'never',
+                              'remedy': 'remove_background'},
+ (503, 'provider_busy'): {'type': 'server_error',
+                          'types': ('server_error',),
+                          'category': 'generic',
+                          'message_key': 'MANAGED_PROVIDER_BUSY',
+                          'retry': 'after',
+                          'remedy': 'wait_for_slot'},
+ (409, 'idempotency_in_progress'): {'type': 'invalid_request_error',
+                                    'types': ('invalid_request_error',),
+                                    'category': 'generic',
+                                    'message_key': 'MANAGED_IDEMPOTENCY_IN_PROGRESS',
+                                    'retry': 'after',
+                                    'remedy': 'keep_idempotency_key'},
+ (422, 'idempotency_key_reused'): {'type': 'invalid_request_error',
+                                   'types': ('invalid_request_error',),
+                                   'category': 'generic',
+                                   'message_key': 'MANAGED_IDEMPOTENCY_KEY_REUSED',
+                                   'retry': 'never',
+                                   'remedy': 'new_idempotency_key'},
+ (404, 'managed_models_disabled'): {'type': 'not_found',
+                                    'types': ('not_found',),
+                                    'category': 'generic',
+                                    'message_key': 'MANAGED_MODELS_DISABLED',
+                                    'retry': 'never',
+                                    'remedy': 'contact_operator'},
+ (400, 'deferred_run_unavailable'): {'type': 'invalid_request_error',
+                                     'types': ('invalid_request_error',),
+                                     'category': 'generic',
+                                     'message_key': 'MANAGED_DEFERRED_UNAVAILABLE',
+                                     'retry': 'never',
+                                     'remedy': 'send_synchronously'},
+ (404, 'model_not_found'): {'type': 'not_found',
+                            'types': ('not_found',),
+                            'category': 'generic',
+                            'message_key': 'MANAGED_MODEL_NOT_FOUND',
+                            'retry': 'never',
+                            'remedy': 'choose_model'},
+ (504, 'gateway_timeout'): {'type': 'gateway_timeout',
+                            'types': ('gateway_timeout',),
+                            'category': 'generic',
+                            'message_key': 'MANAGED_GATEWAY_TIMEOUT',
+                            'retry': 'never',
+                            'remedy': 'check_outcome'},
+ (410, 'model_expired'): {'type': 'not_found',
+                          'types': ('not_found',),
+                          'category': 'generic',
+                          'message_key': 'MANAGED_MODEL_EXPIRED',
+                          'retry': 'never',
+                          'remedy': 'choose_model'},
+ (404, 'no_provider_matches'): {'type': 'not_found',
+                                'types': ('not_found',),
+                                'category': 'generic',
+                                'message_key': 'MANAGED_NO_PROVIDER_MATCHES',
+                                'retry': 'never',
+                                'remedy': 'correct_routing'},
+ (400, 'provider_preference_unavailable'): {'type': 'invalid_request_error',
+                                            'types': ('invalid_request_error',),
+                                            'category': 'generic',
+                                            'message_key': 'MANAGED_PROVIDER_PREFERENCE_UNAVAILABLE',
+                                            'retry': 'never',
+                                            'remedy': 'correct_routing'},
+ (400, 'model_ambiguous'): {'type': 'invalid_request_error',
+                            'types': ('invalid_request_error',),
+                            'category': 'generic',
+                            'message_key': 'MANAGED_MODEL_AMBIGUOUS',
+                            'retry': 'never',
+                            'remedy': 'choose_model'},
+ (400, 'no_auto_candidate'): {'type': 'invalid_request_error',
+                              'types': ('invalid_request_error',),
+                              'category': 'generic',
+                              'message_key': 'MANAGED_NO_AUTO_CANDIDATE',
+                              'retry': 'never',
+                              'remedy': 'choose_model'},
+ (400, 'omega_default_unroutable'): {'type': 'invalid_request_error',
+                                     'types': ('invalid_request_error',),
+                                     'category': 'generic',
+                                     'message_key': 'MANAGED_DEFAULT_UNROUTABLE',
+                                     'retry': 'never',
+                                     'remedy': 'configure_route'},
+ (400, 'route_hint_unsupported'): {'type': 'invalid_request_error',
+                                   'types': ('invalid_request_error',),
+                                   'category': 'generic',
+                                   'message_key': 'MANAGED_ROUTE_HINT_UNSUPPORTED',
+                                   'retry': 'never',
+                                   'remedy': 'correct_request'},
+ (400, 'routing_field_not_yet_supported'): {'type': 'invalid_request_error',
+                                            'types': ('invalid_request_error',),
+                                            'category': 'generic',
+                                            'message_key': 'MANAGED_ROUTING_FIELD_UNSUPPORTED',
+                                            'retry': 'never',
+                                            'remedy': 'correct_request'},
+ (400, 'invalid_provider_preference'): {'type': 'invalid_request_error',
+                                        'types': ('invalid_request_error',),
+                                        'category': 'generic',
+                                        'message_key': 'MANAGED_INVALID_PROVIDER_PREFERENCE',
+                                        'retry': 'never',
+                                        'remedy': 'correct_request'},
+ (400, 'invalid_routing_field'): {'type': 'invalid_request_error',
+                                  'types': ('invalid_request_error',),
+                                  'category': 'generic',
+                                  'message_key': 'MANAGED_INVALID_ROUTING_FIELD',
+                                  'retry': 'never',
+                                  'remedy': 'correct_request'},
+ (400, 'extra_body_conflict'): {'type': 'invalid_request_error',
+                                'types': ('invalid_request_error',),
+                                'category': 'generic',
+                                'message_key': 'MANAGED_EXTRA_BODY_CONFLICT',
+                                'retry': 'never',
+                                'remedy': 'correct_request'},
+ (400, 'invalid_extra_body'): {'type': 'invalid_request_error',
+                               'types': ('invalid_request_error',),
+                               'category': 'generic',
+                               'message_key': 'MANAGED_INVALID_EXTRA_BODY',
+                               'retry': 'never',
+                               'remedy': 'correct_request'},
+ (404, 'provider_not_found'): {'type': 'not_found',
+                               'types': ('not_found',),
+                               'category': 'generic',
+                               'message_key': 'MANAGED_PROVIDER_NOT_FOUND',
+                               'retry': 'never',
+                               'remedy': 'correct_routing'}}
+MANAGED_REFUSAL_METADATA = {'managed_credits_exhausted': {'limit_source': ('enum', ('agentcc_credits',)),
+                               'remedy_hint': ('enum', ('add_credits',)),
+                               'resets_at': ('timestamp', None),
+                               'scope': ('enum', ('org',)),
+                               'required_usd': ('amount', None),
+                               'available_usd': ('amount', None)},
+ 'managed_credits_insufficient': {'limit_source': ('enum', ('agentcc_credits', 'agentcc_in_flight')),
+                                  'remedy_hint': ('enum', ('add_credits', 'retry')),
+                                  'resets_at': ('timestamp', None),
+                                  'scope': ('enum', ('org',)),
+                                  'required_usd': ('amount', None),
+                                  'available_usd': ('amount', None)},
+ 'agent_budget_exhausted': {'limit_source': ('enum', ('agentcc_agent_budget',)),
+                            'remedy_hint': ('enum', ('raise_run_budget',)),
+                            'resets_at': ('timestamp', None),
+                            'available_usd': ('amount', None),
+                            'scope': ('token', None),
+                            'required_usd': ('amount', None),
+                            'cap_scope': ('enum', ('agent', 'key')),
+                            'cap_ref': ('token', None),
+                            'cap_kind': ('enum', ('daily', 'run')),
+                            'policy_revision': ('integer', None)},
+ 'org_budget_exceeded': {'cap_scope': ('enum', ('agent', 'key')),
+                         'cap_ref': ('token', None),
+                         'cap_kind': ('enum', ('daily', 'run')),
+                         'policy_revision': ('integer', None)},
+ 'managed_spend_velocity': {'limit_source': ('enum', ('agentcc_spend_guard',)),
+                            'remedy_hint': ('enum', ('retry',)),
+                            'resets_at': ('timestamp', None),
+                            'scope': ('token', None),
+                            'reason': ('token', None)},
+ 'managed_billing_unavailable': {'reason': ('token', None), 'remedy_hint': ('enum', ('retry',))},
+ 'invalid_api_key': {'reason': ('token', None)},
+ 'agent_call_cap_exceeded': {'limit_source': ('enum', ('agentcc_call_cap',)),
+                             'remedy_hint': ('enum', ('lower_max_tokens',)),
+                             'resets_at': ('timestamp', None),
+                             'required_usd': ('amount', None),
+                             'available_usd': ('amount', None),
+                             'scope': ('token', None)},
+ 'call_cap_unenforceable': {'limit_source': ('enum', ('agentcc_call_cap',)),
+                            'remedy_hint': ('enum', ('use_priced_model',)),
+                            'resets_at': ('timestamp', None),
+                            'scope': ('token', None),
+                            'cap_scope': ('enum', ('agent', 'key')),
+                            'cap_ref': ('token', None),
+                            'cap_kind': ('enum', ('daily', 'run')),
+                            'policy_revision': ('integer', None)},
+ 'agent_run_stopped': {'limit_source': ('enum', ('agentcc_run_stop',)),
+                       'remedy_hint': ('enum', ('start_new_run',)),
+                       'resets_at': ('timestamp', None),
+                       'scope': ('token', None),
+                       'reason': ('token', None)},
+ 'budget_state_unavailable': {'remedy_hint': ('enum', ('retry',)),
+                              'scope': ('token', None),
+                              'reason': ('token', None),
+                              'cap_scope': ('enum', ('agent', 'key')),
+                              'cap_ref': ('token', None),
+                              'cap_kind': ('enum', ('daily', 'run')),
+                              'policy_revision': ('integer', None)},
+ 'managed_spend_paused': {'limit_source': ('enum', ('agentcc_budget',)),
+                          'remedy_hint': ('enum', ('contact_admin', 'raise_budget')),
+                          'resets_at': ('timestamp', None),
+                          'scope': ('enum', ('org',))},
+ 'model_not_permitted': {'reason': ('token', None)},
+ 'agent_key_budget_exhausted': {'limit_source': ('enum', ('agentcc_key_limit',)),
+                                'remedy_hint': ('enum', ('raise_key_budget',)),
+                                'resets_at': ('timestamp', None),
+                                'scope': ('token', None),
+                                'available_usd': ('amount', None)},
+ 'model_not_found': {'suggestions': ('models', 3)},
+ 'model_expired': {'reason': ('token', None)},
+ 'no_provider_matches': {'reason': ('token', None)},
+ 'provider_preference_unavailable': {'reason': ('token', None)},
+ 'omega_default_unroutable': {'remedy_hint': ('token', None), 'model_alias_requested': ('token', None)}}
+MANAGED_REFUSAL_PARAM_CODES = frozenset(['extra_body_conflict', 'invalid_extra_body', 'invalid_provider_preference', 'invalid_routing_field', 'omega_default_unroutable', 'rate_limit_exceeded', 'routing_field_not_yet_supported', 'token_rate_limit_exceeded', 'unsupported_field_for_managed', 'unsupported_routing_field'])
+MANAGED_REFUSAL_ERROR_CODES.update({'MANAGED_CREDITS_INSUFFICIENT': ['Not enough Future AGI credits for this request. Add credits on the '
+                                  'Billing page, lower max_tokens for a smaller request, or use your own '
+                                  'provider key.'],
+ 'MANAGED_SPEND_VELOCITY': ['This request reached a spending control. Ask an administrator to check the '
+                            'applicable limit before sending it again.'],
+ 'MANAGED_RATE_LIMIT': ['Too many requests are being sent. Check the request limit before sending another '
+                        'request.'],
+ 'MANAGED_BILLING_UNAVAILABLE': ['Billing is temporarily unavailable. If the problem continues, contact your '
+                                 'operator.'],
+ 'MANAGED_PERMISSION_DENIED': ['Access to this request was denied. Check your access policy or ask an '
+                               'administrator for permission.'],
+ 'MANAGED_CREDITS_OFF': ['Future AGI credits are turned off. An organization Owner or Admin can turn them on '
+                         'in Gateway Models, or add an own provider key in Gateway Providers.'],
+ 'MANAGED_INVALID_GATEWAY_KEY': ['The gateway API key is invalid. Create or rotate it in Gateway API Keys '
+                                 'and use the authentication header supported by this endpoint. Build Keys '
+                                 'and provider keys are not gateway API keys.'],
+ 'MANAGED_CALL_CAP': ['This request exceeds its call budget. Lower max_tokens, choose a cheaper model, or '
+                      'ask an administrator to raise the cap.'],
+ 'MANAGED_CAP_UNENFORCEABLE': ['This request cannot be bounded by its call cap. Choose a priced model with '
+                               'an enforceable bound or ask an administrator to correct the cap policy.'],
+ 'MANAGED_RUN_STOPPED': ['This run was stopped. Address the stop reason before starting a new run.'],
+ 'MANAGED_BUDGET_STATE_UNAVAILABLE': ['The budget state could not be checked. Ask an administrator to check '
+                                      'activation and budget policy if the problem continues.'],
+ 'MANAGED_SPEND_PAUSED': ['Managed spending is paused. Ask an administrator to raise the exhausted budget or '
+                          'resume your organization, or use your own provider key.'],
+ 'MANAGED_KEY_PAYMENT_REQUIRED': ['This managed API key needs more prepaid credit. Top up its balance before '
+                                  'sending another request.'],
+ 'MANAGED_BUDGET_THROTTLED': ['The budget throttle has no available slot. Ask an administrator to check its '
+                              'window or limit.'],
+ 'MANAGED_KEY_LIST_UNAVAILABLE': ['The gateway has not loaded its API key list. Contact your operator if '
+                                  'synchronization does not complete.'],
+ 'MANAGED_MODEL_NOT_PERMITTED': ['This model is not permitted for this request. Choose an allowed model with '
+                                 'supported pricing or ask an administrator to adjust the policy.'],
+ 'MANAGED_ROUTER_UNBOUNDED': ['This router has no enforceable managed cost bound. Choose a bounded priced '
+                              'model or use your own provider key.'],
+ 'MANAGED_UNSUPPORTED_FIELD': ['This request contains a field that managed models do not support. Remove or '
+                               'change the indicated field, or use your own provider key.'],
+ 'MANAGED_UNSUPPORTED_ROUTING_FIELD': ['This routing field is not supported. Remove it or choose a supported '
+                                       'endpoint or own-provider-key route.'],
+ 'MANAGED_KEY_SCOPE_DENIED': ['This key does not allow the requested operation. Use an authorized key or ask '
+                              'an administrator for an appropriately scoped key.'],
+ 'MANAGED_AGENT_KEY_BUDGET': ['The workspace agent-key budget has been reached. Ask an administrator to '
+                              'raise or repair it, or wait for its stated reset.'],
+ 'MANAGED_TOKEN_LIMIT': ['The token throughput limit has been reached. Check its window or ask an '
+                         'administrator to adjust the authorized limit.'],
+ 'MANAGED_USAGE_PAUSED': ['Usage is paused by a budget. Adjust the exhausted budget or contact support; '
+                          'sending the same request again will not fix it.'],
+ 'MANAGED_QUOTA_EXCEEDED': ['The request quota has been reached. Upgrade the plan or obtain more quota '
+                            'before sending another request.'],
+ 'MANAGED_USAGE_UNAVAILABLE': ['Usage cannot be observed for this request. Remove background mode so the '
+                               'gateway can meter it.'],
+ 'MANAGED_PROVIDER_BUSY': ['The provider has no available slot. Check the supplied wait before making '
+                           'another request.'],
+ 'MANAGED_IDEMPOTENCY_IN_PROGRESS': ['A request with this idempotency key is already in progress. Keep the '
+                                     'same request and key when checking it again.'],
+ 'MANAGED_IDEMPOTENCY_KEY_REUSED': ['This idempotency key belongs to a different request. Use a new key only '
+                                    'for a genuinely different request body.'],
+ 'MANAGED_MODELS_DISABLED': ['Managed models are not configured for this operation. Ask your operator to '
+                             'configure managed providers.'],
+ 'MANAGED_DEFERRED_UNAVAILABLE': ['This organization-key request cannot run in the background. Send it '
+                                  'synchronously.'],
+ 'MANAGED_MODEL_NOT_FOUND': ['This model was not found. Check the model catalog and choose a model this key '
+                             'can call.'],
+ 'MANAGED_GATEWAY_TIMEOUT': ['The gateway timed out. Check the request outcome before trying again; do not '
+                             'automatically replay this request.'],
+ 'MANAGED_MODEL_EXPIRED': ['This model has expired or shut down. Choose an active replacement model.'],
+ 'MANAGED_NO_PROVIDER_MATCHES': ['No eligible provider matches this request. Adjust provider filters, order, '
+                                 'or fallback settings without bypassing organization policy.'],
+ 'MANAGED_PROVIDER_PREFERENCE_UNAVAILABLE': ['This model cannot honor the requested provider preference. '
+                                             'Remove or change it, or choose a model with suitable endpoint '
+                                             'information.'],
+ 'MANAGED_MODEL_AMBIGUOUS': ['This model name is ambiguous. Choose a complete model ID from the catalog '
+                             'instead of a bare name.'],
+ 'MANAGED_NO_AUTO_CANDIDATE': ['No eligible automatic model candidate was found. Choose an explicit model or '
+                               'correct the candidate, capability, and price constraints.'],
+ 'MANAGED_DEFAULT_UNROUTABLE': ['The default model has no usable route. Configure a routable default, turn '
+                                'on credits through the authorized control, or add your own provider.'],
+ 'MANAGED_ROUTE_HINT_UNSUPPORTED': ['This route hint is not supported. For model auto, use cost, balanced, '
+                                    'or quality, or omit the hint.'],
+ 'MANAGED_ROUTING_FIELD_UNSUPPORTED': ['This routing field is not implemented. Remove it or use a supported '
+                                       'routing field.'],
+ 'MANAGED_INVALID_PROVIDER_PREFERENCE': ['This provider preference is invalid. Correct or remove the '
+                                         'indicated field using its documented type and allowed values.'],
+ 'MANAGED_INVALID_ROUTING_FIELD': ['This routing field is invalid. Correct or remove it; do not send models '
+                                   'and fallbacks together, and keep model lists within their documented '
+                                   'limits.'],
+ 'MANAGED_EXTRA_BODY_CONFLICT': ['An extra_body field conflicts with the request. Remove the duplicate or '
+                                 'make it agree with the top-level field; put model and messages at the top '
+                                 'level.'],
+ 'MANAGED_INVALID_EXTRA_BODY': ['extra_body must be a non-nested JSON object with valid request field types. '
+                                'Correct it or remove it.'],
+ 'MANAGED_PROVIDER_NOT_FOUND': ['The selected provider was not found. Correct or remove the provider lock, '
+                                'or ask an operator to configure it without bypassing access policy.'],
+ 'MANAGED_REFUSAL_UNKNOWN': ['The managed request could not be completed. Check its outcome before trying '
+                             'again; do not automatically replay it.'],
+ 'MANAGED_CREDITS_INSUFFICIENT_AMOUNTS': ['Not enough Future AGI credits for this request: it needs '
+                                          '${required} and ${available} is available. Add credits on the '
+                                          'Billing page, lower max_tokens for a smaller request, or use your '
+                                          'own provider key.']})
+err_dict.update(MANAGED_REFUSAL_ERROR_CODES)
+
+
+def positive_retry_after(value):
+    """Finite positive delta seconds, never rounded down or synthesized."""
+    if isinstance(value, bool) or value is None:
+        return None
+    text = str(value).strip()
+    if len(text) > 32 or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", text):
+        return None
+    try:
+        seconds = Decimal(text)
+    except (InvalidOperation, ValueError):
+        return None
+    if not seconds.is_finite() or seconds <= 0:
+        return None
+    return int(seconds) if seconds == seconds.to_integral_value() else float(seconds)
+
+
+def managed_refusal_parts(item):
+    """Read one SDK envelope; never take its code from attributes or prose."""
+    response = getattr(item, "response", None)
+    status = getattr(item, "status_code", None)
+    if not isinstance(status, int) or isinstance(status, bool):
+        status = getattr(response, "status_code", None)
+    if isinstance(item, dict):
+        status = item.get("status", item.get("status_code"))
+    if not isinstance(status, int) or isinstance(status, bool):
+        status = None
+    body = item if isinstance(item, dict) else getattr(item, "body", None)
+    if isinstance(body, dict):
+        inner = body.get("error") if isinstance(body.get("error"), dict) else body
+    else:
+        inner = {}
+    code = inner.get("code")
+    code = code if isinstance(code, str) else None
+    wait = None
+    headers = getattr(response, "headers", None)
+    try:
+        values = [value for key, value in headers.items() if isinstance(key, str) and key.lower() == "retry-after"]
+        if len(values) == 1:
+            wait = positive_retry_after(values[0])
+    except (AttributeError, TypeError, ValueError):
+        pass
+    return status, code, inner, wait
+
+
+def managed_refusal_metadata(code, body):
+    """Per-code display fields only; no request ID, dispatch flag or prose."""
+    from datetime import datetime
+    meta = body.get("metadata") if isinstance(body, dict) else None
+    meta = meta if isinstance(meta, dict) else {}
+    checked = {}
+    for name, (kind, options) in MANAGED_REFUSAL_METADATA.get(code, {}).items():
+        value = meta.get(name)
+        if value is None:
+            continue
+        if kind == "amount":
+            amount = _managed_usd(value) if not isinstance(value, bool) else None
+            if amount is not None and Decimal(amount) >= 0:
+                checked[name] = amount
+        elif kind == "integer":
+            if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 2**63 - 1:
+                checked[name] = value
+        elif kind == "models":
+            if isinstance(value, list) and len(value) <= options and all(
+                isinstance(v, str) and len(v) <= 128 and re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?", v)
+                for v in value
+            ):
+                checked[name] = list(value)
+        elif kind == "timestamp":
+            if isinstance(value, str) and len(value) <= 40:
+                try:
+                    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                    if parsed.tzinfo is not None:
+                        checked[name] = value
+                except ValueError:
+                    pass
+        elif isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value):
+            if kind != "enum" or value in options:
+                checked[name] = value
+    return checked
+
+
+def classify_managed_refusal(status, code, body=None, retry_after=None):
+    """Display classification, independent of every hold/settle/release decision."""
+    if not isinstance(status, int) or isinstance(status, bool) or not isinstance(code, str):
+        return None
+    spec = MANAGED_REFUSAL_CONTRACT.get((status, code))
+    if spec is None:
+        return None
+    body = body if isinstance(body, dict) else {}
+    metadata = managed_refusal_metadata(code, body)
+    wait = positive_retry_after(retry_after)
+    message = get_error_message(spec["message_key"])
+    remedy = spec["remedy"]
+    variant = None
+    retryable = spec["retry"] == "after" and wait is not None
+    if spec["retry"] == "in_flight":
+        retryable = (wait is not None and metadata.get("limit_source") == "agentcc_in_flight"
+                     and metadata.get("remedy_hint") == "retry")
+        if retryable:
+            variant = "in_flight"
+            message = "Other requests are holding your Future AGI credits right now."
+        else:
+            required, available = metadata.get("required_usd"), metadata.get("available_usd")
+            if required is not None and available is not None:
+                message = get_error_message("MANAGED_CREDITS_INSUFFICIENT_AMOUNTS").format(required=required, available=available)
+    elif spec["retry"] == "window":
+        # A reason (even unknown) is not evidence of a filled-window refusal.
+        raw_meta = body.get("metadata")
+        has_reason = isinstance(raw_meta, dict) and "reason" in raw_meta
+        reason = metadata.get("reason")
+        retryable = (not has_reason and wait is not None
+                     and metadata.get("limit_source") == "agentcc_spend_guard"
+                     and metadata.get("remedy_hint") == "retry")
+        if reason in ("request_exceeds_minute_cap", "request_exceeds_hour_cap"):
+            message = "This request exceeds the whole spending window's cap. Lower max_tokens before sending a smaller request."
+            remedy = "lower_max_tokens"
+        elif reason == "new_org_daily_cap":
+            message = "Your new organization's daily spending allowance has been reached. Contact support."
+            remedy = "contact_support"
+        elif retryable:
+            message = "The current spending window is full."
+    elif code == "managed_billing_unavailable":
+        reason = metadata.get("reason")
+        if reason == "account_state_missing":
+            message = "Billing account state is being restored. Contact your operator if restoration does not complete."
+        elif reason == "redis_unavailable":
+            message = "The billing store is temporarily unavailable. Contact your operator if the problem continues."
+    if retryable:
+        message += f" Wait at least {wait} seconds before trying again."
+        remedy = "retry"
+    else:
+        wait = None
+    param = body.get("param")
+    if code not in MANAGED_REFUSAL_PARAM_CODES or not isinstance(param, str) or len(param) > 160 or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.\[\]-]*", param):
+        param = None
+    error_type = body.get("type")
+    if error_type not in spec["types"]:
+        error_type = spec["type"]
+    return dict(status=status, code=code, type=error_type, category=spec["category"],
+                message=message, remedy=remedy, metadata=metadata, param=param,
+                retryable=retryable, retry_after=wait, display_wait_seconds=wait,
+                display_classification=variant, contract_valid=True)
+
+
+def _managed_local_refusal(item):
+    """Concrete local types establish origin; an SDK attribute does not.
+
+    A local instance implies its defining module is already loaded. Looking
+    up those classes avoids importing the routing/ledger layer from this
+    shared utility (including while that layer is importing this module).
+    """
+    import sys
+
+    for module_name, class_name in (
+        ("model_hub.services.credit_ledger_port", "ManagedCallRefusal"),
+        ("model_hub.services.model_route", "ModelRouteError"),
+    ):
+        cls = getattr(sys.modules.get(module_name), class_name, None)
+        if isinstance(cls, type) and isinstance(item, cls):
+            return True
+    return False
+
+
+def _managed_gateway_refusal(item):
+    """Gateway carriers must validate even an unknown or absent code.
+
+    A plain ManagedRouteDenied is a DSX-local denial, not this carrier.
+    Use an already-loaded concrete class rather than spoofable attributes.
+    """
+    import sys
+
+    cls = getattr(sys.modules.get("model_hub.services.model_route"), "ManagedRouteRefused", None)
+    return isinstance(cls, type) and isinstance(item, cls)
+
+
+def _managed_display_source(error):
+    """The first local refusal or SDK envelope is authoritative, even invalid.
+
+    Only non-SDK wrappers may be unwrapped. In particular a BYOK/unknown
+    outer response must never inherit a credit verdict from a nested cause.
+    """
+    for item in _managed_error_chain(error):
+        if (_managed_local_refusal(item) or isinstance(item, dict)
+                or hasattr(item, "body") or hasattr(item, "status_code")
+                or hasattr(item, "response")):
+            return item
+    return None
+
+
+def _generic_managed_display(status=None):
+    """A non-contract code cannot acquire a credit/rate/permission banner."""
+    if not isinstance(status, int) or isinstance(status, bool) or not 100 <= status <= 599:
+        status = 502
+    return dict(status=status, code="MANAGED_ROUTE_CALL_FAILED", type="server_error",
+                category="generic", message=MANAGED_REFUSAL_ERROR_CODES["MANAGED_REFUSAL_UNKNOWN"][0],
+                remedy="check_outcome", metadata={}, param=None, retryable=False,
+                retry_after=None, display_wait_seconds=None,
+                display_classification=None, contract_valid=False)
+
+
+def managed_gateway_display(error):
+    """Checked presentation data, never a money/refusal/retry decision.
+
+    Call only at a known managed boundary. A concrete local error may carry
+    a projection made at SDK normalization; SDK lookalike attributes do not
+    establish that origin. Local DSX denials without a gateway tuple return
+    None so their own copy/status survives. This helper must not replace an
+    already-selected terminal outcome even if an envelope cannot be read.
+    """
+    try:
+        item = _managed_display_source(error)
+        if _managed_local_refusal(item):
+            stored = getattr(item, "gateway_display", None)
+            if isinstance(stored, dict):
+                # Revalidate even our stored projection; never trust stored copy.
+                body = {"metadata": stored.get("metadata"), "type": stored.get("type"),
+                        "param": stored.get("param")}
+                return (classify_managed_refusal(stored.get("status"), stored.get("code"),
+                            body, stored.get("display_wait_seconds"))
+                        or _generic_managed_display(stored.get("status")))
+            code = getattr(item, "code", None)
+            if code not in _MANAGED_CODES:
+                if (_managed_gateway_refusal(item)
+                        or (code == "MANAGED_ROUTE_CALL_FAILED"
+                            and getattr(item, "contract_valid", None) is False)):
+                    return _generic_managed_display(getattr(item, "http_status", None))
+                return None
+            # A class's default retry_after is NOT an HTTP Retry-After header.
+            # The compatibility marker belongs only to concrete normalized
+            # local types; still require the canonical status/code pair.
+            wait = (getattr(item, "display_wait_seconds", None)
+                    if getattr(item, "contract_valid", False) is True else None)
+            status = getattr(item, "http_status", None)
+            body = {"metadata": getattr(item, "metadata", getattr(item, "details", {})),
+                    "type": getattr(item, "error_type", None),
+                    "param": getattr(item, "param", None)}
+            return (classify_managed_refusal(status, code, body, wait)
+                    or _generic_managed_display(status))
+        status, code, body, wait = managed_refusal_parts(item)
+        return (classify_managed_refusal(status, code, body, wait)
+                or _generic_managed_display(status))
+    except Exception:
+        # Enrichment is optional. A broken descriptor/parser cannot escape in
+        # place of the ValueError the frozen ledger already selected.
+        return _generic_managed_display()
+
+
+def _managed_checked_display(item, *, managed_context=False):
+    """Project a concrete local refusal or an explicitly managed SDK envelope."""
+    if _managed_local_refusal(item):
+        code = getattr(item, "code", None)
+        # Settlement outcomes stay primary; their gateway cause is separate
+        # original_refusal data, never an automatic replay or a usage banner.
+        if code not in {"MANAGED_OUTCOME_PENDING_RECONCILE", "CREDIT_SETTLEMENT_FAILED",
+                        "MANAGED_CALL_ALREADY_COMPLETED"}:
+            display = managed_gateway_display(item)
+            if display is not None:
+                return display
+        return dict(code=code, message=item.message,
+                    display_classification=getattr(item, "display_classification", None))
+    if not managed_context or item is None:
+        return None
+    return managed_gateway_display(item)
+
+
+def _managed_invalid_sdk(error, *, managed_context=False):
+    if not managed_context:
+        return False
+    item = _managed_display_source(error)
+    if item is None:
+        return False  # Local validation/timeouts still use the existing rules.
+    return _managed_checked_display(item, managed_context=True) is None
+
+
+_MANAGED_CREDITS_INSUFFICIENT = "managed_credits_insufficient"
+_MANAGED_MESSAGE_KEYS = {
+    code: spec["message_key"] for (_, code), spec in MANAGED_REFUSAL_CONTRACT.items()
+}
+_MANAGED_CODES = frozenset(_MANAGED_MESSAGE_KEYS) | {_MANAGED_CREDITS_INSUFFICIENT}
+# A managed refusal raised after its call was sent and charged carries
+# ``dispatched = True`` (credit_ledger_port and model_route set it); its copy
+# must disclose the charge for every refusal, including already-terminal ones.
+_MANAGED_AFTER_DISPATCH_KEYS = {
+    "managed_billing_unavailable": "MANAGED_BILLING_UNAVAILABLE_AFTER_DISPATCH",
+    "managed_credits_exhausted": "MANAGED_REFUSED_AFTER_DISPATCH",
+    "managed_credits_insufficient": "MANAGED_REFUSED_AFTER_DISPATCH",
+    "INSUFFICIENT_CREDIT": "MANAGED_REFUSED_AFTER_DISPATCH",
+    "agent_budget_exhausted": "MANAGED_REFUSED_AFTER_DISPATCH",
+    "budget_exceeded": "MANAGED_REFUSED_AFTER_DISPATCH",
+    "org_budget_exceeded": "MANAGED_REFUSED_AFTER_DISPATCH",
+    "permission_denied": "MANAGED_REFUSED_AFTER_DISPATCH",
+    "managed_spend_velocity": "MANAGED_REFUSED_AFTER_DISPATCH",
+    "rate_limit_exceeded": "MANAGED_REFUSED_AFTER_DISPATCH",
+    "MANAGED_CREDITS_REFUSED": "MANAGED_REFUSED_AFTER_DISPATCH",
+    "MANAGED_ROUTE_LIMITED": "MANAGED_REFUSED_AFTER_DISPATCH",
+    "MANAGED_ROUTE_DENIED": "MANAGED_REFUSED_AFTER_DISPATCH",
+    "MANAGED_CALL_FAILED_AFTER_DISPATCH": "MANAGED_FAILED_AFTER_DISPATCH",
+    "MANAGED_ROUTE_CALL_FAILED": "MANAGED_FAILED_AFTER_DISPATCH",
+    "MANAGED_ROUTE_TIMEOUT": "MANAGED_FAILED_AFTER_DISPATCH",
+}
+# permission_denied is also an ordinary provider code; it is a managed refusal
+# only on a typed DSX refusal (credit_ledger_port.ManagedPermissionDeniedError).
+_TYPED_ONLY_CODES = {"permission_denied": "MANAGED_PERMISSION_DENIED"}
+# error.code as a JSON / dict field, as code=<value>, or as a leading "<code>:".
+_MANAGED_CODE_FIELD = re.compile(r"""['"]code['"]\s*[:=]\s*['"]([a-z_]+)['"]""")
+_MANAGED_CODE_ASSIGN = re.compile(r"""\bcode=['"]?([a-z_]+)""")
+_MANAGED_CODE_PREFIX = re.compile(r"""^\s*([a-z_]+)\s*:""")
+_MANAGED_META_FIELDS = {
+    key: re.compile(r"""['"]%s['"]\s*:\s*['"]?([A-Za-z0-9_.]+)""" % key)
+    for key in ("limit_source", "remedy_hint", "required_usd", "available_usd")
+}
+
+
+def _managed_error_chain(error):
+    seen = set()
+    item = error
+    while item is not None and id(item) not in seen:
+        seen.add(id(item))
+        yield item
+        if not isinstance(item, BaseException):
+            return
+        item = item.__cause__ or item.__context__
+
+
+def _managed_safe_text(item):
+    if isinstance(item, str):
+        return item
+    try:
+        return str(item)
+    except Exception:
+        return ""
+
+
+def _managed_text_code(text):
+    # Compatibility symbol only: prose is never a structured managed code.
+    return None
+
+
+def _managed_metadata_from_text(text):
+    return {}
+
+
+def _managed_fields(item, *, managed_context=False):
+    found = _managed_checked_display(item, managed_context=managed_context)
+    if found is None:
+        return None
+    return found["code"], {"_safe_message": found["message"],
+                           "_display_classification": found.get("display_classification")}
+
+
+def _managed_refusal(error, *, managed_context=False):
+    """Classify exactly one boundary; invalid outer envelopes stop the search."""
+    return _managed_fields(_managed_display_source(error), managed_context=managed_context)
+
+
+def _managed_unknown_outcome(error):
+    keys = {"MANAGED_CALL_ALREADY_COMPLETED": "MANAGED_CALL_ALREADY_COMPLETED",
+            "MANAGED_OUTCOME_PENDING_RECONCILE": "MANAGED_OUTCOME_PENDING_RECONCILE",
+            "CREDIT_SETTLEMENT_FAILED": "MANAGED_SETTLEMENT_UNKNOWN"}
+    item = _managed_display_source(error)
+    if _managed_local_refusal(item):
+        key = keys.get(getattr(item, "code", None))
+        if key:
+            return get_error_message(key)
+    return None
+
+
+def _managed_after_dispatch(error):
+    """Charged copy only from the first concrete local refusal boundary."""
+    item = _managed_display_source(error)
+    if not _managed_local_refusal(item) or getattr(item, "dispatched", False) is not True:
+        return None
+    code = getattr(item, "code", None)
+    if isinstance(code, str) and code in _MANAGED_AFTER_DISPATCH_KEYS:
+        return get_error_message(_MANAGED_AFTER_DISPATCH_KEYS[code])
+    return get_error_message("MANAGED_FAILED_AFTER_DISPATCH")
+
+
+def _managed_usd(value):
+    """A bounded amount as text, or None. The exponent is checked before any
+    context-sensitive arithmetic (abs() of 1E1000000 raises decimal.Overflow
+    under the default context); adjusted() and copy_abs() never round."""
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ArithmeticError, ValueError, TypeError):
+        return None
+    if not amount.is_finite():
+        return None
+    if amount and not -12 <= amount.adjusted() <= 12:
+        return None
+    if amount.copy_abs() >= Decimal("1e9"):
+        return None
+    try:
+        return format(amount.quantize(Decimal("0.000001")).normalize(), "f")
+    except ArithmeticError:
+        return None
+
+
+def _managed_in_flight_retry(metadata):
+    return (
+        metadata.get("limit_source") == "agentcc_in_flight"
+        and metadata.get("remedy_hint") == "retry"
+    )
+
+
+def _managed_in_flight_display(metadata):
+    # Display classification survives terminalization; it never authorizes retry.
+    return (metadata.get("_display_classification") == "in_flight"
+            or _managed_in_flight_retry(metadata))
+
+
+def _managed_message(found):
+    code, metadata = found
+    return metadata.get("_safe_message") or get_error_message(_MANAGED_MESSAGE_KEYS[code])
+
+
+def _managed_usage_code(found):
+    code, metadata = found
+    if code not in _MANAGED_CODES:
+        return None  # local-only/generic outcomes never acquire a usage banner
+    if code == _MANAGED_CREDITS_INSUFFICIENT and _managed_in_flight_display(metadata):
+        return None  # transient: retried, no usage banner
+    return code
+
+
+def get_specific_error_message(error, is_llm_error=None, *, managed_context=False):
     """
     Maps specific error types, statuses, or messages to the appropriate error code.
     Returns the appropriate error message from err_dict.
 
     Parameters:
     - error: The error object, status string, or error message to analyze
+    - managed_context: trusted caller opt-in for a raw managed SDK failure;
+      never infer this from its status, code, message, or provider name.
 
     Returns:
     - A user-friendly error message string
     """
+    # One key: a managed refusal code has its own message, before every other
+    # rule (including the LLM passthrough): never raw gateway text. A refusal
+    # raised after its call was sent and charged never says "not run".
+    unknown = _managed_unknown_outcome(error)
+    if unknown is not None:
+        return unknown
+    after_dispatch = _managed_after_dispatch(error)
+    if after_dispatch is not None:
+        return after_dispatch
+    managed = _managed_refusal(error, managed_context=managed_context)
+    if managed is not None:
+        return _managed_message(managed)
+
+    if _managed_invalid_sdk(error, managed_context=managed_context):
+        return get_error_message("MANAGED_REFUSAL_UNKNOWN")
+
+    from tfc.ee_gates import jev_error_message
+
+    # A failed Jev run gets its own fixed text: its codes (JEV_RATE_LIMITED,
+    # say) would otherwise match the generic checks below.
+    jev_message = jev_error_message(error)
+    if jev_message is not None:
+        return jev_message
+
     error_message = str(error)
     error_message_lower = error_message.lower()
     error_status = None
@@ -1178,7 +2483,7 @@ def get_specific_error_message(error, is_llm_error=None):
     ):
         return get_error_message("RATE_LIMIT_REACHED")
 
-    # Check for insufficient credits errors
+    # Preserve legacy matches and recognize the replacement copy on re-normalization.
     if error_status and (
         "insufficient_credits" in error_status or "Credits" in error_status
     ):
@@ -1187,6 +2492,7 @@ def get_specific_error_message(error, is_llm_error=None):
         "insufficient_credits" in error_message
         or "insufficient" in error_message.lower()
         or "Insufficient Credits" in error_message
+        or get_error_message("INSUFFICIENT_CREDITS").lower() in error_message_lower
     ):
         return get_error_message("INSUFFICIENT_CREDITS")
 
@@ -1221,7 +2527,7 @@ def get_specific_error_message(error, is_llm_error=None):
     return get_error_message("FAILED_TO_PROCESS_EVALUATION")
 
 
-def get_usage_error_code(error):
+def get_usage_error_code(error, *, managed_context=False):
     """Return a billing/usage error_code for rate-limit or credit-exhaustion
     errors, else None.
 
@@ -1230,6 +2536,21 @@ def get_usage_error_code(error):
     recognises (see ErrorCellRenderer USAGE_LIMIT_CTA). Returns codes from the
     same taxonomy as the usage pre-check (CheckResult.error_code).
     """
+    if _managed_unknown_outcome(error) is not None:
+        return None
+    managed = _managed_refusal(error, managed_context=managed_context)
+    if managed is not None:
+        # One key: the contract's error.code itself (never FREE_TIER_LIMIT,
+        # never RATE_LIMITED for a budget); None for the in-flight retry.
+        return _managed_usage_code(managed)
+    if _managed_invalid_sdk(error, managed_context=managed_context):
+        return None
+
+    from tfc.ee_gates import describe_jev_error
+
+    # TypeSafe's rate limit is the org's own, not a Future AGI plan limit.
+    if describe_jev_error(error) is not None:
+        return None
     error_message = str(error)
     error_status = ""
     if (
@@ -1246,7 +2567,11 @@ def get_usage_error_code(error):
         or "429" in haystack
     ):
         return "RATE_LIMITED"
-    if "insufficient_credits" in haystack or "insufficient credits" in haystack:
+    if (
+        "insufficient_credits" in haystack
+        or "insufficient credits" in haystack
+        or get_error_message("INSUFFICIENT_CREDITS").lower() in haystack
+    ):
         return "FREE_TIER_LIMIT"
     return None
 
@@ -1262,6 +2587,12 @@ def get_error_for_api_status(status):
     Returns:
     - A user-friendly error message string
     """
+    # This API accepts a local code enum, not SDK exception prose.
+    if isinstance(status, str) and status in _MANAGED_MESSAGE_KEYS:
+        return get_error_message(_MANAGED_MESSAGE_KEYS[status])
+    managed = _managed_refusal(status)
+    if managed is not None:
+        return _managed_message(managed)
     status_str = str(status).lower()
 
     # Map common API statuses to error codes
@@ -1349,5 +2680,153 @@ LOGIN_ERROR_CODES = {
 }
 
 err_dict.update(LOGIN_ERROR_CODES)
+
+# Controlled rollout of the hosted Omega products (READINESS 3.13, L07). The codes are the same on
+# every wall (Django views, the Hub, the gateway, EE), so they stay lower-case like the gateway's.
+OMEGA_ROLLOUT_ERROR_CODES = {
+    "product_not_admitted": ["Not found.", ""],
+    "product_paused": [
+        "This product is paused for maintenance.",
+        "Your data is kept. Try again later.",
+    ],
+    "verification_unavailable": [
+        "Access could not be verified just now.",
+        "Try again in a few seconds.",
+    ],
+}
+
+err_dict.update(OMEGA_ROLLOUT_ERROR_CODES)
+
+# A Console agent's learning curves (learning-service P1-09, tracer/views/omega_agent_curves.py).
+OMEGA_AGENT_CURVES_ERROR_CODES = {
+    "OMEGA_AGENT_CURVES_INVALID_ID": [
+        "This agent id is not valid. Open the agent from the Console."
+    ],
+    "OMEGA_AGENT_CURVES_WORKSPACE_REQUIRED": [
+        "Choose a workspace before opening this agent's curves."
+    ],
+    "OMEGA_AGENT_CURVES_PROJECT_NOT_FOUND": [
+        "This agent's Observe project was not found in your workspace."
+    ],
+    "OMEGA_AGENT_CURVES_INVALID_WINDOW": [
+        "Choose a window of 1 to {} days that ends no later than today (UTC), with the "
+        "start date on or before the end date."
+    ],
+    "OMEGA_AGENT_CURVES_TOO_MANY_RUNS": [
+        "This agent has more than {} runs in the chosen window. Choose a shorter window."
+    ],
+    "OMEGA_AGENT_CURVES_FAILED": [
+        "This agent's curves could not be read just now. Try again in a minute."
+    ],
+}
+
+err_dict.update(OMEGA_AGENT_CURVES_ERROR_CODES)
+
+# The Observe link of an Omega deployment (SPEC 5.3, tracer/views/omega_deployments.py).
+OMEGA_DEPLOYMENT_OBSERVE_ERROR_CODES = {
+    "OMEGA_DEPLOYMENT_OBSERVE_INVALID_ID": [
+        "This deployment id is not valid. Open the deployment from the Deployments tab."
+    ],
+    "OMEGA_DEPLOYMENT_OBSERVE_INVALID_NAME": [
+        "A deployment name starts with a lowercase letter and has at most 40 lowercase "
+        "letters, digits and dashes."
+    ],
+    "OMEGA_DEPLOYMENT_OBSERVE_WORKSPACE_REQUIRED": [
+        "Choose a workspace before linking this deployment to Observe."
+    ],
+    "OMEGA_DEPLOYMENT_OBSERVE_NOT_FOUND": [
+        "This deployment was not found in your workspace."
+    ],
+    "OMEGA_DEPLOYMENT_OBSERVE_NAME_TAKEN": [
+        "The project {} already exists in this workspace and is not an Observe project. "
+        "Rename or delete it, then open the deployment again."
+    ],
+    "OMEGA_DEPLOYMENT_OBSERVE_FAILED": [
+        "The Observe project for this deployment could not be set up. Try again in a minute."
+    ],
+    # 200 with the project linked: the two default alerts wait (ensure/quota.py).
+    # The plan's monitor limit is used up. Muted monitors count; deleted ones do not.
+    "OMEGA_DEPLOYMENT_OBSERVE_ALERTS_AT_LIMIT": [
+        "The two default alerts are not set up yet: they need {needed} monitors, and "
+        "your plan allows {limit} for your organization with {current} in use. To make "
+        "room, delete {to_free} of your monitors in Observe, under Alerts, in any of "
+        "your organization's workspaces (a muted monitor still counts), or upgrade your "
+        "plan. The alerts are created the next time this deployment's Overview opens."
+    ],
+    # The plan's number is below the pair's: deleting monitors can never make room.
+    "OMEGA_DEPLOYMENT_OBSERVE_ALERTS_PLAN_TOO_SMALL": [
+        "The two default alerts are not set up: they need {needed} monitors, and your "
+        "plan allows {limit} in all. Upgrade your plan to add them; they are created "
+        "the next time this deployment's Overview opens."
+    ],
+    # The plan answered: monitors are not part of it (or not configured for it).
+    "OMEGA_DEPLOYMENT_OBSERVE_ALERTS_NOT_ON_PLAN": [
+        "The two default alerts are not set up: your plan does not include alert "
+        "monitors. Upgrade your plan to add them; they are created the next time this "
+        "deployment's Overview opens."
+    ],
+    # The entitlement service did not answer; nothing for the user to free.
+    "OMEGA_DEPLOYMENT_OBSERVE_ALERTS_PLAN_UNAVAILABLE": [
+        "The two default alerts are not set up yet: your plan could not be checked just "
+        "now. They are created the next time this deployment's Overview opens."
+    ],
+}
+
+err_dict.update(OMEGA_DEPLOYMENT_OBSERVE_ERROR_CODES)
+
+# The Observe link of a Console agent (learning-service P1-08, tracer/views/omega_agents.py).
+OMEGA_AGENT_OBSERVE_ERROR_CODES = {
+    "OMEGA_AGENT_OBSERVE_INVALID_ID": [
+        "This agent id is not valid. Open the agent from the Console."
+    ],
+    "OMEGA_AGENT_OBSERVE_INVALID_NAME": [
+        "An agent name has 1 to 200 characters, with no control characters and no "
+        "spaces at either end."
+    ],
+    "OMEGA_AGENT_OBSERVE_WORKSPACE_REQUIRED": [
+        "Choose a workspace before linking this agent to Observe."
+    ],
+    "OMEGA_AGENT_OBSERVE_NOT_FOUND": ["This agent was not found in your workspace."],
+    "OMEGA_AGENT_OBSERVE_NAME_TAKEN": [
+        "The project {} already exists in this workspace for something else. Rename or "
+        "delete it, then open the agent again."
+    ],
+    "OMEGA_AGENT_OBSERVE_FAILED": [
+        "The Observe project for this agent could not be set up. Try again in a minute."
+    ],
+    # 200 with the project linked: the two default alerts wait (ensure/quota.py).
+    "OMEGA_AGENT_OBSERVE_ALERTS_AT_LIMIT": [
+        "The two default alerts are not set up yet: they need {needed} monitors, and "
+        "your plan allows {limit} for your organization with {current} in use. To make "
+        "room, delete {to_free} of your monitors in Observe, under Alerts, in any of "
+        "your organization's workspaces (a muted monitor still counts), or upgrade your "
+        "plan. The alerts are created the next time this agent's page opens."
+    ],
+    "OMEGA_AGENT_OBSERVE_ALERTS_PLAN_TOO_SMALL": [
+        "The two default alerts are not set up: they need {needed} monitors, and your "
+        "plan allows {limit} in all. Upgrade your plan to add them; they are created "
+        "the next time this agent's page opens."
+    ],
+    "OMEGA_AGENT_OBSERVE_ALERTS_NOT_ON_PLAN": [
+        "The two default alerts are not set up: your plan does not include alert "
+        "monitors. Upgrade your plan to add them; they are created the next time this "
+        "agent's page opens."
+    ],
+    "OMEGA_AGENT_OBSERVE_ALERTS_PLAN_UNAVAILABLE": [
+        "The two default alerts are not set up yet: your plan could not be checked just "
+        "now. They are created the next time this agent's page opens."
+    ],
+    # 200 with the project linked: this agent's runs are not analysed (ensure/mistakes.py).
+    "OMEGA_AGENT_OBSERVE_MISTAKES_NOT_ON_PLAN": [
+        "Mistakes are not analysed for this agent: your plan does not include Error "
+        "Feed. Analysis starts the next time this agent's page opens after it is added."
+    ],
+    "OMEGA_AGENT_OBSERVE_MISTAKES_TURNED_OFF": [
+        "Mistakes are not analysed for this agent: analysis is turned off, or set to 0%, "
+        "in its Observe project's settings."
+    ],
+}
+
+err_dict.update(OMEGA_AGENT_OBSERVE_ERROR_CODES)
 
 # get_error_message("METRIC_VALID_CONTENT")

@@ -10,6 +10,10 @@ export const PLAYGROUND_AGENTS_PATH = agentsTabPath("playground");
 
 export const CONNECT_AGENT_PATH = `${paths.dashboard.simulate.environments.root}?tab=build`;
 
+// Where CONNECT_AGENT_PATH lands, named as the left menu names it. Connecting
+// happens there, not on Agents, so the connect buttons say so.
+export const CONNECT_AGENT_PLACE = "Simulate > Environment";
+
 export const resolveAgentsTab = (raw) =>
   AGENTS_TABS.includes(raw) ? raw : "connected";
 

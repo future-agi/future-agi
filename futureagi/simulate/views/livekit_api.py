@@ -32,6 +32,7 @@ from simulate.repositories import (
     PhoneNumberRepository,
 )
 from simulate.services.agent_definition import is_masked
+from tfc.ee_loader import is_cloud_env
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
@@ -50,6 +51,14 @@ class LiveKitErrorResponseSerializer(ApiTextErrorResponseSerializer):
 
 
 _gm = GeneralMethods()
+
+# What ValidateLiveKitCredentialsView answers on Future AGI Cloud instead of
+# probing the customer's LiveKit URL from the backend (T6 #7b).
+LIVEKIT_NOT_VERIFIED_ON_CLOUD = (
+    "LiveKit credentials not verified on Future AGI Cloud: Future AGI does not "
+    "contact customer LiveKit URLs from its servers; connection problems will "
+    "show when a run connects."
+)
 
 
 class LiveKitOkResponseSerializer(serializers.Serializer):
@@ -134,6 +143,11 @@ class ValidateLiveKitCredentialsRequestSerializer(serializers.Serializer):
 class ValidateLiveKitCredentialsResultSerializer(serializers.Serializer):
     valid = serializers.BooleanField()
     error = serializers.CharField(required=False, allow_blank=True)
+    # Future AGI Cloud only: the check was not run (skipped), so nothing was
+    # verified, and ``message`` says why.
+    verified = serializers.BooleanField(required=False)
+    skipped = serializers.BooleanField(required=False)
+    message = serializers.CharField(required=False, allow_blank=True)
 
 
 class ValidateLiveKitCredentialsResponseSerializer(serializers.Serializer):
@@ -538,6 +552,7 @@ class ValidateLiveKitCredentialsView(APIView):
         responses={
             200: ValidateLiveKitCredentialsResponseSerializer,
             400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
         },
         reject_unknown_fields=True,
     )
@@ -547,6 +562,21 @@ class ValidateLiveKitCredentialsView(APIView):
         denial = voice_sim_gate_response(request.user.organization)
         if denial is not None:
             return denial
+
+        # On Future AGI Cloud the URL is the customer's, so a probe from this
+        # backend would go wherever it points: private ranges, loopback, cloud
+        # metadata, redirect targets. Nothing is built, read or sent; the answer
+        # says the credentials were not verified, and saving them never depends
+        # on it. A self-hosted install still probes its own LiveKit server.
+        if is_cloud_env(getattr(settings, "CLOUD_DEPLOYMENT", "") or ""):
+            return self.gm.success_response(
+                {
+                    "valid": False,
+                    "verified": False,
+                    "skipped": True,
+                    "message": LIVEKIT_NOT_VERIFIED_ON_CLOUD,
+                }
+            )
 
         from tfc.utils.lazy_extras import load_extra
 
@@ -573,21 +603,33 @@ class ValidateLiveKitCredentialsView(APIView):
         # 401 because they aren't real credentials. Rehydrate any masked
         # field from the stored ProviderCredentials before validating. The
         # url is plaintext on read so it doesn't need this branch.
+        #
+        # Only the caller's own agent: the organization and soft-delete filter
+        # of every other AgentDefinition lookup in simulate (AgentRunsView,
+        # StoredAgentView, the agent version views), and the objects manager
+        # adds the workspace the request was authenticated into. Another
+        # org's agent, one in a workspace the caller is not in, a deleted one
+        # and an id that names nothing get the same 404, before any stored
+        # credential is read or any request is sent.
         if agent_definition_id and (is_masked(api_key) or is_masked(api_secret)):
-            try:
-                agent = AgentDefinition.objects.get(id=agent_definition_id)
-                version = agent.active_version or agent.latest_version
-                if version:
-                    try:
-                        creds = version.credentials
-                        if is_masked(api_key):
-                            api_key = creds.get_api_key()
-                        if is_masked(api_secret):
-                            api_secret = creds.get_api_secret()
-                    except AgentVersion.credentials.RelatedObjectDoesNotExist:
-                        pass
-            except AgentDefinition.DoesNotExist:
-                pass
+            agent = AgentDefinition.objects.filter(
+                id=agent_definition_id,
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+                deleted=False,
+            ).first()
+            if agent is None:
+                return self.gm.not_found("Agent definition not found")
+            version = agent.active_version or agent.latest_version
+            if version:
+                try:
+                    creds = version.credentials
+                    if is_masked(api_key):
+                        api_key = creds.get_api_key()
+                    if is_masked(api_secret):
+                        api_secret = creds.get_api_secret()
+                except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                    pass
 
         if not all([livekit_url, api_key, api_secret]):
             return self.gm.bad_request("All credential fields are required.")

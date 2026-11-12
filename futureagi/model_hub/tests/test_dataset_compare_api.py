@@ -1,3 +1,4 @@
+import json
 import uuid
 from pathlib import Path
 
@@ -112,13 +113,22 @@ def test_compare_row_route_delete_is_method_guarded(auth_client):
 
 @pytest.mark.django_db
 def test_compare_delete_falls_back_to_synchronous_cleanup(
-    auth_client, monkeypatch, tmp_path
+    auth_client, monkeypatch, tmp_path, compare_datasets
 ):
     compare_id = uuid.uuid4()
     monkeypatch.chdir(tmp_path)
     compare_dir = Path(get_compare_local_dir(compare_id))
     compare_dir.mkdir(parents=True)
-    (compare_dir / "metadata.json").write_text("{}", encoding="utf-8")
+    (compare_dir / "metadata.json").write_text(
+        json.dumps({
+            "base_dataset_id": str(compare_datasets["base_dataset"].id),
+            "comparison_datasets": [
+                str(compare_datasets["base_dataset"].id),
+                str(compare_datasets["other_dataset"].id),
+            ],
+        }),
+        encoding="utf-8",
+    )
 
     def raise_temporal_unavailable(*args, **kwargs):
         raise RuntimeError("Temporal unavailable")
@@ -226,3 +236,112 @@ def test_compare_pagination_tolerates_eval_columns_without_source_id(
     assert {column["source_id"] for column in eval_configs} == {None}
     assert result["table"][0][str(base_eval.id)]["cell_value"] == "pass"
     assert result["table"][0][str(other_eval.id)]["cell_value"] == "fail"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_matches_four_questions_by_value_not_row_id(compare_datasets):
+    questions = [
+        "What is the capital of Japan?",
+        "What is 2 + 2?",
+        "Name a primary color.",
+        "What is the opposite of hot?",
+    ]
+    expected = {question: {} for question in questions}
+    datasets = []
+    base_columns = {}
+    for prefix in ("base", "other"):
+        dataset = compare_datasets[f"{prefix}_dataset"]
+        column = compare_datasets[f"{prefix}_input"]
+        datasets.append(dataset)
+        base_columns[dataset.id] = column
+        for index, question in enumerate(questions):
+            if index == 0:
+                row = compare_datasets[f"{prefix}_row"]
+                Cell.objects.filter(column=column, row=row).update(value=question)
+            else:
+                row = Row.objects.create(dataset=dataset, order=index)
+                Cell.objects.create(
+                    dataset=dataset, column=column, row=row, value=question
+                )
+            expected[question][str(dataset.id)] = str(row.id)
+
+    result = CompareDatasetsView().generate_dataset_info(datasets, base_columns)
+
+    assert result == expected
+    assert all(len(set(row_map.values())) == 2 for row_map in result.values())
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    ("left_value", "right_value", "matches"),
+    [
+        ("  Keep Case  ", "  Keep Case  ", True),
+        ("Question", "question", False),
+        ("Question", " Question ", False),
+        (42, "42", True),
+        ("042", 42, False),
+        ("42.0", 42, False),
+    ],
+)
+def test_compare_preserves_exact_stored_value_matching(
+    compare_datasets, left_value, right_value, matches
+):
+    # Cell.value is a TextField: numeric inputs are stored as text. Comparison
+    # must not silently case-fold, trim, or numerically coerce stored strings.
+    datasets = []
+    base_columns = {}
+    for prefix, value in (("base", left_value), ("other", right_value)):
+        dataset = compare_datasets[f"{prefix}_dataset"]
+        column = compare_datasets[f"{prefix}_input"]
+        Cell.objects.filter(column=column).update(value=value)
+        datasets.append(dataset)
+        base_columns[dataset.id] = column
+
+    result = CompareDatasetsView().generate_dataset_info(datasets, base_columns)
+
+    if matches:
+        assert result == {
+            str(left_value): {
+                str(dataset.id): str(compare_datasets[f"{prefix}_row"].id)
+                for prefix, dataset in zip(("base", "other"), datasets)
+            }
+        }
+    else:
+        assert result == {}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_compare_empty_result_keeps_real_column_configuration(
+    auth_client, compare_datasets, monkeypatch, tmp_path
+):
+    monkeypatch.chdir(tmp_path)
+    base_dataset = compare_datasets["base_dataset"]
+    other_dataset = compare_datasets["other_dataset"]
+    Cell.objects.filter(column=compare_datasets["other_input"]).update(value="beta")
+    for dataset in (base_dataset, other_dataset):
+        Column.objects.create(
+            dataset=dataset,
+            name="answer",
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
+        )
+
+    response = auth_client.post(
+        f"/model-hub/datasets/{base_dataset.id}/compare-datasets/",
+        {
+            "dataset_ids": [str(other_dataset.id)],
+            "base_column_name": "input",
+            "page_size": 10,
+            "current_page_index": 0,
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    result = response.json()["result"]
+    assert result["table"] == []
+    assert result["metadata"]["total_rows"] == 0
+    assert {column["group"]["name"] for column in result["column_config"]} == {
+        "input",
+        "answer",
+    }

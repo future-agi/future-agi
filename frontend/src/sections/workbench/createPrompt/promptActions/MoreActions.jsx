@@ -3,11 +3,12 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
-  IconButton,
-  Divider,
-  Typography,
   Collapse,
+  Divider,
+  IconButton,
   Stack,
+  Typography,
+  useMediaQuery,
 } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
 import SvgColor from "src/components/svg-color";
@@ -29,6 +30,7 @@ export default function MoreActions({
   addToCompare,
   userRole,
 }) {
+  const roomy = useMediaQuery("(min-width:1440px)");
   return (
     <Box
       sx={{
@@ -39,7 +41,9 @@ export default function MoreActions({
     >
       <CustomTooltip
         show
-        title={isMoreOpen ? "Minimize" : "Expand"}
+        title={
+          isMoreOpen ? "Fewer actions" : "More actions: History, Compare, …"
+        }
         arrow
         size="small"
         type="black"
@@ -52,12 +56,13 @@ export default function MoreActions({
         }}
       >
         <Button
+          size="small"
+          // FA-PROMPTS-07: a plain name when the button is icon-only.
+          aria-label={isMoreOpen ? "Fewer actions" : "More actions"}
           sx={{
-            borderRadius: "4px",
             backgroundColor: "background.paper",
             border: "1px solid",
             borderColor: "divider",
-            height: "30px",
             minWidth: "30px",
             paddingLeft: isMoreOpen ? "12px" : "8px",
             paddingRight: isMoreOpen ? "12px" : "8px",
@@ -71,9 +76,8 @@ export default function MoreActions({
           onClick={() => setMoreOpen(!isMoreOpen)}
           startIcon={
             <SvgColor
+              width={16}
               sx={{
-                width: "16px",
-                height: "16px",
                 color: "text.primary",
               }}
               src={
@@ -84,7 +88,9 @@ export default function MoreActions({
             />
           }
         >
-          {!isMoreOpen && (
+          {/* IT-R1 G4: icon-only below 1440 px so the header never wraps
+              and the prompt name keeps its room. */}
+          {!isMoreOpen && roomy && (
             <Typography variant="s1" fontWeight={"fontWeightMedium"}>
               More
             </Typography>
@@ -136,12 +142,11 @@ export default function MoreActions({
               }}
             >
               <Button
+                size="small"
                 sx={{
-                  borderRadius: "4px",
                   backgroundColor: "background.paper",
                   border: "1px solid",
                   borderColor: "divider",
-                  height: "30px",
                   whiteSpace: "nowrap",
                   cursor: "pointer",
                   "&:hover": {
@@ -161,9 +166,8 @@ export default function MoreActions({
                 }}
                 startIcon={
                   <SvgColor
+                    width={16}
                     sx={{
-                      width: "16px",
-                      height: "16px",
                       color:
                         loadingPrompt ||
                         currentTab === "Evaluation" ||
@@ -203,12 +207,10 @@ export default function MoreActions({
             >
               <IconButton
                 sx={{
-                  borderRadius: "4px",
                   backgroundColor: "background.paper",
                   border: "1px solid",
                   borderColor: "divider",
                   gap: theme.spacing(0.5),
-                  height: "30px",
                   whiteSpace: "nowrap",
                   "&:hover": {
                     backgroundColor: `${theme.palette.background.neutral} !important`,

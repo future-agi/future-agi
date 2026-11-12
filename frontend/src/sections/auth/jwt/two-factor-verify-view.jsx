@@ -21,6 +21,12 @@ import { useSnackbar } from "src/components/snackbar";
 import { startAuthentication } from "@simplewebauthn/browser";
 
 import RightSectionAuth from "./RightSectionAuth";
+import {
+  authSplitSx,
+  authFormPanelSx,
+  authAsideSx,
+  authFormGutterSx,
+} from "src/layouts/auth/responsive-styles";
 
 // ----------------------------------------------------------------------
 
@@ -99,9 +105,11 @@ export default function TwoFactorVerifyView() {
   // --------------- Shared helpers ---------------
 
   const handleExpiredOrInvalidError = (error) => {
+    // Invalid factor codes are retryable; only an invalid verification session
+    // should clear the challenge. Preserve the existing expiry handling.
     if (
       error?.error?.includes("expired") ||
-      error?.error?.includes("Invalid")
+      error?.error === "Invalid verification session."
     ) {
       sessionStorage.removeItem(TWO_FA_SESSION_KEY);
       enqueueSnackbar("Verification session expired. Please log in again.", {
@@ -247,7 +255,7 @@ export default function TwoFactorVerifyView() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -257,7 +265,7 @@ export default function TwoFactorVerifyView() {
       </Typography>
       <Typography
         sx={{
-          fontSize: "14px",
+          fontSize: "13px",
           color: "text.secondary",
           fontFamily: "Inter",
           mt: 1,
@@ -275,7 +283,7 @@ export default function TwoFactorVerifyView() {
         sx={{
           color: "error.main",
           bgcolor: "error.lighter",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           px: 2,
           py: 1,
           border: "1px solid",
@@ -307,7 +315,7 @@ export default function TwoFactorVerifyView() {
 
   const renderTotpForm = () => (
     <form onSubmit={handleTotpSubmit}>
-      <Stack spacing={2.5} sx={{ maxWidth: "440px" }}>
+      <Stack spacing={2} sx={{ maxWidth: "440px" }}>
         {renderHead(
           "Two-factor authentication",
           "Enter the 6-digit code from your authenticator app.",
@@ -321,21 +329,21 @@ export default function TwoFactorVerifyView() {
           onChange={(e) => setCode(e.target.value)}
           autoComplete="one-time-code"
           inputProps={{ maxLength: 6 }}
-          sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
-          size="small"
+          sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
+          size="medium"
           autoFocus
         />
 
         {renderErrorAlert()}
 
         <LoadingButton
+          size="large"
           fullWidth
           color="primary"
           type="submit"
           variant="contained"
           loading={isSubmitting}
           disabled={code.length !== 6}
-          sx={{ height: "42px", borderRadius: 0.5 }}
         >
           Verify
         </LoadingButton>
@@ -377,7 +385,7 @@ export default function TwoFactorVerifyView() {
 
   const renderRecoveryForm = () => (
     <form onSubmit={handleRecoverySubmit}>
-      <Stack spacing={2.5} sx={{ maxWidth: "440px" }}>
+      <Stack spacing={2} sx={{ maxWidth: "440px" }}>
         {renderHead(
           "Use a recovery code",
           "Enter one of your recovery codes. Each code can only be used once.",
@@ -390,21 +398,21 @@ export default function TwoFactorVerifyView() {
           value={code}
           onChange={(e) => setCode(e.target.value)}
           autoComplete="off"
-          sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
-          size="small"
+          sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
+          size="medium"
           autoFocus
         />
 
         {renderErrorAlert()}
 
         <LoadingButton
+          size="large"
           fullWidth
           color="primary"
           type="submit"
           variant="contained"
           loading={isSubmitting}
           disabled={!code.trim()}
-          sx={{ height: "42px", borderRadius: 0.5 }}
         >
           Verify
         </LoadingButton>
@@ -445,7 +453,7 @@ export default function TwoFactorVerifyView() {
   // --------------- Passkey mode ---------------
 
   const renderPasskeyForm = () => (
-    <Stack spacing={2.5} sx={{ maxWidth: "440px" }}>
+    <Stack spacing={2} sx={{ maxWidth: "440px" }}>
       {renderHead(
         "Verify with passkey",
         "Use your passkey to complete sign in.",
@@ -454,12 +462,12 @@ export default function TwoFactorVerifyView() {
       {renderErrorAlert()}
 
       <LoadingButton
+        size="large"
         fullWidth
         color="primary"
         variant="contained"
         loading={isSubmitting}
         onClick={handlePasskeySubmit}
-        sx={{ height: "42px", borderRadius: 0.5 }}
       >
         Verify with passkey
       </LoadingButton>
@@ -515,12 +523,11 @@ export default function TwoFactorVerifyView() {
   }
 
   return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
+    <Box sx={authSplitSx}>
       {/* Left Side - Form */}
       <Box
         sx={{
-          width: "50%",
-          height: "100vh",
+          ...authFormPanelSx,
           display: "flex",
           justifyContent: "center",
           bgcolor: "background.paper",
@@ -532,7 +539,7 @@ export default function TwoFactorVerifyView() {
             maxWidth: "640px",
             paddingY: "100px",
             width: "100%",
-            px: 10,
+            ...authFormGutterSx,
             height: "fit-content",
           }}
         >
@@ -541,13 +548,7 @@ export default function TwoFactorVerifyView() {
       </Box>
 
       {/* Right Side - Image with Text Overlay */}
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
+      <Box sx={authAsideSx}>
         <RightSectionAuth />
       </Box>
     </Box>

@@ -1,0 +1,176 @@
+schema: connector-gen/rest-overlay/v1
+spec: fixtures/spec/graph-v1.0-openapi.yaml.gz
+tools:
+  - name: get_file
+    title: Get file
+    description: Read file metadata by drive-id and driveItem-id; this does not extract document text.
+    operation:
+      method: GET
+      path: /drives/{drive-id}/items/{driveItem-id}
+    scopes:
+      - Files.Read
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/driveitem-get?view=graph-rest-1.0
+    params:
+      rename:
+        $select: select
+      exclude:
+        - $expand
+      describe: {}
+  - name: list_children
+    title: List children
+    description: List files under a folder driveItem-id; pass top=10 to bound a page.
+    operation:
+      method: GET
+      path: /drives/{drive-id}/items/{driveItem-id}/children
+    scopes:
+      - Files.Read
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/driveitem-list-children?view=graph-rest-1.0
+    params:
+      rename:
+        $top: top
+        $skip: skip
+        $filter: filter
+        $orderby: orderby
+        $select: select
+      exclude:
+        - $search
+        - $count
+        - $expand
+      describe: {}
+  - name: list_versions
+    title: List versions
+    description: List historical file versions. The contents are not downloaded.
+    operation:
+      method: GET
+      path: /drives/{drive-id}/items/{driveItem-id}/versions
+    scopes:
+      - Files.Read
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/driveitem-list-versions?view=graph-rest-1.0
+    params:
+      rename:
+        $top: top
+        $skip: skip
+        $filter: filter
+        $orderby: orderby
+        $select: select
+      exclude:
+        - $search
+        - $count
+        - $expand
+      describe: {}
+  - name: get_version
+    title: Get version
+    description: Read metadata for one version, for example driveItemVersion-id="1.0".
+    operation:
+      method: GET
+      path: /drives/{drive-id}/items/{driveItem-id}/versions/{driveItemVersion-id}
+    scopes:
+      - Files.Read
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/driveitemversion-get?view=graph-rest-1.0
+    params:
+      rename:
+        $select: select
+      exclude:
+        - $expand
+      describe: {}
+  - name: list_permissions
+    title: List permissions
+    description: List permissions on a file; results depend on the caller's access.
+    operation:
+      method: GET
+      path: /drives/{drive-id}/items/{driveItem-id}/permissions
+    scopes:
+      - Files.Read
+    annotations:
+      openWorldHint: false
+    posture: auto
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/driveitem-list-permissions?view=graph-rest-1.0
+    params:
+      rename:
+        $top: top
+        $skip: skip
+        $filter: filter
+        $orderby: orderby
+        $select: select
+      exclude:
+        - $search
+        - $count
+        - $expand
+      describe: {}
+  - name: copy_template
+    title: Copy template
+    description: Request an asynchronous copy of a template file into parentReference.id. Accepted is not completion; verify the destination separately.
+    operation:
+      method: POST
+      path: /drives/{drive-id}/items/{driveItem-id}/copy
+    scopes:
+      - Files.ReadWrite
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - name
+        - parentReference.driveId
+        - parentReference.id
+      required: []
+      description: Request an asynchronous copy of a template file into parentReference.id. Accepted is not completion; verify the destination separately.
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/driveitem-copy?view=graph-rest-1.0
+    params:
+      rename: {}
+      exclude: []
+      describe: {}
+  - name: rename_file
+    title: Rename file
+    description: Rename a file to body.name, for example "Quarterly-report.docx".
+    operation:
+      method: PATCH
+      path: /drives/{drive-id}/items/{driveItem-id}
+    scopes:
+      - Files.ReadWrite
+    annotations:
+      openWorldHint: false
+      destructiveHint: false
+    posture: ask
+    body:
+      fields:
+        - name
+      required: []
+      description: Rename a file to body.name, for example "Quarterly-report.docx".
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/driveitem-update?view=graph-rest-1.0
+    params:
+      rename: {}
+      exclude: []
+      describe: {}
+  - name: delete_file
+    title: Delete file
+    description: Delete a file by drive-id and driveItem-id. The default tool posture is deny.
+    operation:
+      method: DELETE
+      path: /drives/{drive-id}/items/{driveItem-id}
+    scopes:
+      - Files.ReadWrite
+    annotations:
+      openWorldHint: false
+      destructiveHint: true
+    posture: deny
+    scopeSource: https://learn.microsoft.com/en-us/graph/api/driveitem-delete?view=graph-rest-1.0
+    params:
+      rename: {}
+      exclude:
+        - If-Match
+      describe: {}
+server: https://graph.microsoft.com/v1.0

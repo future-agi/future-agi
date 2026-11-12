@@ -89,7 +89,7 @@ test('EVAL-E2E-002: configured evaluator choices stay current in the bound proje
       await testInfo.attach('eval-template-id', { contentType: 'application/json',
         body: JSON.stringify({ templateId, projectId, siblingId, name, alpha, beta, gamma,
           organizationId: actor.organizationId, workspaceId: actor.workspaceId }) });
-      await page.getByPlaceholder('Eg: Hallucination detector').fill(name);
+      await page.getByPlaceholder('e.g. hallucination_detector').fill(name);
       await page.getByRole('tab', { name: 'LLM-As-A-Judge', exact: true }).click();
       // MessageEditorBlock's PromptEditor uses a Quill contenteditable, not textarea.
       await page.locator('.ql-editor[contenteditable="true"]').first()

@@ -1,0 +1,50 @@
+# Fireflies' MCP server with a Fireflies API key as the bearer
+# ("Authorization: Bearer <key>"), the optional form Fireflies' MCP page
+# documents next to OAuth. The key comes from Settings > Developer Settings
+# in Fireflies.
+schema: "connector-manifest/v1#provider"
+app: fireflies
+id: api-key
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://api.fireflies.ai/mcp
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: API key
+      help: "A Fireflies API key, from Settings > Developer Settings in Fireflies."
+      helpUrl: https://docs.fireflies.ai/getting-started/mcp-configuration
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.fireflies.ai/getting-started/mcp-configuration
+    fetchedAt: 2026-11-11
+  - fact: transport.variant
+    url: https://docs.fireflies.ai/getting-started/mcp-configuration
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://docs.fireflies.ai/getting-started/mcp-configuration
+    fetchedAt: 2026-11-11
+  - fact: auth.kind
+    url: https://docs.fireflies.ai/mcp-tools/overview
+    fetchedAt: 2026-11-11
+  - fact: auth.credentialParts
+    url: https://docs.fireflies.ai/getting-started/mcp-configuration
+    fetchedAt: 2026-11-11
+x-omega: { oss: exclude }

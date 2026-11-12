@@ -1,0 +1,20 @@
+schema: "connector-manifest/v1#app"
+id: google-bigquery
+version: 1.0.0
+name: Google BigQuery
+description: "Query and explore BigQuery datasets and tables."
+vendor:
+  name: Google
+  domains: [google.com]
+eeCategory: data
+group: google
+categories: [data, data-warehouse]
+tags: [sql, analytics]
+docsUrl: https://docs.cloud.google.com/bigquery/docs/use-bigquery-mcp
+archetype: data-warehouse
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://docs.cloud.google.com/bigquery/docs/use-bigquery-mcp
+    fetchedAt: 2026-10-21

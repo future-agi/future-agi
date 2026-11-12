@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -69,6 +71,13 @@ func (a *Authenticator) GRPCInterceptor() grpc.UnaryServerInterceptor {
 		if err != nil {
 			return nil, err
 		}
+		if a != nil {
+			md, _ := metadata.FromIncomingContext(ctx)
+			expected, err := ParseExpectedMetadata(md)
+			if err != nil || expected.CheckScope(FromContext(ctx)) != nil {
+				return nil, status.Error(codes.PermissionDenied, ErrExpectedTargetMismatch.Error())
+			}
+		}
 		return handler(ctx, req)
 	}
 }
@@ -115,10 +124,10 @@ func HasGRPCCredentials(md metadata.MD) bool {
 	return firstMD(md, "x-api-key") != "" && firstMD(md, "x-secret-key") != ""
 }
 
-// KnownGRPCCredentials reports whether call metadata carries a key pair that
-// is in the cache as valid (fresh or within the warm window). It reads only
-// the cache, so it can run before a call is accepted; a pair it does not
-// know may still be valid. With auth disabled every call is known.
+// KnownGRPCCredentials is only a pre-auth resource classifier. It uses fresh
+// entries and verifies grant tokens without persistence; it never authorizes
+// a request or replaces Authenticate. An unknown pair may still be valid.
+// With auth disabled every call is known.
 func (a *Authenticator) KnownGRPCCredentials(md metadata.MD) bool {
 	if a == nil {
 		return true
@@ -127,8 +136,16 @@ func (a *Authenticator) KnownGRPCCredentials(md metadata.MD) bool {
 	if apiKey == "" || secretKey == "" {
 		return false
 	}
-	_, status := a.cache.peek(CacheKey(apiKey, secretKey))
-	return status != "miss"
+	var claims *GrantClaims
+	if strings.HasPrefix(apiKey, "fit_") {
+		var err error
+		claims, err = VerifyCollectorGrant(apiKey, secretKey, a.cfg.Peppers, a.cfg.EnvelopeKids, time.Now())
+		if err != nil {
+			return false
+		}
+	}
+	entry, status := a.cache.peek(CacheKey(apiKey, secretKey))
+	return status == "fresh" && sameGrant(entry.result.Grant, claims)
 }
 
 func firstMD(md metadata.MD, key string) string {

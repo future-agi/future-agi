@@ -32,11 +32,19 @@ export default function ResizableSplit({
   maxRightWidth = 720,
   storageKey,
   rightBackground = "background.paper",
+  leftHidden = false,
+  rightHidden = false,
+  leftSx,
 }) {
   const containerRef = useRef(null);
   const [rightWidth, setRightWidth] = useState(() => {
     if (typeof window === "undefined" || !storageKey) return initialRightWidth;
-    const stored = Number(window.localStorage.getItem(storageKey));
+    let stored = NaN;
+    try {
+      stored = Number(window.localStorage.getItem(storageKey));
+    } catch {
+      // storage unavailable (private mode, tests): use the initial width
+    }
     return Number.isFinite(stored) && stored > 0 ? stored : initialRightWidth;
   });
   const [isDragging, setIsDragging] = useState(false);
@@ -67,7 +75,11 @@ export default function ResizableSplit({
   const persist = useCallback(
     (value) => {
       if (!storageKey || typeof window === "undefined") return;
-      window.localStorage.setItem(storageKey, String(value));
+      try {
+        window.localStorage.setItem(storageKey, String(value));
+      } catch {
+        // storage unavailable: the width still applies for this page
+      }
     },
     [storageKey],
   );
@@ -152,8 +164,10 @@ export default function ResizableSplit({
           flex: { xs: "1 1 auto", md: 1 },
           minWidth: 0,
           overflow: "auto",
-          borderBottom: { xs: 1, md: 0 },
+          borderBottom: { xs: rightHidden ? 0 : 1, md: 0 },
           borderColor: "divider",
+          ...leftSx,
+          ...(leftHidden && { display: "none" }),
         }}
       >
         {left}
@@ -175,7 +189,10 @@ export default function ResizableSplit({
         onMouseLeave={() => setHoverHandle(false)}
         onKeyDown={onKeyDown}
         sx={{
-          display: { xs: "none", md: "flex" },
+          display: {
+            xs: "none",
+            md: leftHidden || rightHidden ? "none" : "flex",
+          },
           alignItems: "center",
           justifyContent: "center",
           flexShrink: 0,
@@ -215,14 +232,15 @@ export default function ResizableSplit({
 
       <Box
         sx={{
-          flex: { xs: "1 1 auto", md: "0 0 auto" },
-          width: { xs: "100%", md: rightWidth },
+          flex: { xs: "1 1 auto", md: leftHidden ? 1 : "0 0 auto" },
+          width: { xs: "100%", md: leftHidden ? "auto" : rightWidth },
           minWidth: 0,
           overflow: "auto",
           bgcolor: rightBackground,
+          ...(rightHidden && { display: "none" }),
         }}
       >
-        {right}
+        {rightHidden ? null : right}
       </Box>
     </Box>
   );
@@ -230,11 +248,17 @@ export default function ResizableSplit({
 
 ResizableSplit.propTypes = {
   left: PropTypes.node.isRequired,
-  right: PropTypes.node.isRequired,
+  right: PropTypes.node,
   initialRightWidth: PropTypes.number,
   minLeftWidth: PropTypes.number,
   minRightWidth: PropTypes.number,
   maxRightWidth: PropTypes.number,
   storageKey: PropTypes.string,
   rightBackground: PropTypes.string,
+  // Optional (dataset Row view): hide one pane while keeping both mounted at
+  // the same positions, so a grid on the left never remounts when the right
+  // pane opens or goes full width. `leftSx` styles the left pane.
+  leftHidden: PropTypes.bool,
+  rightHidden: PropTypes.bool,
+  leftSx: PropTypes.object,
 };

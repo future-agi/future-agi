@@ -1,0 +1,52 @@
+# Pylon's hosted MCP server with MCP OAuth (AuthKit): each person signs in
+# with a Pylon account, and actions run as that person, scoped to what they
+# see in the Pylon dashboard. Pylon offers no API key or machine-to-machine
+# credential for it. A workspace's region decides the host, so the org
+# picks it: {mcpHost} admits exactly Pylon's US and EU hosts. An admin first
+# turns the server on (Settings > AI Controls > MCP Server), and each
+# person needs the MCP Access role. EE takes only a declared oauth2 spec,
+# so it gets none.
+schema: "connector-manifest/v1#provider"
+app: pylon
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://{mcpHost}
+  urlVariables:
+    mcpHost:
+      description: "Your Pylon workspace's region: mcp.usepylon.com (US) or mcp.eu.usepylon.com (EU), as shown under Settings > AI Controls > MCP Server."
+      pattern: '^mcp(\.eu)?\.usepylon\.com$'
+      default: mcp.usepylon.com
+      scope: org
+  variant: streamable
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: mcp_oauth
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://docs.usepylon.com/pylon-docs/integrations/pylon-mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.urlVariables.mcpHost
+    url: https://docs.usepylon.com/pylon-docs/integrations/pylon-mcp
+    fetchedAt: 2026-10-21
+  - fact: transport.variant
+    url: https://docs.usepylon.com/pylon-docs/integrations/pylon-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://docs.usepylon.com/pylon-docs/integrations/pylon-mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://support.usepylon.com/articles/2407390554-connecting-to-the-pylon-mcp-server
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

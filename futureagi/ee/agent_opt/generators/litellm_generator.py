@@ -1,6 +1,9 @@
 import litellm
 from typing import Dict, List, Optional
 
+from model_hub.services import credit_ledger_port
+from model_hub.utils.prompt_rendering import render_fstring_template
+
 from ..types import LLMMessage
 from ..base.base_generator import BaseGenerator
 
@@ -14,7 +17,12 @@ class LiteLLMGenerator(BaseGenerator):
     A Generator that uses LiteLLM to call any supported language model.
     """
 
-    def __init__(self, model: str, prompt_template: str):
+    def __init__(
+        self,
+        model: str,
+        prompt_template: str,
+        billing_purpose: str = credit_ledger_port.PURPOSE_OPTIMIZER_PROPOSAL,
+    ):
         """
         Initializes the LiteLLMGenerator.
 
@@ -22,9 +30,12 @@ class LiteLLMGenerator(BaseGenerator):
             model: The name of the model to use (e.g., "gpt-4o-mini").
             prompt_template: A string template for the prompt, with placeholders
                              in f-string format (e.g., "Summarize this: {text}").
+            billing_purpose: The optimizer proposal or teacher billing purpose.
         """
         self.model = model
         self.prompt_template = prompt_template
+        self.billing_purpose = billing_purpose
+        self._billing_scope = credit_ledger_port.current_billing_scope()
         # LiteLLM is stateless, so no further setup is needed here.
 
     def generate(self, prompt_vars: Dict[str, str], **litellm_kwargs) -> str:
@@ -41,7 +52,12 @@ class LiteLLMGenerator(BaseGenerator):
         Returns:
             The string content of the model's response.
         """
-        prompt = self.prompt_template.format(**prompt_vars)
+        credit_ledger_port.guard_direct_dispatch(
+            self._billing_scope,
+            purpose=self.billing_purpose,
+            model_name=self.model,
+        )
+        prompt = render_fstring_template(self.prompt_template, prompt_vars)
 
         response_format = litellm_kwargs.get("response_format")
         if (

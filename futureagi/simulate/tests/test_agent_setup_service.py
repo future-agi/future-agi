@@ -620,8 +620,12 @@ def test_summary_pins_the_active_versions_key_over_a_newer_versions(hosted_defin
 
 
 @pytest.mark.django_db
-def test_summary_counts_a_plain_column_key(hosted_definition, hosted_version):
-    AgentDefinition.objects.filter(id=hosted_definition.id).update(api_key="sk-plain")
+def test_summary_counts_an_encrypted_definition_key(hosted_definition, hosted_version):
+    hosted_definition.set_api_key("sk-plain")
+    hosted_definition.save(update_fields=["encrypted_api_key"])
+    hosted_definition.refresh_from_db()
+    assert hosted_definition.encrypted_api_key != "sk-plain"
+    assert hosted_definition.get_api_key() == "sk-plain"
 
     summary = agent_summary(hosted_definition.id)
 

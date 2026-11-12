@@ -251,6 +251,7 @@ class AudioProcessor:
             },
             "cost": cost_payload,
             "response_time": completion_time,
+            "response_time_unit": "ms",
         }
 
         if duration_seconds:
@@ -493,6 +494,7 @@ class AudioProcessor:
                 model_name=model, token_usage={"audio_seconds": duration_seconds}
             ),
             "response_time": completion_time,
+            "response_time_unit": "ms",
         }
 
         value_info = {

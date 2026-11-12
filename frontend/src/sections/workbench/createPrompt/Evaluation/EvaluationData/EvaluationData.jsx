@@ -52,7 +52,7 @@ const EvaluationData = () => {
   const [rows, setRows] = useState([]);
   const addRowTimeoutRef = useRef(null);
   const rowFocusTimeoutRef = useRef(null);
-  const promptStreamUrl = usePromptStreamUrl();
+  const getPromptStreamUrl = usePromptStreamUrl();
   const activeSocketsRef = useRef({});
 
   const { data: evaluationData } = useQuery({
@@ -180,38 +180,68 @@ const EvaluationData = () => {
      * @param {Object} payload
      * @returns
      */
-    mutationFn: (payload) => {
+    mutationFn: async (payload) => {
       const { _runRowId, ...wirePayload } = payload;
-      return new Promise((resolve, reject) => {
-        if (!promptStreamUrl) {
-          reject(new Error("Stream URL not ready. Please try again."));
-          return;
+      // Compared versions are independent output cells, even on the same row.
+      const cellKey = JSON.stringify([_runRowId, wirePayload.version]);
+      const connection = new AbortController();
+      let socket;
+      let rejectRun;
+      const attempt = {
+        rowId: _runRowId,
+        close: () => {
+          connection.abort();
+          release();
+          rejectRun?.(new DOMException("Prompt run cancelled", "AbortError"));
+          socket?.close();
+        },
+      };
+      const isCurrent = () => activeSocketsRef.current[cellKey] === attempt;
+      const release = () => {
+        if (isCurrent()) delete activeSocketsRef.current[cellKey];
+      };
+      activeSocketsRef.current[cellKey]?.close();
+      activeSocketsRef.current[cellKey] = attempt;
+      try {
+        // Each cell attempt mints once; pending and live runs share an identity.
+        const promptStreamUrl = await getPromptStreamUrl(connection.signal);
+        if (connection.signal.aborted || !isCurrent()) {
+          throw new DOMException("Prompt run cancelled", "AbortError");
         }
-        // @ts-ignore
-        const socket = runPromptOverSocket({
-          url: promptStreamUrl,
-          payload: wirePayload,
-          onMessage: (data) => {
-            setWsData(data);
-            if (data?.streaming_status === "all_completed") {
-              resolve(data);
-            }
-          },
-          onError: (err) => {
-            activeSocketsRef.current[_runRowId]?.close();
-            delete activeSocketsRef.current[_runRowId];
-            reject(err);
-          },
-          onClose: (event) => {
-            if (isAuthFailCloseCode(event)) {
-              reject(new Error(event?.reason || "Permission denied"));
-            } else {
-              reject(new Error("Stream connection closed unexpectedly"));
-            }
-          },
+        return await new Promise((resolve, reject) => {
+          rejectRun = reject;
+          // @ts-ignore
+          socket = runPromptOverSocket({
+            url: promptStreamUrl,
+            payload: wirePayload,
+            onMessage: (data) => {
+              if (!isCurrent() || connection.signal.aborted) return;
+              setWsData(data);
+              if (data?.streaming_status === "all_completed") {
+                release();
+                resolve(data);
+                socket?.close();
+              }
+            },
+            onError: (err) => {
+              release();
+              reject(err);
+              socket?.close();
+            },
+            onClose: (event) => {
+              release();
+              if (isAuthFailCloseCode(event)) {
+                reject(new Error(event?.reason || "Permission denied"));
+              } else {
+                reject(new Error("Stream connection closed unexpectedly"));
+              }
+            },
+          });
         });
-        if (_runRowId != null) activeSocketsRef.current[_runRowId] = socket;
-      });
+      } finally {
+        // A retired connection must never remove a newer run of the same cell.
+        release();
+      }
     },
   });
 
@@ -234,14 +264,9 @@ const EvaluationData = () => {
         }
         case "completed":
           break;
-        case "all_completed": {
-          const rowId = rowNode?.data?.id;
-          if (rowId != null && rowId in activeSocketsRef.current) {
-            activeSocketsRef.current[rowId]?.close();
-            delete activeSocketsRef.current[rowId];
-          }
+        // Connection completion is handled by its own attempt, not row lookup.
+        case "all_completed":
           break;
-        }
         default:
           break;
       }
@@ -308,7 +333,7 @@ const EvaluationData = () => {
         run_index: index,
         is_run: "prompt",
         template_id: id,
-        // FE-only: stable row id to key the active socket (stripped before send).
+        // FE-only: with version, identifies the output cell (stripped before send).
         _runRowId: api?.getDisplayedRowAtIndex(index)?.data?.id,
       };
       let emptyField = false;
@@ -538,9 +563,10 @@ const EvaluationData = () => {
   }, []);
 
   const handleDeleteRow = useCallback((rowId) => {
-    // Close any in-flight run for this row so it can't stream onto a stale row.
-    activeSocketsRef.current[rowId]?.close();
-    delete activeSocketsRef.current[rowId];
+    // Cancel every version, whether it is still minting or already streaming.
+    Object.values(activeSocketsRef.current).forEach((attempt) => {
+      if (attempt.rowId === rowId) attempt.close();
+    });
     setRows((prev) =>
       prev.length > 1 ? prev.filter((row) => row.id !== rowId) : prev,
     );

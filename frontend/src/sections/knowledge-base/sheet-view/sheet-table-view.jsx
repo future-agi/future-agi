@@ -1,3 +1,4 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import React, { useMemo, forwardRef, useRef, useEffect } from "react";
@@ -25,6 +26,7 @@ const SheetTableView = forwardRef((props, ref) => {
   const {
     setSelectedFiles,
     setSelectedAll,
+    setSelectedAllFileIds,
     selectedAll,
     debouncedSearchQuery,
     knowledgeId,
@@ -38,6 +40,7 @@ const SheetTableView = forwardRef((props, ref) => {
   } = props;
 
   const isRefreshing = useRef(null);
+  const matchingFileIds = useRef(null);
 
   const refreshRowsManual = async () => {
     const totalPages = Object.keys(
@@ -168,6 +171,11 @@ const SheetTableView = forwardRef((props, ref) => {
           }
 
           const totalRows = data?.result?.total_rows ?? 0;
+          const ids = data?.result?.matching_file_ids;
+          matchingFileIds.current =
+            Array.isArray(ids) && ids.length === totalRows
+              ? { ids: [...ids], knowledgeId, search: debouncedSearchQuery }
+              : null;
           setTotalRows(totalRows);
 
           if (data?.result?.status) {
@@ -269,7 +277,9 @@ const SheetTableView = forwardRef((props, ref) => {
   useEffect(() => {
     // refresh rows if status is not completed
     let interval;
-    if (status !== "Completed") {
+    // v2.1 g8: Failed / PartialCompleted are final (the mock reads files
+    // at once); only an unknown or processing status polls.
+    if (!["Completed", "PartialCompleted", "Failed"].includes(status)) {
       interval = setInterval(() => {
         refreshRowsManual();
       }, 10000);
@@ -293,7 +303,7 @@ const SheetTableView = forwardRef((props, ref) => {
     >
       <AgGridReact
         ref={ref}
-        rowHeight={54}
+        rowHeight={ROW_HEIGHT.default}
         defaultColDef={defaultColDef}
         theme={agTheme}
         columnDefs={columnDefs}
@@ -359,10 +369,24 @@ const SheetTableView = forwardRef((props, ref) => {
           } else {
             if (selectedAll) {
               setSelectedAll(false);
+              setSelectedAllFileIds([]);
               event.api.deselectAll();
               setExcludingIds(new Set());
               setSelectedFiles([]);
             } else {
+              const snapshot = matchingFileIds.current;
+              // Never turn a missing or stale filtered result into a KB-wide delete.
+              if (
+                !snapshot ||
+                snapshot.knowledgeId !== knowledgeId ||
+                snapshot.search !== debouncedSearchQuery ||
+                snapshot.ids.length !== totalRows
+              ) {
+                event.api.deselectAll();
+                setSelectedFiles([]);
+                return;
+              }
+              setSelectedAllFileIds([...snapshot.ids]);
               setSelectedAll(true);
               event.api.selectAll();
               setExcludingIds(new Set());
@@ -394,6 +418,7 @@ SheetTableView.propTypes = {
   setStatus: PropTypes.func,
   setLastUpdatedDate: PropTypes.func,
   setSelectedAll: PropTypes.func,
+  setSelectedAllFileIds: PropTypes.func,
   selectedAll: PropTypes.bool,
   debouncedSearchQuery: PropTypes.string,
   knowledgeId: PropTypes.string,

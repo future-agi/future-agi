@@ -169,10 +169,10 @@ async function main() {
     );
     await workspaceListResponse;
     await waitForVisibleText(page, "General", { exact: true });
-    await waitForVisibleText(page, "Manage workspace settings", {
+    await waitForVisibleText(page, "Name, ID and access for this workspace.", {
       exact: true,
     });
-    await waitForVisibleText(page, "Workspace Name", { exact: true });
+    await waitForVisibleText(page, "Workspace name", { exact: true });
     await page.waitForSelector("input", { visible: true, timeout: 30000 });
     const inputValue = await page.$eval("input", (element) => element.value);
     assert(
@@ -181,14 +181,11 @@ async function main() {
     );
     const saveDisabled = await page.$$eval("button", (buttons) => {
       const saveButton = buttons.find((button) =>
-        button.textContent?.includes("Save Changes"),
+        button.textContent?.includes("Save"),
       );
       return saveButton ? saveButton.disabled : null;
     });
-    assert(
-      saveDisabled === true,
-      "Save Changes button was not disabled before edits.",
-    );
+    assert(saveDisabled === true, "Save button was not disabled before edits.");
 
     if (shouldMutate) {
       assert(
@@ -197,7 +194,7 @@ async function main() {
       );
       await updateWorkspaceNameThroughBrowser(page, updatedWorkspaceName);
       workspaceNameRestored = false;
-      await waitForInputValue(page, "Workspace Name", updatedWorkspaceName);
+      await waitForInputValue(page, "Workspace name", updatedWorkspaceName);
       let apiWorkspace = await loadActiveWorkspace(auth);
       assert(
         (apiWorkspace.display_name || apiWorkspace.name) ===
@@ -208,7 +205,7 @@ async function main() {
 
       await reloadWorkspaceGeneralPage(page, auth.workspaceId);
       await updateWorkspaceNameThroughBrowser(page, workspaceName);
-      await waitForInputValue(page, "Workspace Name", workspaceName);
+      await waitForInputValue(page, "Workspace name", workspaceName);
       apiWorkspace = await loadActiveWorkspace(auth);
       assert(
         (apiWorkspace.display_name || apiWorkspace.name) === workspaceName,
@@ -256,7 +253,7 @@ async function main() {
     await waitForVisibleText(page, "Manage workspace members and their roles", {
       exact: true,
     });
-    await waitForVisibleText(page, "Workspace Role", { exact: true });
+    await waitForVisibleText(page, "Workspace role", { exact: true });
     await waitForVisibleText(page, "Status", { exact: true });
     await waitForVisibleText(page, email);
 
@@ -280,7 +277,7 @@ async function main() {
       );
       await clickVisibleTextElement(page, "Edit user info", { exact: true });
       await waitForVisibleText(page, "Edit workspace role", { exact: true });
-      await selectSearchFieldOption(page, "Workspace Role", "Workspace Viewer");
+      await selectSearchFieldOption(page, "Workspace role", "Workspace Viewer");
       const roleResponsePromise = page.waitForResponse(
         (response) =>
           response
@@ -468,7 +465,7 @@ async function installRuntimeConfig(page, auth) {
 }
 
 async function updateWorkspaceNameThroughBrowser(page, name) {
-  await fillInputByLabel(page, "Workspace Name", name);
+  await fillInputByLabel(page, "Workspace name", name);
   const updateResponsePromise = page.waitForResponse(
     (response) =>
       response.url().includes("/accounts/workspaces/") &&
@@ -476,7 +473,7 @@ async function updateWorkspaceNameThroughBrowser(page, name) {
       response.request().method() === "PUT",
     { timeout: 60000 },
   );
-  await clickVisibleButton(page, "Save Changes");
+  await clickVisibleButton(page, "Save");
   const updateResponse = await updateResponsePromise;
   assert(
     updateResponse.status() >= 200 && updateResponse.status() < 300,
@@ -490,7 +487,15 @@ async function updateWorkspaceNameThroughBrowser(page, name) {
     "Workspace name update submitted an unexpected payload.",
   );
   await waitForVisibleText(page, "Workspace updated", { exact: true });
-  await waitForNoVisibleText(page, "Saving...", { exact: true });
+  await page.waitForFunction(
+    () => {
+      const save = Array.from(document.querySelectorAll("button")).find(
+        (button) => String(button.textContent || "").trim() === "Save",
+      );
+      return save?.disabled === true;
+    },
+    { timeout: 30000 },
+  );
 }
 
 async function reloadWorkspaceGeneralPage(page, workspaceId) {

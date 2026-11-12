@@ -1,0 +1,49 @@
+# Supabase's hosted MCP server with a personal access token as the bearer,
+# the path Supabase documents for clients that cannot run its browser OAuth
+# flow. A personal access token acts with the developer's own permissions,
+# and Supabase says not to give the server to customers or end users, so
+# this provider is one shared (agent-mode) connection an org admin adds.
+schema: "connector-manifest/v1#provider"
+app: supabase
+id: pat
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus:
+  label: beta
+  source: https://mcp.supabase.com/.well-known/oauth-protected-resource/mcp
+transport:
+  kind: http
+  url: https://mcp.supabase.com/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent]
+auth:
+  kind: api_key
+  credentialParts:
+    - in: header
+      name: Authorization
+      prefix: "Bearer "
+      secret: true
+      label: Personal access token
+      help: "A Supabase personal access token, scoped as narrowly as you can. It acts with your own Supabase permissions, so connect it for your team's own use, never for your customers."
+      helpUrl: https://supabase.com/docs/guides/ai-tools/mcp
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://supabase.com/docs/guides/ai-tools/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://supabase.com/docs/guides/ai-tools/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.credentialParts
+    url: https://supabase.com/docs/guides/ai-tools/mcp
+    fetchedAt: 2026-10-21
+  - fact: accountModes
+    url: https://supabase.com/docs/guides/ai-tools/mcp
+    fetchedAt: 2026-10-21
+x-omega: { oss: exclude }

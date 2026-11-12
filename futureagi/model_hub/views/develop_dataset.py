@@ -18,7 +18,6 @@ from queue import Queue
 from typing import Any
 
 import json_repair
-import numpy as np
 import pandas as pd
 import requests
 import structlog
@@ -55,11 +54,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import workspace_read_only
 from accounts.models.user import User
 from agentic_eval.core.embeddings.embedding_manager import (
     EmbeddingManager,
-    model_manager,
 )
+from agentic_eval.core.utils.functions import is_uuid
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
@@ -72,15 +72,15 @@ from evaluations.constants import AGENT_EVALUATOR_TYPE_ID, FUTUREAGI_EVAL_TYPES
 from model_hub.constants import (
     CREATE_KB_SDK_CODE,
     MAX_KB_SIZE,
-    PYTHON_ADD_COLS,
-    PYTHON_ADD_ROWS,
     SDK_API_KEY_PLACEHOLDER,
     SDK_SECRET_KEY_PLACEHOLDER,
     UPDATE_KB_SDK_CODE,
+    get_add_rows_code,
     get_curl_ts_code,
+    get_python_add_columns_code,
 )
 from model_hub.db_routing import DATABASE_FOR_DATASET_LIST
-from model_hub.models.api_key import ApiKey, SecretModel
+from model_hub.models.api_key import ApiKey
 from model_hub.models.choices import (
     BooleanChoices,
     CellStatus,
@@ -122,6 +122,8 @@ from model_hub.models.run_prompt import PromptVersion, RunPrompter
 from model_hub.selectors.feedback import resolve_feedback_template_data
 from model_hub.serializers.catalog_queries import DatasetEvaluationsQuerySerializer
 from model_hub.serializers.contracts import (
+    APPROVED_HUGGINGFACE_EMBEDDING_MODELS,
+    DATASET_COLUMN_ROLES,
     MODEL_HUB_ERROR_RESPONSES,
     AddAsNewDatasetRequestSerializer,
     AddRowsFromFileRequestSerializer,
@@ -137,7 +139,6 @@ from model_hub.serializers.contracts import (
     DatasetAddEmptyColumnsRequestSerializer,
     DatasetAddEmptyRowsRequestSerializer,
     DatasetAddRowsRequestSerializer,
-    DatasetBehaviorRequestSerializer,
     DatasetCellDataRequestSerializer,
     DatasetColumnDetailResponseSerializer,
     DatasetExplanationSummaryResponseSerializer,
@@ -205,11 +206,13 @@ from model_hub.serializers.develop_dataset_contracts import (
     DatasetCellDataResponseSerializer,
     DatasetColumnsMutationResponseSerializer,
     DatasetCopyResponseSerializer,
+    DatasetDetailsResponseSerializer,
     DatasetListQuerySerializer,
     DatasetListResponseSerializer,
     DatasetNamesResponseSerializer,
     DatasetRowDataResponseSerializer,
     DatasetSdkRowsResponseSerializer,
+    DatasetSettingsRequestSerializer,
     DatasetTableResponseSerializer,
     DevelopDatasetMessageResponseSerializer,
     DuplicateDatasetResponseSerializer,
@@ -234,6 +237,19 @@ from model_hub.services.bounded_dataset_read import (
     assert_bounded_page,
     assert_bounded_projection,
 )
+from model_hub.services.dataset_failed_filters import (
+    FAILED_FILTERS,
+    apply_failed_filter,
+    failure_counts,
+    validate_read_columns,
+)
+from model_hub.services.dataset_schema import (
+    added_rows_refusal,
+    imported_rows_refusal,
+    is_empty_cell_value,
+    normalize_added_cell_value,
+)
+from model_hub.services.dataset_splits import project_split_membership
 from model_hub.services.dataset_table_snapshot import (
     DATASET_TABLE_EXACT_MAX_COLUMNS,
     DatasetTableCursorError,
@@ -253,9 +269,10 @@ from model_hub.services.dataset_table_snapshot import (
 )
 from model_hub.services.derived_variable_service import (
     cleanup_derived_variables_for_column,
-    rename_derived_variables_for_column,
     rename_derived_variables_in_run_prompter,
 )
+from model_hub.services.row_activity_writes import row_activity_requests
+from model_hub.services.selective_rerun import track_generation_inputs
 from model_hub.tasks.develop_dataset import ingest_files_to_s3, remove_kb_files
 from model_hub.types import ConversionResult
 from model_hub.utils.annotation_queue_helpers import (
@@ -282,16 +299,31 @@ from model_hub.utils.kb_helpers import (
     cancel_kb_ingestion_workflow,
     schedule_kb_ingestion_on_commit,
 )
+from model_hub.utils.optimizer_prompt_text import (
+    OptimizerCopyRefused,
+    optimizer_column_references,
+    remap_optimizer_messages,
+)
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from model_hub.utils.utils import contains_sql, get_diff
+from model_hub.utils.workspace_scope import (
+    knowledge_base_in_scope,
+)
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.run_prompt import PROVIDERS_WITH_JSON
 from model_hub.views.utils.dataset_limit import dataset_add_refusal
+from model_hub.views.utils.dataset_readiness import (
+    dataset_import_grid_response,
+    dataset_import_refusal,
+)
 from model_hub.views.utils.evals import process_eval_for_single_row
+from model_hub.views.utils.rerun_cells import (
+    ROW_PROCESSING_ERROR,
+    prepare_source_rerun_cells,
+)
 from model_hub.views.utils.utils import (
     get_recommendations,
-    update_column_id,
     validate_file_url,
 )
 from sdk.utils.helpers import _get_api_call_type
@@ -301,7 +333,7 @@ from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.ee_gates import strip_turing_from_config_options
 from tfc.middleware.workspace_context import get_current_workspace
 from tfc.routers import uses_db
-from tfc.settings.settings import BASE_URL, HUGGINGFACE_API_TOKEN
+from tfc.settings.settings import HUGGINGFACE_API_TOKEN
 from tfc.telemetry import wrap_for_thread
 from tfc.temporal import temporal_activity
 from tfc.utils.api_contracts import validated_request
@@ -314,6 +346,7 @@ from tfc.utils.functions import (
 )
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
+from tfc.utils.ssrf_guard import https_refusal_message
 from tfc.utils.storage import (
     delete_compare_folder,
     download_json_from_s3,
@@ -327,6 +360,7 @@ from tfc.utils.storage import (
     upload_file_to_s3,
     upload_image_to_s3,
 )
+from tfc.utils.tenant_scope import scope_to_caller
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -336,6 +370,12 @@ try:
 except ImportError:
     ROW_LIMIT_REACHED_MESSAGE = None
     log_and_deduct_cost_for_resource_request = None
+
+from model_hub.utils.comparison_scope import (
+    require_comparison_datasets,
+    require_comparison_metadata,
+    require_comparison_rows,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -347,7 +387,9 @@ def _request_organization(request):
 def _request_workspace_filter(request, field_name="workspace"):
     workspace = getattr(request, "workspace", None) or get_current_workspace()
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     if getattr(workspace, "is_default", False):
         return (
@@ -411,6 +453,45 @@ def _request_user_eval_metric_queryset(request, dataset_id=None):
     if dataset_id is not None:
         queryset = queryset.filter(dataset_id=dataset_id)
     return queryset
+
+
+def _experiment_eval_scope(request, dataset, experiment_id):
+    """An experiment's evaluations, as ``(experiment, metrics)``.
+
+    The experiment is the caller's (organization and workspace through its
+    dataset) and belongs to ``dataset``, the dataset in the URL: its own
+    dataset or its snapshot. ``metrics`` are that experiment's evaluations
+    (``source_id``) on either of its datasets, because a v2 experiment writes
+    them on its snapshot while the experiment page addresses its own dataset.
+    ``(None, None)`` when no such experiment is reachable, or when
+    ``experiment_id`` is not an id at all.
+    """
+    try:
+        experiment_id = uuid.UUID(str(experiment_id))
+    except (ValueError, TypeError, AttributeError):
+        return None, None
+    experiment = (
+        scope_to_caller(
+            ExperimentsTable.objects.all(),
+            request,
+            organization_field="dataset__organization",
+            workspace_field="dataset__workspace",
+        )
+        .filter(
+            Q(dataset_id=dataset.id) | Q(snapshot_dataset_id=dataset.id),
+            id=experiment_id,
+        )
+        .first()
+    )
+    if experiment is None:
+        return None, None
+    dataset_ids = {
+        pk for pk in (experiment.dataset_id, experiment.snapshot_dataset_id) if pk
+    }
+    metrics = _request_user_eval_metric_queryset(request).filter(
+        dataset_id__in=dataset_ids, source_id=str(experiment.id)
+    )
+    return experiment, metrics
 
 
 def _request_experiment_dataset_queryset(request):
@@ -767,6 +848,7 @@ def _prepare_compare_dataset_impl(
         close_old_connections()
 
 
+@row_activity_requests
 class AddRowsFromFile(CreateAPIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -809,6 +891,16 @@ class AddRowsFromFile(CreateAPIView):
 
             data.columns = data.columns.str.strip()
             data = data.map(lambda x: x.strip() if isinstance(x, str) else x)
+            # Validate the entire import before billing or dataset writes.
+            from model_hub.services.dataset_schema import user_columns
+
+            # Match the missing-cell fallback without changing source columns or values.
+            validation_data = data.copy()
+            for column in user_columns(dataset):
+                if column.name not in validation_data.columns:
+                    validation_data[column.name] = ""
+            if refusal := imported_rows_refusal(request, dataset, validation_data):
+                return refusal
 
             # --- Row Limit Check Start ---
             new_rows_count = data.shape[0]
@@ -947,7 +1039,7 @@ class AddRowsFromFile(CreateAPIView):
                     try:
                         value = row[column.name]
                     except KeyError:
-                        value = None
+                        value = ""
 
                     if column.data_type == DataTypeChoices.IMAGE.value and value:
                         try:
@@ -1010,6 +1102,7 @@ class AddRowsFromFile(CreateAPIView):
             )
 
 
+@row_activity_requests
 class CloneDatasetView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -1030,6 +1123,9 @@ class CloneDatasetView(APIView):
             )
             if not source_dataset:
                 return self._gm.not_found("Dataset not found")
+            refusal = dataset_import_refusal(source_dataset)
+            if refusal is not None:
+                return refusal
             if log_and_deduct_cost_for_resource_request is not None:
                 call_log_row_entry = log_and_deduct_cost_for_resource_request(
                     organization=getattr(request, "organization", None)
@@ -1042,13 +1138,18 @@ class CloneDatasetView(APIView):
                     return refusal
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
-            new_dataset_name = request.data.get(
-                "new_dataset_name", f"Copy of {source_dataset.name}"
-            )
-
             from model_hub.validators.dataset_validators import (
+                available_dataset_copy_name,
                 validate_dataset_name_unique,
             )
+
+            # Explicit names retain validation/refusal semantics. The list and
+            # header send no name, so repeated copies get a free default name.
+            new_dataset_name = request.data.get("new_dataset_name")
+            if new_dataset_name is None:
+                new_dataset_name = available_dataset_copy_name(
+                    source_dataset.name, _request_organization(request)
+                )
 
             try:
                 validate_dataset_name_unique(
@@ -1184,6 +1285,7 @@ class CloneDatasetView(APIView):
             )
 
 
+@row_activity_requests
 class AddAsNewDataset(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -1197,6 +1299,7 @@ class AddAsNewDataset(APIView):
             503: DatasetLimitCheckFailedErrorSerializer,
         },
     )
+    @transaction.atomic
     def post(self, request, *args, **kwargs):
         try:
             dataset_id = request.validated_data.get("dataset_id")
@@ -1397,7 +1500,50 @@ class AddAsNewDataset(APIView):
 
             else:
                 list(source_dataset.columns.all())
-                experiment = source_dataset.experiments_datasets_created.first()
+                experiment = (
+                    source_dataset.experiments_datasets_created.filter(
+                        dataset__organization=_org,
+                        deleted=False,
+                    )
+                    .filter(_request_workspace_filter(request, "dataset__workspace"))
+                    .first()
+                )
+                if experiment is None:
+                    raise OptimizerCopyRefused
+                source_dataset_ids = {experiment.dataset_id}
+                if experiment.snapshot_dataset_id:
+                    source_dataset_ids.add(experiment.snapshot_dataset_id)
+                # A legacy NULL-workspace source can have a default-workspace snapshot.
+                # Admit each independently, then bind reads to each exact ownership.
+                source_datasets = list(
+                    Dataset.no_workspace_objects.filter(
+                        _request_workspace_filter(request),
+                        id__in=source_dataset_ids,
+                        organization=_org,
+                        deleted=False,
+                    )
+                )
+                if {dataset.id for dataset in source_datasets} != source_dataset_ids:
+                    raise OptimizerCopyRefused
+                source_scope = Q(dataset_id__in=[])
+                for admitted_dataset in source_datasets:
+                    source_scope |= Q(
+                        dataset_id=admitted_dataset.id,
+                        dataset__organization_id=admitted_dataset.organization_id,
+                        dataset__workspace_id=admitted_dataset.workspace_id,
+                        dataset__deleted=False,
+                    )
+                source_column_ids = {column.id for column in experiment_columns}
+                admitted_column_ids = set(
+                    Column.no_workspace_objects.filter(
+                        source_scope, id__in=source_column_ids, deleted=False
+                    ).values_list("id", flat=True)
+                )
+                if admitted_column_ids != source_column_ids:
+                    raise OptimizerCopyRefused
+                source_prompts = RunPrompter.no_workspace_objects.filter(
+                    source_scope, deleted=False
+                )
                 user_eval_metric = list(experiment.user_eval_template_ids.all())
                 total_columns = []
                 for metric in user_eval_metric:
@@ -1414,21 +1560,9 @@ class AddAsNewDataset(APIView):
 
                 total_columns.append(experiment.column.id)
                 if experiment.column.source == SourceChoices.RUN_PROMPT.value:
-                    run_prompt = RunPrompter.objects.get(id=experiment.column.source_id)
-                    # Extract all column UUIDs from messages
-                    message_column_ids = []
-                    for message in run_prompt.messages:
-                        content = message.get("content", "")
-                        # Find all UUIDs between {{ and }}
-                        column_ids = re.findall(r"\{\{([^}]*)\}\}", content)
-                        # Clean up any whitespace and add to list
-                        message_column_ids.extend(
-                            [col_id.strip() for col_id in column_ids]
-                        )
-
-                    # Add unique column IDs to total_columns
+                    run_prompt = source_prompts.get(id=experiment.column.source_id)
                     total_columns.extend(
-                        [uuid.UUID(col_id) for col_id in message_column_ids if col_id]
+                        optimizer_column_references(run_prompt.messages)
                     )
 
                 column_id_mapping = {}
@@ -1438,17 +1572,23 @@ class AddAsNewDataset(APIView):
                 column_config = {}
 
                 def handle_run_prompt(source_id, dataset):
-                    source_run_prompter = RunPrompter.objects.get(id=source_id)
+                    source_run_prompter = source_prompts.get(id=source_id)
 
                     run_prompt_obj = RunPrompter.objects.create(
                         dataset=dataset,
                         **{
                             **model_to_dict(
                                 source_run_prompter,
-                                exclude=["id", "dataset", "organization", "tools"],
+                                exclude=[
+                                    "id",
+                                    "dataset",
+                                    "organization",
+                                    "workspace",
+                                    "tools",
+                                ],
                             ),
-                            "organization": getattr(request, "organization", None)
-                            or request.user.organization,
+                            "organization": dataset.organization,
+                            "workspace": dataset.workspace,
                         },
                     )
 
@@ -1556,21 +1696,28 @@ class AddAsNewDataset(APIView):
 
                 for column in experiment_columns:
                     if column.source == SourceChoices.RUN_PROMPT.value:
+                        from model_hub.views.run_prompt import (
+                            _run_prompt_columns_belong_to_dataset,
+                        )
+
                         new_column = Column.objects.get(
-                            id=column_id_mapping[str(column.id)]
+                            id=column_id_mapping[str(column.id)], dataset=new_dataset
                         )
-                        run_prompt_col = RunPrompter.objects.get(
-                            id=new_column.source_id
+                        run_prompt_col = RunPrompter.no_workspace_objects.get(
+                            id=new_column.source_id,
+                            dataset=new_dataset,
+                            organization_id=new_dataset.organization_id,
+                            workspace_id=new_dataset.workspace_id,
                         )
-                        new_messages = []
-                        for message in run_prompt_col.messages:
-                            new_messages.append(
-                                update_column_id(
-                                    message=message, column_mapping=column_id_mapping
-                                )
-                            )
+                        new_messages = remap_optimizer_messages(
+                            run_prompt_col.messages, column_id_mapping
+                        )
+                        if not _run_prompt_columns_belong_to_dataset(
+                            new_messages, new_dataset
+                        ):
+                            raise OptimizerCopyRefused
                         run_prompt_col.messages = new_messages
-                        run_prompt_col.save()
+                        run_prompt_col.save(update_fields=["messages"])
 
                     elif column.source in [
                         SourceChoices.EVALUATION.value,
@@ -1664,7 +1811,11 @@ class AddAsNewDataset(APIView):
                 }
             )
 
+        except (OptimizerCopyRefused, RunPrompter.DoesNotExist):
+            transaction.set_rollback(True)
+            return self._gm.not_found("Column or dataset not found")
         except Exception as e:
+            transaction.set_rollback(True)
             logger.exception(f"Error in Adding as New Dataset: {str(e)}")
             return self._gm.internal_server_error_response(
                 get_error_message("FAILED_TO_CLONE_DATASET")
@@ -1679,12 +1830,7 @@ class ColumnConfigView(APIView):
         responses={200: ColumnConfigResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, column_id):
-        column = get_object_or_404(
-            Column,
-            id=column_id,
-            dataset__organization=getattr(request, "organization", None)
-            or request.user.organization,
-        )
+        column = get_object_or_404(_request_column_queryset(request), id=column_id)
 
         if column.source == SourceChoices.EXPERIMENT.value:
             config = self.get_experiment_config(column)
@@ -1705,8 +1851,15 @@ class ColumnConfigView(APIView):
     def get_optimisation_evaluation_config(self, column):
         evaluation_id = column.source_id.split("-sourceid-")[1]
         optimisation_id = column.source_id.split("-sourceid-")[0]
-        optimisation = get_object_or_404(OptimizationDataset, id=optimisation_id)
-        evaluation = get_object_or_404(UserEvalMetric, id=evaluation_id)
+        optimisation = get_object_or_404(
+            OptimizationDataset,
+            id=optimisation_id,
+            dataset=column.dataset,
+            deleted=False,
+        )
+        evaluation = get_object_or_404(
+            UserEvalMetric, id=evaluation_id, dataset=column.dataset, deleted=False
+        )
         return {
             "name": column.name,
             "template": evaluation.template.id,
@@ -1719,7 +1872,9 @@ class ColumnConfigView(APIView):
         }
 
     def get_experiment_config(self, column):
-        experiment = get_object_or_404(ExperimentsTable, id=column.source_id)
+        experiment = get_object_or_404(
+            ExperimentsTable, id=column.source_id, dataset=column.dataset, deleted=False
+        )
         user_eval_template_ids = list(
             experiment.user_eval_template_ids.values("id", "name")
         )
@@ -1732,7 +1887,12 @@ class ColumnConfigView(APIView):
         }
 
     def get_optimization_config(self, column):
-        optimization = get_object_or_404(OptimizationDataset, id=column.source_id)
+        optimization = get_object_or_404(
+            OptimizationDataset,
+            id=column.source_id,
+            dataset=column.dataset,
+            deleted=False,
+        )
         user_eval_template_ids = list(
             optimization.user_eval_template_ids.values("id", "name")
         )
@@ -1747,7 +1907,9 @@ class ColumnConfigView(APIView):
         }
 
     def get_run_prompt_config(self, column):
-        run_prompt = get_object_or_404(RunPrompter, id=column.source_id)
+        run_prompt = get_object_or_404(
+            RunPrompter, id=column.source_id, dataset=column.dataset, deleted=False
+        )
         tool_names = list(run_prompt.tools.values_list("name", flat=True))
         return {
             "name": column.name,
@@ -1765,7 +1927,9 @@ class ColumnConfigView(APIView):
         }
 
     def get_evaluation_config(self, column):
-        evaluation = get_object_or_404(UserEvalMetric, id=column.source_id)
+        evaluation = get_object_or_404(
+            UserEvalMetric, id=column.source_id, dataset=column.dataset, deleted=False
+        )
         return {
             "name": column.name,
             "template": evaluation.template.id,
@@ -1776,10 +1940,45 @@ class ColumnConfigView(APIView):
         }
 
     def get_experiment_evaluation_config(self, column):
-        evaluation_id = column.source_id.split("-sourceid-")[1]
-        experiment_id = column.source_id.split("-sourceid-")[0]
-        evaluation = get_object_or_404(UserEvalMetric, id=evaluation_id)
-        experiment_dataset = get_object_or_404(ExperimentDatasetTable, id=experiment_id)
+        # "<table>-<output>-sourceid-<metric>", or "<table>-sourceid-<metric>"
+        # for earlier tables: the table id is the leading UUID.
+        source_id = column.source_id or ""
+        table_part, _, evaluation_id = source_id.partition("-sourceid-")
+        if len(table_part) != 36 and table_part[36:37] != "-":
+            raise Http404
+        try:
+            experiment_id = uuid.UUID(table_part[:36])
+            evaluation_id = uuid.UUID(evaluation_id)
+        except ValueError:
+            raise Http404 from None
+        # Keep request scope and unambiguous ownership while accepting both
+        # source-dataset and snapshot columns, including output-qualified ids.
+        dataset_id = column.dataset_id
+        experiment_dataset = get_object_or_404(
+            _request_experiment_dataset_queryset(self.request)
+            .filter(
+                Q(experiment__snapshot_dataset_id=dataset_id)
+                | Q(experiment__dataset_id=dataset_id)
+                | Q(experiments_datasets_created__snapshot_dataset_id=dataset_id)
+                | Q(experiments_datasets_created__dataset_id=dataset_id)
+            )
+            .distinct(),
+            id=experiment_id,
+        )
+        try:
+            parent = _scoped_experiment_for_dataset(self.request, experiment_dataset)
+        except ExperimentDatasetIntegrityError:
+            raise Http404("Experiment not found") from None
+        if dataset_id not in (parent.dataset_id, parent.snapshot_dataset_id):
+            raise Http404("Experiment not found")
+        evaluation = get_object_or_404(
+            UserEvalMetric.objects.filter(
+                organization_id=column.dataset.organization_id,
+                dataset_id=dataset_id,
+                deleted=False,
+            ),
+            id=evaluation_id,
+        )
         return {
             "name": column.name,
             "template": evaluation.template.id,
@@ -1788,7 +1987,9 @@ class ColumnConfigView(APIView):
             "config": evaluation.config,
             "status": evaluation.status,
             "experiment_dataset": experiment_dataset.name,
-            "experiment_dataset_config": experiment_dataset.prompt_config,
+            # The table's stored prompt config (db column "prompt_config");
+            # ``prompt_config`` on the model is the ExperimentPromptConfig row.
+            "experiment_dataset_config": experiment_dataset.legacy_prompt_config,
         }
 
 
@@ -1803,6 +2004,13 @@ class GetDatasetsView(APIView):
         reject_unknown_fields=True,
     )
     def get(self, request, *args, **kwargs):  # Changed from 'post' to 'get'
+        from django.conf import settings
+
+        from model_hub.models.dataset_stars import DatasetStar
+
+        columns_enabled = (
+            getattr(settings, "DSX_DATASET_LIST_COLUMNS_ENABLED", False) is True
+        )
         try:
             # Get pagination and sorting parameters
             page_size = request.GET.get(
@@ -1843,6 +2051,7 @@ class GetDatasetsView(APIView):
             queryset = (
                 Dataset.objects.db_manager(DATABASE_FOR_DATASET_LIST)
                 .filter(
+                    _request_workspace_filter(request),
                     organization=getattr(request, "organization", None)
                     or request.user.organization,
                     deleted=False,
@@ -1903,6 +2112,18 @@ class GetDatasetsView(APIView):
                     ),
                 )
             )
+            queryset = queryset.annotate(
+                starred=Exists(
+                    DatasetStar.objects.filter(
+                        dataset_id=OuterRef("pk"), user=request.user
+                    )
+                )
+            )
+            from model_hub.services.dataset_folders import filter_dataset_folders
+
+            queryset = filter_dataset_folders(queryset, request.validated_query_data)
+            if request.validated_query_data.get("starred", False):
+                queryset = queryset.filter(starred=True)
             # Apply search filter if search_text is provided
             if search_text:
                 queryset = queryset.filter(name__icontains=search_text)
@@ -1916,6 +2137,8 @@ class GetDatasetsView(APIView):
                 "derived_datasets_count": "derived_datasets_count",
                 "created_at": "created_at",
             }
+            if columns_enabled:
+                column_mapping["updated_at"] = "updated_at"
             for sort_param in sort_params:
                 column = sort_param.get("column_id")
                 order = sort_param.get("type", "ascending")
@@ -1924,11 +2147,17 @@ class GetDatasetsView(APIView):
                     if order == "descending":
                         sort_field = f"-{sort_field}"
                     queryset = queryset.order_by(sort_field)
+            # Personal stars lead; preserve the requested order within each group.
+            queryset = queryset.order_by(
+                "-starred", *(queryset.query.order_by or ("-created_at",)), "pk"
+            )
             # Get total count before pagination
             total_datasets = queryset.count()
             total_pages = (total_datasets + page_size - 1) // page_size
             # Apply pagination at database level
             start = current_page * page_size
+            if columns_enabled:
+                queryset = queryset.select_related("user")
             queryset = queryset[start : start + page_size]
             # Prepare response data
             datasets = []
@@ -1937,6 +2166,13 @@ class GetDatasetsView(APIView):
                     {
                         "id": str(dataset.id),
                         "name": dataset.name,
+                        "description": dataset.description,
+                        "tags": dataset.tags,
+                        "starred": dataset.starred,
+                        "folder": dataset.folder.path if dataset.folder_id else "",
+                        "folder_id": str(dataset.folder_id)
+                        if dataset.folder_id
+                        else None,
                         "number_of_datapoints": dataset.number_of_datapoints,
                         "number_of_experiments": dataset.number_of_experiments,
                         "number_of_optimisations": dataset.number_of_optimisations,
@@ -1945,6 +2181,19 @@ class GetDatasetsView(APIView):
                         "dataset_type": dataset.model_type,
                     }
                 )
+                if columns_enabled:
+                    datasets[-1].update(
+                        {
+                            "created_by": str(dataset.user_id)
+                            if dataset.user_id
+                            else None,
+                            "created_by_name": dataset.user.name
+                            if dataset.user_id
+                            else None,
+                            "source": dataset.source,
+                            "updated_at": dataset.updated_at.isoformat(),
+                        }
+                    )
 
             return self._gm.success_response(
                 {
@@ -1996,6 +2245,9 @@ class GetDatasetTableView(APIView):
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
     def _apply_filters(self, all_cells, rows, filters, error_messages, columns_map):
+        from model_hub.services.dataset_splits import filter_split_rows
+
+        validate_read_columns(filters, [], columns_map)
         # Apply filters if any
         for filter_item in filters:
             try:
@@ -2008,6 +2260,14 @@ class GetDatasetTableView(APIView):
                 filter_type = filter_config.get("filter_type")
                 filter_op = filter_config.get("filter_op")
                 filter_value = filter_config.get("filter_value")
+                if column_id == "system:splits":
+                    rows = filter_split_rows(rows, filter_config)
+                    continue
+                if column_id in FAILED_FILTERS:
+                    rows = apply_failed_filter(
+                        all_cells, rows, filter_item, columns_map
+                    )
+                    continue
                 cells = all_cells.filter(column_id=column_id)
 
                 if filter_op in ("is_null", "is_not_null"):
@@ -2406,6 +2666,9 @@ class GetDatasetTableView(APIView):
         },
     )
     def get(self, request, dataset_id, *args, **kwargs):
+        from model_hub.services.dataset_splits import validate_request_split_filters
+
+        validate_request_split_filters(request, dataset_id)
         query_data = request.validated_query_data
         exact_snapshot = query_data.get("exact_snapshot", False) or bool(
             query_data.get("cursor")
@@ -2502,6 +2765,16 @@ class GetDatasetTableView(APIView):
                 )
             except Dataset.DoesNotExist:
                 return self._gm.bad_request(get_error_message("DATASET_NOT_FOUND"))
+
+            if not exact_snapshot:
+                processing_response = dataset_import_grid_response(
+                    dataset,
+                    page_size=page_size,
+                    page_index=current_page,
+                    columns_only=column_config_only,
+                )
+                if processing_response is not None:
+                    return processing_response
 
             if exact_snapshot:
                 try:
@@ -2640,7 +2913,18 @@ class GetDatasetTableView(APIView):
             columns = ordered_columns
             column_config = []
 
-            cells = Cell.objects.filter(row__in=rows, column__in=columns, deleted=False)
+            cells = Cell.objects.filter(
+                dataset=dataset, row__in=rows, column__in=columns, deleted=False
+            )
+            try:
+                validate_read_columns(filters, sort_configs, columns_map)
+            except serializers.ValidationError as exc:
+                return self._gm.bad_request(exc.detail)
+            counts = (
+                None
+                if snapshot_bound or column_config_only
+                else failure_counts(cells, columns_map)
+            )
 
             if filters:
                 rows = self._apply_filters(
@@ -2815,10 +3099,14 @@ class GetDatasetTableView(APIView):
                     elif column.source == SourceChoices.RUN_PROMPT.value:
                         model_name = "gpt-4o-mini"  # Default model name if run_prompter not present
                         status = None
+                        # The cells' organization, so a custom model's header
+                        # cost uses its saved price as its cells do.
+                        price_org_id = dataset.organization_id
                         run_prompter = run_prompter_map.get(column.source_id)
                         if run_prompter:
                             status = run_prompter.status
                             model_name = run_prompter.model
+                            price_org_id = run_prompter.organization_id or price_org_id
 
                         if status == StatusType.COMPLETED.value:
                             if column_config_only:
@@ -2856,6 +3144,7 @@ class GetDatasetTableView(APIView):
                                             "prompt_tokens": total_prompt,
                                             "completion_tokens": total_completion,
                                         },
+                                        organization_id=price_org_id,
                                     )
                                     total_cost = (
                                         cost_calculation.get("total_cost", 0) or 0
@@ -2912,6 +3201,15 @@ class GetDatasetTableView(APIView):
                         "reason_column": reason_column_flag,
                         "is_numeric_eval": is_numeric_eval,
                         "is_numeric_eval_percentage": is_numeric_eval_percentage,
+                        # A user column's stored role (edit_dataset_behavior,
+                        # add_static_column); generated columns carry none.
+                        "role": (
+                            column_display_config.get("role")
+                            if column.source == SourceChoices.OTHERS.value
+                            and column_display_config.get("role")
+                            in DATASET_COLUMN_ROLES
+                            else None
+                        ),
                     }
                     exact_checkpoint()
                     result_queue.put((idx, result))
@@ -3218,10 +3516,16 @@ class GetDatasetTableView(APIView):
                 if result:
                     table_data.append(result)
 
+            # Project persisted splits onto the authorized page
+            project_split_membership(table_data, dataset, request, exact_checkpoint)
             logger.info(
                 f"[TIMING] Row processing: {time.time() - row_processing_start:.2f}s"
             )
             exact_checkpoint()
+            # Attach each page row's import source as row_meta.source.
+            from model_hub.services.row_sources import attach_row_sources
+
+            attach_row_sources(table_data, dataset=dataset, live=True)
 
             dataset_config = (
                 dataset.dataset_config
@@ -3308,6 +3612,8 @@ class GetDatasetTableView(APIView):
                 ),
                 "is_processing_data": is_processing_data,
             }
+            if counts is not None:
+                response_data["metadata"]["counts"] = counts
             if not snapshot_bound:
                 # Exact reads must perform no external I/O while their
                 # repeatable-read transaction is open. These cache-backed
@@ -3479,7 +3785,10 @@ class GetDatasetTableView(APIView):
         return None
 
 
+@workspace_read_only
 class GetRowDataView(APIView):
+    """Read an authorized dataset row; POST carries filters, never mutations."""
+
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
@@ -3499,6 +3808,7 @@ class GetRowDataView(APIView):
             with transaction.atomic():
                 request_data = request.validated_data
                 filters = request_data.get("filters", [])
+                search = request_data.get("search", {})
                 sort_configs = request_data.get("sort", [])
                 row_id = request_data.get("row_id")
 
@@ -3538,28 +3848,26 @@ class GetRowDataView(APIView):
                 )
                 columns_map = {str(column.id): column for column in all_columns}
 
-                requested_column_ids = {
-                    str(item.get("column_id"))
-                    for item in [*filters, *sort_configs]
-                    if item.get("column_id")
-                }
-                unknown_column_ids = sorted(
-                    requested_column_ids - set(columns_map.keys())
-                )
-                if unknown_column_ids:
-                    return self._gm.bad_request(
-                        {
-                            "column_id": [
-                                "Unknown or inaccessible dataset column: "
-                                + ", ".join(unknown_column_ids)
-                            ]
-                        }
-                    )
+                try:
+                    validate_read_columns(filters, sort_configs, columns_map)
+                except serializers.ValidationError as exc:
+                    return self._gm.bad_request(exc.detail)
 
                 error_messages = []
                 if filters:
                     rows = GetDatasetTableView()._apply_filters(
                         cells, rows, filters, error_messages, columns_map
+                    )
+                if search:
+                    # Match the grid's search over its visible columns before
+                    # choosing either the current row or its next neighbors.
+                    deadline.before_query()
+                    rows, _ = GetDatasetTableView()._apply_search(
+                        cells.filter(column_id__in=columns_map),
+                        rows,
+                        search,
+                        dataset.id,
+                        error_messages,
                     )
                 if sort_configs:
                     rows = GetDatasetTableView()._apply_sorting(
@@ -3623,7 +3931,9 @@ class GetRowDataView(APIView):
                 )
 
                 row_data_array = {"next": {"row_id": next_row_ids or []}}
-                row_data = {"row_id": str(row_id)}
+                # The row's position, as get-dataset-table sends it: the Row
+                # view's header ("Row N") and its palette labels read it.
+                row_data = {"row_id": str(row_id), "order": current_row.order}
                 for cell in current_cells:
                     deadline.checkpoint()
                     response_time_ms = None
@@ -3659,6 +3969,10 @@ class GetRowDataView(APIView):
                         "feedback_info": cell.feedback_info,
                     }
 
+                # Attach the row's import source as row_meta.source.
+                from model_hub.services.row_sources import attach_row_sources
+
+                attach_row_sources([row_data], dataset=dataset, live=True)
                 row_data_array["current"] = row_data
                 assert_dataset_table_response_within_limits(row_data_array)
                 deadline.checkpoint()
@@ -4138,15 +4452,12 @@ class GetColumnDetailView(APIView):
     )
     def get(self, request, dataset_id, *args, **kwargs):
         try:
-            dataset = Dataset.objects.filter(
-                id=dataset_id,
-                deleted=False,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-            ).first()
-            exp_dataset = ExperimentDatasetTable.objects.filter(
-                id=dataset_id, deleted=False
-            ).first()
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            exp_dataset = (
+                _request_experiment_dataset_queryset(request)
+                .filter(id=dataset_id)
+                .first()
+            )
 
             include_prompt = request.GET.get("include_prompt", False)
             source = request.GET.get("source", None)
@@ -4165,7 +4476,10 @@ class GetColumnDetailView(APIView):
                             SourceChoices.RUN_PROMPT.value,
                         ]
                 columns = Column.objects.filter(
-                    id__in=column_order, deleted=False, source__in=sources
+                    id__in=column_order,
+                    dataset=dataset,
+                    deleted=False,
+                    source__in=sources,
                 ).order_by(
                     Case(
                         *[
@@ -4187,8 +4501,19 @@ class GetColumnDetailView(APIView):
                         }
                     )
             elif exp_dataset:
-                columns_in_experiment = list(exp_dataset.columns.all())
-                experiment = exp_dataset.experiments_datasets_created.first()
+                try:
+                    experiment = _scoped_experiment_for_dataset(request, exp_dataset)
+                except ExperimentDatasetIntegrityError:
+                    return self._gm.not_found("Dataset not found")
+                columns_in_experiment = list(
+                    exp_dataset.columns.filter(
+                        dataset_id__in=[
+                            experiment.dataset_id,
+                            experiment.snapshot_dataset_id,
+                        ],
+                        deleted=False,
+                    )
+                )
                 user_eval_metric = list(experiment.user_eval_template_ids.all())
                 total_columns = []
                 for metric in user_eval_metric:
@@ -4203,9 +4528,18 @@ class GetColumnDetailView(APIView):
                     )
                     total_columns.extend(cols_used)
 
-                total_columns.append(experiment.column.id)
-                if experiment.column.source == SourceChoices.RUN_PROMPT.value:
-                    run_prompt = RunPrompter.objects.get(id=experiment.column.source_id)
+                if experiment.column_id:
+                    total_columns.append(experiment.column_id)
+                if (
+                    experiment.column_id
+                    and experiment.column.source == SourceChoices.RUN_PROMPT.value
+                ):
+                    run_prompt = RunPrompter.objects.get(
+                        id=experiment.column.source_id,
+                        dataset=experiment.column.dataset,
+                        organization=_request_organization(request),
+                        deleted=False,
+                    )
                     # Extract all column UUIDs from messages
                     message_column_ids = []
                     for message in run_prompt.messages:
@@ -4258,7 +4592,7 @@ class GetColumnDetailView(APIView):
                     column_config.append({"id": str(column.id), "name": column.name})
 
             else:
-                return self._gm.bad_request("Dataset Not Found")
+                return self._gm.not_found("Dataset not found")
 
             return self._gm.success_response({"columns": column_config})
 
@@ -4420,6 +4754,8 @@ class AddColumnsView(APIView):
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
+            if not _request_dataset_queryset(request).filter(id=dataset_id).exists():
+                return self._gm.not_found("Dataset not found")
             columns_data = request.validated_data.get("new_columns_data")
 
             if not columns_data or not isinstance(columns_data, list):
@@ -4545,7 +4881,9 @@ class AddEmptyColumnsView(APIView):
         try:
             num_cols = request.validated_data.get("num_cols", 0)
 
-            dataset = get_object_or_404(Dataset, id=dataset_id)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
 
             added_columns = []
 
@@ -4616,17 +4954,27 @@ class GetCellDataView(APIView):
                     "Both row_ids and column_ids are required"
                 )
 
-            # Get dataset
-            # dataset = get_object_or_404(Dataset, id=dataset_id, deleted=False)
+            rows = _request_row_queryset(request).filter(id__in=row_ids)
+            columns = _request_column_queryset(request).filter(id__in=column_ids)
+            # Preserve partial results for stale/deleted IDs, but reject foreign IDs.
+            owned_datasets = Dataset.all_objects.filter(
+                _request_workspace_filter(request),
+                organization=_request_organization(request),
+            )
+            if (
+                Row.all_objects.filter(id__in=row_ids)
+                .exclude(dataset__in=owned_datasets)
+                .exists()
+                or Column.all_objects.filter(id__in=column_ids)
+                .exclude(dataset__in=owned_datasets)
+                .exists()
+            ):
+                return self._gm.not_found("Cells not found")
 
-            # Get cells for specified rows and columns
             cells = Cell.objects.filter(
-                # dataset=dataset,
-                row_id__in=row_ids,
-                column_id__in=column_ids,
+                row_id__in=rows.values("id"),
+                column_id__in=columns.values("id"),
                 deleted=False,
-                column__dataset__organization=getattr(request, "organization", None)
-                or request.user.organization,
             ).select_related("column")
 
             # Organize data by row_id and column_id
@@ -4663,6 +5011,7 @@ class GetCellDataView(APIView):
             )
 
 
+@row_activity_requests
 class AddStaticColumnView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -4678,9 +5027,27 @@ class AddStaticColumnView(APIView):
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             with transaction.atomic():
+                if (
+                    not _request_dataset_queryset(request)
+                    .filter(id=dataset_id)
+                    .exists()
+                ):
+                    return self._gm.not_found("Dataset not found")
                 new_column_name = request.validated_data.get("new_column_name")
                 column_type = request.validated_data.get("column_type")
                 source = request.validated_data.get("source")
+                # "none" / null: the column has no role.
+                role = request.validated_data.get("role")
+                role = None if role in (None, "none") else role
+                column_source = (
+                    source
+                    if source and getattr(SourceChoices, source, None)
+                    else SourceChoices.OTHERS.value
+                )
+                if role and column_source != SourceChoices.OTHERS.value:
+                    return self._gm.bad_request(
+                        "Only data columns can take a role (input, expected, metadata)."
+                    )
 
                 if len(new_column_name) > 255:
                     return self._gm.bad_request(
@@ -4691,13 +5058,14 @@ class AddStaticColumnView(APIView):
                 if column_type not in valid_data_types:
                     return self._gm.bad_request(get_error_message("INVALID_DATA_TYPE"))
 
-                dataset = get_object_or_404(
-                    Dataset,
+                dataset = Dataset.objects.filter(
                     id=dataset_id,
                     organization=getattr(request, "organization", None)
                     or request.user.organization,
                     deleted=False,
-                )
+                ).first()
+                if dataset is None:
+                    return self._gm.not_found("Dataset not found")
 
                 if Column.objects.filter(
                     name=new_column_name,
@@ -4713,11 +5081,7 @@ class AddStaticColumnView(APIView):
                     id=uuid.uuid4(),
                     name=new_column_name,
                     data_type=column_type,
-                    source=(
-                        source
-                        if source and getattr(SourceChoices, source, None)
-                        else SourceChoices.OTHERS.value
-                    ),
+                    source=column_source,
                     dataset=dataset,
                 )
 
@@ -4725,10 +5089,12 @@ class AddStaticColumnView(APIView):
                 column_order = dataset.column_order or []
                 column_order.append(str(new_column.id))
                 dataset.column_order = column_order
-                dataset.column_config[str(new_column.id)] = {
-                    "is_visible": True,
-                    "is_frozen": None,
-                }
+                column_settings = {"is_visible": True, "is_frozen": None}
+                if role:
+                    column_settings["role"] = role
+                column_config = dict(dataset.column_config or {})
+                column_config[str(new_column.id)] = column_settings
+                dataset.column_config = column_config
                 dataset.save()
 
                 # # for each row, create a cell with the new column and set the value to None
@@ -4758,6 +5124,7 @@ class AddStaticColumnView(APIView):
             )
 
 
+@row_activity_requests
 class AddMultipleStaticColumnsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -4791,6 +5158,12 @@ class AddMultipleStaticColumnsView(APIView):
         """
         try:
             with transaction.atomic():
+                if (
+                    not _request_dataset_queryset(request)
+                    .filter(id=dataset_id)
+                    .exists()
+                ):
+                    return self._gm.not_found("Dataset not found")
                 columns_data = request.validated_data.get("columns", [])
 
                 if not columns_data or not isinstance(columns_data, list):
@@ -4915,6 +5288,7 @@ class AddMultipleStaticColumnsView(APIView):
             )
 
 
+@row_activity_requests
 class DeleteColumnView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -4923,7 +5297,9 @@ class DeleteColumnView(APIView):
     def delete(self, request, dataset_id, column_id, *args, **kwargs):
         try:
             now = timezone.now()
-            dataset = get_object_or_404(Dataset, id=dataset_id)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
             column = get_object_or_404(Column, id=column_id, dataset=dataset)
 
             # Delete associated source model based on source type
@@ -5034,6 +5410,7 @@ class DeleteColumnView(APIView):
             )
 
 
+@row_activity_requests
 class DeleteRowView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -5042,7 +5419,9 @@ class DeleteRowView(APIView):
     def delete(self, request, dataset_id, *args, **kwargs):
         try:
             now = timezone.now()
-            dataset = get_object_or_404(Dataset, id=dataset_id, deleted=False)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
             row_ids = request.data.get("row_ids", [])
             selected_all_rows = request.data.get("selected_all_rows", False)
 
@@ -5101,6 +5480,7 @@ class DeleteRowView(APIView):
             )
 
 
+@row_activity_requests
 class AddEmptyRowsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -5124,7 +5504,9 @@ class AddEmptyRowsView(APIView):
                 return self._gm.bad_request(num_rows_err)
 
             # Get dataset and verify it exists
-            dataset = get_object_or_404(Dataset, id=dataset_id)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
@@ -5158,7 +5540,7 @@ class AddEmptyRowsView(APIView):
             )
 
             last_row = (
-                Row.all_objects.filter(dataset=dataset).order_by("-created_at").first()
+                Row.all_objects.filter(dataset=dataset).order_by("-order").first()
             )
             if last_row:
                 max_order = last_row.order
@@ -5193,6 +5575,7 @@ class AddEmptyRowsView(APIView):
             )
 
 
+@row_activity_requests
 class AddSDKRowsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -5249,14 +5632,39 @@ class AddSDKRowsView(APIView):
 
             (
                 CURL_ADD_COLUMN_REQUEST,
-                CURL_ADD_ROWS_REQUEST,
+                _,
                 TYPESCRIPT_ADD_COLUMNS,
-                TYPESCRIPT_ADD_ROWS,
+                _,
             ) = get_curl_ts_code(
                 dataset_id=dataset.id,
                 api_key=SDK_API_KEY_PLACEHOLDER,
                 secret_key=SDK_SECRET_KEY_PLACEHOLDER,
                 dataset_name=dataset.name,
+            )
+
+            # The add-rows examples write the columns people fill in, in the
+            # order the dataset shows them: the server refuses a row that names
+            # a column the dataset does not have.
+            data_columns = list(
+                Column.objects.filter(
+                    dataset=dataset,
+                    deleted=False,
+                    source=SourceChoices.OTHERS.value,
+                ).order_by("created_at")
+            )
+            position = {
+                column_id: index
+                for index, column_id in enumerate(dataset.column_order or [])
+            }
+            data_columns.sort(
+                key=lambda column: position.get(str(column.id), len(position))
+            )
+            python_add_row, typescript_add_row, curl_add_row = get_add_rows_code(
+                dataset_id=dataset.id,
+                dataset_name=dataset.name,
+                columns=[(column.name, column.data_type) for column in data_columns],
+                api_key=SDK_API_KEY_PLACEHOLDER,
+                secret_key=SDK_SECRET_KEY_PLACEHOLDER,
             )
 
             response = {
@@ -5266,24 +5674,16 @@ class AddSDKRowsView(APIView):
                 },
                 "dataset": serialized_datset.data,
                 "code": {
-                    "python_add_row": PYTHON_ADD_ROWS.format(
+                    "python_add_row": python_add_row,
+                    "python_add_col": get_python_add_columns_code(
+                        dataset.name,
                         SDK_API_KEY_PLACEHOLDER,
                         SDK_SECRET_KEY_PLACEHOLDER,
-                        BASE_URL,
-                        dataset.name,
-                        dataset.name,
-                    ),
-                    "python_add_col": PYTHON_ADD_COLS.format(
-                        SDK_API_KEY_PLACEHOLDER,
-                        SDK_SECRET_KEY_PLACEHOLDER,
-                        BASE_URL,
-                        dataset.name,
-                        dataset.name,
                     ),
                     "typescript_add_col": TYPESCRIPT_ADD_COLUMNS,
-                    "typescript_add_row": TYPESCRIPT_ADD_ROWS,
+                    "typescript_add_row": typescript_add_row,
                     "curl_add_col": CURL_ADD_COLUMN_REQUEST,
-                    "curl_add_row": CURL_ADD_ROWS_REQUEST,
+                    "curl_add_row": curl_add_row,
                 },
             }
 
@@ -5296,6 +5696,7 @@ class AddSDKRowsView(APIView):
             )
 
 
+@row_activity_requests
 class ManuallyCreateDatasetView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -5331,7 +5732,7 @@ class ManuallyCreateDatasetView(APIView):
             except Exception as validation_err:
                 return self._gm.bad_request(str(validation_err.detail[0]))
 
-            if number_of_rows <= 0 or number_of_columns <= 0:
+            if number_of_rows < 0 or number_of_columns <= 0:
                 return self._gm.bad_request(
                     get_error_message("INVALID_ROW_OR_COLUMN_COUNT")
                 )
@@ -5356,8 +5757,8 @@ class ManuallyCreateDatasetView(APIView):
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 
-            # Check row limit
-            if log_and_deduct_cost_for_resource_request is not None:
+            # A schema-only dataset does not consume any rows.
+            if number_of_rows and log_and_deduct_cost_for_resource_request is not None:
                 call_log_row = log_and_deduct_cost_for_resource_request(
                     organization,
                     api_call_type=APICallTypeChoices.ROW_ADD.value,
@@ -5372,68 +5773,22 @@ class ManuallyCreateDatasetView(APIView):
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
                 call_log_row.save()
 
-            # Create dataset
-            dataset = Dataset.objects.create(
+            from model_hub.views.datasets.create.blank_grid import create_blank_grid
+
+            column_specs = request.validated_data.get("columns")
+            if column_specs is None:
+                column_specs = [
+                    {"name": f"Column {index + 1}", "type": DataTypeChoices.TEXT.value}
+                    for index in range(number_of_columns)
+                ]
+            dataset = create_blank_grid(
                 name=dataset_name,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                workspace=getattr(request, "workspace", None),
-                source=DatasetSourceChoices.BUILD.value,
+                organization=organization,
+                workspace=request.workspace,
                 user=request.user,
+                row_count=number_of_rows,
+                columns=column_specs,
             )
-
-            columns = []
-            column_order = []
-            column_config = {}
-
-            # Create columns
-            for i in range(number_of_columns):
-                column_id = uuid.uuid4()
-                column = Column.objects.create(
-                    id=column_id,
-                    name=f"Column {i + 1}",
-                    data_type=DataTypeChoices.TEXT.value,
-                    source=SourceChoices.OTHERS.value,
-                    dataset=dataset,
-                )
-                columns.append(column)
-                column_order.append(str(column_id))
-                column_config[str(column_id)] = {"is_visible": True, "is_frozen": None}
-
-            # Update dataset with column configuration
-            dataset.column_order = column_order
-            dataset.column_config = column_config
-            dataset.dataset_config.update(
-                {"eval_recommendations": ["Deterministic Evals"]}
-            )
-            dataset.save()
-
-            # Create rows and cells in batches
-            batch_size = 1000
-            cells_to_create = []
-
-            for i in range(number_of_rows):
-                row = Row.objects.create(id=uuid.uuid4(), dataset=dataset, order=i)
-
-                for column in columns:
-                    cells_to_create.append(
-                        Cell(
-                            id=uuid.uuid4(),
-                            dataset=dataset,
-                            column=column,
-                            row=row,
-                            value=None,
-                        )
-                    )
-
-                # Bulk create cells when batch size is reached
-                if len(cells_to_create) >= batch_size:
-                    Cell.objects.bulk_create(cells_to_create)
-                    cells_to_create = []
-
-            # Create any remaining cells
-            if cells_to_create:
-                Cell.objects.bulk_create(cells_to_create)
             return self._gm.success_response(
                 {
                     "message": "Dataset created successfully",
@@ -5452,6 +5807,7 @@ class ManuallyCreateDatasetView(APIView):
             )
 
 
+@row_activity_requests
 class AddDataRowsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -5469,8 +5825,13 @@ class AddDataRowsView(APIView):
             rows = request.validated_data.get("rows", [])
             if not rows:
                 return self._gm.bad_request(get_error_message("DATA_MISSING"))
+            # Validate the complete batch before any persistent side effect.
+            if refusal := added_rows_refusal(request, dataset_id, rows):
+                return refusal
 
-            dataset = get_object_or_404(Dataset, id=dataset_id)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
 
             columns = list(
                 Column.objects.filter(dataset=dataset, deleted=False).exclude(
@@ -5491,6 +5852,19 @@ class AddDataRowsView(APIView):
                         f"Row {index + 1}: unknown or non-writable columns: "
                         f"{', '.join(unknown)}. Create the columns before adding rows."
                     )
+
+            # Normalize the complete batch before billing or creating any rows.
+            column_types = {column.name: column.data_type for column in columns}
+            try:
+                for row_data in rows:
+                    for cell_data in row_data.get("cells", []):
+                        name = cell_data["column_name"]
+                        if name in column_types:
+                            cell_data["value"] = normalize_added_cell_value(
+                                cell_data.get("value", ""), column_types[name]
+                            )
+            except serializers.ValidationError as error:
+                return self._gm.bad_request(error.detail)
 
             # Validate row limit
             organization = (
@@ -5518,7 +5892,7 @@ class AddDataRowsView(APIView):
                 call_log_row.save()
 
             last_row = (
-                Row.all_objects.filter(dataset=dataset).order_by("-created_at").first()
+                Row.all_objects.filter(dataset=dataset).order_by("-order").first()
             )
             if last_row:
                 max_order = last_row.order
@@ -5698,43 +6072,47 @@ class UpdateColumnNameView(APIView):
     )
     def put(self, request, dataset_id, column_id, *args, **kwargs):
         try:
+            if not _request_dataset_queryset(request).filter(id=dataset_id).exists():
+                return self._gm.not_found("Dataset not found")
+            if (
+                not _request_column_queryset(request)
+                .filter(dataset_id=dataset_id, id=column_id)
+                .exists()
+            ):
+                return self._gm.not_found("Column not found")
             new_column_name = request.validated_data.get("new_column_name")
 
             if len(new_column_name) > 255:
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_TOO_LONG"))
 
-            dataset = get_object_or_404(
-                Dataset,
-                id=dataset_id,
-                deleted=False,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
-            column = get_object_or_404(
-                Column,
-                id=column_id,
-                dataset=dataset,
-                dataset__organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
-
-            if new_column_name != column.name:
-                if Column.objects.filter(
-                    name=new_column_name,
-                    dataset=dataset,
-                    dataset__organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    deleted=False,
-                ).exists():
-                    return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
-
+            with transaction.atomic():
+                # The scope check runs again under the locks, before any write.
+                dataset, column = self._locked_dataset_and_column(
+                    request, dataset_id, column_id
+                )
+                if dataset is None:
+                    return self._gm.not_found("Dataset not found")
+                if column is None:
+                    return self._gm.not_found("Column not found")
                 old_column_name = column.name
 
-                # Update column name
-                column.name = new_column_name
-                column.save()
+                if new_column_name != old_column_name:
+                    if Column.objects.filter(
+                        name=new_column_name,
+                        dataset=dataset,
+                        dataset__organization=getattr(request, "organization", None)
+                        or request.user.organization,
+                        deleted=False,
+                    ).exists():
+                        return self._gm.bad_request(
+                            get_error_message("COLUMN_NAME_EXISTS")
+                        )
 
-                # Update derived variable references if this is a run prompt column
+                    column.name = new_column_name
+                    column.save()
+
+                # Re-run propagation even on an identical retry. Any failure
+                # rolls back both the column and its derived references.
                 if column.source == SourceChoices.RUN_PROMPT.value and column.source_id:
                     self._update_derived_variables_for_renamed_column(
                         dataset, column, old_column_name, new_column_name
@@ -5748,69 +6126,108 @@ class UpdateColumnNameView(APIView):
                 get_error_message("FAILED_TO_UPDATE_COLUMN_NAME")
             )
 
+    def _locked_dataset_and_column(self, request, dataset_id, column_id):
+        """Lock the caller's dataset, then its run prompter, then the column.
+
+        Both rows come from the request-scoped querysets, so a dataset
+        or column outside the caller's organization and workspace is None and
+        the caller answers it like an unknown id, never as a server error.
+        Serialize renames without blocking Cell inserts' foreign-key checks:
+        FOR NO KEY UPDATE on the scoped rows only, not on the nullable
+        workspace joins from their managers.
+        """
+        dataset = (
+            _request_dataset_queryset(request)
+            .select_for_update(of=("self",), no_key=True)
+            .filter(id=dataset_id)
+            .first()
+        )
+        if dataset is None:
+            return None, None
+        column = (
+            _request_column_queryset(request)
+            .filter(id=column_id, dataset_id=dataset.id)
+            .first()
+        )
+        if column is None:
+            return dataset, None
+        # Match run-prompt editing's prompter-before-column lock order.
+        if column.source == SourceChoices.RUN_PROMPT.value and column.source_id:
+            self._run_prompter_for_update(dataset, column)
+        # Re-read after waiting, and refuse if the source changed before
+        # its lock was acquired rather than locking a different prompter.
+        column = (
+            _request_column_queryset(request)
+            .select_for_update(of=("self",), no_key=True)
+            .filter(
+                id=column_id,
+                dataset_id=dataset.id,
+                source=column.source,
+                source_id=column.source_id,
+            )
+            .first()
+        )
+        return dataset, column
+
+    def _run_prompter_for_update(self, dataset, column):
+        return (
+            RunPrompter.objects.select_for_update(of=("self",))
+            .filter(
+                Q(organization_id=dataset.organization_id)
+                | Q(organization_id__isnull=True),
+                id=column.source_id,
+                dataset=dataset,
+                deleted=False,
+            )
+            .first()
+        )
+
     def _update_derived_variables_for_renamed_column(
         self, dataset, column, old_column_name: str, new_column_name: str
     ):
+        """Update the run prompter's dataset-local derived references.
+
+        Prompt versions are independent shared assets, not dataset metadata.
+        Propagation errors reach the caller's logged error response.
         """
-        Update derived variable references when a run prompt column is renamed.
+        run_prompter = self._run_prompter_for_update(dataset, column)
 
-        This updates:
-        1. RunPrompter.run_prompt_config["derived_variables"]
-        2. PromptVersion.metadata["derived_variables"] for all associated versions
-        """
-        try:
-            # Update RunPrompter
-            run_prompter = RunPrompter.objects.filter(
-                id=column.source_id,
-                deleted=False,
-            ).first()
+        if run_prompter:
+            if rename_derived_variables_in_run_prompter(
+                run_prompter, old_column_name, new_column_name
+            ):
+                run_prompter.save(update_fields=["run_prompt_config"])
 
-            if run_prompter:
-                if rename_derived_variables_in_run_prompter(
-                    run_prompter, old_column_name, new_column_name
-                ):
-                    run_prompter.save(update_fields=["run_prompt_config"])
-
-                # Update all prompt versions associated with this run prompter
-                prompt_template = run_prompter.prompt
-                if prompt_template:
-                    from model_hub.models.prompts import PromptVersion
-
-                    prompt_versions = PromptVersion.objects.filter(
-                        prompt=prompt_template,
-                        deleted=False,
-                    )
-
-                    for version in prompt_versions:
-                        if rename_derived_variables_for_column(
-                            version, old_column_name, new_column_name
-                        ):
-                            version.save(update_fields=["metadata"])
-
-            logger.info(
-                "Updated derived variables for renamed column",
-                old_name=old_column_name,
-                new_name=new_column_name,
-                column_id=str(column.id),
-            )
-
-        except Exception as e:
-            # Log but don't fail the rename operation
-            logger.warning(
-                "Failed to update derived variables for renamed column",
-                old_name=old_column_name,
-                new_name=new_column_name,
-                error=str(e),
-            )
+        logger.info(
+            "Updated derived variables for renamed column",
+            old_name=old_column_name,
+            new_name=new_column_name,
+            column_id=str(column.id),
+        )
 
 
 class EditDatasetBehaviorView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
-    # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
     @validated_request(
-        request_serializer=DatasetBehaviorRequestSerializer,
+        responses={200: DatasetDetailsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
+    def get(self, request, dataset_id, *args, **kwargs):
+        dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+        if dataset is None:
+            return self._gm.not_found("Dataset not found")
+        return self._gm.success_response(
+            {
+                "id": str(dataset.id),
+                "name": dataset.name,
+                "description": dataset.description,
+                "tags": dataset.tags,
+            }
+        )
+
+    @validated_request(
+        request_serializer=DatasetSettingsRequestSerializer,
         responses={
             200: DevelopDatasetMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -5824,12 +6241,18 @@ class EditDatasetBehaviorView(APIView):
             column_config = request.validated_data.get("column_config", {})
             dataset_config = request.validated_data.get("dataset_config", {})
 
-            # Get dataset
-            dataset = get_object_or_404(Dataset, id=dataset_id, deleted=False)
+            # Get dataset: the caller's organization (from the active
+            # membership) and workspace only.
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
 
-            if dataset_config:
+            # Merge, never replace: settings this request does not name (eval
+            # recommendations, version labels, ...) are kept.
+            if "dismiss_banner" in dataset_config:
                 dataset.dataset_config = {
-                    "dismiss_banner": dataset_config.get("dismiss_banner")
+                    **(dataset.dataset_config or {}),
+                    "dismiss_banner": dataset_config.get("dismiss_banner"),
                 }
 
             # Update dataset name if provided
@@ -5847,15 +6270,13 @@ class EditDatasetBehaviorView(APIView):
                     dataset.name = dataset_name
 
             # Get all valid column IDs for this dataset once (for both column_order and column_config validation)
-            valid_column_ids = set(
-                Column.objects.filter(dataset=dataset, deleted=False).values_list(
-                    "id", flat=True
-                )
-            )
-            valid_column_ids_str = {
-                str(column_id) if not isinstance(column_id, str) else column_id
-                for column_id in valid_column_ids
+            column_sources = {
+                str(column_id): column_source
+                for column_id, column_source in Column.objects.filter(
+                    dataset=dataset, deleted=False
+                ).values_list("id", "source")
             }
+            valid_column_ids_str = set(column_sources)
 
             # Validate column_order if provided
             if column_order and len(column_order) > 0:
@@ -5884,9 +6305,21 @@ class EditDatasetBehaviorView(APIView):
                         f"{get_error_message('INVALID_COLUMN_IDS')}: {', '.join(map(str, invalid_config_columns))}"
                     )
 
+                role_columns = [
+                    column_id
+                    for column_id, config in column_config.items()
+                    if config.get("role") not in (None, "none")
+                    and column_sources.get(column_id) != SourceChoices.OTHERS.value
+                ]
+                if role_columns:
+                    return self._gm.bad_request(
+                        "Only data columns can take a role (input, expected, "
+                        f"metadata): {', '.join(map(str, role_columns))}"
+                    )
+
                 for column_id, config in column_config.items():
                     # Update or create column configuration
-                    column_settings = existing_config.get(column_id, {})
+                    column_settings = dict(existing_config.get(column_id) or {})
 
                     # Update visibility and frozen status if provided
                     column_settings["is_visible"] = config.get(
@@ -5895,10 +6328,35 @@ class EditDatasetBehaviorView(APIView):
                     column_settings["is_frozen"] = config.get(
                         "is_frozen", column_settings.get("is_frozen", None)
                     )
+                    # A user column's role; "none" / null clears it.
+                    if "role" in config:
+                        if config["role"] in (None, "none"):
+                            column_settings.pop("role", None)
+                        else:
+                            column_settings["role"] = config["role"]
 
                     existing_config[column_id] = column_settings
 
                 dataset.column_config = existing_config
+
+            # "Use in new experiments" (the whole set; [] clears it).
+            default_ids = request.validated_data.get("experiment_default_eval_ids")
+            if default_ids is not None:
+                from model_hub.services import experiment_defaults
+
+                try:
+                    experiment_defaults.set_experiment_defaults(
+                        dataset=dataset,
+                        organization=_request_organization(request),
+                        eval_ids=default_ids,
+                    )
+                except experiment_defaults.ExperimentDefaultsError as exc:
+                    return self._gm.bad_request(str(exc))
+
+            # Omitted details are preserved; explicit empty values clear them.
+            for field in ("description", "tags"):
+                if field in request.validated_data:
+                    setattr(dataset, field, request.validated_data[field])
 
             # Save all changes
             dataset.save()
@@ -5912,6 +6370,7 @@ class EditDatasetBehaviorView(APIView):
             )
 
 
+@row_activity_requests
 class UpdateCellValueView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -5996,6 +6455,7 @@ class UpdateCellValueView(APIView):
         else:
             return None
 
+    # fmt: off
     @validated_request(
         request_serializer=DatasetUpdateCellValueRequestSerializer,
         responses={
@@ -6014,17 +6474,22 @@ class UpdateCellValueView(APIView):
                 return self._gm.bad_request(
                     get_error_message("MISSING_ROW_ID_COLUMN_ID_AND_NEW_VALUE")
                 )
-            # Get the cell and verify it exists
-            try:
-                cell = get_object_or_404(
-                    Cell, dataset_id=dataset_id, row_id=row_id, column_id=column_id
-                )
-            except Exception:
-                cell = get_object_or_404(Cell, row_id=row_id, column_id=column_id)
+            # Authorize through the row's dataset, including legacy cells whose
+            # redundant dataset FK is null. Never drop the requested dataset.
+            scoped_rows = _request_row_queryset(request).filter(dataset_id=dataset_id)
+            cell = Cell.objects.filter(
+                Q(dataset_id=dataset_id) | Q(dataset__isnull=True),
+                row_id=row_id,
+                row_id__in=scoped_rows.values("id"),
+                column_id=column_id,
+                column__dataset_id=dataset_id,
+                column__deleted=False,
+                deleted=False,
+            ).select_related("column").first()
+            if cell is None:
+                return self._gm.not_found("Cell not found")
 
-            # Update the cell value
-            # cell.value = str(new_value)
-            column = get_object_or_404(Column, id=column_id)
+            column = cell.column
             column_data_type = column.data_type
 
             # Check if column is editable (non-editable source types cannot be edited)
@@ -6054,10 +6519,8 @@ class UpdateCellValueView(APIView):
                     f"Value exceeds maximum length of {MAX_CELL_VALUE_LENGTH} characters"
                 )
 
-            # Handle empty values for all data types
-            if not new_value or (
-                isinstance(new_value, str) and new_value.strip() == ""
-            ):
+            # Handle absence without discarding numeric zero or boolean false.
+            if is_empty_cell_value(new_value):
                 cell.value = None
                 cell.value_infos = json.dumps({})
                 cell.status = CellStatus.PASS.value
@@ -6066,11 +6529,11 @@ class UpdateCellValueView(APIView):
                 cell.value_infos = json.dumps({})
                 cell.status = CellStatus.PASS.value
             elif column_data_type == DataTypeChoices.BOOLEAN.value:
-                if new_value in BooleanChoices.TRUE_OPTIONS.value:
+                if new_value is True or new_value in BooleanChoices.TRUE_OPTIONS.value:
                     cell.value = "true"
                     cell.value_infos = json.dumps({})
                     cell.status = CellStatus.PASS.value
-                elif new_value in BooleanChoices.FALSE_OPTIONS.value:
+                elif new_value is False or new_value in BooleanChoices.FALSE_OPTIONS.value:
                     cell.value = "false"
                     cell.value_infos = json.dumps({})
                     cell.status = CellStatus.PASS.value
@@ -6164,6 +6627,8 @@ class UpdateCellValueView(APIView):
                     if not new_value or (
                         isinstance(new_value, str) and new_value.strip() == ""
                     ):
+                        if payload.get("new_value") != []:
+                            return self._gm.bad_request("Invalid image value")
                         cell.value = None
                         cell.value_infos = json.dumps({})
                         cell.status = CellStatus.PASS.value
@@ -6180,11 +6645,12 @@ class UpdateCellValueView(APIView):
 
                 except Exception as e:
                     logger.error(f"ERROR: {e}")
-                    cell.value = None
-                    cell.status = CellStatus.ERROR.value
-                    cell.value_infos = json.dumps({"reason": str(e)})
-                    cell.save()
-                    return self._gm.bad_request("Invalid image value")
+                    # A refused replacement must leave the saved cell intact.
+                    # The https:// transport refusal is meant for the user
+                    # here; every other failure stays generic.
+                    return self._gm.bad_request(
+                        https_refusal_message(e) or "Invalid image value"
+                    )
 
             elif column_data_type == DataTypeChoices.AUDIO.value:
                 try:
@@ -6197,6 +6663,8 @@ class UpdateCellValueView(APIView):
                     if not new_value or (
                         isinstance(new_value, str) and new_value.strip() == ""
                     ):
+                        if payload.get("new_value") != []:
+                            return self._gm.bad_request("Invalid audio value")
                         cell.value = None
                         cell.value_infos = json.dumps({})
                         cell.status = CellStatus.PASS.value
@@ -6222,10 +6690,7 @@ class UpdateCellValueView(APIView):
 
                 except Exception as e:
                     logger.error(f"ERROR: {e}")
-                    cell.value = None
-                    cell.status = CellStatus.ERROR.value
-                    cell.value_infos = json.dumps({"reason": str(e)})
-                    cell.save()
+                    # A refused replacement must leave the saved cell intact.
                     return self._gm.bad_request(str(e))
 
             elif column_data_type == DataTypeChoices.DOCUMENT.value:
@@ -6239,6 +6704,8 @@ class UpdateCellValueView(APIView):
                     if not new_value or (
                         isinstance(new_value, str) and new_value.strip() == ""
                     ):
+                        if payload.get("new_value") != []:
+                            return self._gm.bad_request("Invalid document value")
                         cell.value = None
                         cell.value_infos = json.dumps({})
                         cell.status = CellStatus.PASS.value
@@ -6262,10 +6729,7 @@ class UpdateCellValueView(APIView):
 
                 except Exception as e:
                     logger.error(f"ERROR: {e}")
-                    cell.value = None
-                    cell.status = CellStatus.ERROR.value
-                    cell.value_infos = json.dumps({"reason": str(e)})
-                    cell.save()
+                    # A refused replacement must leave the saved cell intact.
                     return self._gm.bad_request(str(e))
 
             elif column_data_type == DataTypeChoices.IMAGES.value:
@@ -6274,6 +6738,8 @@ class UpdateCellValueView(APIView):
                     if not new_value or (
                         isinstance(new_value, str) and new_value.strip() == ""
                     ):
+                        if payload.get("new_value") != []:
+                            return self._gm.bad_request("Invalid images value")
                         cell.value = None
                         cell.value_infos = json.dumps({})
                         cell.status = CellStatus.PASS.value
@@ -6302,6 +6768,9 @@ class UpdateCellValueView(APIView):
                                 )
                                 uploaded_urls.append(image_url)
 
+                        if not uploaded_urls and images_list != []:
+                            return self._gm.bad_request("Invalid images value")
+
                         # Store as JSON array
                         cell.value = json.dumps(uploaded_urls)
                         cell.value_infos = json.dumps({})
@@ -6309,11 +6778,11 @@ class UpdateCellValueView(APIView):
 
                 except Exception as e:
                     logger.error(f"ERROR uploading images: {e}")
-                    cell.value = None
-                    cell.status = CellStatus.ERROR.value
-                    cell.value_infos = json.dumps({"reason": str(e)})
-                    cell.save()
-                    return self._gm.bad_request("Invalid images value")
+                    # A refused replacement must leave the saved cell intact.
+                    # Same as the single-image branch above.
+                    return self._gm.bad_request(
+                        https_refusal_message(e) or "Invalid images value"
+                    )
 
             else:
                 cell.value = str(new_value)
@@ -6330,7 +6799,10 @@ class UpdateCellValueView(APIView):
                 get_error_message("FAILED_TO_UPDATE_CELL_VALUE")
             )
 
+    # fmt: on
 
+
+@row_activity_requests
 class UpdateRowView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -6341,7 +6813,9 @@ class UpdateRowView(APIView):
             if not rows:
                 return self._gm.bad_request(get_error_message("DATA_MISSING"))
 
-            dataset = get_object_or_404(Dataset, id=dataset_id)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
 
             # Get valid columns for this dataset
             columns = Column.objects.filter(dataset=dataset, deleted=False).exclude(
@@ -6396,6 +6870,7 @@ class UpdateRowView(APIView):
             )
 
 
+@row_activity_requests
 class UpdateColumnTypeView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -6414,7 +6889,9 @@ class UpdateColumnTypeView(APIView):
             force_update = request.validated_data.get("force_update", False)
 
             # Get dataset and column
-            dataset = get_object_or_404(Dataset, id=dataset_id)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
             column = get_object_or_404(Column, id=column_id, dataset=dataset)
 
             # Validate data type
@@ -7233,8 +7710,13 @@ class DownloadDatasetView(APIView):
     )
     def get(self, request, dataset_id, *args, **kwargs):
         try:
-            # Get dataset and verify it exists
-            dataset = get_object_or_404(Dataset, id=dataset_id)
+            # Resolve tenancy before exposing readiness or exported data.
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
+            refusal = dataset_import_refusal(dataset)
+            if refusal is not None:
+                return refusal
 
             # Get all columns in the correct order
             _exp_sources = [
@@ -7788,6 +8270,8 @@ class GetEvalsListView(APIView):
                 deleted=False,
                 visible_ui=True,
             )
+            # Decision trees run through their own routes, not dataset columns.
+            .exclude(eval_type="dag")
             # Prefetch the relations get_created_by_name() walks so it reads
             # from memory instead of issuing a query per template (N+1 on
             # model_hub_evaluator, model_hub_eval_template_version and
@@ -7874,7 +8358,7 @@ class GetEvalsListView(APIView):
     ):
         eval_templates = EvalTemplate.objects.filter(
             organization=organization, deleted=False, visible_ui=True
-        )
+        ).exclude(eval_type="dag")
         if search_text:
             from model_hub.utils.eval_list import normalize_search_for_name
 
@@ -7930,7 +8414,7 @@ class GetEvalConfigView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            template = self._get_accessible_template(eval_id, organization)
+            template = self._get_accessible_template(eval_id, request)
             if template is None:
                 return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
             if template.owner == "user":
@@ -7948,13 +8432,14 @@ class GetEvalConfigView(APIView):
                 get_error_message("FAILED_TO_GET_EVAL_STRUCTURE")
             )
 
-    def _get_accessible_template(self, template_id, organization):
+    def _get_accessible_template(self, template_id, request):
+        # The same rule as every other place that opens an eval: the list
+        # shows no-workspace user evals in every workspace.
+        from model_hub.views.separate_evals import accessible_eval_templates_q
+
         return (
             EvalTemplate.no_workspace_objects.filter(id=template_id, deleted=False)
-            .filter(
-                Q(owner=OwnerChoices.SYSTEM.value)
-                | Q(owner=OwnerChoices.USER.value, organization=organization)
-            )
+            .filter(accessible_eval_templates_q(request))
             .first()
         )
 
@@ -8188,7 +8673,11 @@ class GetEvalStructureView(APIView):
         if not eval:
             return self._gm.not_found("Eval not found")
 
-        template = EvalTemplate.no_workspace_objects.get(id=eval.template_id)
+        template = (
+            _request_eval_template_queryset(request).filter(id=eval.template_id).first()
+        )
+        if template is None:
+            return self._gm.not_found("Eval template not found")
         corresponding_column_id = Column.objects.filter(
             source_id=str(eval.id), deleted=False
         ).values_list("id", flat=True)
@@ -8229,6 +8718,7 @@ class GetEvalStructureView(APIView):
             "reason_column": eval.config.get("reason_column", False),
             "eval_tags": template.eval_tags,
             "description": template.description,
+            "instance_description": eval.config.get("description", ""),
             "required_keys": template.config.get("required_keys", []),
             "optional_keys": template.config.get("optional_keys", []),
             "variable_keys": template.config.get("variable_keys", []),
@@ -8297,6 +8787,10 @@ class StartEvalsProcess(APIView):
             if not dataset:
                 return self._gm.not_found("Dataset not found")
 
+            refusal = dataset_import_refusal(dataset)
+            if refusal is not None:
+                return refusal
+
             eval_metrics = list(
                 _request_user_eval_metric_queryset(request, dataset_id)
                 .filter(id__in=user_eval_ids)
@@ -8310,6 +8804,12 @@ class StartEvalsProcess(APIView):
                     return self._gm.bad_request(
                         f"{get_error_message('COLUMN_DELETED')} {metric.name}"
                     )
+
+            from model_hub.services.external_metrics import external_execution_refusal
+
+            refusal = external_execution_refusal(metric.id for metric in eval_metrics)
+            if refusal:
+                return self._gm.bad_request(refusal)
 
             # Update status for all specified evals
             updated = UserEvalMetric.objects.filter(
@@ -8342,6 +8842,10 @@ class StartEvalsProcess(APIView):
                 data_type = infer_eval_result_column_data_type(
                     user_eval_metric.template
                 )
+                # Precreate the result using the selected jury version.
+                from model_hub.services.jury_versions import jury_result_column_type
+
+                data_type = jury_result_column_type(user_eval_metric, data_type)
 
                 source_id = str(user_eval_metric.id)
                 column = existing_columns.get(str(source_id))
@@ -8373,6 +8877,14 @@ class StartEvalsProcess(APIView):
                     }
                     column_order_changed = True
                 else:
+                    # Retype the existing result for the selected jury version.
+                    from model_hub.services.composite_result_columns import (
+                        retype_existing_result_column,
+                    )
+
+                    column = retype_existing_result_column(
+                        user_eval_metric, column, data_type
+                    )
                     # Reconcile: ensure reason column is in column_order
                     # (may have been dropped by a concurrent column_order overwrite)
                     reason_col = Column.objects.filter(
@@ -8424,12 +8936,14 @@ class DeleteEvalsView(APIView):
             if not dataset:
                 return self._gm.not_found("Dataset not found")
             now = timezone.now()
-            # Experiment-scoped evals live under source_id=experiment_id, not
-            # dataset_id. Branch the lookup so experiment eval deletion doesn't
-            # 404 against the dataset-scoped record.
             eval_queryset = _request_user_eval_metric_queryset(request, dataset_id)
+            experiment = None
             if experiment_id:
-                eval_queryset = eval_queryset.filter(source_id=str(experiment_id))
+                experiment, eval_queryset = _experiment_eval_scope(
+                    request, dataset, experiment_id
+                )
+                if experiment is None:
+                    return self._gm.not_found("Experiment not found")
             eval_metric = eval_queryset.filter(id=eval_id).first()
             if not eval_metric:
                 return self._gm.not_found("Eval not found")
@@ -8438,11 +8952,8 @@ class DeleteEvalsView(APIView):
             # validates this via CreateExperimentSerializer; mirror it here
             # so the delete path can't leave an experiment in a state the
             # create flow wouldn't accept.
-            if experiment_id:
-                experiment = ExperimentsTable.objects.filter(id=experiment_id).first()
-                if experiment and (
-                    experiment.user_eval_template_ids.filter(deleted=False).count() <= 1
-                ):
+            if experiment is not None:
+                if experiment.user_eval_template_ids.filter(deleted=False).count() <= 1:
                     return self._gm.bad_request(
                         "Cannot delete the last evaluation. "
                         "An experiment must have at least one evaluation."
@@ -8471,23 +8982,39 @@ class DeleteEvalsView(APIView):
             if delete_column:
                 if experiment_id:
                     # Experiment evals: one EXPERIMENT_EVALUATION column per EDT
-                    # with source_id "{edt_id}-{col_id}-sourceid-{metric_id}".
-                    # The dataset-style source_id=eval_metric.id lookup finds
-                    # nothing here, so match by suffix across per-EDT + tag +
-                    # reason columns.
+                    # with source_id "{edt_id}-{col_id}-sourceid-{metric_id}",
+                    # plus reason columns "{col_id}-sourceid-{metric_id}". The
+                    # dataset-style source_id=eval_metric.id lookup finds
+                    # nothing here, so match by suffix, but only in the dataset
+                    # the experiment writes to (its snapshot, or its own
+                    # dataset when it has none) and, for per-EDT + tag columns,
+                    # only under this experiment's EDT ids.
+                    eval_dataset_id = (
+                        experiment.snapshot_dataset_id or experiment.dataset_id
+                    )
+                    edt_prefixes = Q()
+                    for edt_id in (
+                        ExperimentDatasetTable.all_objects.filter(
+                            Q(experiment=experiment)
+                            | Q(experiments_datasets_created=experiment)
+                        )
+                        .values_list("id", flat=True)
+                        .distinct()
+                    ):
+                        edt_prefixes |= Q(source_id__startswith=f"{edt_id}-")
+                    per_edt_q = Q(source=SourceChoices.EVALUATION_REASON.value)
+                    if edt_prefixes:
+                        per_edt_q |= edt_prefixes & Q(
+                            source__in=[
+                                SourceChoices.EXPERIMENT_EVALUATION.value,
+                                SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                            ]
+                        )
                     per_edt_cols = list(
                         Column.objects.filter(
-                            Q(
-                                source__in=[
-                                    SourceChoices.EXPERIMENT_EVALUATION.value,
-                                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
-                                ],
-                                source_id__endswith=f"-sourceid-{eval_metric.id}",
-                            )
-                            | Q(
-                                source=SourceChoices.EVALUATION_REASON.value,
-                                source_id__endswith=f"-sourceid-{eval_metric.id}",
-                            ),
+                            per_edt_q,
+                            dataset_id=eval_dataset_id,
+                            source_id__endswith=f"-sourceid-{eval_metric.id}",
                             deleted=False,
                         )
                     )
@@ -8504,7 +9031,7 @@ class DeleteEvalsView(APIView):
                     # multiple sources). So we hand-roll the cell/column delete
                     # but share ``prune_dataset_columns`` for the dataset config
                     # update — that way ``column_order`` and ``column_config``
-                    # stay in sync on both delete paths (TH-5508 round-7 ask).
+                    # stay in sync on both delete paths.
                     from model_hub.services.column_service import (
                         prune_dataset_columns,
                     )
@@ -8516,10 +9043,11 @@ class DeleteEvalsView(APIView):
                             Cell.objects.filter(
                                 column_id__in=col_ids, deleted=False
                             ).update(deleted=True, deleted_at=now)
+                            # Match rename's Dataset-before-Column lock order.
+                            prune_dataset_columns(snapshot_dataset, col_ids)
                             Column.objects.filter(id__in=col_ids).update(
                                 deleted=True, deleted_at=now
                             )
-                            prune_dataset_columns(snapshot_dataset, col_ids)
                         eval_metric.deleted = True
                         eval_metric.deleted_at = now
                         eval_metric.save(update_fields=["deleted", "deleted_at"])
@@ -8606,6 +9134,26 @@ class EditAndRunUserEvalView(APIView):
             return value.strip().lower() not in {"false", "0", "no", ""}
         return bool(value)
 
+    @staticmethod
+    def _with_pass_threshold(config, threshold):
+        """A copy of a saved evaluation's config with its pass threshold set.
+
+        The threshold is a run setting, not part of the evaluation's
+        definition. It goes in run_config, which every run and the evaluation
+        list read first (resolve_pass_threshold). Where an older config also
+        holds a threshold at its top level or in its definition, that copy
+        gets the same value, so the config never says two things.
+        """
+        updated = copy.deepcopy(config) if isinstance(config, dict) else {}
+        run_config = updated.get("run_config")
+        run_config = dict(run_config) if isinstance(run_config, dict) else {}
+        run_config["pass_threshold"] = threshold
+        updated["run_config"] = run_config
+        for holder in (updated, updated.get("config")):
+            if isinstance(holder, dict) and "pass_threshold" in holder:
+                holder["pass_threshold"] = threshold
+        return updated
+
     @validated_request(
         request_serializer=UserEvalUpdateRequestSerializer,
         responses={
@@ -8614,14 +9162,21 @@ class EditAndRunUserEvalView(APIView):
         },
     )
     def post(self, request, dataset_id, eval_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
+        from tfc.ee_gates import jev_gate_for_template, turing_oss_gate_for_template
 
         request_data = request.validated_data
-        gate = turing_oss_gate_for_template(
+        gate = jev_gate_for_template(
             request_data.get("model"),
-            template_id=request_data.get("template_id"),
-            eval_type=request_data.get("eval_type"),
+            request_data.get("template_id"),
+            request_data.get("eval_type"),
         )
+        if gate is None:
+            gate = turing_oss_gate_for_template(
+                request_data.get("model"),
+                request_data.get("template_id"),
+                request_data.get("eval_type"),
+                getattr(request, "organization", None) or request.user.organization,
+            )
         if gate is not None:
             return gate
 
@@ -8636,12 +9191,15 @@ class EditAndRunUserEvalView(APIView):
                 if not dataset:
                     return self._gm.not_found("Dataset not found")
 
-                # When editing an eval attached to an experiment, retain the
-                # source_id=experiment_id discriminator, but keep the lookup bound to
-                # the active workspace dataset from the URL.
+                # An eval attached to an experiment is that experiment's
+                # (source_id), on the experiment's own dataset or its snapshot.
                 eval_queryset = _request_user_eval_metric_queryset(request, dataset_id)
                 if experiment_id:
-                    eval_queryset = eval_queryset.filter(source_id=str(experiment_id))
+                    _, eval_queryset = _experiment_eval_scope(
+                        request, dataset, experiment_id
+                    )
+                    if eval_queryset is None:
+                        return self._gm.not_found("Eval not found")
                 eval_metric = (
                     eval_queryset.filter(id=eval_id)
                     .select_related("dataset", "template")
@@ -8649,10 +9207,68 @@ class EditAndRunUserEvalView(APIView):
                 )
                 if not eval_metric:
                     return self._gm.not_found("Eval not found")
+                # Validate jury mappings before any binding writes,
+                # against the dataset the evaluation is on.
+                from model_hub.services.jury_binding import prepare_jury_binding
+
+                prepare_jury_binding(
+                    request, eval_metric.dataset, request_data, eval_metric
+                )
                 if eval_metric.column_deleted:
                     return self._gm.bad_request(
                         f"{get_error_message('COLUMN_DELETED')} {eval_metric.name}"
                     )
+                from model_hub.services.external_metrics import (
+                    external_template_refusal,
+                )
+
+                # The template is already loaded (select_related above).
+                refusal = external_template_refusal(eval_metric.template)
+                if refusal:
+                    return self._gm.bad_request(refusal)
+                requested_kb_id = request_data.get("kb_id")
+                if requested_kb_id and not knowledge_base_in_scope(
+                    request, requested_kb_id
+                ):
+                    return self._gm.not_found("Knowledge base not found")
+
+                requested_kb_id = request_data.get("kb_id") or eval_metric.kb_id
+                if requested_kb_id and not knowledge_base_in_scope(
+                    request, requested_kb_id
+                ):
+                    return self._gm.not_found("Knowledge base not found")
+
+                from model_hub.services.dataset_eval_version_selection import (
+                    selected_dataset_eval_version,
+                )
+
+                has_selection = "pinned_version_id" in request_data
+                selected_version = None
+                if has_selection:
+                    accessible_template = (
+                        _request_eval_template_queryset(request)
+                        .filter(id=eval_metric.template_id)
+                        .first()
+                    )
+                    if not accessible_template:
+                        return self._gm.not_found("Eval template not found")
+                    selected_version = selected_dataset_eval_version(
+                        accessible_template, request_data["pinned_version_id"]
+                    )
+                    if save_as_template and selected_version is not None:
+                        return self._gm.bad_request(
+                            "Save a new template separately before selecting its version"
+                        )
+
+                from model_hub.utils.jev_templates import validate_jev_binding
+
+                jev_error = validate_jev_binding(
+                    eval_metric.template,
+                    model=request_data.get("model") or eval_metric.model,
+                    runtime_config=request_data.get("config") or eval_metric.config,
+                )
+                if jev_error is not None:
+                    return jev_error
 
                 if save_as_template:
                     template = eval_metric.template
@@ -8728,6 +9344,16 @@ class EditAndRunUserEvalView(APIView):
                     new_config = normalize_eval_runtime_config(
                         eval_metric.template.config, new_config
                     )
+                    from model_hub.utils.scoring import validate_choice_score_override
+
+                    validate_choice_score_override(eval_metric.template, new_config)
+                    # Older clients omit instance notes; only an explicit value
+                    # (including an empty string) should replace them.
+                    if (
+                        "description" not in new_config
+                        and "description" in eval_metric.config
+                    ):
+                        new_config["description"] = eval_metric.config["description"]
                     from model_hub.utils.eval_prompt_variables import (
                         sync_required_keys_from_prompt,
                     )
@@ -8753,54 +9379,37 @@ class EditAndRunUserEvalView(APIView):
                             f"Missing required mapping keys: {', '.join(missing_keys)}"
                         )
 
-                # If the user explicitly switched to a DIFFERENT version, set it
-                # as the dedup baseline before calling maybe_pin_new_version.
-                # This means:
-                #   - user selects V1 with no config changes → snap matches V1 →
-                #     dedup fires → V1 stays pinned (no new version)
-                #   - user selects V1 and also edits config → snap differs from V1 →
-                #     new version created with the edited config
-                # Both paths keep eval_metric.config and pinned_version.config_snapshot
-                # in lockstep (the invariant).
-                explicit_version_id = request_data.get("pinned_version_id")
-                version_switched = explicit_version_id and str(
-                    explicit_version_id
-                ) != str(eval_metric.pinned_version_id or "")
-                if version_switched:
-                    from model_hub.models.evals_metric import EvalTemplateVersion as ETV
+                # Selecting an immutable saved version (or clearing the pin) is
+                # not an instruction to create a new version. Legacy editors
+                # that omit selection retain their existing save-version path.
+                if has_selection:
+                    eval_metric.pinned_version = selected_version
+                else:
+                    from model_hub.services.eval_version_pinning import (
+                        maybe_pin_new_version,
+                    )
 
-                    selected_ver = ETV.objects.filter(
-                        id=explicit_version_id,
-                        eval_template=eval_metric.template,
-                    ).first()
-                    if not selected_ver:
-                        return self._gm.bad_request("Selected version not found")
-                    # Use the selected version as the dedup baseline.
-                    eval_metric.pinned_version = selected_ver
-
-                # Version creation on edit — business logic lives in the service.
-                # Runs whether or not the user switched versions: if config
-                # matches the baseline snapshot, dedup skips creation; if it
-                # differs (including after a version switch with edits), a new
-                # version is created and pinned.
-                from model_hub.services.eval_version_pinning import (
-                    maybe_pin_new_version,
-                )
-
-                maybe_pin_new_version(
-                    eval_metric,
-                    request_data,
-                    user=request.user,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    workspace=getattr(request, "workspace", None),
-                )
+                    maybe_pin_new_version(
+                        eval_metric,
+                        request_data,
+                        user=request.user,
+                        organization=getattr(request, "organization", None)
+                        or request.user.organization,
+                        workspace=getattr(request, "workspace", None),
+                    )
 
                 # Update the config (already validated above)
                 if new_config:
                     if "reason_column" not in new_config:
                         new_config["reason_column"] = True
                     eval_metric.config = new_config
+                # A pass threshold sent in its own field is stored only after
+                # the version is settled above, so it never saves a new
+                # version, whatever config came with it.
+                if "pass_threshold" in request_data:
+                    eval_metric.config = self._with_pass_threshold(
+                        eval_metric.config, request_data["pass_threshold"]
+                    )
                 eval_metric.kb_id = request_data.get("kb_id") or eval_metric.kb_id
                 if "error_localizer" in request.data:
                     eval_metric.error_localizer = self._coerce_bool(
@@ -8833,14 +9442,47 @@ class EditAndRunUserEvalView(APIView):
                 #    Column.objects.get(source_id=eval_metric.id) here crashes.
                 if new_config.get("reason_column"):
                     if experiment_id:
-                        per_edt_cols = Column.objects.filter(
-                            source__in=[
-                                SourceChoices.EXPERIMENT_EVALUATION.value,
-                                SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
-                            ],
-                            source_id__endswith=f"-sourceid-{eval_metric.id}",
-                            deleted=False,
+                        # The experiment resolves in the request's
+                        # organization and workspace, through its dataset.
+                        experiment = (
+                            scope_to_caller(
+                                ExperimentsTable.objects.all(),
+                                request,
+                                organization_field="dataset__organization",
+                                workspace_field="dataset__workspace",
+                            )
+                            .filter(id=experiment_id)
+                            .first()
                         )
+                        # Only this experiment's per-EDT columns, in the dataset
+                        # it writes to (its snapshot, or its own dataset when it
+                        # has none), get reason columns.
+                        edt_prefixes = Q()
+                        if experiment is not None:
+                            for edt_id in (
+                                ExperimentDatasetTable.objects.filter(
+                                    Q(experiment=experiment)
+                                    | Q(experiments_datasets_created=experiment)
+                                )
+                                .values_list("id", flat=True)
+                                .distinct()
+                            ):
+                                edt_prefixes |= Q(source_id__startswith=f"{edt_id}-")
+                        per_edt_cols = Column.objects.none()
+                        if edt_prefixes:
+                            per_edt_cols = Column.objects.filter(
+                                edt_prefixes,
+                                dataset_id=(
+                                    experiment.snapshot_dataset_id
+                                    or experiment.dataset_id
+                                ),
+                                source__in=[
+                                    SourceChoices.EXPERIMENT_EVALUATION.value,
+                                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                                ],
+                                source_id__endswith=f"-sourceid-{eval_metric.id}",
+                                deleted=False,
+                            )
                         for col in per_edt_cols:
                             Column.objects.get_or_create(
                                 name=f"{eval_metric.name}-{col.name}-reason",
@@ -8856,9 +9498,6 @@ class EditAndRunUserEvalView(APIView):
                                 _build_and_save_v2_column_order,
                             )
 
-                            experiment = ExperimentsTable.objects.filter(
-                                id=experiment_id
-                            ).first()
                             if experiment and experiment.snapshot_dataset_id:
                                 _build_and_save_v2_column_order(
                                     experiment, experiment.snapshot_dataset
@@ -8986,14 +9625,21 @@ class AddUserEvalView(CreateAPIView):
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
+        from tfc.ee_gates import jev_gate_for_template, turing_oss_gate_for_template
 
         request_data = request.validated_data
-        gate = turing_oss_gate_for_template(
+        gate = jev_gate_for_template(
             request_data.get("model"),
-            template_id=request_data.get("template_id"),
-            eval_type=request_data.get("eval_type"),
+            request_data.get("template_id"),
+            request_data.get("eval_type"),
         )
+        if gate is None:
+            gate = turing_oss_gate_for_template(
+                request_data.get("model"),
+                request_data.get("template_id"),
+                request_data.get("eval_type"),
+                getattr(request, "organization", None) or request.user.organization,
+            )
         if gate is not None:
             return gate
 
@@ -9005,6 +9651,10 @@ class AddUserEvalView(CreateAPIView):
         if not dataset:
             return self._gm.not_found("Dataset not found")
 
+        # Validate jury mappings before any binding writes.
+        from model_hub.services.jury_binding import prepare_jury_binding
+
+        prepare_jury_binding(request, dataset, request_data)
         serializer = UserEvalSerializer(data=request_data)
         run = request_data.get("run", False)
         save_as_template = request_data.get("save_as_template", False)
@@ -9013,6 +9663,39 @@ class AddUserEvalView(CreateAPIView):
             id1 = dataset_id
 
             template_id = validated_data.get("template_id")
+            from model_hub.models.evals_metric import EXTERNAL_EVAL_TYPE
+            from model_hub.services.external_metrics import EXTERNAL_TEMPLATE_REFUSAL
+
+            # Only a template the caller may use is refused here; any other id
+            # is answered below like an id that does not exist.
+            if (
+                _request_eval_template_queryset(request)
+                .filter(id=template_id, eval_type=EXTERNAL_EVAL_TYPE)
+                .exists()
+            ):
+                return self._gm.bad_request(EXTERNAL_TEMPLATE_REFUSAL)
+            template = (
+                _request_eval_template_queryset(request).filter(id=template_id).first()
+            )
+            if not template:
+                return self._gm.not_found("Eval template not found")
+            from model_hub.services.dataset_eval_version_selection import (
+                selected_dataset_eval_version,
+            )
+
+            try:
+                selected_version = selected_dataset_eval_version(
+                    template, request_data.get("pinned_version_id")
+                )
+            except ValueError as exc:
+                return self._gm.bad_request(str(exc))
+            if save_as_template and selected_version is not None:
+                return self._gm.bad_request(
+                    "Save a new template separately before selecting its version"
+                )
+            kb_id = validated_data.get("kb_id", None)
+            if kb_id and not knowledge_base_in_scope(request, kb_id):
+                return self._gm.not_found("Knowledge base not found")
             if save_as_template:
                 try:
                     if (
@@ -9097,6 +9780,16 @@ class AddUserEvalView(CreateAPIView):
             )
             if not template:
                 return self._gm.not_found("Eval template not found")
+            from model_hub.utils.jev_templates import validate_jev_binding
+
+            jev_error = validate_jev_binding(
+                template,
+                model=validated_data.get("model"),
+                runtime_config=validated_data.get("config"),
+            )
+            if jev_error is not None:
+                return jev_error
+
             # Inherit template-level enablement unless caller explicitly overrides.
             if "error_localizer" in request.data:
                 error_localizer = self._coerce_bool(
@@ -9137,6 +9830,9 @@ class AddUserEvalView(CreateAPIView):
                 validated_data["config"] = normalize_eval_runtime_config(
                     template.config, validated_data.get("config", {})
                 )
+                from model_hub.utils.scoring import validate_choice_score_override
+
+                validate_choice_score_override(template, validated_data["config"])
             except ValueError as e:
                 return self._gm.bad_request(str(e))
 
@@ -9152,6 +9848,7 @@ class AddUserEvalView(CreateAPIView):
                 workspace=getattr(request, "workspace", None),
                 dataset_id=id1,
                 template_id=template_id,
+                pinned_version=selected_version,
                 config=validated_data.get("config"),
                 status=(
                     StatusType.NOT_STARTED.value if run else StatusType.INACTIVE.value
@@ -9164,17 +9861,6 @@ class AddUserEvalView(CreateAPIView):
                     "composite_weight_overrides"
                 ),
             )
-            if kb_id:
-                try:
-                    KnowledgeBaseFile.objects.get(
-                        id=kb_id,
-                        organization=getattr(request, "organization", None)
-                        or request.user.organization,
-                    )
-                except KnowledgeBaseFile.DoesNotExist:
-                    pass
-            else:
-                pass
 
             if run:
                 with transaction.atomic():
@@ -9183,6 +9869,10 @@ class AddUserEvalView(CreateAPIView):
                         id=id1
                     )
                     data_type = infer_eval_result_column_data_type(template)
+                    # Preserve saved aggregation on add-and-run.
+                    from model_hub.services.jury_versions import jury_result_column_type
+
+                    data_type = jury_result_column_type(user_eval_metric, data_type)
 
                     column = Column.objects.create(
                         name=validated_data.get("name"),
@@ -9240,7 +9930,11 @@ class StopUserEvalView(APIView):
 
             eval_queryset = _request_user_eval_metric_queryset(request, dataset_id)
             if experiment_id:
-                eval_queryset = eval_queryset.filter(source_id=str(experiment_id))
+                _, eval_queryset = _experiment_eval_scope(
+                    request, dataset, experiment_id
+                )
+                if eval_queryset is None:
+                    return self._gm.not_found("Eval not found")
             eval_metric = (
                 eval_queryset.filter(id=eval_id)
                 .select_related("dataset", "template")
@@ -9291,7 +9985,15 @@ class StopUserEvalView(APIView):
                         maybe_complete_experiment_after_eval_stop,
                     )
 
-                    maybe_complete_experiment_after_eval_stop(experiment_id)
+                    maybe_complete_experiment_after_eval_stop(
+                        experiment_id,
+                        experiments=scope_to_caller(
+                            ExperimentsTable.objects.all(),
+                            request,
+                            organization_field="dataset__organization",
+                            workspace_field="dataset__workspace",
+                        ),
+                    )
 
             return self._gm.success_response("User evaluation stopped")
         except Exception as e:
@@ -9308,8 +10010,20 @@ class PreviewRunEvalView(APIView):
         responses={200: EvalPreviewResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, dataset_id, *args, **kwargs):
+        from tfc.ee_gates import ee_model_gate_for_template
+
+        request_data = request.validated_data
+        # Gated like the dataset run (AddUserEvalView): an unknown or
+        # unlicensed model is one 400/402, not an error on every previewed row.
+        gate = ee_model_gate_for_template(
+            request_data.get("model"),
+            template_id=request_data.get("template_id"),
+            eval_type=request_data.get("eval_type"),
+        )
+        if gate is not None:
+            return gate
+
         try:
-            request_data = request.validated_data
             config = request_data.get("config")
             if not config:
                 return self._gm.bad_request("config is required")
@@ -9347,6 +10061,13 @@ class PreviewRunEvalView(APIView):
             )
             if not eval_template:
                 return self._gm.not_found("Eval template not found")
+            from model_hub.utils.jev_templates import validate_jev_binding
+
+            jev_error = validate_jev_binding(
+                eval_template, model=model, runtime_config=config
+            )
+            if jev_error is not None:
+                return jev_error
 
             eval_class = globals().get(eval_template.config.get("eval_type_id"))
 
@@ -9363,8 +10084,17 @@ class PreviewRunEvalView(APIView):
 
             eval_id = eval_template.config.get("eval_type_id")
 
+            from model_hub.utils.feedback_run_scope import (
+                STARTED_BY_PERSON,
+                feedback_workspace_for_run,
+            )
+
+            # Feedback follows the workspace the person started the preview in;
+            # a dataset with no workspace only from the default workspace.
+            started_in = getattr(request, "workspace", None) or get_current_workspace()
             runner = EvaluationRunner(
-                eval_id,
+                user_eval_metric_id=None,
+                standalone_eval_type_id=eval_id,
                 is_only_eval=is_only_eval,
                 format_output=True,
                 futureagi_eval=self.futureagi_eval,
@@ -9373,8 +10103,27 @@ class PreviewRunEvalView(APIView):
                 protect=protect,
                 protect_flash=protect_flash,
                 sdk_uuid=sdk_uuid,
+                organization_id=dataset.organization_id,
+                workspace_id=dataset.workspace_id,
+                feedback_workspace_id=feedback_workspace_for_run(
+                    dataset.organization_id,
+                    dataset.workspace_id,
+                    started_by=STARTED_BY_PERSON,
+                    workspace_id=getattr(started_in, "id", None),
+                ),
             )
             runtime_config = normalize_eval_runtime_config(eval_template.config, config)
+            # No save here: the request's Choices override is checked before
+            # the preview applies it.
+            from model_hub.utils.scoring import (
+                ChoiceScoreOverrideError,
+                validate_choice_score_override,
+            )
+
+            try:
+                validate_choice_score_override(eval_template, runtime_config)
+            except ChoiceScoreOverrideError as e:
+                return self._gm.bad_request(str(e))
             data_config = runtime_config.get("config")
 
             run_prompt_column = eval_template.config.get("run_prompt_column", False)
@@ -9508,7 +10257,9 @@ class GetHuggingFaceDatasetListView(APIView):
                 logger.exception("Error parsing huggingface filter params")
                 parsed_filters = {}
 
-            API_URL = "https://huggingface.co/datasets-json"
+            from huggingface_hub.constants import ENDPOINT
+
+            API_URL = f"{ENDPOINT}/datasets-json"
 
             try:
                 if search_query:
@@ -9709,11 +10460,15 @@ class GetHuggingFaceDatasetDetailView(APIView):
                 if not dataset_id:
                     return self._gm.bad_request(get_error_message("DATASET_ID_MISSING"))
                 # Search for datasets
-                API_URL = f"https://huggingface.co/api/datasets?id={dataset_id}"
+                from huggingface_hub.constants import ENDPOINT
+
+                API_URL = f"{ENDPOINT}/api/datasets"
 
                 headers = {"Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}"}
 
-                response = requests.get(API_URL, headers=headers, timeout=30)
+                response = requests.get(
+                    API_URL, params={"id": dataset_id}, headers=headers, timeout=30
+                )
                 if response.status_code != 200:
                     return self._gm.bad_request(
                         f"{get_error_message('FAILED_TO_FETCH_DATASET')}: {response.status_code} {response.text}"
@@ -9782,7 +10537,7 @@ class ExtractJsonColumnView(APIView):
                 return str(value) if value is not None else None
             return None
         except Exception as e:
-            logger.error("Error in json extract _process_cell", str(e))
+            logger.error("Error in json extract _process_cell", error=str(e))
             return None
         finally:
             close_old_connections()
@@ -9884,12 +10639,58 @@ class ExtractJsonColumnView(APIView):
 
 
 @temporal_activity(time_limit=3600, queue="tasks_l")
-def extract_json_async(column_id, json_key, concurrency, dataset_id, new_column_id):
+@track_generation_inputs
+def extract_json_async(
+    column_id,
+    json_key,
+    concurrency,
+    dataset_id,
+    new_column_id,
+    is_rerun=False,
+    row_ids=None,
+):
+    # Same activity name and arguments as dynamic_columns.extract_json_async.
+    # The drop-in registry keeps whichever module the process imports last. In
+    # separate worker containers that is this one, so this copy runs every JSON
+    # extraction dynamic_columns dispatches, new and rerun; the standalone
+    # install's embedded worker runs dynamic_columns' copy instead. This copy
+    # keeps this module's parser (standard JSON first, then a Python literal:
+    # f4bf60cb88), the one new JSON columns have always been filled with on a
+    # separate worker. dynamic_columns' parser reads Python literals only, so
+    # true, false or null anywhere in a document would turn the cell into an
+    # ERROR.
     view = ExtractJsonColumnView()
     # Process cells concurrently
     Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
     source_cells = Cell.objects.filter(column_id=column_id, deleted=False)
+    eligible = Row.objects.filter(dataset_id=dataset_id, deleted=False)
+    if row_ids is not None:
+        eligible = eligible.filter(id__in=row_ids)
+    selected = set(map(str, eligible.values_list("id", flat=True)))
+    source_cells = [cell for cell in source_cells if str(cell.row_id) in selected]
+    if is_rerun:
+        # As in dynamic_columns' reruns, every row this rerun processes gets a
+        # cell to refill first.
+        source_cells = list(source_cells)
+        # Finalize missing sources within the same live-row scope as execution.
+        prepare_source_rerun_cells(
+            [cell.row_id for cell in source_cells],
+            dataset_id,
+            new_column_id,
+            selected_row_ids=selected,
+        )
+    # A rerun refills its cells: its value as a PASS cell, or None as an ERROR
+    # cell with the reason. A new column creates them, with the same outcome.
+    existing_cells_map = (
+        {
+            str(cell.row_id): cell
+            for cell in Cell.objects.filter(column_id=new_column_id, deleted=False)
+        }
+        if is_rerun
+        else {}
+    )
     new_cells = []
+    cells_to_update = []
     total_processed = 0
     failed_cells = 0
 
@@ -9907,34 +10708,40 @@ def extract_json_async(column_id, json_key, concurrency, dataset_id, new_column_
         for future in as_completed(future_to_cell):
             cell = future_to_cell[future]
             try:
-                value = future.result()
-                new_cells.append(
-                    Cell(
-                        dataset_id=dataset_id,
-                        column_id=new_column_id,
-                        row=cell.row,
-                        value=value,
-                    )
-                )
+                fields = {"value": future.result()}
                 total_processed += 1
             except Exception as e:
                 failed_cells += 1
                 logger.error(f"Error processing cell: {str(e)}")
-                # Create a failed cell with error information
+                # A failed cell with error information
+                fields = {
+                    "value": None,
+                    "value_infos": json.dumps({"reason": ROW_PROCESSING_ERROR}),
+                    "status": CellStatus.ERROR.value,
+                }
+            existing_cell = existing_cells_map.get(str(cell.row_id))
+            if existing_cell is None:
                 new_cells.append(
                     Cell(
                         dataset_id=dataset_id,
                         column_id=new_column_id,
                         row=cell.row,
-                        value=None,
-                        value_infos=json.dumps({"reason": str(e)}),
-                        status=CellStatus.ERROR.value,
+                        **fields,
                     )
                 )
+            else:
+                existing_cell.value = fields["value"]
+                existing_cell.value_infos = fields.get("value_infos", json.dumps({}))
+                existing_cell.status = fields.get("status", CellStatus.PASS.value)
+                cells_to_update.append(existing_cell)
 
     # Bulk create all cells at once
     if new_cells:
         Cell.objects.bulk_create(new_cells)
+    if cells_to_update:
+        Cell.objects.bulk_update(
+            cells_to_update, ["value", "value_infos", "status"], batch_size=1000
+        )
     Column.objects.filter(id=new_column_id).update(status=StatusType.COMPLETED.value)
     # insert_embeddings_task.delay(column_ids=[str(new_column_id)])
 
@@ -10076,60 +10883,34 @@ class ClassifyColumnView(APIView):
 
 @temporal_activity(time_limit=3600, queue="tasks_l")
 def classify_column_async(
-    column_id, labels, model, concurrency, dataset_id, new_column_id
+    column_id,
+    labels,
+    model,
+    concurrency,
+    dataset_id,
+    new_column_id,
+    is_rerun=False,
+    row_ids=None,
 ):
-    view = ClassifyColumnView()
-    # Process cells concurrently
-    source_cells = Cell.objects.filter(column_id=column_id, deleted=False)
-    new_cells = []
-    total_processed = 0
-    failed_cells = 0
-    Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
+    # Same activity name as dynamic_columns.classify_column_async. The drop-in
+    # registry keeps whichever module the process imports last, which is this
+    # one in separate worker containers, so this copy received every call
+    # dynamic_columns dispatches; it took no is_rerun, so every classification
+    # rerun failed with a TypeError after the rerun view had cleared the column.
+    # Run the one implementation (the standalone install's embedded worker
+    # registers it directly); its rerun gives every row a cell to refill.
+    from model_hub.views import dynamic_columns
 
-    # Wrap function with OTel context propagation for thread safety
-    wrapped_classify_cell = wrap_for_thread(view._classify_cell)
-
-    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        future_to_cell = {
-            executor.submit(wrapped_classify_cell, cell, labels, model): cell
-            for cell in source_cells
-        }
-
-        for future in as_completed(future_to_cell):
-            cell = future_to_cell[future]
-            try:
-                classification, value_infos = future.result()
-                if value_infos and "reason" in value_infos:
-                    failed_cells += 1
-                    new_cells.append(
-                        Cell(
-                            dataset_id=dataset_id,
-                            column_id=new_column_id,
-                            row=cell.row,
-                            value=None,
-                            value_infos=json.dumps(value_infos),
-                            status=CellStatus.ERROR.value,
-                        )
-                    )
-                else:
-                    new_cells.append(
-                        Cell(
-                            dataset_id=dataset_id,
-                            column_id=new_column_id,
-                            row=cell.row,
-                            value=classification,
-                            value_infos=json.dumps(value_infos if value_infos else {}),
-                        )
-                    )
-                    total_processed += 1
-            except Exception:
-                failed_cells += 1
-
-    # Bulk create all cells
-    if new_cells:
-        Cell.objects.bulk_create(new_cells)
-    Column.objects.filter(id=new_column_id).update(status=StatusType.COMPLETED.value)
-    # insert_embeddings_task.delay(column_ids=[str(new_column_id)])
+    return dynamic_columns.classify_column_async._original_func(
+        column_id,
+        labels,
+        model,
+        concurrency,
+        dataset_id,
+        new_column_id,
+        is_rerun,
+        row_ids=row_ids,
+    )
 
 
 class ExtractEntitiesView(APIView):
@@ -10295,62 +11076,34 @@ Remember, accuracy and adherence to the specified format are crucial. Your task 
 
 @temporal_activity(time_limit=3600, queue="tasks_l")
 def extract_async(
-    source_column_id, instruction, model, concurrency, dataset_id, new_column_id
+    source_column_id,
+    instruction,
+    model,
+    concurrency,
+    dataset_id,
+    new_column_id,
+    is_rerun=False,
+    row_ids=None,
 ):
-    # Process cells concurrently
-    source_cells = Cell.objects.filter(column_id=source_column_id, deleted=False)
-    new_cells = []
-    Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
-    total_processed = 0
-    failed_cells = 0
-    view = ExtractEntitiesView()
+    # Same activity name as dynamic_columns.extract_async. The drop-in registry
+    # keeps whichever module the process imports last, which is this one in
+    # separate worker containers, so this copy received every call
+    # dynamic_columns dispatches; it took no is_rerun, so every entity-extraction
+    # rerun failed with a TypeError after the rerun view had cleared the column.
+    # Run the one implementation (the standalone install's embedded worker
+    # registers it directly); its rerun gives every row a cell to refill.
+    from model_hub.views import dynamic_columns
 
-    # Wrap function with OTel context propagation for thread safety
-    wrapped_extract_entities = wrap_for_thread(view._extract_entities)
-
-    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        future_to_cell = {
-            executor.submit(wrapped_extract_entities, cell, instruction, model): cell
-            for cell in source_cells
-        }
-
-        for future in as_completed(future_to_cell):
-            cell = future_to_cell[future]
-            try:
-                entities, value_infos = future.result()
-                if value_infos and "reason" in value_infos:
-                    failed_cells += 1
-                    new_cells.append(
-                        Cell(
-                            dataset_id=dataset_id,
-                            column_id=new_column_id,
-                            row=cell.row,
-                            value=None,
-                            value_infos=json.dumps(value_infos),
-                            status=CellStatus.ERROR.value,
-                        )
-                    )
-                else:
-                    new_cells.append(
-                        Cell(
-                            dataset_id=dataset_id,
-                            column_id=new_column_id,
-                            row=cell.row,
-                            value=entities,
-                            value_infos=json.dumps(value_infos if value_infos else {}),
-                        )
-                    )
-                    total_processed += 1
-            except Exception as e:
-                logger.error(f"Failed to process cell: {str(e)}")
-                failed_cells += 1
-
-    # Bulk create all cells
-    if new_cells:
-        Cell.objects.bulk_create(new_cells)
-
-    Column.objects.filter(id=new_column_id).update(status=StatusType.COMPLETED.value)
-    # insert_embeddings_task.delay(column_ids=[str(new_column_id)])
+    return dynamic_columns.extract_async._original_func(
+        source_column_id,
+        instruction,
+        model,
+        concurrency,
+        dataset_id,
+        new_column_id,
+        is_rerun,
+        row_ids=row_ids,
+    )
 
 
 class AddApiColumnView(APIView):
@@ -10372,93 +11125,11 @@ class AddApiColumnView(APIView):
                     logger.error(f"Error replacing variable: {str(e)}")
         return value
 
-    def _make_api_call(self, cell, config):
-        """Make API call for a single cell and return the result"""
-        try:
-            # Process parameters
-            processed_params = {}
-            for param_name, param_config in config.get("params", {}).items():
-                if param_config["type"] == "PlainText":
-                    processed_params[param_name] = param_config["value"]
-                elif param_config["type"] == "Secret":
-                    processed_params[param_name] = SecretModel.objects.get(
-                        id=param_config["value"]
-                    ).actual_key
-                elif param_config["type"] == "Variable":
-                    try:
-                        param_cell = Cell.objects.get(
-                            column__id=self._replace_variables(
-                                param_config["value"], cell.row
-                            ),
-                            row=cell.row,
-                        )
-                        processed_params[param_name] = param_cell.value
-                    except Exception as e:
-                        logger.error(f"Error replacing variable: {str(e)}")
+    def _make_api_call(self, cell, config, *, dataset=None):
+        """Keep legacy background callers on the canonical API-column transport."""
+        from model_hub.views.dynamic_columns import AddApiColumnView as ApiColumn
 
-            # Process headers
-            processed_headers = {}
-            for header_name, header_config in config.get("headers", {}).items():
-                if header_config["type"] == "PlainText":
-                    processed_headers[header_name] = header_config["value"]
-                elif header_config["type"] == "Secret":
-                    # secret = get_object_or_404(Secret, id=header_config['value'])
-                    processed_headers[header_name] = SecretModel.objects.get(
-                        id=header_config["value"]
-                    ).actual_key
-                elif header_config["type"] == "Variable":
-                    try:
-                        header_cell = Cell.objects.get(
-                            column__id=self._replace_variables(
-                                header_config["value"], cell.row
-                            ),
-                            row=cell.row,
-                        )
-                        processed_headers[header_name] = header_cell.value
-                    except Exception as e:
-                        logger.error(f"Error replacing variable: {str(e)}")
-
-            # Process body if it exists
-            body = {}
-            if "body" in config:
-                for key, values in config["body"].items():
-                    if not cell:
-                        body[key] = values
-                    else:
-                        body[key] = self._replace_variables(values, cell.row)
-
-            # Process URL
-            url = config["url"]
-
-            # Make the API call
-            response = requests.request(
-                method=config["method"],
-                url=url,
-                params=processed_params,
-                headers=processed_headers,
-                json=body if isinstance(body, dict) else None,
-                data=body if isinstance(body, str) else None,
-                timeout=30,
-            )
-            response.raise_for_status()
-
-            # Process response based on output_type
-            if config["output_type"] == "string":
-                return str(response.text), {"response_status": response.status_code}
-            elif config["output_type"] == "object":
-                return response.json(), {"response_status": response.status_code}
-            elif config["output_type"] == "array":
-                return json.dumps(response.json()), {
-                    "response_status": response.status_code
-                }
-            elif config["output_type"] == "number":
-                return str(response.text), {"response_status": response.status_code}
-            else:
-                return response.text, {"response_status": response.status_code}
-
-        except Exception as e:
-            logger.exception(f"API call error: {str(e)}")
-            return str(e), {"response_status": 400}
+        return ApiColumn()._make_api_call(cell, config, dataset=dataset)
 
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -10540,45 +11211,23 @@ class AddApiColumnView(APIView):
 
 
 @temporal_activity(time_limit=3600, queue="tasks_l")
-def add_api_column_async(config, dataset_id, concurrency, new_column_id):
-    view = AddApiColumnView()
-    # Process all rows
-    rows = Row.objects.filter(dataset_id=dataset_id, deleted=False)
-    new_cells = []
-    total_processed = 0
-    failed_cells = 0
-    Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
+def add_api_column_async(
+    config, dataset_id, concurrency, new_column_id, is_rerun=False, row_ids=None
+):
+    # Same activity name as dynamic_columns.add_api_column_async. The drop-in
+    # registry keeps whichever module the worker imports last, which is this one
+    # with the worker's module order, so this copy received every call
+    # dynamic_columns dispatches; it took no is_rerun, so every API-column rerun
+    # failed with a TypeError after the rerun view had cleared the column. Run
+    # the one implementation.
+    # This copy also passed the organization id positionally to a
+    # _make_api_call whose dataset argument is keyword-only, so every row
+    # failed and a new API column finished with no cells.
+    from model_hub.views import dynamic_columns
 
-    # Wrap function with OTel context propagation for thread safety
-    wrapped_make_api_call = wrap_for_thread(view._make_api_call)
-
-    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        # Create a cell for each row and submit API calls
-        future_to_cell = {}
-        for row in rows:
-            cell = Cell(
-                dataset_id=dataset_id, column_id=new_column_id, row=row, value=None
-            )
-            future_to_cell[executor.submit(wrapped_make_api_call, cell, config)] = cell
-
-        # Process results as they complete
-        for future in as_completed(future_to_cell):
-            cell = future_to_cell[future]
-            try:
-                value, value_infos = future.result()
-                cell.value = value
-                cell.value_infos = json.dumps(value_infos) if value_infos else None
-                new_cells.append(cell)
-                total_processed += 1
-            except Exception as e:
-                failed_cells += 1
-                logger.error(f"Error processing cell: {str(e)}")
-
-    # Bulk create all cells
-    if new_cells:
-        Cell.objects.bulk_create(new_cells)
-    Column.objects.filter(id=new_column_id).update(status=StatusType.COMPLETED.value)
-    # insert_embeddings_task.delay(column_ids=[str(new_column_id)])
+    return dynamic_columns.add_api_column_async._original_func(
+        config, dataset_id, concurrency, new_column_id, is_rerun, row_ids=row_ids
+    )
 
 
 class ExecutePythonCodeView(APIView):
@@ -10726,71 +11375,21 @@ class ExecutePythonCodeView(APIView):
 
 
 @temporal_activity(time_limit=3600, queue="tasks_s")
-def execute_python_code_async(code, dataset_id, concurrency, new_column_id):
-    view = ExecutePythonCodeView()
-    # Process rows concurrently
-    rows = Row.objects.filter(dataset_id=dataset_id, deleted=False)
-    new_cells = []
-    total_processed = 0
-    failed_cells = 0
-    Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
+def execute_python_code_async(
+    code, dataset_id, concurrency, new_column_id, is_rerun=False
+):
+    # Same activity name as dynamic_columns.execute_python_code_async. The
+    # drop-in registry keeps whichever module the worker imports last, which is
+    # this one with the worker's module order, so this copy received every call
+    # dynamic_columns dispatches; it took no is_rerun, so a queued or retried
+    # rerun failed with a TypeError instead of the non-retryable refusal. Run
+    # the one implementation, which refuses first (Capability contract: before
+    # the first read or the RUNNING status write).
+    from model_hub.views import dynamic_columns
 
-    # Wrap function with OTel context propagation for thread safety
-    wrapped_execute_python_code = wrap_for_thread(view._execute_python_code)
-
-    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        future_to_row = {
-            executor.submit(wrapped_execute_python_code, row, code): row for row in rows
-        }
-
-        for future in as_completed(future_to_row):
-            row = future_to_row[future]
-            try:
-                value, value_infos = future.result()
-                if value_infos and "reason" in value_infos:
-                    # Handle case where function returned error
-                    new_cells.append(
-                        Cell(
-                            dataset_id=dataset_id,
-                            column_id=new_column_id,
-                            row=row,
-                            value=None,
-                            value_infos=json.dumps(value_infos),
-                            status=CellStatus.ERROR.value,
-                        )
-                    )
-                    failed_cells += 1
-                else:
-                    new_cells.append(
-                        Cell(
-                            dataset_id=dataset_id,
-                            column_id=new_column_id,
-                            row=row,
-                            value=value,
-                            value_infos=json.dumps(value_infos if value_infos else {}),
-                        )
-                    )
-                    total_processed += 1
-            except Exception as e:
-                logger.exception(f"Failed to process row: {str(e)}")
-                failed_cells += 1
-                # Create a failed cell with error information
-                new_cells.append(
-                    Cell(
-                        dataset_id=dataset_id,
-                        column_id=new_column_id,
-                        row=row,
-                        value=None,
-                        value_infos=json.dumps({"reason": str(e)}),
-                        status=CellStatus.ERROR.value,
-                    )
-                )
-
-    # Bulk create all cells
-    if new_cells:
-        Cell.objects.bulk_create(new_cells)
-    Column.objects.filter(id=new_column_id).update(status=StatusType.COMPLETED.value)
-    # insert_embeddings_task.delay(column_ids=[str(new_column_id)])
+    return dynamic_columns.execute_python_code_async._original_func(
+        code, dataset_id, concurrency, new_column_id, is_rerun
+    )
 
 
 class ConditionalColumnView(APIView):
@@ -10933,9 +11532,13 @@ class ConditionalColumnView(APIView):
             elif output_type == "api_call":
                 executor = AddApiColumnView()
                 if not source_column:
-                    return executor._make_api_call(cell=None, config=config)
+                    return executor._make_api_call(
+                        cell=None, config=config, dataset=row.dataset
+                    )
                 return executor._make_api_call(
-                    cell=Cell.objects.get(column=source_column, row=row), config=config
+                    cell=Cell.objects.get(column=source_column, row=row),
+                    config=config,
+                    dataset=row.dataset,
                 )
 
             elif output_type == "run_prompt":
@@ -11099,505 +11702,144 @@ class ConditionalColumnView(APIView):
 
 
 @temporal_activity(time_limit=3600, queue="tasks_l")
-def conditional_column_async(config, dataset_id, concurrency, new_column_id):
-    view = ConditionalColumnView()
-    # Process rows
-    rows = Row.objects.filter(dataset_id=dataset_id, deleted=False)
-    organization_id = Dataset.objects.get(id=dataset_id).organization.id
-    new_cells = []
-    total_processed = 0
-    failed_cells = 0
-    Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
+def conditional_column_async(
+    config,
+    dataset_id,
+    concurrency,
+    new_column_id,
+    is_rerun=False,
+    row_ids=None,
+    *,
+    authority=None,
+):
+    # Same activity name as dynamic_columns.conditional_column_async. The
+    # drop-in registry keeps whichever module the worker imports last, which
+    # is this one with the worker's module order, so this copy received every
+    # call dynamic_columns dispatches; it took no is_rerun, so every rerun
+    # failed with a TypeError. Run the one implementation (which also refuses
+    # a code branch first, and writes a refused embedding model as an ERROR
+    # cell for new and existing destination cells).
+    from model_hub.views import dynamic_columns
 
-    # Wrap function with OTel context propagation for thread safety
-    wrapped_process_row = wrap_for_thread(view._process_row)
-
-    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        future_to_row = {
-            executor.submit(wrapped_process_row, row, config, organization_id): row
-            for row in rows
-        }
-
-        for future in as_completed(future_to_row):
-            row = future_to_row[future]
-            try:
-                value, value_infos = future.result()
-                if value_infos and "reason" in value_infos:
-                    new_cells.append(
-                        Cell(
-                            dataset_id=dataset_id,
-                            column_id=new_column_id,
-                            row=row,
-                            value=None,
-                            value_infos=json.dumps(value_infos),
-                            status=CellStatus.ERROR.value,
-                        )
-                    )
-                else:
-                    new_cells.append(
-                        Cell(
-                            dataset_id=dataset_id,
-                            column_id=new_column_id,
-                            row=row,
-                            value=value,
-                            value_infos=json.dumps(value_infos if value_infos else {}),
-                        )
-                    )
-                    total_processed += 1
-            except Exception as e:
-                logger.error("traceback : ", traceback.format_exc())
-                logger.error(f"Error processing row: {str(e)}")
-                failed_cells += 1
-                # Create a failed cell with error information
-                new_cells.append(
-                    Cell(
-                        dataset_id=dataset_id,
-                        column_id=new_column_id,
-                        row=row,
-                        value=None,
-                        value_infos=json.dumps({"reason": str(e)}),
-                        status=CellStatus.ERROR.value,
-                    )
-                )
-
-    if new_cells:
-        Cell.objects.bulk_create(new_cells)
-    Column.objects.filter(id=new_column_id).update(status=StatusType.COMPLETED.value)
-    # insert_embeddings_task.delay(column_ids=[str(new_column_id)])
+    return dynamic_columns.conditional_column_async._original_func(
+        config,
+        dataset_id,
+        concurrency,
+        new_column_id,
+        is_rerun,
+        row_ids=row_ids,
+        authority=authority,
+    )
 
 
 class AddVectorDBColumnView(APIView):
-    _gm = GeneralMethods()
+    """Compatibility entrypoint; all vector consumers share the authority contract.
+
+    Import lazily because these view modules participate in existing import cycles.
+    No second credential resolver or less-scoped legacy worker is retained.
+    """
+
     permission_classes = [IsAuthenticated]
-    organization_id = None
 
-    def _get_api_key_for_provider(self, organization_id, workspace_id, provider):
-        """Get API key for a provider, filtering by workspace"""
-        api_key_entry = ApiKey.objects.filter(
-            organization_id=organization_id,
-            workspace_id=workspace_id,
-            provider=provider,
-        ).first()
-        if not api_key_entry:
-            raise ValueError(
-                f"API key not configured for {provider}. Please add your API key in settings."
-            )
-        return api_key_entry.actual_key
+    @staticmethod
+    def _canonical():
+        from model_hub.views.dynamic_columns import AddVectorDBColumnView
 
-    def _query_vector_db(self, text_input, config, organization_id, workspace_id=None):
-        """Query vector database using text input"""
-        try:
-            # 1. Set up the embedding model based on config
-            embedding_config = config.get("embedding_config", {})
-            embedding_type = embedding_config.get("type", "")
-            if embedding_type == "openai":
-                embedding_vector = model_manager.get_embeddings(
-                    text_input,
-                    "openai",
-                    embedding_config.get("model", "text-embedding-3-small"),
-                    model_params={
-                        "api_key": self._get_api_key_for_provider(
-                            organization_id, workspace_id, "openai"
-                        )
-                    },
-                )
-            elif embedding_type == "huggingface":
-                embedding_vector = model_manager.get_embeddings(
-                    text_input,
-                    "huggingface",
-                    embedding_config.get("model", "all-mpnet-base-v2"),
-                    model_params={
-                        "api_key": self._get_api_key_for_provider(
-                            organization_id, workspace_id, "huggingface"
-                        )
-                    },
-                )
-            elif embedding_type == "sentence_transformers":
-                embedding_vector = model_manager.get_embeddings(
-                    text_input,
-                    "sentence_transformers",
-                    embedding_config.get("model", "all-mpnet-base-v2"),
-                    model_params={
-                        "api_key": self._get_api_key_for_provider(
-                            organization_id, workspace_id, "huggingface"
-                        )
-                    },
-                )
-            else:
-                raise ValueError(f"Unsupported embedding type: {embedding_type}")
+        return AddVectorDBColumnView()
 
-            if isinstance(embedding_vector, str):
-                embedding_vector = [embedding_vector]
-
-            # Ensure the vector has 512 dimensions
-            if isinstance(embedding_vector, list) or hasattr(
-                embedding_vector, "tolist"
-            ):
-                embedding_vector = np.array(
-                    embedding_vector
-                )  # Convert to numpy array for processing
-                embedding_vector = embedding_vector[
-                    : config.get("vector_length", 512)
-                ]  # Truncate to 512 dimensions
-                embedding_vector = (
-                    embedding_vector.tolist()
-                )  # Convert back to list for Weaviate
-
-                # Debug logging
-                logger.info(
-                    f"Generated embedding vector with {len(embedding_vector)} dimensions"
-                )
-                logger.info(f"First 5 values: {embedding_vector[:5]}")
-
-            # 3. Initialize vector store based on type
-            sub_type = config.get("sub_type")
-
-            if sub_type == "pinecone":
-                return self._query_pinecone(embedding_vector, config)
-
-            elif sub_type == "qdrant":
-                return self._query_qdrant(embedding_vector, config)
-
-            elif sub_type == "weaviate":
-                return self._query_weaviate(
-                    embedding_vector, text_input, config, organization_id, workspace_id
-                )
-
-            else:
-                raise ValueError(f"Unsupported vector database type: {sub_type}")
-
-        except Exception as e:
-            logger.exception("vector_embedding_database_error", sub_type=sub_type)
-            return str(e)
-
-    def _query_pinecone(self, query, config):
-        """
-                {
-            "indexName": "apicall2",
-            "namespace": "garvit",
-            "topK": 2,
-            "queryKey": "vector",
-            "embeddingConfig": {
-                "model": "text-embedding-3-small",
-                "type": "openai"
-            },
-            "key": "text",
-            "concurrency": 2,
-            "vectorLength": 512
-        }
-
-        """
-        from tfc.utils.lazy_extras import load_extra
-
-        Pinecone = load_extra("pinecone", "vectordb").Pinecone
-
-        pc = Pinecone(api_key=SecretModel.objects.get(id=config["api_key"]).actual_key)
-        index = pc.Index(config["index_name"])
-        query_object = {}
-
-        # Validate that query is not None or empty
-        if not query or (isinstance(query, list) and len(query) == 0):
-            raise ValueError("Query vector is empty or None")
-
-        # Ensure query is a list of numbers
-        if not isinstance(query, list):
-            raise ValueError(f"Query must be a list, got {type(query)}")
-
-        # Validate that all elements are numbers
-        if not all(isinstance(x, int | float) for x in query):
-            raise ValueError("All elements in query vector must be numbers")
-
-        query_object["vector"] = query
-        query_object["top_k"] = config["top_k"]
-        query_object["namespace"] = config.get("namespace", "default")
-        # Add include_metadata=True to get metadata
-        query_object["include_metadata"] = True
-        # Add include_values=True if you want vector values
-        query_object["include_values"] = True
-
-        results = index.query(**query_object)
-        if not results["matches"]:
-            return "No matches found"
-
-        metadata_list = []
-        for result in results["matches"]:
-            metadata = result.get("metadata", {})
-            if config.get("key"):
-                metadata = metadata.get(config["key"])
-            metadata_list.append(metadata)
-
-        return metadata_list
-
-        # Return both ID and full match info including metadata
-        return metadata
-
-    def _query_qdrant(self, query, config):
-        """Query Qdrant vector database
-
-                {
-            "subType": "qdrant",
-            "newColumnName": "valuss",
-            "columnId": "dddb8ffb-1de1-4b98-a489-de6dd33eb884",
-            "apiKey": "your-qdrant-api-key",
-            "topK": 2,
-            "embeddingConfig": {
-                "model": "text-embedding-3-small",
-                "type": "openai"
-            },
-            "concurrency": 2,
-            "url": "https://0763e883-fc79-4636-a8e3-cdeb47f024be.us-east-1-0.aws.cloud.qdrant.io:6333",
-            "collectionName": "mid",
-            "key": "name",
-            "vectorLength": 512
-        }
-
-                Args:
-                    query: Vector to search for
-                    config: Dictionary containing:
-                        - api_key: Qdrant API key
-                        - url: Qdrant instance URL (including port)
-                        - collection_name: Name of collection to search
-                        - top_k: Number of results to return (default: 1)
-                        - query_key: Key for vector query (default: 'vector')
-
-                Returns:
-                    Dictionary containing search results and metadata
-        """
-        try:
-            # Validate required config parameters
-            required_params = ["api_key", "url", "collection_name"]
-            missing_params = [p for p in required_params if not config.get(p)]
-            if missing_params:
-                raise ValueError(
-                    f"Missing required parameters: {', '.join(missing_params)}"
-                )
-
-            # Initialize Qdrant client
-            from tfc.utils.lazy_extras import load_extra
-
-            QdrantClient = load_extra("qdrant_client", "vectordb").QdrantClient
-
-            client = QdrantClient(
-                url=config["url"],
-                api_key=SecretModel.objects.get(id=config["api_key"]).actual_key,
-            )
-            # query=[0.2, 0.1, 0.9, 0.7]
-
-            # Build search query
-            query_object = {
-                "collection_name": config["collection_name"],
-                "query_vector": query,  # Qdrant expects 'query_vector' instead of 'vector'
-                "limit": config.get("top_k", 5),  # Default to 1 if not specified
-                "with_payload": True,  # Always get metadata
-                "with_vectors": False,  # Don't return vectors by default for efficiency
-            }
-
-            # Execute search
-            results = client.search(**query_object)
-
-            if not results:
-                return "No matches found"
-
-            metadata_list = []
-            for result in results:
-                metadata = result.payload
-                if config.get("key"):
-                    metadata = metadata.get(config.get("key"))
-                metadata_list.append(metadata)
-            return metadata_list
-
-        except Exception as e:
-            logger.error(f"Error querying Qdrant: {str(e)}")
-            raise ValueError(f"Failed to query Qdrant: {str(e)}")  # noqa: B904
-
-    def get_client(self, config, organization_id, workspace_id=None, use_hybrid=False):
-        from tfc.utils.lazy_extras import load_extra
-
-        weaviate = load_extra("weaviate", "vectordb")
-        AuthApiKey = weaviate.AuthApiKey
-
-        embedding_config = config.get("embedding_config", {})
-        embedding_type = embedding_config.get("type", "")
-        key = None
-        if embedding_type:
-            key = self._get_api_key_for_provider(
-                organization_id, workspace_id, embedding_type
-            )
-
-        auth = AuthApiKey(
-            api_key=SecretModel.objects.get(id=config["api_key"]).actual_key
+    def _get_api_key_for_provider(
+        self, organization_id, workspace_id, provider, *, authority=None
+    ):
+        return self._canonical()._get_api_key_for_provider(
+            organization_id,
+            workspace_id,
+            provider,
+            authority=authority,
         )
-        connect_kwargs = {"auth_client_secret": auth}
-        if key and use_hybrid:
-            connect_kwargs["additional_headers"] = {"X-OpenAI-Api-Key": key}
 
-        return weaviate.connect_to_wcs(
-            cluster_url=config["url"],
-            auth_credentials=auth,
-            # additional_headers=additional_headers or None
+    def _query_vector_db(
+        self, text_input, config, organization_id, workspace_id=None, *, authority=None
+    ):
+        return self._canonical()._query_vector_db(
+            text_input,
+            config,
+            organization_id,
+            workspace_id,
+            authority=authority,
+        )
+
+    def _query_pinecone(
+        self, query, config, organization_id=None, workspace_id=None, *, authority=None
+    ):
+        return self._canonical()._query_pinecone(
+            query,
+            config,
+            organization_id,
+            workspace_id,
+            authority=authority,
+        )
+
+    def _query_qdrant(
+        self, query, config, organization_id=None, workspace_id=None, *, authority=None
+    ):
+        return self._canonical()._query_qdrant(
+            query,
+            config,
+            organization_id,
+            workspace_id,
+            authority=authority,
+        )
+
+    def get_client(
+        self,
+        config,
+        organization_id,
+        workspace_id=None,
+        use_hybrid=False,
+        *,
+        authority=None,
+    ):
+        return self._canonical().get_client(
+            config,
+            organization_id,
+            workspace_id,
+            use_hybrid,
+            authority=authority,
         )
 
     def _query_weaviate(
-        self, query, text_input, config, organization_id, workspace_id=None
+        self,
+        query,
+        text_input,
+        config,
+        organization_id,
+        workspace_id=None,
+        *,
+        authority=None,
     ):
-        try:
-            client = self.get_client(
-                config,
-                organization_id,
-                workspace_id,
-                config.get("search_type") == "hybrid",
-            )
+        return self._canonical()._query_weaviate(
+            query,
+            text_input,
+            config,
+            organization_id,
+            workspace_id,
+            authority=authority,
+        )
 
-            search_type = config.get("search_type", "semantic_search")
-            limit = config.get("top_k", 5)
-            class_name = config["collection_name"]
-            return_field = config.get("key")
-
-            if search_type == "hybrid" and text_input:
-                resp = (
-                    client.query.get(class_name, [return_field])
-                    .with_hybrid(query=text_input, alpha=0.5)
-                    .with_limit(limit)
-                    .do()
-                )
-            else:
-                if not query:
-                    raise ValueError("Vector query is required for semantic search")
-                resp = (
-                    client.query.get(class_name, [return_field])
-                    .with_near_vector(
-                        {"vector": query, "certainty": config.get("certainty", 0.0)}
-                    )
-                    .with_limit(limit)
-                    .do()
-                )
-
-            data = resp.get("data", {})
-            hits = data.get("Get", {}).get(class_name, [])
-            if not hits:
-                err = resp.get("errors", [{}])[0].get("message", "No results")
-                return err
-
-            results = [
-                (
-                    m.get(return_field)
-                    if return_field
-                    else {k: v for k, v in m.items() if k not in ("id", "_additional")}
-                )
-                for m in hits
-            ]
-            return results
-
-        except Exception as e:
-            logger.error("Error in _query_weaviate", exc_info=True)
-            raise ValueError(f"Failed to query Weaviate: {e}")  # noqa: B904
-
-    def _process_row(self, row, column, config, organization_id, workspace_id=None):
-        try:
-            input_cell = Cell.objects.get(row=row, column=column)
-            query = input_cell.value
-            result_info = self._query_vector_db(
-                query, config, organization_id, workspace_id
-            )
-            return result_info, {}
-        except Exception as e:
-            logger.error("traceback : ", traceback.format_exc())
-            logger.error(f"Error processing row: {str(e)}")
-            return str(e), {"reason": str(e)}
+    def _process_row(
+        self, row, column, config, organization_id, workspace_id=None, *, authority=None
+    ):
+        return self._canonical()._process_row(
+            row,
+            column,
+            config,
+            organization_id,
+            workspace_id,
+            authority=authority,
+        )
 
     def post(self, request, dataset_id, *args, **kwargs):
-        try:
-            config = request.data
-            self.organization_id = (
-                getattr(request, "organization", None) or request.user.organization.id
-            )
-            column_id = config.get("column_id")
-            new_column_name = config.get("new_column_name", "Vector DB Result")
-            concurrency = config.get("concurrency", 5)
-
-            if not all([column_id, config.get("sub_type"), config.get("api_key")]):
-                return self._gm.bad_request(
-                    get_error_message("MISSING_COLUMN_ID_SUB_TYPE_AND_API_KEY")
-                )
-
-            input_column = get_object_or_404(
-                Column, id=column_id, dataset_id=dataset_id
-            )
-
-            if Column.objects.filter(
-                name=new_column_name, dataset=dataset_id, deleted=False
-            ).exists():
-                return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
-
-            new_column = Column.objects.create(
-                name=new_column_name,
-                data_type=DataTypeChoices.ARRAY.value,
-                source=SourceChoices.VECTOR_DB.value,
-                dataset_id=dataset_id,
-                metadata={
-                    "vector_db_config": {
-                        "sub_type": config["sub_type"],
-                        "collection_name": config.get("collection_name"),
-                        "url": config.get("url"),
-                        "search_type": config.get("search_type"),
-                        "key": config.get("key"),
-                        "limit": config.get("limit", 1),
-                        "index_name": config.get("index_name"),
-                        "top_k": config.get("top_k", 1),
-                        "namespace": config.get("namespace"),
-                        "api_key": config.get("api_key"),
-                        "embedding_config": config.get("embedding_config"),
-                    },
-                    "source_column_id": str(column_id),
-                    "concurrency": concurrency,
-                },
-            )
-
-            dataset = Dataset.objects.get(id=dataset_id)
-            column_order = dataset.column_order or []
-            column_order.append(str(new_column.id))
-
-            column_config = dataset.column_config or {}
-            column_config[str(new_column.id)] = {"is_visible": True, "is_frozen": None}
-
-            dataset.column_order = column_order
-            dataset.column_config = column_config
-            dataset.save()
-
-            # Ensure config is JSON serializable
-            serializable_config = json.loads(json.dumps(config))
-            Column.objects.filter(id=new_column.id).update(
-                status=StatusType.RUNNING.value
-            )
-
-            add_vector_db_column_async.delay(
-                serializable_config,
-                dataset_id,
-                concurrency,
-                str(input_column.id),
-                getattr(request, "organization", None) or request.user.organization.id,
-                new_column.id,
-                str(request.workspace.id) if request.workspace else None,
-            )
-
-            return self._gm.success_response(
-                {
-                    "message": "Vector DB column created successfully",
-                    "new_column_id": str(new_column.id),
-                    "new_column_name": new_column.name,
-                }
-            )
-
-        except Exception as e:
-            try:
-                if "new_column" in locals():
-                    new_column.delete()
-            except Exception:
-                pass
-            logger.exception(f"Error in creating vector db column: {str(e)}")
-            return self._gm.internal_server_error_response(
-                get_error_message("FAILED_TO_CREATE_VECTOR_DB_COLUMN")
-            )
+        return self._canonical().post(request, dataset_id, *args, **kwargs)
 
 
 @temporal_activity(time_limit=3600, queue="tasks_l")
@@ -11609,76 +11851,32 @@ def add_vector_db_column_async(
     org_id,
     new_column_id,
     workspace_id=None,
+    is_rerun=False,
+    row_ids=None,
+    *,
+    authority=None,
 ):
-    # Ensure config is properly deserialized if needed
-    if isinstance(config, str):
-        config = json.loads(config)
-    view = AddVectorDBColumnView()
-    input_column = Column.objects.get(id=input_column_id)
-    rows = Row.objects.filter(dataset_id=dataset_id, deleted=False)
-    new_cells = []
-    total_processed = 0
-    failed_cells = 0
-    Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
+    # Same activity name as dynamic_columns.add_vector_db_column_async. The
+    # drop-in registry keeps whichever module the worker imports last, which
+    # is this one with the worker's module order, so this copy received every
+    # call dynamic_columns dispatches; it took no is_rerun, so every vector-DB
+    # rerun failed with a TypeError. Run the one implementation (which writes
+    # a refused embedding model as an ERROR cell for new and existing
+    # destination cells).
+    from model_hub.views import dynamic_columns
 
-    # Wrap function with OTel context propagation for thread safety
-    wrapped_process_row = wrap_for_thread(view._process_row)
-
-    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        future_to_row = {
-            executor.submit(
-                wrapped_process_row, row, input_column, config, org_id, workspace_id
-            ): row
-            for row in rows
-        }
-
-        for future in as_completed(future_to_row):
-            row = future_to_row[future]
-            try:
-                value, value_infos = future.result()
-                if value_infos and "reason" in value_infos:
-                    # Handle case where function returned error
-                    new_cells.append(
-                        Cell(
-                            dataset_id=dataset_id,
-                            column_id=new_column_id,
-                            row=row,
-                            value=None,
-                            value_infos=json.dumps(value_infos),
-                            status=CellStatus.ERROR.value,
-                        )
-                    )
-                    failed_cells += 1
-                else:
-                    new_cells.append(
-                        Cell(
-                            dataset_id=dataset_id,
-                            column_id=new_column_id,
-                            row=row,
-                            value=value,
-                            value_infos=json.dumps(value_infos if value_infos else {}),
-                        )
-                    )
-                    total_processed += 1
-            except Exception as e:
-                logger.exception(f"Failed to process row: {str(e)}")
-                failed_cells += 1
-                # Create a failed cell with error information
-                new_cells.append(
-                    Cell(
-                        dataset_id=dataset_id,
-                        column_id=new_column_id,
-                        row=row,
-                        value=None,
-                        value_infos=json.dumps({"reason": str(e)}),
-                        status=CellStatus.ERROR.value,
-                    )
-                )
-
-    if new_cells:
-        Cell.objects.bulk_create(new_cells)
-    Column.objects.filter(id=new_column_id).update(status=StatusType.COMPLETED.value)
-    # insert_embeddings_task.delay(column_ids=[str(new_column_id)])
+    return dynamic_columns.add_vector_db_column_async._original_func(
+        config,
+        dataset_id,
+        concurrency,
+        input_column_id,
+        org_id,
+        new_column_id,
+        workspace_id,
+        is_rerun,
+        row_ids=row_ids,
+        authority=authority,
+    )
 
 
 class GetEmbeddingsListView(APIView):
@@ -11690,6 +11888,13 @@ class GetEmbeddingsListView(APIView):
     )
     def get(self, request, *args, **kwargs):
         try:
+            # Model serving loads only these Hugging Face models, so the
+            # catalog must not offer any other.
+            approved_huggingface_models = (
+                "Model ID to use for embeddings. Approved models: "
+                + ", ".join(sorted(APPROVED_HUGGINGFACE_EMBEDDING_MODELS))
+                + "."
+            )
             # Define available embeddings and their configurations
             embeddings_list = {
                 "openai": {
@@ -11712,7 +11917,7 @@ class GetEmbeddingsListView(APIView):
                 },
                 "huggingface": {
                     "name": "Hugging Face Embeddings",
-                    "description": "Access to Hugging Face's vast collection of embedding models",
+                    "description": "Approved Hugging Face sentence-transformers embedding models",
                     "requires_api_key": True,
                     "config_schema": {
                         "api_key": {
@@ -11723,20 +11928,29 @@ class GetEmbeddingsListView(APIView):
                         "model": {
                             "type": "string",
                             "required": True,
-                            "description": "Model ID to use for embeddings",
+                            "description": approved_huggingface_models,
                             "default": "sentence-transformers/all-mpnet-base-v2",
                         },
                     },
                 },
+                # Model serving has no sentence_transformers servable (it
+                # answers 404 for every model), so the entry must not claim
+                # any model works. Kept, with its default, for API clients.
                 "sentence_transformers": {
                     "name": "Sentence Transformers",
-                    "description": "Local sentence transformer models for embedding generation",
+                    "description": (
+                        "Sentence Transformers embeddings are not available on "
+                        "this server. Use Hugging Face Embeddings instead."
+                    ),
                     "requires_api_key": False,
                     "config_schema": {
                         "model": {
                             "type": "string",
                             "required": True,
-                            "description": "Model ID to use for embeddings",
+                            "description": (
+                                "Sentence Transformers models are not available "
+                                "on this server; no model loads for this type."
+                            ),
                             "default": "all-mpnet-base-v2",
                         }
                     },
@@ -11851,6 +12065,10 @@ class FeedbackViewSet(viewsets.ModelViewSet):
             None,
         )
 
+    # Schema only: the static envelope analysis (tfc/utils/success_envelope.py)
+    # cannot follow the tuple-unpacked error_response, so declare the
+    # success_response() envelope (HTTP 200) this action answers.
+    @swagger_auto_schema(success_envelope=True)
     def create(self, request, *args, **kwargs):
         try:
             serializer = self.get_serializer(data=request.data)
@@ -12047,6 +12265,14 @@ class FeedbackViewSet(viewsets.ModelViewSet):
                 return self._gm.bad_request(
                     get_error_message("MISSING_USER_EVAL_METRIC_ID")
                 )
+            from model_hub.services.external_metrics import (
+                external_template_refusal,
+            )
+
+            # Every action re-runs or re-tunes the metric on the server.
+            refusal = external_template_refusal(user_eval_metric.template)
+            if refusal:
+                return self._gm.bad_request(refusal)
             if (
                 feedback.user_eval_metric_id is not None
                 and feedback.user_eval_metric_id != user_eval_metric.id
@@ -12367,6 +12593,15 @@ class SingleRowEvaluationView(APIView):
             if {str(metric.id) for metric in eval_metrics} != set(user_eval_metric_ids):
                 return self._gm.not_found("Eval not found")
 
+            from model_hub.services.external_metrics import external_execution_refusal
+
+            refusal = external_execution_refusal(
+                user_eval_metric_ids,
+                queryset=_request_user_eval_metric_queryset(request),
+            )
+            if refusal:
+                return self._gm.bad_request(refusal)
+
             dataset_ids = {metric.dataset_id for metric in eval_metrics}
             if len(dataset_ids) != 1:
                 return self._gm.bad_request(
@@ -12451,6 +12686,29 @@ def run_evaluation_task(evaluation_data):
         metric_ids = evaluation_data["metric_ids"]
         row_ids = evaluation_data["row_ids"]
 
+        # Backstop: never run, or write a status to, an external
+        # metric. The views refuse them first; this covers any other caller.
+        from model_hub.models.evals_metric import EXTERNAL_EVAL_TYPE
+
+        external_ids = {
+            str(metric_id)
+            for metric_id in UserEvalMetric.all_objects.filter(
+                id__in=metric_ids, template__eval_type=EXTERNAL_EVAL_TYPE
+            ).values_list("id", flat=True)
+        }
+        if external_ids:
+            logger.warning(
+                "run_evaluation_task_skipped_external_metrics",
+                metric_ids=sorted(external_ids),
+            )
+            metric_ids = [
+                metric_id
+                for metric_id in metric_ids
+                if str(metric_id) not in external_ids
+            ]
+            if not metric_ids:
+                return
+
         # Update status for all metrics. select_related avoids an N+1 when
         # version stamping resolves each metric's pinned/default version.
         metrics = UserEvalMetric.objects.filter(id__in=metric_ids).select_related(
@@ -12506,8 +12764,15 @@ def run_evaluation_task(evaluation_data):
                         check_usage = None
 
                     if check_usage is not None:
+                        from evaluations.engine.instance import (
+                            charged_model_for_metric,
+                        )
+
+                        # Limit-checked as the model that runs (a live pin's
+                        # model, else the metric's own model as before).
                         api_call_type = _get_api_call_type(
-                            metric.model or ModelChoices.TURING_LARGE.value
+                            charged_model_for_metric(metric)
+                            or ModelChoices.TURING_LARGE.value
                         )
                         usage_check = check_usage(
                             str(metric.organization.id), api_call_type
@@ -12641,6 +12906,7 @@ def run_evaluation_task(evaluation_data):
         logger.error(f"Error in evaluation task: {str(e)}")
 
 
+@row_activity_requests
 class DuplicateRowsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -12675,9 +12941,13 @@ class DuplicateRowsView(APIView):
             if not dataset:
                 return self._gm.not_found("Dataset not found")
 
+            refusal = dataset_import_refusal(dataset)
+            if refusal is not None:
+                return refusal
+
             # Get max order to append new rows at the end
             last_row = (
-                Row.all_objects.filter(dataset=dataset).order_by("-created_at").first()
+                Row.all_objects.filter(dataset=dataset).order_by("-order").first()
             )
             if last_row:
                 max_order = last_row.order
@@ -12777,6 +13047,7 @@ class DuplicateRowsView(APIView):
             )
 
 
+@row_activity_requests
 class DuplicateDatasetView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -12805,6 +13076,9 @@ class DuplicateDatasetView(APIView):
             )
             if not source_dataset:
                 return self._gm.not_found("Dataset not found")
+            refusal = dataset_import_refusal(source_dataset)
+            if refusal is not None:
+                return refusal
 
             if selected_all_rows:
                 if row_ids:
@@ -12998,6 +13272,7 @@ class DuplicateDatasetView(APIView):
             )
 
 
+@row_activity_requests
 class MergeDatasetView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -13263,12 +13538,8 @@ class GetBaseColumnsView(APIView):
                 "dataset_ids", []
             ) or request.query_params.getlist("datasetIds", [])
 
-            # Verify all datasets exist and aren't deleted in one query
-            dataset_count = Dataset.objects.filter(
-                id__in=dataset_ids, deleted=False
-            ).count()
-            if dataset_count != len(dataset_ids):
-                return self._gm.bad_request(get_error_message("INVALID_DATASET_IDS"))
+            # Authorize the entire selection, not only the datasets returned by a filter.
+            require_comparison_datasets(request, dataset_ids)
 
             # Get all columns per dataset in a single query
             excluded_sources = [
@@ -13303,6 +13574,8 @@ class GetBaseColumnsView(APIView):
 
             return self._gm.success_response({"base_columns": list(common_columns)})
 
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in fetching base columns: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -13340,6 +13613,7 @@ class GetCompareDatasetRow(APIView):
                 )
                 with open(metadata_path) as f:
                     metadata = json.load(f)
+                require_comparison_metadata(request, metadata)
                 if time.time() - loop_start > 300:
                     return self._gm.bad_request(
                         "Timeout while waiting for metadata to be ready"
@@ -13547,6 +13821,8 @@ class GetCompareDatasetRow(APIView):
 
             return self._gm.success_response(response)
 
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in fetching compare dataset row: {str(e)}")
             return self._gm.internal_server_error_response(str(e))
@@ -13571,7 +13847,13 @@ class GetCompareDatasetRow(APIView):
                 code="method_not_allowed",
             )
         try:
-            # Import the activity to register it
+            try:
+                with open(get_compare_metadata_path(compare_id)) as metadata_file:
+                    metadata = json.load(metadata_file)
+            except (OSError, ValueError) as exc:
+                raise Http404("Comparison not found") from exc
+            require_comparison_metadata(request, metadata)
+            # Import the activity to register it only after authorizing the cache.
             import tfc.temporal.background_tasks.activities  # noqa: F401
             from tfc.temporal.drop_in import start_activity
 
@@ -13592,6 +13874,8 @@ class GetCompareDatasetRow(APIView):
             return self._gm.success_response(
                 {"message": "File(s) deleted successfully"}
             )
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in deleting compare dataset file: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -14282,8 +14566,11 @@ class CompareDatasetsView(APIView):
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             start_time = time.time()
-            # Pagination parameters
+            # Authorize all request and row-map parents before reading or creating cache files.
             validated_data = request.validated_data
+            requested_ids = [str(dataset_id), *map(str, validated_data["dataset_ids"])]
+            require_comparison_datasets(request, requested_ids)
+            require_comparison_rows(requested_ids, validated_data["dataset_info"])
             page_size = validated_data["page_size"]
             current_page = validated_data["current_page_index"]
             base_column_name = validated_data["base_column_name"]
@@ -14319,6 +14606,9 @@ class CompareDatasetsView(APIView):
 
             if os.path.exists(metadata_path):
                 metadata = self.read_metadata_safely(metadata_path)
+                cached_ids = require_comparison_metadata(request, metadata)
+                if set(map(str, cached_ids)) != set(requested_ids):
+                    raise Http404("Comparison not found")
                 if metadata.get("total_pages") < num_pages_to_fetch:
                     return self._gm.bad_request(
                         get_error_message("FAILED_TO_COMPARE_DATASETS")
@@ -14355,9 +14645,11 @@ class CompareDatasetsView(APIView):
                     output_field=IntegerField(),
                 )
 
-                datasets = Dataset.objects.filter(
-                    id__in=ordered_ids, deleted=False
-                ).order_by(preserved_order)
+                datasets = (
+                    _request_dataset_queryset(request)
+                    .filter(id__in=ordered_ids)
+                    .order_by(preserved_order)
+                )
                 if len(datasets) != len(dataset_ids) + 1:
                     return self._gm.bad_request(
                         get_error_message("INVALID_DATASET_IDS")
@@ -14686,6 +14978,8 @@ class CompareDatasetsView(APIView):
                     dynamic_sources,
                     compare_json,
                 )
+            else:
+                compare_json = {"column_config": column_config, "table": []}
 
             compare_json.update(
                 {
@@ -14708,6 +15002,8 @@ class CompareDatasetsView(APIView):
 
             return self._gm.success_response(compare_json)
 
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in comparing the datasets: {str(e)}")
             # return self._gm.bad_request(get_error_message('FAILED_TO_COMPARE_DATASETS'))
@@ -14730,8 +15026,10 @@ class DownloadComparisonDatasetView(APIView):
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            # Get main dataset and validate request data
-            get_object_or_404(Dataset, id=dataset_id, deleted=False)
+            # Resolve every dataset in the request scope before reading data.
+            datasets = _request_dataset_queryset(request)
+            if not datasets.filter(id=dataset_id).exists():
+                return self._gm.not_found("Dataset not found")
             validated_data = request.validated_data
             compare_id = (
                 str(validated_data["compare_id"])
@@ -14767,10 +15065,12 @@ class DownloadComparisonDatasetView(APIView):
             # Ensure main dataset is included in comparison
             if str(dataset_id) not in dataset_ids:
                 dataset_ids.insert(0, str(dataset_id))
-            comparison_datasets = [
-                get_object_or_404(Dataset, id=ds_id, deleted=False)
-                for ds_id in dataset_ids
-            ]
+            comparison_datasets = []
+            for ds_id in dataset_ids:
+                dataset = datasets.filter(id=ds_id).first()
+                if dataset is None:
+                    return self._gm.not_found("Dataset not found")
+                comparison_datasets.append(dataset)
 
             if not dataset_info or not common_column_names:
                 return self._gm.bad_request(
@@ -14802,12 +15102,21 @@ class DownloadComparisonDatasetView(APIView):
                     if base_val in dataset_info and ds_id in dataset_info[base_val]:
                         row_id = dataset_info[base_val][ds_id]
 
-                    # If we have a row_id, fetch cells directly
+                    # A client-supplied row must belong to this authorized dataset.
                     if row_id:
-                        # Fetch all common columns for this row in one query
+                        row = (
+                            _request_row_queryset(request, dataset=ds)
+                            .filter(id=row_id)
+                            .first()
+                        )
+                        if row is None:
+                            return self._gm.not_found("Row not found")
                         cells = Cell.objects.filter(
-                            row_id=row_id,
+                            dataset=ds,
+                            row=row,
+                            column__dataset=ds,
                             column__name__in=common_column_names,
+                            column__deleted=False,
                             deleted=False,
                         ).select_related("column")
 
@@ -14862,10 +15171,17 @@ class CompareDatasetsStatsView(APIView):
 
             if str(dataset_id) not in dataset_ids:
                 dataset_ids.insert(0, str(dataset_id))
+            if _request_dataset_queryset(request).filter(
+                id__in=dataset_ids
+            ).count() != len(set(dataset_ids)):
+                return self._gm.not_found("Dataset not found")
 
-            base_columns = Column.objects.filter(
-                dataset__in=dataset_ids, name=base_column_name, deleted=False
-            ).values_list("id", flat=True)
+            require_comparison_datasets(request, dataset_ids)
+            base_columns = (
+                _request_column_queryset(request)
+                .filter(dataset__in=dataset_ids, name=base_column_name, deleted=False)
+                .values_list("id", flat=True)
+            )
 
             if not base_columns or len(base_columns) == 0:
                 return self._gm.bad_request(
@@ -14953,6 +15269,8 @@ class CompareDatasetsStatsView(APIView):
                 case _:
                     return self._gm.bad_request(get_error_message("INVALID_STAT_TYPE"))
 
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in comparing the datasets stats: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -14977,6 +15295,13 @@ class AddCompareExperimentEvalView(APIView):
         )
 
         request_data = request.validated_data
+        require_comparison_datasets(
+            request, [dataset_id, *request_data.get("dataset_ids", [])]
+        )
+        get_object_or_404(
+            _request_eval_template_queryset(request),
+            id=request_data["template_id"],
+        )
         serializer = UserEvalSerializer(data=request_data)
         run = request_data.get("run", False)
         save_as_template = request_data.get("save_as_template", False)
@@ -14986,8 +15311,19 @@ class AddCompareExperimentEvalView(APIView):
 
             if str(dataset_id) not in dataset_ids:
                 dataset_ids.append(str(dataset_id))
+            if _request_dataset_queryset(request).filter(
+                id__in=dataset_ids
+            ).count() != len(set(dataset_ids)):
+                return self._gm.not_found("Dataset not found")
 
             template_id = validated_data.get("template_id")
+            source_template = (
+                _request_eval_template_queryset(request).filter(id=template_id).first()
+                if is_uuid(str(template_id))
+                else None
+            )
+            if source_template is None:
+                return self._gm.not_found("Eval template not found")
             (validated_data.get("config", {}).get("mapping", {}).get("input"))
             # for dataset_id in dataset_ids:
             #     for key in validated_data.get("config", {}).get("mapping", {}).keys():
@@ -15016,9 +15352,7 @@ class AddCompareExperimentEvalView(APIView):
                 ):
                     return self._gm.bad_request(get_error_message("EVAL_NAME_EXISTS"))
 
-                template = EvalTemplate.no_workspace_objects.get(
-                    id=validated_data.get("template_id")
-                )
+                template = source_template
                 new_template = EvalTemplate(
                     name=validated_data.get("name"),
                     description=template.description,
@@ -15056,11 +15390,18 @@ class AddCompareExperimentEvalView(APIView):
                 template_id = new_template.id
 
             # Create a deep copy of the config to avoid modifying the original across iterations
-            selected_template = EvalTemplate.no_workspace_objects.get(id=template_id)
+            selected_template = (
+                EvalTemplate.no_workspace_objects.get(id=template_id)
+                if save_as_template
+                else source_template
+            )
             try:
                 normalized_config = normalize_eval_runtime_config(
                     selected_template.config, validated_data.get("config", {})
                 )
+                from model_hub.utils.scoring import validate_choice_score_override
+
+                validate_choice_score_override(selected_template, normalized_config)
             except ValueError as e:
                 return self._gm.bad_request(str(e))
             from model_hub.utils.eval_validators import (
@@ -15191,16 +15532,25 @@ class CompareDatasetsStartEvalsProcess(APIView):
 
             if str(dataset_id) not in dataset_ids:
                 dataset_ids.append(str(dataset_id))
+            if _request_dataset_queryset(request).filter(
+                id__in=dataset_ids
+            ).count() != len(set(dataset_ids)):
+                return self._gm.not_found("Dataset not found")
 
+            require_comparison_datasets(request, dataset_ids)
             # Fetch all UserEvalMetrics in one query
-            user_eval_metrics = UserEvalMetric.objects.filter(
-                name__in=user_eval_names,
-                dataset_id__in=dataset_ids,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                deleted=False,
-                template__deleted=False,
-            ).select_related("dataset")
+            user_eval_metrics = (
+                _request_user_eval_metric_queryset(request)
+                .filter(
+                    name__in=user_eval_names,
+                    dataset_id__in=dataset_ids,
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    deleted=False,
+                    template__deleted=False,
+                )
+                .select_related("dataset")
+            )
 
             # Validate metrics existence
             if user_eval_metrics.count() % len(dataset_ids) != 0:
@@ -15216,6 +15566,12 @@ class CompareDatasetsStartEvalsProcess(APIView):
             # Extract user eval IDs and unique dataset IDs
             user_eval_ids = [metric.id for metric in user_eval_metrics]
             {metric.dataset_id for metric in user_eval_metrics}
+
+            from model_hub.services.external_metrics import external_execution_refusal
+
+            refusal = external_execution_refusal(user_eval_ids)
+            if refusal:
+                return self._gm.bad_request(refusal)
 
             # Bulk update UserEvalMetric status
             updated_count = UserEvalMetric.objects.filter(id__in=user_eval_ids).update(
@@ -15272,6 +15628,8 @@ class CompareDatasetsStartEvalsProcess(APIView):
                 f"Successfully updated {updated_count} eval(s) status"
             )
 
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in starting evaluation process: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -15305,6 +15663,8 @@ class GetCompareEvalsListView(APIView):
                     request, dataset_ids, search_text=search_text
                 )
 
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in fetching the eval lists: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -15312,15 +15672,22 @@ class GetCompareEvalsListView(APIView):
             )
 
     def _get_user_evals(self, request, dataset_ids, search_text):
+        require_comparison_datasets(request, dataset_ids)
         # Fetch all relevant UserEvalMetrics in one query with preloaded templates
-        user_evals = UserEvalMetric.objects.filter(
-            dataset_id__in=dataset_ids,
-            show_in_sidebar=True,
-            organization=getattr(request, "organization", None)
-            or request.user.organization,
-            deleted=False,
-            template__deleted=False,
-        ).select_related("template")
+        user_evals = (
+            _request_user_eval_metric_queryset(request)
+            .filter(
+                dataset_id__in=dataset_ids,
+                show_in_sidebar=True,
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+                deleted=False,
+                template__deleted=False,
+                template__in=_request_eval_template_queryset(request),
+                dataset__in=_request_dataset_queryset(request),
+            )
+            .select_related("template")
+        )
 
         if search_text:
             from model_hub.utils.eval_list import normalize_search_for_name
@@ -15391,12 +15758,22 @@ class ComparePreviewRunEvalView(APIView):
             template_id = str(request_data.get("template_id"))
             dataset_ids = [str(did) for did in request_data.get("dataset_ids", [])]
             dataset_info = request_data.get("dataset_info", {})
+            require_comparison_datasets(request, dataset_ids)
+            require_comparison_rows(dataset_ids, dataset_info)
 
             protect = False
             is_only_eval = True
 
             # Get eval template and setup
-            eval_template = EvalTemplate.no_workspace_objects.get(id=template_id)
+            eval_template = (
+                _request_eval_template_queryset(request).filter(id=template_id).first()
+            )
+            if eval_template is None:
+                return self._gm.not_found("Eval template not found")
+            if _request_dataset_queryset(request).filter(
+                id__in=dataset_ids
+            ).count() != len(set(dataset_ids)):
+                return self._gm.not_found("Dataset not found")
             eval_class = globals().get(eval_template.config.get("eval_type_id"))
             responses = []
 
@@ -15410,15 +15787,6 @@ class ComparePreviewRunEvalView(APIView):
                 else False
             )
             eval_id = eval_template.config.get("eval_type_id")
-            runner = EvaluationRunner(
-                eval_id,
-                is_only_eval=is_only_eval,
-                format_output=True,
-                futureagi_eval=self.futureagi_eval,
-                source=request_data.get("source", "dataset_evaluation"),
-                source_id=template_id,
-                protect=protect,
-            )
             data_config = config.get("config")
             run_prompt_column = eval_template.config.get("run_prompt_column", False)
 
@@ -15439,7 +15807,10 @@ class ComparePreviewRunEvalView(APIView):
                         if ds_id in dataset_info[first_base_value]:
                             row_ids.append(dataset_info[first_base_value][ds_id])
 
-            rows = Row.objects.filter(id__in=row_ids, deleted=False)
+            rows = _request_row_queryset(request).filter(
+                id__in=row_ids,
+                dataset_id__in=dataset_ids,
+            )
 
             # Fetch source from the first dataset if available
             source = (
@@ -15449,8 +15820,8 @@ class ComparePreviewRunEvalView(APIView):
             )
 
             # Fetch all relevant columns in one query
-            all_columns = Column.objects.filter(
-                dataset_id__in=dataset_ids, deleted=False
+            all_columns = _request_column_queryset(request).filter(
+                dataset_id__in=dataset_ids,
             )
             column_map = {
                 (str(col.dataset_id), col.name): str(col.id) for col in all_columns
@@ -15488,8 +15859,39 @@ class ComparePreviewRunEvalView(APIView):
             # Wrap function with OTel context propagation for thread safety
             wrapped_process_eval = wrap_for_thread(process_eval_for_single_row)
 
+            from model_hub.utils.feedback_run_scope import (
+                STARTED_BY_PERSON,
+                feedback_workspace_for_run,
+            )
+
+            # Feedback follows the workspace the person started the comparison
+            # in; a dataset with no workspace only from the default workspace.
+            started_in = getattr(request, "workspace", None) or get_current_workspace()
+            started_in_id = getattr(started_in, "id", None)
+
             with ThreadPoolExecutor(max_workers=10) as executor:
                 for ds_id, ds_rows in rows_by_dataset.items():
+                    # Each admitted dataset owns its execution scope. In particular,
+                    # a NULL-workspace dataset must not borrow the first one's scope.
+                    dataset = ds_rows[0].dataset
+                    runner = EvaluationRunner(
+                        user_eval_metric_id=None,
+                        standalone_eval_type_id=eval_id,
+                        is_only_eval=is_only_eval,
+                        format_output=True,
+                        futureagi_eval=self.futureagi_eval,
+                        source=request_data.get("source", "dataset_evaluation"),
+                        source_id=template_id,
+                        protect=protect,
+                        organization_id=dataset.organization_id,
+                        workspace_id=dataset.workspace_id,
+                        feedback_workspace_id=feedback_workspace_for_run(
+                            dataset.organization_id,
+                            dataset.workspace_id,
+                            started_by=STARTED_BY_PERSON,
+                            workspace_id=started_in_id,
+                        ),
+                    )
                     dataset_config = copy.deepcopy(original_config)
                     mapping = dataset_config.get("mapping", {})
                     for key in mapping.keys():
@@ -15530,6 +15932,8 @@ class ComparePreviewRunEvalView(APIView):
 
             return self._gm.success_response({"responses": responses})
 
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in preview the evaluation: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -15840,6 +16244,9 @@ class CreateKnowledgeBaseView(APIView):
         try:
             name = request.query_params.get("name", "")
             kb_type = request.query_params.get("type", "create")
+            # The example writes the name as a Python string literal; a JSON
+            # string is one, with any quote or backslash in the name escaped.
+            name_literal = json.dumps(name, ensure_ascii=False)
 
             if kb_type == "create":
                 code = CREATE_KB_SDK_CODE.format(
@@ -15847,16 +16254,15 @@ class CreateKnowledgeBaseView(APIView):
                     SDK_SECRET_KEY_PLACEHOLDER,
                     SDK_API_KEY_PLACEHOLDER,
                     SDK_SECRET_KEY_PLACEHOLDER,
-                    name,
+                    name_literal,
                 )
             else:
                 code = UPDATE_KB_SDK_CODE.format(
                     SDK_API_KEY_PLACEHOLDER,
                     SDK_SECRET_KEY_PLACEHOLDER,
-                    name,
                     SDK_API_KEY_PLACEHOLDER,
                     SDK_SECRET_KEY_PLACEHOLDER,
-                    "UPDATED_KB_NAME",
+                    name_literal,
                 )
             response = {
                 "code": code,
@@ -16054,11 +16460,16 @@ class CreateKnowledgeBaseView(APIView):
             if updated_size > MAX_KB_SIZE:
                 return self._gm.bad_request(get_error_message("MAX_KB_SIZE_EXCEEDED"))
 
-            if Files.objects.filter(
-                knowledge_base_files__id=kb_id,
-                name__in=list(file_names),
-                knowledge_base_files__organization=org,
-            ).exists():
+            # A file that failed does not block adding a file of the same name.
+            if (
+                Files.objects.filter(
+                    knowledge_base_files__id=kb_id,
+                    name__in=list(file_names),
+                    knowledge_base_files__organization=org,
+                )
+                .exclude(status=StatusType.FAILED.value)
+                .exists()
+            ):
                 return self._gm.bad_request(get_error_message("FILE_ALREADY_EXISTS"))
 
             requested_name = request_data.get("name")
@@ -16532,6 +16943,8 @@ class ExistingKnowledgeBaseView(APIView):
 
             response = {
                 "table_data": table_rows,
+                # Capture the full filtered selection, not only the current page.
+                "matching_file_ids": [entry["id"] for entry in data],
                 "last_updated": kb.first().updated_at,
                 "status": kb_status,
                 "status_count": count,
@@ -16544,6 +16957,10 @@ class ExistingKnowledgeBaseView(APIView):
             return self._gm.internal_server_error_response(
                 get_error_message("FAILED_TO_GET_KNOWLEDGE_BASE")
             )
+
+    # This POST only reads files/status. Mark the handler, not the mixed
+    # read/delete view, and preserve the existing JSON-body validation.
+    post._read_query_post = True
 
     # Delete files from kb
     @validated_request(

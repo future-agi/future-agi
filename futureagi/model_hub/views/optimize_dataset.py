@@ -48,6 +48,7 @@ from model_hub.serializers.optimize_dataset import (
     OptimizeDatasetKbSerializer,
     OptimizeDatasetSerializer,
 )
+from model_hub.services import credit_ledger_port as credit_ledger
 from model_hub.tasks.agent import create_criteria_text_prompt
 from model_hub.tasks.prompt_template_optimizer import get_topk_prompts
 from model_hub.utils.constant import optimize_table_columns
@@ -218,12 +219,15 @@ class OptimizedDatasetView(APIView):
                 id=model_id,
             )
 
-            if optimize_type == OptimizeDataset.OptimizeType.TEMPLATE:
-                pass
-            elif optimize_type == OptimizeDataset.OptimizeType.RAG_TEMPLATE:
-                pass
-            else:
-                pass
+            if optimize_type in (
+                OptimizeDataset.OptimizeType.TEMPLATE,
+                OptimizeDataset.OptimizeType.RAG_TEMPLATE,
+            ):
+                # One key (OK-E, R4-17): both paths end in a PromptOptimizer
+                # construction it does not accept (criteria_breakdown,
+                # optimize_rag, filter_keys) after unmetered model calls.
+                # Refuse before any row or model call.
+                credit_ledger.refuse_legacy_optimizer(f"optimize-dataset {optimize_type}")
 
             valid, msg = check_valid_metrics(
                 (
@@ -320,6 +324,8 @@ class OptimizedDatasetView(APIView):
                 },
                 status=200,
             )
+        except credit_ledger.LegacyOptimizerRetiredError as e:
+            return self._gm.bad_request(str(e))
         except Http404:
             raise NotFound("AI model not found.") from None
         except Exception as e:
@@ -1557,6 +1563,9 @@ class OptimizedDatasetKbView(CreateAPIView):
 
     def create(self, request, *args, **kwargs):
         try:
+            # One key (OK-E, R4-17): rag_prompt_optimzer cannot construct its
+            # PromptOptimizer; refuse before the row and the criteria model call.
+            credit_ledger.refuse_legacy_optimizer("knowledge-base optimizer")
             data = request.validated_data
             name = data.get("name")
             knowledge_base_metrics = data.get("knowledge_base_metrics")
@@ -1599,6 +1608,8 @@ class OptimizedDatasetKbView(CreateAPIView):
             rag_prompt_optimzer.apply_async(args=(optim_obj.id,))
 
             return self._gm.success_response(optim_obj.id)
+        except credit_ledger.LegacyOptimizerRetiredError as e:
+            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception(f"Error in starting knowledge base optimizer: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -1609,6 +1620,12 @@ class OptimizedDatasetKbView(CreateAPIView):
 @temporal_activity(time_limit=3600, queue="default")
 def rag_prompt_optimzer(optim_id):
     optim_obj = OptimizeDataset.objects.filter(id=optim_id).get()
+    # One key (OK-E, R4-17): PromptOptimizer accepts none of criteria_breakdown,
+    # optimize_rag or filter_keys, so this run cannot start; fail it typed
+    # instead of a TypeError that leaves it RUNNING.
+    optim_obj.status = OptimizeDataset.StatusType.FAILED
+    optim_obj.save(update_fields=["status"])
+    credit_ledger.refuse_legacy_optimizer("knowledge-base optimizer")
     time.sleep(10)
     prompt_optim_agent = PromptOptimizer(
         prompt=optim_obj.prompt,

@@ -1,14 +1,7 @@
 import React from "react";
-import { Helmet } from "react-helmet-async";
 import MCPManagementSection from "src/sections/gateway/mcp/MCPManagementSection";
 
-const GatewayMCP = () => (
-  <>
-    <Helmet>
-      <title>Gateway MCP Tools | Future AGI</title>
-    </Helmet>
-    <MCPManagementSection />
-  </>
-);
+// The page frame sets the browser-tab title.
+const GatewayMCP = () => <MCPManagementSection />;
 
 export default GatewayMCP;

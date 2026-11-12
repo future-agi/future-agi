@@ -1,13 +1,13 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Stack, Tab } from "@mui/material";
+import { Box, Button, Stack, Tab, Typography } from "@mui/material";
 import { CustomTabs } from "src/components/tabs/tabs";
 
 import { ENV_TABS_SX } from "../../environmentOptions";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "../../workspace/overview/overview.constants";
 import WorkspacePanels from "../../workspace/WorkspacePanels";
 import { gapsByTab, counts as countsFor } from "../../workspace/helpers/workspaceGaps";
-import { DERIVING_LABEL, BUILDING_TABS } from "../build.constants";
+import { DERIVING_LABEL, BUILDING_TABS, ENDED_BUILD_COPY } from "../build.constants";
 import { pipelineStatus } from "../buildPipeline.constants";
 import DerivingAnimation from "./DerivingAnimation";
 import PipelineChecks from "./PipelineChecks";
@@ -47,6 +47,7 @@ export default function BuildingPane({
   primed = false,
   source,
   world = null,
+  onStartNewBuild,
 }) {
   const [tab, setTab] = useState("overview");
 
@@ -81,7 +82,7 @@ export default function BuildingPane({
           onChange={() => {}}
           variant="scrollable"
           scrollButtons={false}
-          sx={ENV_TABS_SX}
+          sx={{ ...ENV_TABS_SX, boxShadow: "none" }}
         >
           {BUILDING_TABS.map((t) => (
             <Tab key={t.id} value={t.id} label={t.label} />
@@ -90,7 +91,7 @@ export default function BuildingPane({
       </Box>
 
       {/* body */}
-      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto", px: 2.5 }}>
+      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto", px: 2 }}>
         <DerivingAnimation
           label={
             failure
@@ -102,6 +103,28 @@ export default function BuildingPane({
           failed={!!failure}
         />
         <PipelineChecks pipeline={pipelineStatus(done, running, "setup", failure)} />
+        {/* A failed or canceled build is not a dead end: say what to do next
+            and offer the new build right under the step that stopped it. */}
+        {failure && onStartNewBuild && (
+          <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 3, pb: 3 }}>
+            <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>
+              {failure.canceled
+                ? ENDED_BUILD_COPY.canceled
+                : failure.retryable
+                  ? ENDED_BUILD_COPY.retryable
+                  : ENDED_BUILD_COPY.failed}
+            </Typography>
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              onClick={onStartNewBuild}
+              sx={{ flexShrink: 0 }}
+            >
+              {ENDED_BUILD_COPY.startNew}
+            </Button>
+          </Stack>
+        )}
       </Box>
     </Stack>
   );
@@ -115,6 +138,7 @@ BuildingPane.propTypes = {
     title: PropTypes.string,
     detail: PropTypes.string,
     retryable: PropTypes.bool,
+    canceled: PropTypes.bool,
   }),
   env: ENV_SHAPE,
   envState: ENV_STATE_SHAPE,
@@ -122,4 +146,6 @@ BuildingPane.propTypes = {
   primed: PropTypes.bool,
   source: PropTypes.string,
   world: PropTypes.object,
+  // Shown with the failed/canceled step: leaves for a new build of this source.
+  onStartNewBuild: PropTypes.func,
 };

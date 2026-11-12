@@ -22,6 +22,7 @@ import {
   uploadSourceFolder,
 } from "src/pages/dashboard/harness/sourceUpload";
 import { FolderInput } from "../../panels/PanelCodeUpload";
+import usePrivateGithubAvailable from "../../hooks/usePrivateGithubAvailable";
 import { AGENT_VERSIONS_COPY } from "../workspace.constants";
 import { refusalText } from "../evals/refusalText";
 
@@ -52,6 +53,26 @@ function Waiting({ checking, children }) {
   );
 }
 Waiting.propTypes = { checking: PropTypes.bool, children: PropTypes.node };
+
+// A private GitHub source on a deployment that no longer reads private
+// repositories: one calm line saying so and what keeps the environment going,
+// with the upload that does under it. Only a definite "unavailable" from the
+// backend shows it; while that answer loads or fails, nothing does.
+function PrivateGithubUnavailable({ children }) {
+  if (usePrivateGithubAvailable() !== false) return null;
+  return (
+    <Box
+      data-testid="private-github-unavailable"
+      sx={{ mt: 1, px: 1.5, py: 1, borderRadius: 1, bgcolor: "action.hover" }}
+    >
+      <Typography sx={{ typography: "s2", color: "text.primary" }}>
+        {COPY.privateUnavailable}
+      </Typography>
+      {children && <Box sx={{ mt: 1 }}>{children}</Box>}
+    </Box>
+  );
+}
+PrivateGithubUnavailable.propTypes = { children: PropTypes.node };
 
 // The prompt (and a phone agent's number) of the default version, edited in
 // place; saving makes the agent's next version.
@@ -214,6 +235,37 @@ export default function AgentSourceChange({
   const watched =
     source.visibility !== "private" && !PINNED_REF.test(source.ref || "");
   const prompted = ["phone", "livekit", "provider"].includes(source.kind);
+  // An uploaded source takes a new folder; so does a private repository this
+  // deployment no longer reads, under the line that says so. Either way the
+  // folder makes the agent's next version.
+  const uploadControl = (
+    <>
+      <Waiting checking={checking}>
+        <Button
+          component="label"
+          size="small"
+          variant="outlined"
+          color="inherit"
+          disabled={busy}
+          sx={{ textTransform: "none" }}
+        >
+          {create.isPending
+            ? COPY.creating
+            : uploading !== null
+              ? COPY.uploading(uploading)
+              : COPY.upload}
+          <FolderInput onPick={upload} />
+        </Button>
+      </Waiting>
+      {(uploading !== null || create.isPending) && (
+        <LinearProgress
+          variant={uploading > 0 ? "determinate" : "indeterminate"}
+          value={uploading ?? 0}
+          sx={{ mt: 1 }}
+        />
+      )}
+    </>
+  );
 
   return (
     <Box
@@ -238,37 +290,13 @@ export default function AgentSourceChange({
           ) : (
             watched && <Note>{COPY.watchHint}</Note>
           )}
-        </>
-      )}
-
-      {source.kind === "archive" && (
-        <>
-          <Waiting checking={checking}>
-            <Button
-              component="label"
-              size="small"
-              variant="outlined"
-              color="inherit"
-              disabled={busy}
-              sx={{ textTransform: "none" }}
-            >
-              {create.isPending
-                ? COPY.creating
-                : uploading !== null
-                  ? COPY.uploading(uploading)
-                  : COPY.upload}
-              <FolderInput onPick={upload} />
-            </Button>
-          </Waiting>
-          {(uploading !== null || create.isPending) && (
-            <LinearProgress
-              variant={uploading > 0 ? "determinate" : "indeterminate"}
-              value={uploading ?? 0}
-              sx={{ mt: 1 }}
-            />
+          {source.visibility === "private" && (
+            <PrivateGithubUnavailable>{uploadControl}</PrivateGithubUnavailable>
           )}
         </>
       )}
+
+      {source.kind === "archive" && uploadControl}
 
       {prompted && !editing && (
         <>

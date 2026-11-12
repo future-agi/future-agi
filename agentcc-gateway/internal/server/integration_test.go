@@ -73,6 +73,7 @@ func createRealServer(t *testing.T) *Server {
 
 	engine := pipeline.NewEngine()
 	srv := New(cfg, "", registry, engine, nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	releaseTestServer(t, srv)
 	srv.ready.Store(true)
 	return srv
 }

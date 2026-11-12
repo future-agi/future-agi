@@ -1,39 +1,36 @@
 import base64
 import json
-import os
 import re
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-import chevron
 import litellm
 import structlog
 import yaml
+from chevron.tokenizer import ChevronError
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import close_old_connections
 from django.db.models import Q
 from django.http import Http404
 from drf_yasg.utils import swagger_auto_schema
-from jinja2.sandbox import SandboxedEnvironment
+from jinja2.exceptions import TemplateError
 from rest_framework import viewsets
 from rest_framework.generics import CreateAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-logger = structlog.get_logger(__name__)
-from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
-
-# (available_models always available)
+from agentic_eval.core_evals.run_prompt.available_models import (
+    AVAILABLE_MODELS as AVAILABLE_MODELS,
+)
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from agentic_eval.core_evals.run_prompt.other_services.manager import (
     get_model_parameters,
 )
 from model_hub.models.api_key import ApiKey
-from model_hub.utils.llm_providers import is_model_in_catalog
 from model_hub.models.choices import (
     CellStatus,
     LiteLlmModelProvider,
@@ -73,45 +70,66 @@ from model_hub.serializers.run_prompt import (
     LitellmSerializer,
     PreviewRunPromptSerializer,
 )
+from model_hub.services import credit_ledger_port as credit_ledger
 from model_hub.services.column_service import (
     create_run_prompt_column,
     update_column_for_rerun,
 )
+from model_hub.utils.column_utils import OUTPUT_FORMAT_TO_DATA_TYPE
+from model_hub.utils.column_utils import get_column_data_type as get_column_data_type
+from model_hub.utils.llm_providers import is_model_in_catalog
 from model_hub.utils.model_provider_update import (
     one_time_model_providers_update,
+)
+from model_hub.utils.optimizer_prompt_text import optimizer_column_references
+from model_hub.utils.prompt_rendering import (
+    DEFAULT_TEMPLATE_FORMAT as DEFAULT_TEMPLATE_FORMAT,
+    TEMPLATE_FORMAT_FSTRING as TEMPLATE_FORMAT_FSTRING,
+    TEMPLATE_FORMAT_JINJA2 as TEMPLATE_FORMAT_JINJA2,
+    TEMPLATE_FORMAT_MUSTACHE as TEMPLATE_FORMAT_MUSTACHE,
+    JsonStr as JsonStr,
+    add_template_context_value,
+    render_template as render_template,
+)
+from model_hub.utils.run_prompt_errors import (
+    RunPromptValidationError,
+    get_run_prompt_error_message,
 )
 from model_hub.utils.utils import (
     get_model_mode,
     remove_empty_text_from_messages,
 )
 from model_hub.views.prompt_template import handle_media
+from model_hub.views.utils.dataset_readiness import dataset_import_refusal
 from model_hub.views.utils.utils import (
     sanitize_uuid_for_jinja,
     sanitize_uuids_in_template,
 )
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.telemetry import wrap_for_thread
 from tfc.temporal import temporal_activity
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import (
     get_error_for_api_status,
     get_error_message,
     get_specific_error_message,
 )
-from tfc.utils.api_contracts import validated_request
 from tfc.utils.functions import get_prompt_stats
-from tfc.utils.ssrf_guard import safe_fetch
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
+from tfc.utils.ssrf_guard import safe_fetch
 from tfc.utils.storage import (
     convert_image_from_url_to_base64,
     detect_audio_format,
 )
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
     log_and_deduct_cost_for_api_request = None
+
+logger = structlog.get_logger(__name__)
 
 
 def _request_organization(request):
@@ -121,7 +139,9 @@ def _request_organization(request):
 def _request_workspace_filter(request, field_name="workspace"):
     workspace = getattr(request, "workspace", None)
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     if getattr(workspace, "is_default", False):
         return (
@@ -163,6 +183,54 @@ def _request_run_prompter_queryset(request):
     )
 
 
+def _run_prompt_columns_belong_to_dataset(messages, dataset):
+    """Check UUID placeholders without querying foreign rows or exposing their names."""
+    return _run_prompt_column_ids_belong_to_dataset(
+        optimizer_column_references(messages), dataset
+    )
+
+
+def _run_prompt_column_ids_belong_to_dataset(requested_ids, dataset):
+    if not requested_ids:
+        return True
+    found_ids = set(
+        Column.objects.filter(
+            id__in=requested_ids,
+            dataset_id=dataset.id,
+            dataset__organization_id=dataset.organization_id,
+            dataset__workspace_id=dataset.workspace_id,
+            dataset__deleted=False,
+            deleted=False,
+        ).values_list("id", flat=True)
+    )
+    return requested_ids == found_ids
+
+
+# The cell text of a row whose saved prompt uses a column that was deleted.
+DELETED_COLUMN_REFERENCE_MESSAGE = (
+    "This prompt uses a column that was deleted. Edit the prompt to remove it."
+)
+
+
+def _dead_column_references(messages, dataset):
+    """Column ids the messages use that are not live columns of the dataset.
+
+    Deleting a column never checked the prompts that use it, and dataset copies
+    remap ids, so a saved prompt can keep a deleted (or another dataset's)
+    column id. A run reads only this dataset's live columns, so such a value
+    would be sent to the model as empty text.
+    """
+    requested_ids = optimizer_column_references(messages)
+    if not requested_ids:
+        return set()
+    live_ids = set(
+        Column.objects.filter(
+            id__in=requested_ids, dataset_id=dataset.id, deleted=False
+        ).values_list("id", flat=True)
+    )
+    return requested_ids - live_ids
+
+
 def _extract_tool_ids(tools):
     tool_ids = []
     for tool in tools or []:
@@ -178,10 +246,7 @@ def _extract_tool_ids(tools):
 PROVIDERS_WITH_JSON = ["vertex_ai", "azure", "bedrock", "sagemaker"]
 
 # Re-export for backward compatibility - prefer importing from column_utils directly
-from model_hub.utils.column_utils import OUTPUT_FORMAT_TO_DATA_TYPE as DATA_TYPE_MAP
-from model_hub.utils.column_utils import (
-    get_column_data_type,
-)
+DATA_TYPE_MAP = OUTPUT_FORMAT_TO_DATA_TYPE
 
 
 class ApiKeyViewSet(viewsets.ModelViewSet):
@@ -419,80 +484,6 @@ def convert_uuids_to_column_names(messages: list, dataset_id: str) -> list:
     return replace_uuids_in_messages(messages, uuid_to_name)
 
 
-# Template format options
-TEMPLATE_FORMAT_FSTRING = "f-string"
-TEMPLATE_FORMAT_MUSTACHE = "mustache"
-TEMPLATE_FORMAT_JINJA2 = "jinja2"
-DEFAULT_TEMPLATE_FORMAT = TEMPLATE_FORMAT_JINJA2
-
-# Jinja2 environment (reusable, sandboxed for security)
-_jinja2_env = SandboxedEnvironment()
-
-
-def render_template(
-    template_str: str, context: dict, template_format: str = None
-) -> str:
-    """
-    Render a template string with the given context.
-    Supports multiple formats: f-string, mustache, jinja2.
-
-    Args:
-        template_str: The template string
-        context: Dictionary of variables to substitute
-        template_format: One of 'f-string', 'mustache', 'jinja2' (default: jinja2)
-
-    Returns:
-        Rendered string
-    """
-    if not template_str:
-        return template_str or ""
-
-    if template_format is None:
-        template_format = DEFAULT_TEMPLATE_FORMAT
-
-    if template_format == TEMPLATE_FORMAT_FSTRING:
-        return template_str.format(**context)
-
-    elif template_format == TEMPLATE_FORMAT_MUSTACHE:
-        return chevron.render(template_str, context)
-
-    elif template_format == TEMPLATE_FORMAT_JINJA2:
-        # Pre-process: handle variable names with spaces (Jinja2 doesn't allow them)
-        import re
-
-        processed = template_str
-        safe_ctx = dict(context)
-        raw_vars = re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", processed)
-        for var_name in raw_vars:
-            stripped = var_name.strip()
-            if " " in stripped and stripped in safe_ctx:
-                processed = processed.replace(
-                    "{{" + var_name + "}}", str(safe_ctx.pop(stripped))
-                )
-                processed = processed.replace(
-                    "{{ " + stripped + " }}", str(context.get(stripped, ""))
-                )
-        return _jinja2_env.from_string(processed).render(**safe_ctx)
-
-    else:
-        raise ValueError(
-            f"Unknown template_format: {template_format}. "
-            f"Supported: {TEMPLATE_FORMAT_FSTRING}, {TEMPLATE_FORMAT_MUSTACHE}, {TEMPLATE_FORMAT_JINJA2}"
-        )
-
-
-class JsonStr(dict):
-    """Dict subclass that renders as its original JSON string via str()/Jinja.
-    Allows {{col.key}} via dict attribute access while {{col}} outputs the raw JSON."""
-
-    def __init__(self, data, raw):
-        super().__init__(data)
-        self._raw = raw
-
-    def __str__(self):
-        return self._raw
-
-
 def populate_placeholders(
     messages: list[dict], dataset_id, row_id, col_id, model_name, template_format=None
 ):
@@ -533,40 +524,9 @@ def populate_placeholders(
                         "name": column.name,
                     }
 
-                    # Build nested structure based on column name (e.g., account.name)
-                    parts = column.name.split(".")
-                    current = context
-
-                    # Determine the value to store - parse JSON for dot notation access.
-                    # For any column with a JSON string value, parse it into a
-                    # JsonStr dict so {{col.key}} works via Jinja attribute access
-                    # while {{col}} still renders as the original JSON string.
-                    cell_value = cell.value if cell.value is not None else ""
-                    if cell_value and isinstance(cell_value, str):
-                        from model_hub.utils.json_path_resolver import parse_json_safely
-
-                        parsed_json, is_valid = parse_json_safely(cell_value)
-                        if is_valid and isinstance(parsed_json, dict):
-                            cell_value = JsonStr(parsed_json, cell_value)
-                        elif (
-                            is_valid
-                            and isinstance(parsed_json, list)
-                            and template_format in ("jinja", "jinja2")
-                        ):
-                            # Only parse lists for Jinja mode ({% for %} iteration).
-                            # Mustache/default mode keeps the raw JSON string.
-                            cell_value = parsed_json
-
-                    # Create nested objects
-                    for i, part in enumerate(parts):
-                        if i == len(parts) - 1:
-                            # Set the leaf value (parsed dict for JSON, string otherwise)
-                            current[part] = cell_value
-                        else:
-                            # Create intermediate objects if they don't exist
-                            if part not in current:
-                                current[part] = {}
-                            current = current[part]
+                    cell_value = add_template_context_value(
+                        context, column.name, cell.value, template_format
+                    )
 
                     # Store at sanitized column_id level (hyphens -> underscores for Jinja2)
                     sanitized_col_id = sanitize_uuid_for_jinja(column_id)
@@ -667,6 +627,8 @@ def process_list_content(
             # Handle other media types
             try:
                 processed_content.append(handle_media(item, model_name))
+            except RunPromptValidationError:
+                raise
             except Exception as e:
                 logger.exception(f"Error handling media item: {e}")
                 # Keep original item if processing fails
@@ -810,12 +772,10 @@ def process_text_with_media(
             processed_text = render_template(
                 text, context, template_format=effective_format
             )
-        except Exception as render_error:
-            logger.exception(
-                f"Template rendering failed: {render_error}. Template: {text[:200]}..."
-            )
-            # Re-raise to see full error - template syntax issue
-            raise
+        except (KeyError, ValueError, TemplateError, ChevronError) as render_error:
+            # This phase only renders user input; media downloads and provider
+            # calls are outside it and must never acquire this validation marker.
+            raise RunPromptValidationError(str(render_error)) from render_error
         uuid_pattern = r"\{\{[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}\}\}"
         if re.search(uuid_pattern, processed_text, re.IGNORECASE):
             logger.warning(
@@ -909,7 +869,9 @@ def process_media_markers(text, image_markers, model_name):
         # Add media content
         if info["type"] == "image":
             if not litellm.utils.supports_vision(model=model_name):
-                raise ValueError(f"Model {model_name} does not support image input.")
+                raise RunPromptValidationError(
+                    f"Model {model_name} does not support image input."
+                )
             segments.append(
                 {
                     "type": "text",
@@ -938,7 +900,9 @@ def process_media_markers(text, image_markers, model_name):
                 "stt",
                 "tts",
             ) and not litellm.utils.supports_audio_input(model=model_name):
-                raise ValueError(f"Model {model_name} does not support audio input.")
+                raise RunPromptValidationError(
+                    f"Model {model_name} does not support audio input."
+                )
             segments.append(
                 {
                     "type": "text",
@@ -988,7 +952,9 @@ class LitellmAPIView(CreateAPIView):
     def process_row(self, row, validated_data, dataset, column, request):
         # Call litellm with the validated data
         status = CellStatus.PASS.value
+        error_phase = None
         try:
+            error_phase = "local_validation"
             messages = populate_placeholders(
                 validated_data.get("messages"),
                 dataset_id=dataset.id,
@@ -996,6 +962,7 @@ class LitellmAPIView(CreateAPIView):
                 col_id=column.id,
                 model_name=validated_data.get("model"),
             )
+            error_phase = None
             messages = remove_empty_text_from_messages(messages)
 
             run_prompt = RunPrompt(
@@ -1021,9 +988,13 @@ class LitellmAPIView(CreateAPIView):
 
         except Exception as e:
             logger.exception(f"Error in processing the row: {str(e)}")
-            error_message = get_specific_error_message(e)
+            error_message = get_run_prompt_error_message(e, phase=error_phase)
             response = error_message
             value_info = {"reason": error_message}
+            if credit_ledger.is_managed_refusal(e):
+                # Typed refusal for the recovery UI; never provider text.
+                value_info = credit_ledger.refusal_cell_info(e)
+                response = value_info["reason"]
             status = CellStatus.ERROR.value
 
         # Create a Cell object for each processed row
@@ -1076,6 +1047,10 @@ class LitellmAPIView(CreateAPIView):
         )
         if not dataset:
             return self._gm.not_found("Dataset not found")
+        if not _run_prompt_columns_belong_to_dataset(
+            validated_data.get("messages"), dataset
+        ):
+            return self._gm.not_found("Column or dataset not found")
         # Retrieve tools based on the IDs from the validated data
         tool_ids = _extract_tool_ids(validated_data.get("tools"))
         tools = Tools.objects.filter(
@@ -1151,6 +1126,7 @@ class RunPrompts:
         self.run_prompt_id = run_prompt_id
         self.run_prompt_model = None
         self.tools_config = []
+        self._dead_column_ids = None
         logger.info(
             "RunPrompts_init",
             run_prompt_id=str(run_prompt_id),
@@ -1187,7 +1163,15 @@ class RunPrompts:
             )
             raise ValueError("Invalid run prompt ID or  does not exist.")  # noqa: B904
 
-    def run_prompt(self, edit_mode=False):
+    def dead_column_references(self):
+        """Ids the saved prompt uses that are not live columns (once per run)."""
+        if getattr(self, "_dead_column_ids", None) is None:
+            self._dead_column_ids = _dead_column_references(
+                self.run_prompt_model.messages, self.run_prompt_model.dataset
+            )
+        return self._dead_column_ids
+
+    def run_prompt(self, edit_mode=False, row_ids=None):
         try:
             self.load_run_prompt_id()
 
@@ -1225,6 +1209,9 @@ class RunPrompts:
             rows = Row.objects.filter(
                 dataset_id=self.run_prompt_model.dataset.id, deleted=False
             ).order_by("order")
+
+            if row_ids is not None:
+                rows = rows.filter(id__in=row_ids)
 
             # Execute with a maximum of 5 threads
             # Wrap process_row with OTel context propagation for thread safety
@@ -1318,6 +1305,12 @@ class RunPrompts:
             raise
 
     def process_row(self, row, column, edit_mode=False):
+        from model_hub.services.selective_rerun import (
+            input_fingerprints,
+            save_fingerprints,
+        )
+
+        fingerprints = input_fingerprints(column, [str(row.id)])
         row_id = str(row.id)
         logger.info(
             "RunPrompts_process_row_started",
@@ -1332,12 +1325,37 @@ class RunPrompts:
                 self.is_editing = True
             status = CellStatus.PASS.value
             is_llm_error = False
+            error_phase = None
             # api_call_log_row = None
             try:
+                # A prompt that still uses a deleted column says so in the
+                # cell, before any meter, charge or model call.
+                if self.dead_column_references():
+                    error_phase = "local_validation"
+                    raise RunPromptValidationError(DELETED_COLUMN_REFERENCE_MESSAGE)
+                # One key (OK-E): who pays for this row's provider call. BYOK
+                # rows get an inert meter and keep the legacy path unchanged.
+                meter = credit_ledger.call_meter(
+                    organization=self.run_prompt_model.organization,
+                    workspace=(
+                        self.run_prompt_model.dataset.workspace
+                        if self.run_prompt_model.dataset
+                        else None
+                    ),
+                    model_name=self.run_prompt_model.model,
+                    purpose=credit_ledger.PURPOSE_DATASET_RUN_PROMPT,
+                    source="dataset_run_prompt",
+                    source_id=self.run_prompt_id,
+                    row_id=row.id,
+                    call_ref=column.id,
+                )
                 logger.info(
                     "RunPrompts_process_row_validating_api_call",
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
+                )
+                credit_ledger.require_single_billing_path(
+                    meter, log_and_deduct_cost_for_api_request
                 )
                 if log_and_deduct_cost_for_api_request is not None:
                     try:
@@ -1407,7 +1425,12 @@ class RunPrompts:
                     except ImportError:
                         emit = None
 
-                    if emit is not None and UsageEvent is not None:
+                    # A managed row emits its event once, after settlement.
+                    if (
+                        emit is not None
+                        and UsageEvent is not None
+                        and not meter.is_managed
+                    ):
                         emit(
                             UsageEvent(
                                 org_id=str(self.run_prompt_model.organization.id),
@@ -1426,6 +1449,7 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
+                error_phase = "local_validation"
                 messages = populate_placeholders(
                     self.run_prompt_model.messages,
                     dataset_id=self.run_prompt_model.dataset.id,
@@ -1436,6 +1460,7 @@ class RunPrompts:
                         "template_format"
                     ),
                 )
+                error_phase = None
                 messages = remove_empty_text_from_messages(messages)
                 logger.info(
                     "RunPrompts_process_row_placeholders_populated",
@@ -1478,7 +1503,29 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
-                response, value_info = run_prompt.litellm_response()
+                # Managed: hold before dispatch, settle the actual cost once
+                # when the managed transport claimed it, release on any failure,
+                # back off per Retry-After on the contract's retryable refusals.
+                # BYOK: no ledger call and exactly one dispatch.
+                (response, value_info), managed_call = credit_ledger.run_metered(
+                    meter,
+                    run_prompt.litellm_response,
+                    messages=messages,
+                    max_tokens=(self.run_prompt_model.run_prompt_config or {}).get(
+                        "max_tokens"
+                    ),
+                    observe=credit_ledger.observe_value_info,
+                )
+                if managed_call is not None:
+                    value_info["credit_settlement"] = managed_call.summary()
+                    meter.emit_usage_event(
+                        managed_call,
+                        event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
+                        properties={
+                            "source": "dataset_run_prompt",
+                            "source_id": str(self.run_prompt_id),
+                        },
+                    )
                 logger.info(
                     "RunPrompts_process_row_litellm_response_received",
                     run_prompt_id=str(self.run_prompt_id),
@@ -1495,15 +1542,19 @@ class RunPrompts:
                     error=str(e),
                     is_llm_error=is_llm_error,
                 )
-                error_message = get_specific_error_message(e, is_llm_error)
+                error_message = get_run_prompt_error_message(e, phase=error_phase)
                 logger.error(
                     "RunPrompts_process_row_error_message",
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                     error_message=error_message,
                 )
-                response = str(e)
+                response = error_message
                 value_info = {"reason": error_message}
+                if credit_ledger.is_managed_refusal(e):
+                    # Typed refusal for the recovery UI; never provider text.
+                    value_info = credit_ledger.refusal_cell_info(e)
+                    response = value_info["reason"]
                 status = CellStatus.ERROR.value
 
             # if status == CellStatus.ERROR.value:
@@ -1668,6 +1719,7 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     status=status,
                 )
+            save_fingerprints(column, fingerprints)
             logger.info(
                 "RunPrompts_process_row_completed",
                 run_prompt_id=str(self.run_prompt_id),
@@ -1731,12 +1783,16 @@ class AddRunPromptColumnView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
             try:
-                dataset = Dataset.objects.get(id=dataset_id)
+                dataset = _request_dataset_queryset(request).get(id=dataset_id)
             except Dataset.DoesNotExist:
                 return self._gm.not_found("Dataset not found")
 
             if dataset.organization_id != organization.id:
                 return self._gm.not_found("Dataset not found")
+
+            refusal = dataset_import_refusal(dataset)
+            if refusal is not None:
+                return refusal
 
             if Column.objects.filter(
                 name=name, dataset=dataset, deleted=False
@@ -1744,7 +1800,9 @@ class AddRunPromptColumnView(APIView):
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
 
             model_name = config.get("model")
-            if model_name and not is_model_in_catalog(model_name, organization_id=organization.id):
+            if model_name and not is_model_in_catalog(
+                model_name, organization_id=organization.id
+            ):
                 return self._gm.bad_request(
                     f"Model '{model_name}' is no longer available. "
                     "Please select a supported model."
@@ -1754,6 +1812,8 @@ class AddRunPromptColumnView(APIView):
             messages = config.get("messages", [])
             if output_format != "audio":
                 messages = remove_empty_text_from_messages(messages)
+            if not _run_prompt_columns_belong_to_dataset(messages, dataset):
+                return self._gm.not_found("Column or dataset not found")
 
             # Use transaction to ensure atomicity of all DB operations
             # Create with NOT_STARTED first, then set RUNNING only after workflow starts
@@ -1863,6 +1923,9 @@ class PreviewRunPromptColumnView(APIView):
             dataset_id = validated_data["dataset_id"]
             config = validated_data["config"]
 
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
             first_n_rows = validated_data.get("first_n_rows")
             orders = list(
                 Row.objects.filter(dataset_id=dataset_id, deleted=False)
@@ -1878,7 +1941,7 @@ class PreviewRunPromptColumnView(APIView):
                         row_indices.append(orders[index - 1])
 
             # Get dataset and selected rows
-            dataset = Dataset.objects.filter(id=dataset_id, deleted=False).first()
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
 
             # Enforce organization isolation
             if not dataset:
@@ -1917,8 +1980,10 @@ class PreviewRunPromptColumnView(APIView):
 
             responses = []
             for row in rows:
+                error_phase = None
                 try:
                     output_format = config.get("output_format", "string")
+                    error_phase = "local_validation"
                     messages = populate_placeholders(
                         config.get("messages", []),
                         dataset_id=dataset_id,
@@ -1926,6 +1991,7 @@ class PreviewRunPromptColumnView(APIView):
                         col_id=None,
                         model_name=config.get("model", ""),
                     )
+                    error_phase = None
                     if output_format != "audio":
                         messages = remove_empty_text_from_messages(messages)
 
@@ -1950,7 +2016,26 @@ class PreviewRunPromptColumnView(APIView):
                             else None
                         ),
                     )
-                    response, value_infos = run_prompt.litellm_response()
+                    # One key (OK-E): a preview call is metered like a dataset
+                    # row: a managed call is held before dispatch, settled once
+                    # when the managed transport claimed it, and backs off per
+                    # Retry-After; BYOK runs exactly as before.
+                    meter = credit_ledger.call_meter(
+                        organization=dataset.organization,
+                        workspace=dataset.workspace,
+                        model_name=config.get("model", ""),
+                        purpose=credit_ledger.PURPOSE_RUN_PROMPT_PREVIEW,
+                        source="run_prompt_preview",
+                        source_id=dataset_id,
+                        row_id=row.id,
+                    )
+                    (response, value_infos), _managed_call = credit_ledger.run_metered(
+                        meter,
+                        run_prompt.litellm_response,
+                        messages=messages,
+                        max_tokens=config.get("max_tokens"),
+                        observe=credit_ledger.observe_value_info,
+                    )
 
                     # Check if showReasoningProcess is enabled to include thinking content
                     run_prompt_config = config.get("run_prompt_config", {})
@@ -1969,7 +2054,16 @@ class PreviewRunPromptColumnView(APIView):
                         responses.append(response)
 
                 except Exception as e:
-                    responses.append(str(e))
+                    logger.exception(
+                        "run_prompt_preview_row_failed", row_id=str(row.id), error=str(e)
+                    )
+                    if credit_ledger.is_managed_refusal(e):
+                        # Typed refusal copy (e.g. out of credits); never provider text.
+                        responses.append(credit_ledger.refusal_message(e))
+                    else:
+                        responses.append(
+                            get_run_prompt_error_message(e, phase=error_phase)
+                        )
                     value_infos = {"metadata": {"usage": {}, "cost": {}}}
             return self._gm.success_response(
                 {
@@ -1980,8 +2074,8 @@ class PreviewRunPromptColumnView(APIView):
             )
 
         except Exception as e:
-            error_message = get_specific_error_message(e)
-            logger.exception(f"Error in preview run prompt column: {error_message}")
+            error_message = get_run_prompt_error_message(e)
+            logger.exception("Error in preview run prompt column", error=str(e))
             return self._gm.internal_server_error_response(error_message)
 
 
@@ -2000,12 +2094,16 @@ class EditRunPromptColumnView(APIView):
     def post(self, request, *args, **kwargs):
         from django.db import transaction
 
+        from model_hub.services.selective_rerun import selected_rows
+
         try:
             validated_data = request.validated_data
             dataset_id = validated_data["dataset_id"]
             column_id = validated_data["column_id"]
-            config = validated_data["config"]
-            name = validated_data["name"]
+            config = validated_data.get("config") or {}
+            name = validated_data.get("name")
+            if name is None and not config:
+                return self._gm.bad_request("Nothing to update.")
             run_prompt_config = config.get("run_prompt_config", {})
 
             dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
@@ -2021,7 +2119,9 @@ class EditRunPromptColumnView(APIView):
                 return self._gm.not_found("Column or dataset not found")
 
             model_name = config.get("model")
-            if model_name and not is_model_in_catalog(model_name, organization_id=dataset.organization_id):
+            if model_name and not is_model_in_catalog(
+                model_name, organization_id=dataset.organization_id
+            ):
                 return self._gm.bad_request(
                     f"Model '{model_name}' is no longer available. "
                     "Please select a supported model."
@@ -2045,26 +2145,25 @@ class EditRunPromptColumnView(APIView):
                         "Column or run prompt configuration not found"
                     )
 
-                # Check if currently running - warn but allow edit
-                was_running = run_prompter.status == StatusType.RUNNING.value
-                if was_running:
-                    logger.warning(
-                        "edit_run_prompt_while_running",
-                        run_prompt_id=str(run_prompter.id),
-                        message="Editing run prompt while it's running. Current run will be cancelled.",
+                if run_prompter.status == StatusType.RUNNING.value:
+                    return self._gm.bad_request(
+                        "Wait for the current generation to finish"
                     )
-
-                Cell.objects.filter(column=column).update(
-                    value="",
-                    value_infos=json.dumps({}),
-                    status=CellStatus.RUNNING.value,
-                )
 
                 messages = config.get("messages", run_prompter.messages)
                 output_format = config.get("output_format", run_prompter.output_format)
 
-                if output_format != "audio":
+                if "messages" in config and output_format != "audio":
                     messages = remove_empty_text_from_messages(messages)
+
+                # Check only the column references this edit adds, before
+                # saving. A saved reference to a column deleted later is kept:
+                # the editor marks it and a run says why it cannot run.
+                added_ids = optimizer_column_references(
+                    messages
+                ) - optimizer_column_references(run_prompter.messages)
+                if not _run_prompt_column_ids_belong_to_dataset(added_ids, dataset):
+                    return self._gm.not_found("Column or dataset not found")
 
                 # Update RunPrompter instance
                 run_prompter.name = name if name is not None else run_prompter.name
@@ -2099,12 +2198,12 @@ class EditRunPromptColumnView(APIView):
                     StatusType.RUNNING.value
                 )  # Set to RUNNING immediately
 
-                run_prompter.run_prompt_config = config.get(
-                    "run_prompt_config", run_prompter.run_prompt_config
-                )
+                if "run_prompt_config" in config:
+                    run_prompter.run_prompt_config = run_prompt_config
 
-                # Handle tools update - first clear existing tools
-                run_prompter.tools.clear()
+                # Preserve existing tools unless a tools update was requested.
+                if "tools" in config:
+                    run_prompter.tools.clear()
 
                 # Handle tools update if provided
                 tools = config.get("tools")
@@ -2116,24 +2215,41 @@ class EditRunPromptColumnView(APIView):
 
                 run_prompter.save()
 
+                row_ids = selected_rows(column, validated_data.get("scope", "all"))
+                Cell.objects.filter(
+                    column=column, dataset=dataset, row_id__in=row_ids, deleted=False
+                ).update(status=CellStatus.RUNNING.value)
+                if not row_ids:
+                    run_prompter.status = StatusType.COMPLETED.value
+                    run_prompter.save(update_fields=["status"])
+
                 # Update column
                 update_column_for_rerun(
                     column=column,
                     output_format=run_prompter.output_format,
                     response_format=run_prompter.response_format,
-                    name=name if name is not None else run_prompter.name,
+                    name=name,
                     status=None,  # Don't update status here
                 )
 
                 # Store run_prompter id for triggering workflow after transaction
                 run_prompter_id = str(run_prompter.id)
 
+            if not row_ids:
+                return self._gm.success_response("No rows need rerunning")
+
             # Directly trigger the Temporal workflow after transaction commits
             from model_hub.tasks.run_prompt import process_prompts_single
 
             try:
                 result = process_prompts_single.apply_async(
-                    args=({"type": "editing", "prompt_id": run_prompter_id},)
+                    args=(
+                        {
+                            "type": "editing",
+                            "prompt_id": run_prompter_id,
+                            "row_ids": row_ids,
+                        },
+                    )
                 )
                 logger.info(
                     "run_prompt_edit_workflow_started",
@@ -2225,6 +2341,20 @@ class RetrieveRunPromptColumnConfigView(APIView):
             converted_messages = convert_uuids_to_column_names(
                 run_prompter.messages, str(run_prompter.dataset.id)
             )
+            # References left as {{<id>}}: this dataset's columns deleted after
+            # the prompt was saved (named) or another dataset's (never named).
+            dead_ids = _dead_column_references(
+                run_prompter.messages, run_prompter.dataset
+            )
+            deleted_names = (
+                dict(
+                    Column.all_objects.filter(
+                        id__in=dead_ids, dataset_id=run_prompter.dataset_id
+                    ).values_list("id", "name")
+                )
+                if dead_ids
+                else {}
+            )
 
             config = {
                 "dataset_id": str(run_prompter.dataset.id),
@@ -2242,6 +2372,10 @@ class RetrieveRunPromptColumnConfigView(APIView):
                 "output_format": run_prompter.output_format,
                 "concurrency": run_prompter.concurrency,
                 "run_prompt_config": run_prompt_config,
+                "deleted_column_references": [
+                    {"id": str(column_id), "name": deleted_names.get(column_id)}
+                    for column_id in sorted(dead_ids, key=str)
+                ],
             }
 
             return self._gm.success_response({"config": config})
@@ -2271,7 +2405,10 @@ class DefaultProviderView(APIView):
             ).first()
 
             if api_key:
-                data = {"provider": api_key.provider, "key": api_key.key}
+                data = {
+                    "provider": api_key.provider,
+                    "key": api_key.masked_actual_key,
+                }
                 return self._gm.success_response(data)
 
             return self._gm.not_found(get_error_message("PROVIDER_CONFIG_NOT_FOUND"))
@@ -2349,10 +2486,51 @@ class RetrieveRunPromptOptionsView(APIView):
                 provider[0]: provider[0] in existing_keys for provider in providers
             }
 
-            # Add is_available based on provider status
-            for model in available_models:
-                provider = model.get("providers")
-                model["is_available"] = provider_has_key.get(provider, False)
+            # Add is_available based on provider status (unchanged). One key:
+            # credential_mode/payer say how the runtime would run the model:
+            # BYOK when get_api_key would find a stored credential (the same
+            # row choice and non-empty test, so an empty key row is not
+            # BYOK), else managed when the gateway admits the model for this
+            # organization (is_available is then true too), else
+            # unavailable. Each item is a copy: the catalog dicts are shared
+            # by every organization's request.
+            from model_hub.services.model_route import (
+                availability_fields,
+                managed_model_names,
+            )
+
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
+            workspace = getattr(request, "workspace", None)
+            if workspace is None:
+                workspace = model_manager._resolve_default_workspace_id(
+                    getattr(organization, "pk", organization)
+                )
+            stored = model_manager.stored_credential_index(
+                getattr(organization, "pk", organization),
+                getattr(workspace, "pk", workspace),
+            )
+            managed_names = managed_model_names(
+                organization=organization,
+                workspace=workspace,
+                models=available_models,
+            )
+            available_models = [
+                {
+                    **model,
+                    **availability_fields(
+                        listed_available=provider_has_key.get(
+                            model.get("providers"), False
+                        ),
+                        byok_credential=stored.covers(
+                            model.get("model_name"), model.get("providers")
+                        ),
+                        managed_available=model.get("model_name") in managed_names,
+                    ),
+                }
+                for model in available_models
+            ]
 
             # Get available tools for the organization
             given_tools = Tools.objects.filter(
@@ -2426,7 +2604,7 @@ class DatasetRunPromptStatsView(APIView):
     def get(self, request, dataset_id):
         try:
             # Enforce organization isolation - verify dataset belongs to user's org
-            dataset = Dataset.objects.filter(id=dataset_id, deleted=False).first()
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
             if (
                 not dataset
                 or dataset.organization_id
@@ -2558,8 +2736,25 @@ class LiteLLMModelListView(APIView):
         logo_cache = {}
         response_data = []
 
-        # Pre-compute provider checks
-        json_provider_set = set(PROVIDERS_WITH_JSON)
+        # Pre-compute provider checks. One key: the models the gateway admits
+        # for this organization on Future AGI credits (one port call), and
+        # the runtime's own stored-credential test for credential_mode/payer.
+        from model_hub.services.model_route import (
+            availability_fields,
+            managed_model_names,
+        )
+
+        workspace = getattr(request, "workspace", None)
+        if workspace is None:
+            workspace = model_manager._resolve_default_workspace_id(organization.id)
+        stored = model_manager.stored_credential_index(
+            organization.id, getattr(workspace, "pk", workspace)
+        )
+        managed_names = managed_model_names(
+            organization=organization,
+            workspace=workspace,
+            models=[model for model in available_models if model is not None],
+        )
 
         for model in available_models:
             if model is None:
@@ -2592,6 +2787,16 @@ class LiteLLMModelListView(APIView):
                 "pricing": model.get("pricing"),
                 "type": key_type,
             }
+            # is_available stays provider membership; credential_mode/payer
+            # follow the runtime (a stored credential get_api_key would find,
+            # else managed on credits, which also makes the model available).
+            model_data.update(
+                availability_fields(
+                    listed_available=model_data["is_available"],
+                    byok_credential=stored.covers(model["model_name"], provider),
+                    managed_available=model["model_name"] in managed_names,
+                )
+            )
             response_data.append(model_data)
 
         # Sort by isAvailable (available models first)
@@ -2764,7 +2969,10 @@ class RunPromptForRowsView(APIView):
             )
             user_org_id = user_org.id if hasattr(user_org, "id") else user_org
             run_prompters = list(
-                RunPrompter.objects.filter(id__in=run_prompt_ids, deleted=False)
+                _request_run_prompter_queryset(request).filter(
+                    id__in=run_prompt_ids,
+                    dataset__in=_request_dataset_queryset(request),
+                )
             )
             if len(run_prompters) != len(set(map(str, run_prompt_ids))):
                 return self._gm.not_found("Run prompt not found")
@@ -2788,8 +2996,10 @@ class RunPromptForRowsView(APIView):
                     return self._gm.not_found("Row not found")
 
             deprecated_models = [
-                rp.model for rp in run_prompters
-                if rp.model and not is_model_in_catalog(rp.model, organization_id=user_org_id)
+                rp.model
+                for rp in run_prompters
+                if rp.model
+                and not is_model_in_catalog(rp.model, organization_id=user_org_id)
             ]
             if deprecated_models:
                 names = ", ".join(f"'{m}'" for m in set(deprecated_models))

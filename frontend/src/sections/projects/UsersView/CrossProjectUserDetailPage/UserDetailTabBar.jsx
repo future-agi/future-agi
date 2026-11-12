@@ -33,13 +33,13 @@ const FIXED_TABS = [
   {
     key: "sessions",
     label: "Sessions",
-    icon: "mdi:account-group-outline",
+    icon: "solar:users-group-rounded-linear",
     shortcut: "1",
   },
   {
     key: "traces",
     label: "Trace",
-    icon: "mdi:link-variant",
+    icon: "solar:link-linear",
     shortcut: "2",
   },
 ];
@@ -204,9 +204,12 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
             setIsSavingView(false);
           },
           onError: (err) => {
-            enqueueSnackbar(getRequestErrorMessage(err, "Failed to create view"), {
-              variant: "error",
-            });
+            enqueueSnackbar(
+              getRequestErrorMessage(err, "Failed to create view"),
+              {
+                variant: "error",
+              },
+            );
             setIsSavingView(false);
           },
         },
@@ -251,9 +254,12 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
         { id: viewId, name: newName },
         {
           onError: (err) =>
-            enqueueSnackbar(getRequestErrorMessage(err, "Failed to rename view"), {
-              variant: "error",
-            }),
+            enqueueSnackbar(
+              getRequestErrorMessage(err, "Failed to rename view"),
+              {
+                variant: "error",
+              },
+            ),
         },
       );
       // Always exit edit mode — a lingering rename state would re-submit on blur.
@@ -298,9 +304,20 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
               // display state back into the URL before the apply useEffect
               // gets a chance to clear it.
               setActiveViewConfig(null);
-              setSearchParams(new URLSearchParams({ userTab: key }), {
-                replace: true,
-              });
+              const next = new URLSearchParams({ userTab: key });
+              // Keep the date window when moving between Sessions and Trace,
+              // so a range the user widened (or one carried over from the
+              // Users list) does not snap back to Today. A saved view's
+              // window stays with that view.
+              if (FIXED_TABS.some((t) => t.key === activeTab)) {
+                ["sessionDateFilter", "primaryTraceDateFilter"].forEach(
+                  (param) => {
+                    const value = searchParams.get(param);
+                    if (value) next.set(param, value);
+                  },
+                );
+              }
+              setSearchParams(next, { replace: true });
               onTabChange?.(key, key);
             }}
           />
@@ -383,7 +400,11 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
             "&:hover": { bgcolor: "background.neutral" },
           }}
         >
-          <Iconify icon="mdi:plus" width={16} sx={{ color: "text.primary" }} />
+          <Iconify
+            icon="solar:add-linear"
+            width={16}
+            sx={{ color: "text.primary" }}
+          />
         </ButtonBase>
       </CustomTooltip>
 

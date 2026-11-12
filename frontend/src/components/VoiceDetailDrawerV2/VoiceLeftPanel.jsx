@@ -57,6 +57,9 @@ const VoiceLeftPanel = ({
     const transcript = data?.transcript;
     return transcript?.filter((item) => item.speaker_role !== "system");
   }, [data]);
+  // Simulate list rows arrive without a transcript and get it from the
+  // per-call detail a moment later, so only other calls say it is missing.
+  const showNoTranscript = !isSimulate && !filteredTranscript?.length;
 
   const callExecutionId =
     data?.call_execution_id || (data?.id !== data?.trace_id ? data?.id : null);
@@ -71,19 +74,19 @@ const VoiceLeftPanel = ({
       {
         label: "Transcript",
         value: TABS.TRANSCRIPT,
-        icon: "mdi:file-document-outline",
+        icon: "solar:document-text-linear",
       },
     ];
     if (showPathTabs) {
       t.push({
         label: "Checklist",
         value: TABS.CHECKLIST,
-        icon: "mdi:format-list-checks",
+        icon: "solar:list-check-linear",
       });
       t.push({
         label: "Graph",
         value: TABS.GRAPH,
-        icon: "mdi:graph-outline",
+        icon: "solar:graph-linear",
       });
     }
     extraTabs.forEach(({ label, value, icon }) =>
@@ -97,7 +100,8 @@ const VoiceLeftPanel = ({
     : TABS.TRANSCRIPT;
   const isTranscriptTab = selectedTab === TABS.TRANSCRIPT;
   const activeExtraTab = extraTabs.find((tab) => tab.value === selectedTab);
-  const isPathTab = selectedTab === TABS.CHECKLIST || selectedTab === TABS.GRAPH;
+  const isPathTab =
+    selectedTab === TABS.CHECKLIST || selectedTab === TABS.GRAPH;
 
   return (
     <Stack
@@ -151,8 +155,9 @@ const VoiceLeftPanel = ({
 
                     When there is no transcript the Recording block grows
                     to fill the panel so its centered empty-state message
-                    ("No recording found …") sits in the middle instead
-                    of being pinned to the top. */}
+                    ("No recording for this call") sits in the middle
+                    instead of being pinned to the top, with "No transcript
+                    for this call" right under it. */}
                 <Box
                   sx={{
                     flexShrink: 0,
@@ -172,11 +177,11 @@ const VoiceLeftPanel = ({
                   >
                     <Typography
                       sx={{
-                        fontSize: 10,
+                        fontSize: 12,
                         fontWeight: 600,
                         color: "text.secondary",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.04em",
+                        textTransform: "none",
+                        letterSpacing: 0,
                         mb: 0.5,
                       }}
                     >
@@ -184,11 +189,22 @@ const VoiceLeftPanel = ({
                     </Typography>
                   </ShowComponent>
                   <VoiceAudioBridge data={data} />
+                  <ShowComponent condition={showNoTranscript}>
+                    <Typography
+                      typography="s2_1"
+                      color="text.secondary"
+                      textAlign="center"
+                      sx={{ mt: 1 }}
+                    >
+                      No transcript for this call
+                    </Typography>
+                  </ShowComponent>
                 </Box>
                 <ShowComponent condition={!!filteredTranscript?.length}>
                   <Box sx={{ flex: 1, minHeight: 0, display: "flex" }}>
                     <TranscriptView
                       transcript={filteredTranscript}
+                      callStartedAt={data?.started_at}
                       embedded={embedded}
                     />
                   </Box>

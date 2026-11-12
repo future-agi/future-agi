@@ -1,0 +1,32 @@
+{
+  "header": {
+    "alg": "ES256",
+    "kid": "rt-2026-10"
+  },
+  "claims": {
+    "typ": "futureagi-runtime-token",
+    "iss": "https://runtime.futureagi.com",
+    "aud": "futureagi-agentcc-gateway",
+    "iat": 1792056600,
+    "nbf": 1792056600,
+    "exp": 1792057500,
+    "jti": "rtj_6d2f0a9e",
+    "org_id": "0b7c1e52-4f3a-4d0e-9b8a-2a7d6c5e4f31",
+    "deployment_id": "dep_research_prod",
+    "agent_id": "researcher",
+    "workspace_id": "ws_main",
+    "agent_version": "3",
+    "env": "production",
+    "framework": "omega",
+    "root_run_id": "run_R1",
+    "session_id": "sess_9c1d",
+    "budget_scope": "run_R1",
+    "budget_usd": 5.0,
+    "billing_mode": "managed",
+    "scopes": ["gateway:chat", "gateway:responses", "gateway:models"],
+    "key_policy": {
+      "allowed_models": ["anthropic/*", "openai/gpt-6-*"],
+      "allowed_providers": ["openrouter"]
+    }
+  }
+}

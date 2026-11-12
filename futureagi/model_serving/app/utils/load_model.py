@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+import secrets
 import threading
 import time
 
@@ -5,6 +8,25 @@ import structlog
 from app.config.settings import MODEL_NAME_TO_CLASS_MAPPING, SUPPORTED_MODELS
 
 logger = structlog.get_logger(__name__)
+
+# Request kwargs that may appear verbatim in a model's cache key. The key is
+# logged (load, cache hit, failure, cleanup, unload), returned in the 503
+# detail and listed by the usage helpers, so every other kwarg, such as a
+# customer's api_key, is replaced by a keyed digest: different credentials
+# still get different cached clients, but no credential is ever written out.
+_PLAIN_KEY_KWARGS = frozenset({"model"})
+# Per process: cache keys never leave this process, and a digest in a log
+# line cannot be checked against a guessed key.
+_KEY_DIGEST_SECRET = secrets.token_bytes(32)
+
+
+def _cache_key_part(name: str, value: object) -> str:
+    if name in _PLAIN_KEY_KWARGS:
+        return f"{name}={value}"
+    digest = hmac.new(
+        _KEY_DIGEST_SECRET, str(value).encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return f"{name}=hmac-sha256:{digest}"
 
 
 class ModelLoader:
@@ -105,9 +127,11 @@ class ModelLoader:
         # ✅ IMPROVED: Generate a unique key for the model instance based on its parameters
         instance_key = model_name
         if kwargs:
-            # Create a stable key from kwargs
+            # Create a stable key from kwargs; credentials only as a digest.
             sorted_kwargs = sorted(kwargs.items())
-            instance_key += "_" + "&".join(f"{k}={v}" for k, v in sorted_kwargs)
+            instance_key += "_" + "&".join(
+                _cache_key_part(k, v) for k, v in sorted_kwargs
+            )
 
         # Return cached model if already loaded
         if instance_key in cls._models:

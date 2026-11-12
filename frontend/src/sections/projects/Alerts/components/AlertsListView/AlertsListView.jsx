@@ -1,4 +1,5 @@
-import { Box, Typography } from "@mui/material";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import { Box, Stack, Typography } from "@mui/material";
 import React, {
   lazy,
   Suspense,
@@ -26,9 +27,11 @@ import { DataTable, DataTablePagination } from "src/components/data-table";
 import { formatNumberWithCommas } from "../../../UsersView/common";
 import _ from "lodash";
 import {
+  EARLIER_RULE_ROW_TEXT,
   getAlertFilterValue,
   isAlertMuted,
   normalizeAlertListRow,
+  usesEarlierRule,
 } from "../../common";
 
 const AlertsSheetView = lazy(
@@ -44,7 +47,6 @@ export default function AlertsListView() {
     searchQuery,
     setHasData,
     selectedRows,
-    setSelectedRows,
     setTotalRows,
     setCurrentPageAlertList,
     setColumns,
@@ -57,7 +59,17 @@ export default function AlertsListView() {
 
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
-  const [rowSelection, setRowSelection] = useState({});
+  // The store is the single selection owner, including removals from the
+  // confirmation dialog. No effect may restore IDs after a scope reset.
+  const rowSelection = useMemo(
+    () =>
+      Object.fromEntries(
+        selectedRows
+          .filter((row) => row?.id != null)
+          .map((row) => [row.id, true]),
+      ),
+    [selectedRows],
+  );
   // Derive column visibility from the store's columns (set by ColumnDropdown via Actions)
   const columnVisibility = useMemo(() => {
     if (!storeColumns || storeColumns.length === 0) {
@@ -152,6 +164,10 @@ export default function AlertsListView() {
     [data],
   );
   const total = data?.metadata?.total_rows ?? 0;
+  // A row on its earlier rule carries a second line under its name.
+  const rowHeight = items.some(usesEarlierRule)
+    ? ROW_HEIGHT.twoLine
+    : ROW_HEIGHT.default;
 
   // Sync store state on data change
   useEffect(() => {
@@ -183,24 +199,13 @@ export default function AlertsListView() {
   ]);
 
   // Sync row selection → store selectedRows
-  const handleRowSelectionChange = useCallback(
-    (newSelection) => {
-      setRowSelection(newSelection);
-      const newSelected = Object.keys(newSelection)
-        .filter((k) => newSelection[k])
-        .map((k) => items[parseInt(k, 10)])
-        .filter(Boolean);
-      setSelectedRows(newSelected);
-    },
-    [items, setSelectedRows],
-  );
-
-  // When store's handleCancelSelection is called, also clear local rowSelection
-  useEffect(() => {
-    if (selectedRows.length === 0) {
-      setRowSelection({});
-    }
-  }, [selectedRows]);
+  const handleRowSelectionChange = useCallback((_selection, selected) => {
+    useAlertStore.setState({
+      selectedRows: selected,
+      selectedAll: false,
+      excludingIds: new Set(),
+    });
+  }, []);
 
   const columns = useMemo(
     () => [
@@ -209,19 +214,33 @@ export default function AlertsListView() {
         accessorKey: "name",
         header: "Issues",
         meta: { flex: 2 },
-        minSize: 200,
+        minSize: 120,
         cell: ({ getValue, row }) => {
           const isMuted = isAlertMuted(row.original);
-          return (
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+          const label = getValue();
+          // The grid cell is a flex row that clips. Without minWidth 0 this
+          // box kept the whole name's width, so the cell edge cut the name
+          // mid-word and hid the mute icon. Now the box fits the cell, the
+          // name block ends in "…", the full name stays in its title and the
+          // mute icon stays beside it.
+          const name = (
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+                minWidth: 0,
+              }}
+            >
               <Typography
                 variant="body2"
                 noWrap
-                sx={{ fontWeight: 500 }}
+                title={typeof label === "string" ? label : undefined}
+                sx={{ fontWeight: 500, minWidth: 0 }}
                 data-alert-row-name={row.original?.name}
                 data-alert-row-id={row.original?.id}
               >
-                {getValue()}
+                {label}
               </Typography>
               {isMuted && (
                 <SvgColor
@@ -230,11 +249,28 @@ export default function AlertsListView() {
                     height: 14,
                     width: 14,
                     flexShrink: 0,
-                    bgcolor: "red.500",
+                    bgcolor: "status.danger.solid",
                   }}
                 />
               )}
             </Box>
+          );
+          if (!usesEarlierRule(row.original)) return name;
+          return (
+            <Stack
+              sx={{ height: "100%", minWidth: 0, justifyContent: "center" }}
+            >
+              {name}
+              <Typography
+                variant="s3"
+                color="text.secondary"
+                noWrap
+                title={EARLIER_RULE_ROW_TEXT}
+                data-alert-row-rule="earlier"
+              >
+                {EARLIER_RULE_ROW_TEXT}
+              </Typography>
+            </Stack>
           );
         },
       },
@@ -242,7 +278,7 @@ export default function AlertsListView() {
         id: "status",
         accessorKey: "status",
         header: "Status",
-        size: 110,
+        size: 100,
         enableSorting: false,
         cell: ({ getValue }) => <StatusCell value={getValue()} />,
       },
@@ -251,9 +287,10 @@ export default function AlertsListView() {
         accessorKey: "metricType",
         header: "Alert Type",
         meta: { flex: 1 },
+        minSize: 130,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
             {getValue() || "-"}
           </Typography>
         ),
@@ -268,19 +305,19 @@ export default function AlertsListView() {
           const val = getValue();
           if (!val || val === "-")
             return (
-              <Typography variant="body2" sx={{ fontSize: 13 }}>
+              <Typography variant="body2" sx={{ fontSize: 12 }}>
                 -
               </Typography>
             );
           try {
             return (
-              <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+              <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
                 {formatDistanceToNow(new Date(val), { addSuffix: true })}
               </Typography>
             );
           } catch {
             return (
-              <Typography variant="body2" sx={{ fontSize: 13 }}>
+              <Typography variant="body2" sx={{ fontSize: 12 }}>
                 -
               </Typography>
             );
@@ -291,10 +328,10 @@ export default function AlertsListView() {
         id: "noOfAlerts",
         accessorKey: "noOfAlerts",
         header: "No. of triggers",
-        size: 120,
+        size: 100,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" sx={{ fontSize: 12 }}>
             {formatNumberWithCommas(getValue())}
           </Typography>
         ),
@@ -310,7 +347,7 @@ export default function AlertsListView() {
           if (!val) return null;
           try {
             return (
-              <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+              <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
                 {formatDistanceToNow(new Date(val), { addSuffix: true })}
               </Typography>
             );
@@ -381,12 +418,21 @@ export default function AlertsListView() {
           isLoading={isLoading}
           rowCount={total}
           rowSelection={rowSelection}
+          selectionScope={[
+            page,
+            pageSize,
+            searchQuery,
+            debouncedSearchTerm,
+            extractedFilterObject,
+            observeId,
+            mainPage,
+          ]}
           onRowSelectionChange={handleRowSelectionChange}
           columnVisibility={columnVisibility}
           onRowClick={handleRowClick}
           getRowId={(row) => row.id}
           enableSelection
-          rowHeight={44}
+          rowHeight={rowHeight}
           emptyMessage="No alerts found"
         />
 

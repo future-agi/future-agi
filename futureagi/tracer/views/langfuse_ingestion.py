@@ -2,7 +2,6 @@ import uuid
 from collections import defaultdict
 
 import structlog
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -10,15 +9,18 @@ from rest_framework.views import APIView
 
 from accounts.authentication import APIKeyAuthentication, LangfuseBasicAuthentication
 from integrations.transformers.langfuse_transformer import LangfuseTransformer
-from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import ApiDetailErrorResponseSerializer
 from tracer.models.project import Project
 from tracer.serializers.langfuse_ingestion import (
     LangfuseIngestionRequestSerializer,
     LangfuseIngestionResponseSerializer,
 )
-from tracer.utils.langfuse_upsert import parse_langfuse_timestamp, upsert_langfuse_trace
+from tracer.utils.langfuse_upsert import (
+    merge_langfuse_observation,
+    upsert_langfuse_trace,
+)
 from tracer.utils.otel import get_or_create_project
 
 logger = structlog.get_logger(__name__)
@@ -35,52 +37,25 @@ _EVENT_TYPE_TO_OBS_TYPE = {
 }
 
 
-def _compute_latency_seconds(start_time_str, end_time_str):
-    """Compute latency in seconds from ISO 8601 start/end time strings."""
-    start = parse_langfuse_timestamp(start_time_str)
-    end = parse_langfuse_timestamp(end_time_str)
-    if start and end:
-        return (end - start).total_seconds()
-    return 0
-
-
 def _merge_observation_events(obs_list):
-    """Merge create + update events that share the same observation ID.
+    """Coalesce one batch, retaining absent vs explicitly supplied fields.
 
-    The Langfuse SDK sends ``generation-create`` with initial data (name,
-    model, input, startTime) followed by ``generation-update`` with
-    completion data (output, endTime, usage).  If we process them as
-    separate observations the update overwrites the create's fields with
-    empty values.  Merging preserves all non-None fields from both events.
+    The upsert merges these patches with persisted state and recalculates timing
+    there; the start and end may have arrived in entirely different requests.
     """
-    merged = {}  # obs_id → merged body dict
-    order = []  # preserve insertion order
-
+    merged = {}
+    order = []
     for obs in obs_list:
         obs_id = obs.get("id")
         if not obs_id:
-            order.append(obs)
+            order.append(dict(obs))
             continue
-
-        if obs_id in merged:
-            existing = merged[obs_id]
-            for key, value in obs.items():
-                if value is not None:
-                    existing[key] = value
-        else:
-            merged[obs_id] = dict(obs)  # copy to avoid mutating original
+        if obs_id not in merged:
+            merged[obs_id] = {}
             order.append(merged[obs_id])
-
-    # Recompute latency on merged observations (startTime and endTime
-    # may have come from different events).
-    for obs in order:
-        obs["latency"] = _compute_latency_seconds(
-            obs.get("startTime"), obs.get("endTime")
-        )
-        # Normalise usage → usageDetails after merge
-        if obs.get("usage") and not obs.get("usageDetails"):
-            obs["usageDetails"] = obs["usage"]
-
+        combined = merge_langfuse_observation(merged[obs_id], obs)
+        merged[obs_id].clear()
+        merged[obs_id].update(combined)
     return order
 
 
@@ -270,14 +245,7 @@ def _process_traces(
             )
 
             assembled = {
-                "id": trace_body["id"],
-                "name": trace_body.get("name"),
-                "input": trace_body.get("input"),
-                "output": trace_body.get("output"),
-                "metadata": trace_body.get("metadata"),
-                "tags": trace_body.get("tags"),
-                "userId": trace_body.get("userId"),
-                "sessionId": trace_body.get("sessionId"),
+                **trace_body,
                 "observations": merged_obs,
                 "scores": score_bodies.get(langfuse_trace_id, []),
             }
@@ -288,6 +256,7 @@ def _process_traces(
                 org=org,
                 workspace=workspace,
                 org_id=org.id,
+                patch_mode=True,
             )
         except Exception:
             logger.exception(

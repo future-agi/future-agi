@@ -22,7 +22,7 @@ def is_experiment_cancelled(experiment_id: uuid.UUID) -> bool:
         return False
 
 
-def maybe_complete_experiment_after_eval_stop(experiment_id) -> bool:
+def maybe_complete_experiment_after_eval_stop(experiment_id, experiments=None) -> bool:
     """If the stopped eval was the last running one, flip experiment to COMPLETED.
 
     StopUserEvalView flips the individual UserEvalMetric to ERROR on a
@@ -32,19 +32,23 @@ def maybe_complete_experiment_after_eval_stop(experiment_id) -> bool:
     flipping it stopped should move the experiment to COMPLETED so the
     UI reflects reality.
 
+    ``experiments`` is the queryset the experiment id is looked up in (a
+    view passes the experiments of the request's organization and
+    workspace); by default, every experiment.
+
     Returns True if the experiment status was updated.
     """
     if not experiment_id:
         return False
+    if experiments is None:
+        experiments = ExperimentsTable.objects.all()
     try:
         exp_uuid = (
             experiment_id
             if isinstance(experiment_id, uuid.UUID)
             else uuid.UUID(str(experiment_id))
         )
-        experiment = ExperimentsTable.objects.filter(
-            id=exp_uuid, deleted=False
-        ).first()
+        experiment = experiments.filter(id=exp_uuid, deleted=False).first()
         if not experiment or experiment.status != StatusType.RUNNING.value:
             return False
 

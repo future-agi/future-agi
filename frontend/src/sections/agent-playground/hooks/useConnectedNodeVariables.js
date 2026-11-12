@@ -43,6 +43,9 @@ function getPortDataSchema(port) {
   return port?.dataSchema || port?.data_schema;
 }
 
+// A plain variable name: no dots, brackets or Jinja expression syntax.
+const PLAIN_VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 /**
  * Derives connected input nodes, dropdown options, and a variable validator
  * for the prompt editor mention system.
@@ -177,7 +180,13 @@ export default function useConnectedNodeVariables(
    * Rules:
    * 1. "node_label.output_label" — valid if node is connected
    * 2. "node_label.output_label.key..." — valid if connected node has JSON/schema response
-   * 3. "custom_var" — valid if it exists in global variables (dataset)
+   * 3. "custom_var" — valid if it exists in global variables (dataset). For a
+   *    plain name, spaces inside the braces ({{ custom_var }}) are ignored, as
+   *    the backend ignores them.
+   * 4. A plain name with no value yet that is neither a connected node's
+   *    output nor a connected node's label — null (left plain, not red).
+   *    Saving makes it an input of this agent and Run asks for its value; the
+   *    form says so in words (UnsetVariablesNote).
    */
   const validateVariable = useMemo(() => {
     const exactNodeVars = new Set(
@@ -221,6 +230,25 @@ export default function useConnectedNodeVariables(
 
     const allPrefixes = [...jsonPrefixes, ...objectPrefixes];
     const globalKeys = new Set(Object.keys(globalVariables));
+    // Names a connected node owns. Saving wires a bare {{response}} to a
+    // connected node's output of that name, so it is not an input of this
+    // agent. A bare {{llm_prompt_1}} (a connected node's label) most likely
+    // means one of that node's outputs, and "connect that node" would not
+    // help. Neither belongs in the note, so both keep the result they had.
+    const connectedNames = new Set(
+      [
+        ...connectedNodes.map((n) => n.outputLabel),
+        ...connectedNodes.map((n) => n.label),
+        ...(edgeMappingsData || []).flatMap((mapping) =>
+          getMappingOutputPorts(mapping)
+            .filter((port) => port.direction === "output")
+            .map((port) => getPortDisplayName(port)),
+        ),
+        ...(edgeMappingsData || []).map((mapping) =>
+          getMappingSourceNodeName(mapping),
+        ),
+      ].filter(Boolean),
+    );
 
     return (variableName) => {
       if (exactNodeVars.has(variableName)) return true;
@@ -228,6 +256,15 @@ export default function useConnectedNodeVariables(
       if (allPrefixes.some((prefix) => variableName.startsWith(prefix)))
         return true;
       if (globalKeys.has(variableName)) return true;
+      const name = String(variableName ?? "").trim();
+      // {{ question }} with a value: only reached when the braces hold spaces
+      // around a plain name (the unspaced name returned true just above).
+      // The backend trims, so the run uses that value. Valid, as {{question}}.
+      if (PLAIN_VARIABLE_NAME.test(name) && globalKeys.has(name)) return true;
+      // A plain name with no value yet is not an error: saving makes it an
+      // input of this agent and Run asks for its value. Leave it plain.
+      if (PLAIN_VARIABLE_NAME.test(name) && !connectedNames.has(name))
+        return null;
       return false;
     };
   }, [connectedNodes, edgeMappingsData, globalVariables]);

@@ -20,23 +20,27 @@ import StepCredentials from "./AddIntegrationWizard/StepCredentials";
 import StepProjectMapping from "./AddIntegrationWizard/StepProjectMapping";
 import StepSyncSettings from "./AddIntegrationWizard/StepSyncSettings";
 import {
-  DEFAULT_LANGFUSE_HOST,
+  EXPORT_PLATFORMS,
   SKIP_PROJECT_MAPPING_PLATFORMS,
   SKIP_SYNC_SETTINGS_PLATFORMS,
 } from "./constants";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import { useIntegrationsWorkspaceId } from "./scope";
 
 const FULL_STEPS = ["Platform", "Credentials", "Project", "Sync Settings"];
 const SHORT_STEPS = ["Platform", "Credentials", "Sync Settings"];
 const MINIMAL_STEPS = ["Platform", "Credentials"];
 
-function WizardContent({ onClose, initialPlatform, onSelectSlack }) {
+function WizardContent({ platforms, onClose, initialPlatform, onSelectSlack }) {
   const theme = useTheme();
   const navigate = useNavigate();
+  const workspaceId = useIntegrationsWorkspaceId();
   const [activeStep, setActiveStep] = useState(initialPlatform ? 1 : 0);
   const [createdConnectionId, setCreatedConnectionId] = useState(null);
   const [wizardData, setWizardData] = useState({
     platform: initialPlatform || "",
-    hostUrl: DEFAULT_LANGFUSE_HOST,
+    // Set by the credentials step: where the connection delivers.
+    hostUrl: "",
     publicKey: "",
     secretKey: "",
     caCertificate: "",
@@ -58,11 +62,15 @@ function WizardContent({ onClose, initialPlatform, onSelectSlack }) {
   const skipSyncSettings = SKIP_SYNC_SETTINGS_PLATFORMS.includes(
     wizardData.platform,
   );
-  const STEPS = skipSyncSettings
-    ? MINIMAL_STEPS
-    : skipProjectMapping
-      ? SHORT_STEPS
-      : FULL_STEPS;
+  const isExport = EXPORT_PLATFORMS.includes(wizardData.platform);
+  // The steps of the platform picked; before a pick, the steps every
+  // platform shares.
+  const STEPS =
+    !wizardData.platform || skipSyncSettings
+      ? MINIMAL_STEPS
+      : skipProjectMapping
+        ? SHORT_STEPS
+        : FULL_STEPS;
 
   const handleNext = () => setActiveStep((prev) => prev + 1);
   const handleBack = () => setActiveStep((prev) => prev - 1);
@@ -97,8 +105,12 @@ function WizardContent({ onClose, initialPlatform, onSelectSlack }) {
         <Typography fontSize={16} fontWeight={600}>
           {isSuccess ? "" : "Add Integration"}
         </Typography>
-        <IconButton onClick={onClose} sx={{ p: 0, color: "text.primary" }}>
-          <Icon icon="mingcute:close-line" />
+        <IconButton
+          size="small"
+          onClick={onClose}
+          sx={{ color: "text.primary" }}
+        >
+          <Icon icon="solar:close-linear" />
         </IconButton>
       </Box>
 
@@ -117,6 +129,7 @@ function WizardContent({ onClose, initialPlatform, onSelectSlack }) {
       <Box sx={{ flex: 1, overflow: "auto" }}>
         {activeStep === 0 && (
           <StepPlatformSelect
+            platforms={platforms}
             data={wizardData}
             onUpdate={updateData}
             onNext={handleNext}
@@ -174,7 +187,9 @@ function WizardContent({ onClose, initialPlatform, onSelectSlack }) {
             >
               {skipSyncSettings
                 ? "Your integration is now active."
-                : "Your integration is now active. Traces will begin syncing shortly."}
+                : isExport
+                  ? "Your integration is now active. Request logs export at the sync interval you chose."
+                  : "Your integration is now active. Traces sync at the interval you chose."}
             </Typography>
             <Box display="flex" justifyContent="center" gap={theme.spacing(2)}>
               {createdConnectionId && !skipSyncSettings && (
@@ -185,12 +200,16 @@ function WizardContent({ onClose, initialPlatform, onSelectSlack }) {
                   onClick={() => {
                     onClose();
                     navigate(
-                      paths.dashboard.settings.integrationDetail(
-                        createdConnectionId,
-                      ),
+                      workspaceId
+                        ? paths.dashboard.settings.workspaceIntegrationDetail(
+                            workspaceId,
+                            createdConnectionId,
+                          )
+                        : paths.dashboard.settings.integrationDetail(
+                            createdConnectionId,
+                          ),
                     );
                   }}
-                  sx={{ fontWeight: 500 }}
                 >
                   View Integration
                 </Button>
@@ -201,12 +220,12 @@ function WizardContent({ onClose, initialPlatform, onSelectSlack }) {
                 size="small"
                 onClick={() => {
                   onClose();
-                  if (skipSyncSettings) return; // just close the drawer
+                  // An export has no project to open; just close the drawer.
+                  if (skipSyncSettings || isExport) return;
                   navigate(paths.dashboard.observe);
                 }}
-                sx={{ fontWeight: 500 }}
               >
-                {skipSyncSettings ? "Done" : "Go to Project"}
+                {skipSyncSettings || isExport ? "Done" : "Go to Project"}
               </Button>
             </Box>
           </Box>
@@ -217,6 +236,7 @@ function WizardContent({ onClose, initialPlatform, onSelectSlack }) {
 }
 
 WizardContent.propTypes = {
+  platforms: PropTypes.arrayOf(PropTypes.object).isRequired,
   onClose: PropTypes.func.isRequired,
   initialPlatform: PropTypes.string,
   onSelectSlack: PropTypes.func.isRequired,
@@ -224,14 +244,18 @@ WizardContent.propTypes = {
 
 export default function AddIntegrationWizard({
   open,
+  platforms,
   onClose,
   initialPlatform,
   onSelectSlack,
 }) {
   const theme = useTheme();
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
@@ -239,7 +263,7 @@ export default function AddIntegrationWizard({
       PaperProps={{
         sx: {
           height: "100vh",
-          width: 520,
+          width: 480,
           position: "fixed",
           zIndex: 10,
           boxShadow: theme.customShadows?.drawer || "-10px 0px 100px #00000035",
@@ -256,13 +280,19 @@ export default function AddIntegrationWizard({
         },
       }}
     >
-      <WizardContent onClose={onClose} initialPlatform={initialPlatform} onSelectSlack={onSelectSlack} />
+      <WizardContent
+        platforms={platforms}
+        onClose={onClose}
+        initialPlatform={initialPlatform}
+        onSelectSlack={onSelectSlack}
+      />
     </Drawer>
   );
 }
 
 AddIntegrationWizard.propTypes = {
   open: PropTypes.bool.isRequired,
+  platforms: PropTypes.arrayOf(PropTypes.object).isRequired,
   onClose: PropTypes.func.isRequired,
   initialPlatform: PropTypes.string,
   onSelectSlack: PropTypes.func.isRequired,

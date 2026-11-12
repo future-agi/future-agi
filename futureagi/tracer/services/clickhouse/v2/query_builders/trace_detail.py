@@ -22,6 +22,7 @@ import structlog
 from tracer.services.clickhouse.query_builders.trace_detail import (
     TraceDetail,
     TraceDetailHandler,
+    compute_trace_capture_coverage,
     compute_trace_summary_and_graph,
 )
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
@@ -271,7 +272,12 @@ def retrieve_trace_detail_ch(
             "total_tokens": row.get("total_tokens"),
             "response_time": None,
             "eval_id": None,
-            "cost": row.get("cost"),
+            "cost": (
+                None
+                if span_attrs.get("fi.cost.kind") == "unknown"
+                and span_attrs.get("fi.usage.contribution") != "none"
+                else row.get("cost")
+            ),
             "status": row.get("status"),
             "status_message": row.get("status_message"),
             "tags": _parse_json(row.get("tags"), default=[]),
@@ -541,6 +547,11 @@ def retrieve_trace_detail_ch(
     # CH-only trace (no PG row): synthesize the trace metadata from the root
     # span so the response shape matches the PG serializer.
     if trace_data is None:
+        from tracer.services.trace_tags import read_collector_trace_tags
+
+        trace_tags = read_collector_trace_tags(
+            analytics, trace_id=trace_id, project_id=project_id
+        )
         root_obs = (root_spans[0].get("observation_span") if root_spans else {}) or {}
         session_id = None
         if span_rows:
@@ -557,12 +568,18 @@ def retrieve_trace_detail_ch(
             "error": summary["error_count"] > 0,
             "session": session_id,
             "external_id": None,
-            "tags": root_obs.get("tags") or [],
+            "tags": trace_tags
+            if trace_tags is not None
+            else root_obs.get("tags") or [],
         }
 
-    return {
+    result: TraceDetail = {
         "trace": trace_data,
         "observation_spans": observation_spans_response,
         "summary": summary,
         "graph": graph,
     }
+    capture = compute_trace_capture_coverage(observation_spans_response)
+    if capture is not None:
+        result["capture_coverage"] = capture
+    return result

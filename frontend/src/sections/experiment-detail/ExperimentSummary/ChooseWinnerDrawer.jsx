@@ -21,12 +21,20 @@ import { enqueueSnackbar } from "src/components/snackbar";
 import ChooseWinnerSkeleton from "./ChooseWinnerSkeleton";
 import { trackEvent, Events } from "src/utils/Mixpanel";
 import { weightSliderMarks } from "src/sections/project/ChooseWinner/common";
+import { useExperimentDetail } from "src/api/develop/runs";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import { opsWeightsAvailable, weightsToSend } from "./chooseWinnerOps";
 
-const getDefaultValue = (evalsList, oldData) => {
+// With no saved weights, the dataset's default evals (`Use in new
+// experiments`, in that order) start highest: 8, 7, 6 …; other evals and the
+// ops variables start at 1. Direction comes from the metric definitions.
+export const getDefaultValue = (evalsList, oldData, defaultEvalNames = []) => {
   const obj = { response_time: 1, total_tokens: 1, completion_tokens: 1 };
+  const fresh = !Object.keys(oldData ?? {}).length;
 
   evalsList.forEach(({ name }) => {
-    obj[name] = 1;
+    const rank = defaultEvalNames.indexOf(name);
+    obj[name] = fresh && rank >= 0 ? Math.max(2, 8 - rank) : 1;
   });
   Object.keys(oldData).forEach((key) => {
     if (Object.prototype.hasOwnProperty.call(obj, key)) {
@@ -54,15 +62,20 @@ const sliderRowStyles = (theme) => ({
   marginTop: theme.spacing(2),
 });
 
-const ChooseWinnerDrawerChild = ({ onClose, evalsList, oldData }) => {
+const ChooseWinnerDrawerChild = ({
+  onClose,
+  experimentId,
+  evalsList,
+  oldData,
+  defaultEvalNames,
+  opsAvailable = true,
+}) => {
   const theme = useTheme();
   const { control, handleSubmit } = useForm({
-    defaultValues: getDefaultValue(evalsList, oldData),
+    defaultValues: getDefaultValue(evalsList, oldData, defaultEvalNames),
   });
 
   const queryClient = useQueryClient();
-
-  const { experimentId } = useParams();
 
   // useMemo(() => {
   //   if (oldData) {
@@ -79,7 +92,7 @@ const ChooseWinnerDrawerChild = ({ onClose, evalsList, oldData }) => {
       ),
     onSuccess: (data, variables) => {
       trackEvent(Events.expWinnerSelect, {
-        experiment_name: data?.data?.result?.experimentName,
+        experiment_name: data?.data?.result?.experiment_name,
         experiment_details: variables,
       });
       enqueueSnackbar("Winner chosen successfully", { variant: "success" });
@@ -87,11 +100,17 @@ const ChooseWinnerDrawerChild = ({ onClose, evalsList, oldData }) => {
       queryClient.invalidateQueries({
         queryKey: ["experiment-summary", experimentId],
       });
+      queryClient.invalidateQueries({ queryKey: ["develop", "analysis"] });
     },
   });
 
   return (
-    <form style={{ height: "100%" }} onSubmit={handleSubmit(mutate)}>
+    <form
+      style={{ height: "100%" }}
+      onSubmit={handleSubmit((values) =>
+        mutate(weightsToSend(values, opsAvailable)),
+      )}
+    >
       <Box
         sx={{
           padding: "20px",
@@ -117,15 +136,22 @@ const ChooseWinnerDrawerChild = ({ onClose, evalsList, oldData }) => {
               Winner Settings
             </Typography>
             <IconButton onClick={onClose} size="small">
-              <Iconify icon="mingcute:close-line" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Box>
           <HelperText
             text="Choose the overall importance value of the given variables below to
           determine which experiment performed the best"
           />
+          {defaultEvalNames?.length > 0 && (
+            <Typography typography="s2" color="text.secondary">
+              Weights start from this dataset&apos;s default evals (Use in new
+              experiments). Each eval&apos;s direction is the one the verdict
+              and win rate use.
+            </Typography>
+          )}
         </Stack>
-        <Typography fontWeight={600} fontSize="14px" color="text.primary">
+        <Typography fontWeight={600} fontSize="13px" color="text.primary">
           Variables
         </Typography>
         <Box
@@ -138,37 +164,49 @@ const ChooseWinnerDrawerChild = ({ onClose, evalsList, oldData }) => {
             overflowX: "hidden",
           }}
         >
-          <SliderRow
-            label="Average Response Time"
-            control={control}
-            fieldName={`response_time`}
-            min={0}
-            max={10}
-            step={1}
-            marks={weightSliderMarks}
-            sx={sliderRowStyles(theme)}
-          />
-
-          <SliderRow
-            label="Completion tokens"
-            control={control}
-            fieldName={`completion_tokens`}
-            min={0}
-            max={10}
-            step={1}
-            marks={weightSliderMarks}
-            sx={sliderRowStyles(theme)}
-          />
-          <SliderRow
-            label="Total tokens"
-            control={control}
-            fieldName={`total_tokens`}
-            min={0}
-            max={10}
-            step={1}
-            marks={weightSliderMarks}
-            sx={sliderRowStyles(theme)}
-          />
+          {opsAvailable ? (
+            <>
+              <SliderRow
+                label="Average Response Time"
+                control={control}
+                fieldName={`response_time`}
+                min={0}
+                max={10}
+                step={1}
+                marks={weightSliderMarks}
+                sx={sliderRowStyles(theme)}
+              />
+              <SliderRow
+                label="Completion tokens"
+                control={control}
+                fieldName={`completion_tokens`}
+                min={0}
+                max={10}
+                step={1}
+                marks={weightSliderMarks}
+                sx={sliderRowStyles(theme)}
+              />
+              <SliderRow
+                label="Total tokens"
+                control={control}
+                fieldName={`total_tokens`}
+                min={0}
+                max={10}
+                step={1}
+                marks={weightSliderMarks}
+                sx={sliderRowStyles(theme)}
+              />
+            </>
+          ) : (
+            <Typography
+              typography="s2"
+              color="text.secondary"
+              data-testid="choose-winner-no-ops"
+            >
+              Ranked on evals only: agent, code and harness runs in this
+              experiment record no response time or token counts to weigh.
+            </Typography>
+          )}
           {evalsList.map(({ name }) => (
             <SliderRow
               key={name}
@@ -205,20 +243,36 @@ const ChooseWinnerDrawerChild = ({ onClose, evalsList, oldData }) => {
 
 ChooseWinnerDrawerChild.propTypes = {
   onClose: PropTypes.func,
+  experimentId: PropTypes.string.isRequired,
   evalsList: PropTypes.array,
   oldData: PropTypes.object,
+  defaultEvalNames: PropTypes.arrayOf(PropTypes.string),
+  opsAvailable: PropTypes.bool,
 };
 
-const ChooseWinnerDrawer = ({ open, onClose, evalsList }) => {
-  const { experimentId } = useParams();
+const ChooseWinnerDrawer = ({
+  open,
+  onClose,
+  evalsList,
+  defaultEvalNames,
+  experimentId: parentExperimentId,
+}) => {
+  const { experimentId: routeExperimentId } = useParams();
+  // The individual Summary resolves its parent from dataset metadata; its
+  // route has only individualExperimentId. Use one ID for reads, save and refresh.
+  const experimentId = parentExperimentId ?? routeExperimentId;
   const [isLoading, setIsLoading] = useState(null);
+  const { data: experiment } = useExperimentDetail(experimentId, {
+    enabled: Boolean(open),
+  });
+  const opsAvailable = opsWeightsAvailable(experiment?.runs);
 
   const { data, isFetching } = useQuery({
     queryKey: ["get-choose-winner", experimentId],
     queryFn: () =>
       axios.get(endpoints.develop.experiment.comparison(experimentId)),
     select: (data) => data.data?.result,
-    enabled: open,
+    enabled: Boolean(open && experimentId),
     // staleTime: 1000,
   });
 
@@ -241,19 +295,21 @@ const ChooseWinnerDrawer = ({ open, onClose, evalsList }) => {
     return formattedOldData;
   }, [data]);
 
+  const covered = useDrawerCovered(Boolean(open && oldData));
   return (
     <Drawer
       anchor="right"
-      open={open && oldData}
+      open={Boolean(open && oldData)}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
-          minWidth: "550px",
+          minWidth: "640px",
         },
       }}
       ModalProps={{
@@ -265,11 +321,14 @@ const ChooseWinnerDrawer = ({ open, onClose, evalsList }) => {
       {!isLoading && !isFetching ? (
         <ChooseWinnerDrawerChild
           onClose={onClose}
+          experimentId={experimentId}
           evalsList={evalsList?.filter(
             (item) =>
               !item.name.includes("-reason") && !item.name.includes("_reason"),
           )}
           oldData={oldData}
+          defaultEvalNames={defaultEvalNames}
+          opsAvailable={opsAvailable}
         />
       ) : (
         <ChooseWinnerSkeleton />
@@ -279,9 +338,11 @@ const ChooseWinnerDrawer = ({ open, onClose, evalsList }) => {
 };
 
 ChooseWinnerDrawer.propTypes = {
+  experimentId: PropTypes.string,
   open: PropTypes.bool,
   onClose: PropTypes.func,
   evalsList: PropTypes.array,
+  defaultEvalNames: PropTypes.arrayOf(PropTypes.string),
 };
 
 export default ChooseWinnerDrawer;

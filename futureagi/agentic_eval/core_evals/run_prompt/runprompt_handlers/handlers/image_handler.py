@@ -14,6 +14,11 @@ Features:
 - Retry on timeout with exponential backoff
 """
 
+# Older lint findings in this module (import pruning and ordering, an unused
+# local and typing rewrites) are exempted file-wide, so a change here does not
+# have to rewrite them.
+# ruff: noqa: F401, F841, I001, UP006, UP035
+
 import re
 import time
 from typing import Any, Dict, Optional, Tuple
@@ -22,6 +27,10 @@ import litellm
 import structlog
 
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from model_hub.utils.model_endpoints import (
+    guarded_image_generation,
+    is_endpoint_error,
+)
 from tfc.utils.storage import upload_image_to_s3
 
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
@@ -250,9 +259,19 @@ class ImageHandler(BaseModelHandler):
 
         # Call litellm image_generation
         try:
-            response = litellm.image_generation(**image_params, drop_params=True)
+            # A tenant api_base is called through a guarded client.
+            response = guarded_image_generation(**image_params, drop_params=True)
         except Exception as e:
-            self.logger.exception("Image generation failed", error=str(e))
+            if is_endpoint_error(e):
+                # A tenant endpoint's error: generic already; logged without
+                # text or traceback.
+                self.logger.warning(
+                    "Image generation failed",
+                    error_type=type(e).__name__,
+                    category=getattr(e, "category", None),
+                )
+            else:
+                self.logger.exception("Image generation failed", error=str(e))
             raise
 
         # Validate response is not None
@@ -357,6 +376,7 @@ class ImageHandler(BaseModelHandler):
             },
             "cost": cost_payload,
             "response_time": completion_time,
+            "response_time_unit": "ms",
             "revised_prompt": revised_prompt,
             "size": image_params.get("size"),
             "quality": image_params.get("quality"),

@@ -21,8 +21,10 @@ import { LoadingButton } from "@mui/lab";
 import EvaluationsSelectionGrid from "./EvaluationsSelectionGrid";
 import { useEvalsList, getUserEvalListKey } from "./getEvalsList";
 import SavedEvalsList from "./SavedEvalsList";
+import ApplyEvalGroupButton from "src/sections/common/EvalHandoffs/ApplyEvalGroupDialog";
 import usePendingEvalSelections from "./usePendingEvalSelections";
 import SavedEvalsSkeleton from "./SavedEvalsSkeleton";
+import EmptyState from "src/sections/common/ux/EmptyState";
 import DeleteEval from "./DeleteEval";
 import RunEvals from "./RunEvals";
 import CustomEvalsForm from "./CustomEvalsForm";
@@ -40,9 +42,13 @@ import { useParams } from "react-router";
 import CreateEvaluationGroupDrawer from "./CreateEvaluationGroupDrawer";
 import { useSearchParams } from "react-router-dom";
 import { resetEvalStore } from "src/sections/evals/store/useEvalStore";
+import juryBindingPayload from "src/sections/evals/jury/juryBindingPayload";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import { buildBindingSavePayload } from "src/sections/common/EvalPicker/bindingSavePayload";
 import { useRunEvaluationStore } from "src/sections/develop-detail/states";
+import { useRescore } from "src/sections/common/Runs/useRescore";
 import { useWorkbenchEvaluationContext } from "src/sections/workbench/createPrompt/Evaluation/context/WorkbenchEvaluationContext";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const EvaluationDrawerChild = ({
   onClose,
@@ -54,6 +60,8 @@ const EvaluationDrawerChild = ({
   requiredColumnIds = "",
   onColumnSearchChange,
   columnInventoryControls,
+  allowRescore = true,
+  editDatasetId,
 }) => {
   const theme = useTheme();
   const { experimentId } = useParams();
@@ -74,7 +82,7 @@ const EvaluationDrawerChild = ({
   } = useEvaluationContext();
   const { id } = actionButtonConfig;
   const [openDeleteEval, setOpenDeleteEval] = useState(null);
-  const [selectedEvals, setSelectedEvals] = useState([]);
+  const [selectedEvals] = useState([]);
   const [confirmRunEvaluationsOpen, setConfirmRunEvaluationsOpen] =
     useState(false);
   const [evalPickerOpen, setEvalPickerOpen] = useState(false);
@@ -125,8 +133,29 @@ const EvaluationDrawerChild = ({
             ? { error_localizer_enabled: evalItem.error_localizer }
             : {}),
         },
+        // Keep the persisted JSON separate from the display-only config and
+        // run_config views so an untouched control cannot erase an override.
+        storedBinding: {
+          template_id: tplId,
+          name: evalItem.name,
+          model: evalItem.model,
+          pinned_version_id:
+            evalItem.pinned_version_id ?? evalItem.pinnedVersionId ?? null,
+          error_localizer: evalItem.error_localizer ?? false,
+          config: {
+            ...(evalItem.config || {}),
+            mapping: evalItem.mapping ?? evalItem.config?.mapping ?? {},
+          },
+          ...(evalItem.composite_weight_overrides !== undefined
+            ? {
+                composite_weight_overrides: evalItem.composite_weight_overrides,
+              }
+            : {}),
+        },
+        run_config: evalItem.config?.run_config ?? evalItem.run_config ?? {},
         bindingConfig: evalItem.config?.config || {},
-        mapping: evalItem.mapping || {},
+        params: evalItem.config?.params ?? evalItem.params,
+        mapping: evalItem.mapping ?? evalItem.config?.mapping ?? {},
         outputType: evalItem.output_type,
         // Existing UserEvalMetric id — handleAdd routes via editEval
         // endpoint instead of addEval to avoid duplicate bindings.
@@ -158,7 +187,7 @@ const EvaluationDrawerChild = ({
     }
   }, [visibleSection, setVisibleSection]);
 
-  const { data, isLoading } = useEvalsList(
+  const { data, isLoading, isError, refetch } = useEvalsList(
     id,
     {
       eval_type: "user",
@@ -255,8 +284,44 @@ const EvaluationDrawerChild = ({
     }
   }, [queryClient, module, id, experimentId]);
 
+  // W1-2: on an experiment, Run, Run all and Update score the stored
+  // outputs again as new runs: the one re-score door (a confirm with the
+  // judge's cost, one request carrying every eval, a toast that opens the
+  // new run and the rows that changed).
+  const isExperiment = module === "experiment" && Boolean(experimentId);
+  // The classic host restores the old run/group actions, not W1-2.
+  const rescoreShown = isExperiment && allowRescore;
+  const rescore = useRescore({
+    datasetId: id,
+    onDone: () => {
+      invalidateEvalCaches();
+      refreshGrid?.(null, true);
+    },
+  });
+  const rescoreEvals = (list) =>
+    rescore.request({
+      posts: [
+        {
+          url: endpoints.develop.eval.runEvals(id),
+          body: {
+            user_eval_ids: list.map((e) => e.id),
+            experiment_id: experimentId,
+          },
+        },
+      ],
+      evalNames: list.map((e) => e.name),
+      experimentId,
+      // Nothing is sent before Confirm. For an experiment,
+      // start_evals_process hands the evals to rerun-cells without dry_run,
+      // so a "count" would start a real rerun and never answer a plan.
+      // Update and Add & Run below do the same (edit_and_run_user_eval
+      // ignores dry_run; add-eval refuses it).
+      estimate: false,
+    });
+
   return (
     <>
+      {rescoreShown ? rescore.dialog : null}
       <Box
         display="flex"
         flexDirection="row"
@@ -296,20 +361,33 @@ const EvaluationDrawerChild = ({
                 mb={theme.spacing(1)}
               >
                 <Typography fontSize={16} fontWeight={600}>
-                  All Evaluations
+                  All evaluations
                 </Typography>
                 <IconButton
+                  aria-label="Close evaluations"
                   onClick={onClose}
                   sx={{ p: 0, color: "text.primary" }}
                 >
-                  <Icon icon="mingcute:close-line" />
+                  <Icon icon="solar:close-linear" />
                 </IconButton>
               </Box>
-              {isLoading ? (
+              {isError ? (
+                <Box role="alert">
+                  <EmptyState
+                    title={
+                      data
+                        ? "Could not refresh evaluations"
+                        : "Could not load evaluations"
+                    }
+                    body="The evaluation list is unavailable. Retry to load the current saved evaluations."
+                    actions={[{ label: "Retry", onClick: () => refetch() }]}
+                  />
+                </Box>
+              ) : isLoading ? (
                 <Box
                   border="1px solid"
                   borderColor={theme.palette.divider}
-                  borderRadius={0.5}
+                  borderRadius="4px"
                   p={theme.spacing(1.5)}
                   flexGrow={1}
                   display="flex"
@@ -330,7 +408,7 @@ const EvaluationDrawerChild = ({
                   alignItems="center"
                   sx={{ width: "100%", height: "calc(100% - 50px)" }}
                 >
-                  <Typography fontSize={16} fontWeight="bold">
+                  <Typography fontSize={16} fontWeight="600">
                     No evaluations added
                   </Typography>
                   <Typography
@@ -347,15 +425,13 @@ const EvaluationDrawerChild = ({
                     onClick={() => setVisibleSection("config")}
                     startIcon={
                       <SvgColor
+                        width={16}
                         src="/assets/icons/action_buttons/ic_add.svg"
                         sx={{
-                          width: 16,
-                          height: 16,
                           color: "inherit",
                         }}
                       />
                     }
-                    sx={{ px: theme.spacing(3), fontWeight: 500 }}
                   >
                     Add Evaluations
                   </Button>
@@ -371,6 +447,21 @@ const EvaluationDrawerChild = ({
                     evals={SavedEvals}
                     allColumns={allColumns}
                     onClose={onClose}
+                    headerExtra={
+                      // HO D9: apply an eval group to this dataset / experiment.
+                      module === "dataset" || isExperiment ? (
+                        <ApplyEvalGroupButton
+                          page={isExperiment ? "experiment" : "dataset"}
+                          datasetId={id}
+                          experimentId={experimentId}
+                          savedEvals={SavedEvals ?? []}
+                          onApplied={() => {
+                            invalidateEvalCaches();
+                            refreshGrid?.(null, true);
+                          }}
+                        />
+                      ) : null
+                    }
                     autoSelectRequests={autoSelectRequests}
                     onAutoSelectApplied={acknowledgeAutoSelect}
                     disableDelete={
@@ -413,6 +504,7 @@ const EvaluationDrawerChild = ({
                         );
                       }
                     }}
+                    onRunEvalsClick={rescoreShown ? rescoreEvals : undefined}
                     onRunEvalClick={async (evalItem) => {
                       try {
                         const runEndpoint =
@@ -440,9 +532,16 @@ const EvaluationDrawerChild = ({
                           });
                           return;
                         }
-                        enqueueSnackbar(`${evalItem.name} started`, {
-                          variant: "success",
-                        });
+                        // L7c g7 (dsdrawer:run): an unchanged eval keeps
+                        // its stored results; the server says so.
+                        const said = res?.data?.result;
+                        enqueueSnackbar(
+                          typeof said === "string" &&
+                            said.startsWith("Nothing changed")
+                            ? said
+                            : `${evalItem.name} started`,
+                          { variant: "success" },
+                        );
                         // Immediately refetch so status shows as Running
                         invalidateEvalCaches();
                         refreshGrid?.(null, true);
@@ -456,15 +555,21 @@ const EvaluationDrawerChild = ({
                     }}
                     onStopEvalClick={async (evalItem) => {
                       try {
-                        await axios.post(
+                        const stopped = await axios.post(
                           endpoints.develop.eval.stopEval(id, evalItem.id),
                           module === "experiment" && experimentId
                             ? { experiment_id: experimentId }
                             : {},
                         );
-                        enqueueSnackbar("User evaluation stopped", {
-                          variant: "info",
-                        });
+                        // The server says what it stopped (an experiment's
+                        // re-score finishes when asked: nothing to stop).
+                        const said = stopped?.data?.result;
+                        enqueueSnackbar(
+                          typeof said === "string"
+                            ? said
+                            : said?.message ?? "User evaluation stopped",
+                          { variant: "info" },
+                        );
                         invalidateEvalCaches();
                         refreshGrid?.(null, true);
                       } catch {
@@ -678,43 +783,10 @@ const EvaluationDrawerChild = ({
             };
           } else {
             payload = {
-              name: evalConfig.name,
-              template_id: evalConfig.templateId,
-              model: isComposite ? undefined : evalConfig.model,
-              // In the optimization context the optimizer runs evals itself —
-              // skip the full-dataset run so adding an eval is near-instant.
-              // Dataset adds are also save-only now: the user runs evals
-              // manually from the dataset grid rather than auto-running on
-              // add, which would otherwise queue work the user didn't ask for.
+              // This is the same complete persisted payload the picker
+              // compares with the stored binding before enabling Update.
+              ...buildBindingSavePayload(evalConfig),
               run: module !== "run-optimization" && module !== "dataset",
-              // Mirror the workbench path: surface error_localizer at the top
-              // level so EditAndRunUserEvalView can update eval_metric.error_localizer.
-              error_localizer: runConfig.error_localizer_enabled ?? false,
-              config: {
-                mapping: evalConfig.mapping || {},
-                config: isComposite ? {} : evalConfig.config || {},
-                ...(Object.keys(evalParams).length
-                  ? { params: evalParams }
-                  : {}),
-                ...(Object.keys(runConfig).length
-                  ? { run_config: runConfig }
-                  : {}),
-              },
-              ...(isComposite && evalConfig.compositeWeightOverrides
-                ? {
-                    composite_weight_overrides:
-                      evalConfig.compositeWeightOverrides,
-                  }
-                : {}),
-              ...(isComposite && evalConfig.composite_weight_overrides
-                ? {
-                    composite_weight_overrides:
-                      evalConfig.composite_weight_overrides,
-                  }
-                : {}),
-              ...(evalConfig.versionId
-                ? { pinned_version_id: evalConfig.versionId }
-                : {}),
             };
           }
           // Edit branch: POST directly to /edit_and_run_user_eval/{id} so the
@@ -725,6 +797,9 @@ const EvaluationDrawerChild = ({
           // — same pattern as the rest of the per-eval endpoints.
           // Workbench + task modules keep their own create-or-update routes.
           const effectiveModule = module || "dataset";
+          // hook(F68): retain the selected jury version in the binding contract.
+          if (effectiveModule === "workbench")
+            juryBindingPayload(payload, evalConfig);
           if (
             evalConfig?.userEvalId &&
             (effectiveModule === "dataset" ||
@@ -732,17 +807,51 @@ const EvaluationDrawerChild = ({
               effectiveModule === "experiment")
           ) {
             try {
-              // `id` in this drawer is always the datasetId for dataset /
-              // experiment flows (experiment evals still live under a dataset).
-              await axios.post(
-                endpoints.develop.eval.editEval(id, evalConfig.userEvalId),
-                {
+              // Listing authorizes the parent experiment through its source
+              // dataset; editing validates the metric against its own snapshot.
+              const editUrl = endpoints.develop.eval.editEval(
+                editDatasetId ?? id,
+                evalConfig.userEvalId,
+              );
+              if (rescoreShown && payload.run !== false) {
+                // W1-2: Update saves the definition and scores the stored
+                // outputs again as new runs: the re-score confirm (the
+                // edit's dry run prices it) first; Cancel keeps the editor
+                // open with nothing saved.
+                const out = await rescore.request({
+                  posts: [
+                    {
+                      url: editUrl,
+                      body: { ...payload, experiment_id: experimentId },
+                    },
+                  ],
+                  evalNames: [evalConfig.name],
+                  experimentId,
+                  // The edit ignores dry_run and saves: nothing before Confirm.
+                  estimate: false,
+                  // Nothing to score: Update only saves.
+                  title: (runs, { nothing } = {}) =>
+                    nothing
+                      ? `Update ${evalConfig.name}?`
+                      : `Update ${evalConfig.name} and re-score${
+                          runs.length
+                            ? ` ${runs.length > 2 ? `${runs.length} runs` : runs.map((r) => r.label).join(" and ")}`
+                            : ""
+                        }?`,
+                  confirmLabel: ({ nothing } = {}) =>
+                    nothing ? "Update" : "Update and re-score",
+                });
+                if (out?.cancelled) throw new Error("Update cancelled");
+              } else {
+                // Keep the experiment discriminator as well as the effective
+                // dataset URL; neither tenant nor metric scope is widened.
+                await axios.post(editUrl, {
                   ...payload,
                   ...(effectiveModule === "experiment" && experimentId
                     ? { experiment_id: experimentId }
                     : {}),
-                },
-              );
+                });
+              }
               queryClient.invalidateQueries({
                 queryKey: getUserEvalListKey(module, id),
               });
@@ -781,6 +890,36 @@ const EvaluationDrawerChild = ({
           if (evalConfig?.userEvalId) {
             payload.user_eval_id = evalConfig.userEvalId;
           }
+          // W1-2: Add & Run on an experiment scores the stored outputs in
+          // new runs: the one re-score door (the add's dry run prices the
+          // judge calls; the toast names the new runs). Cancel keeps the
+          // picker open with nothing added.
+          if (rescoreShown && !payload.user_eval_id && payload.run) {
+            const out = await rescore.request({
+              posts: [
+                {
+                  url: endpoints.develop.experiment.addEval(experimentId),
+                  body: payload,
+                },
+              ],
+              evalNames: [evalConfig.name],
+              experimentId,
+              adding: true,
+              // add-eval refuses dry_run: nothing before Confirm.
+              estimate: false,
+              title: (runs) =>
+                `Add ${evalConfig.name} and score ${
+                  runs.length > 2
+                    ? `${runs.length} runs`
+                    : runs.map((r) => r.label).join(" and ") || "the runs"
+                }?`,
+              confirmLabel: "Add and score",
+            });
+            if (out?.cancelled) throw new Error("Add cancelled");
+            setEvalPickerOpen(false);
+            setVisibleSection("list");
+            return;
+          }
           // await so errors propagate to EvalPickerDrawer's handleSaveEval
           // catch block — keeps the drawer open on failure.
           const addedName = payload.name;
@@ -813,6 +952,8 @@ EvaluationDrawerChild.propTypes = {
   requiredColumnIds: PropTypes.string,
   onColumnSearchChange: PropTypes.func,
   columnInventoryControls: PropTypes.node,
+  allowRescore: PropTypes.bool,
+  editDatasetId: PropTypes.string,
 };
 
 const ContextConsumer = ({
@@ -886,6 +1027,8 @@ const EvaluationDrawer = ({
   requiredColumnIds = "",
   onColumnSearchChange,
   columnInventoryControls,
+  allowRescore = true,
+  editDatasetId,
 }) => {
   const { experimentId } = useParams();
   const setVisibleSectionRef = useRef(null);
@@ -1010,6 +1153,7 @@ const EvaluationDrawer = ({
     };
   }, []);
 
+  const covered = useDrawerCovered(open);
   return (
     <EvaluationProvider>
       <EvaluationContext.Consumer>
@@ -1031,11 +1175,23 @@ const EvaluationDrawer = ({
       <Drawer
         anchor="right"
         open={open}
-        variant={type}
+        variant={
+          module === "dataset" || module === "run-optimization"
+            ? "temporary"
+            : type
+        }
+        sx={coveredDrawerSx(covered)}
         onClose={handleClose}
         PaperProps={{
+          role: "dialog",
+          "aria-modal":
+            module === "dataset" ||
+            module === "run-optimization" ||
+            type === "temporary",
+          "aria-label":
+            module === "run-optimization" ? "Optimize dataset" : "Evaluations",
           sx: (theme) => ({
-            width: 650,
+            width: 640,
             maxWidth: "100vw",
             height: "100vh",
             position: "fixed",
@@ -1071,6 +1227,8 @@ const EvaluationDrawer = ({
           requiredColumnIds={requiredColumnIds}
           onColumnSearchChange={onColumnSearchChange}
           columnInventoryControls={columnInventoryControls}
+          allowRescore={allowRescore}
+          editDatasetId={editDatasetId}
         />
         <ConfirmDialog
           open={openConfirmDialog}
@@ -1082,9 +1240,6 @@ const EvaluationDrawer = ({
               variant="contained"
               size="small"
               color="error"
-              sx={{
-                paddingX: 3,
-              }}
               onClick={() => {
                 setOpenConfirmDialog(false);
                 onClose();
@@ -1125,6 +1280,8 @@ EvaluationDrawer.propTypes = {
   requiredColumnIds: PropTypes.string,
   onColumnSearchChange: PropTypes.func,
   columnInventoryControls: PropTypes.node,
+  allowRescore: PropTypes.bool,
+  editDatasetId: PropTypes.string,
 };
 
 export default EvaluationDrawer;

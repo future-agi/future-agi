@@ -15,8 +15,11 @@ import {
   TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES,
 } from "src/api/contracts/filter-contract";
 import {
+  ATTRIBUTE_INVENTORY_SEARCH_DEBOUNCE_MS,
   FILTER_VALUE_PAGE_SIZE,
+  FILTER_VALUE_SEARCH_DEBOUNCE_MS,
   PROPERTY_CATALOG_PAGE_SIZE,
+  PROPERTY_CATALOG_SEARCH_DEBOUNCE_MS,
 } from "src/config/runtime_limits";
 import axios, { endpoints } from "src/utils/axios";
 import TraceFilterPanel, {
@@ -214,7 +217,7 @@ describe("JSON array picker value identity", () => {
         null,
         Number.NaN,
       ]),
-    ).toEqual([true, 1, "1", false, 0, 7, "text"]);
+    ).toEqual([true, 1, "1", false, 0, 7, "  text  "]);
   });
 });
 
@@ -1102,6 +1105,27 @@ const selectQueryPhaseOption = async (typed, nextPlaceholder) => {
     expect(input).toHaveAttribute("placeholder", nextPlaceholder),
   );
   return input;
+};
+
+// Types into a search box and fires every search debounce on fake timers
+// (tests F4): the debounced request is issued exactly when the debounce
+// elapses, never "eventually" on a loaded host. Real timers come back before
+// any findBy/waitFor runs.
+const SEARCH_DEBOUNCE_MS = Math.max(
+  ATTRIBUTE_INVENTORY_SEARCH_DEBOUNCE_MS,
+  FILTER_VALUE_SEARCH_DEBOUNCE_MS,
+  PROPERTY_CATALOG_SEARCH_DEBOUNCE_MS,
+);
+const typeAndSettleSearch = async (input, value) => {
+  vi.useFakeTimers();
+  try {
+    fireEvent.change(input, { target: { value } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
+    });
+  } finally {
+    vi.useRealTimers();
+  }
 };
 
 const scrollQueryOptionsToEnd = async () => {
@@ -5873,11 +5897,12 @@ describe("filter-value picker bounded-read UX", () => {
     document.body.removeChild(anchorEl);
   });
 
-  it("matches a trimmed catalog value to the selected filter value", () => {
+  it("matches only the exact catalog value to the selected filter value", () => {
     dashboardFilterValuesMock.mockReturnValue({
       ...defaultDashboardFilterValues(),
       data: [
         { value: "True ", label: "True", type: "string" },
+        { value: "True", label: "True", type: "string" },
         { value: "False", label: "False", type: "string" },
       ],
     });
@@ -5914,11 +5939,96 @@ describe("filter-value picker bounded-read UX", () => {
     const falseOption = document.querySelector(
       '[data-filter-value-option="False"]',
     );
+    const spacedTrueOption = document.querySelector(
+      '[data-filter-value-option="True "]',
+    );
     expect(trueOption).toHaveAttribute("aria-checked", "true");
+    expect(spacedTrueOption).toHaveAttribute("aria-checked", "false");
     expect(falseOption).toHaveAttribute("aria-checked", "false");
 
     document.body.removeChild(anchorEl);
   });
+
+  it.each(["equals", "in"])(
+    "OBS-SW-58 commits a retained newline verbatim for %s filters",
+    async (operator) => {
+      const onApply = vi.fn();
+      dashboardFilterValuesMock.mockReturnValue({
+        ...defaultDashboardFilterValues(),
+        data: [
+          {
+            value: "Summarize this.\n",
+            label: "Prompt with newline",
+            type: "string",
+          },
+          {
+            value: "Summarize this.",
+            label: "Prompt without newline",
+            type: "string",
+          },
+        ],
+      });
+      const { anchorEl } = renderPanel({
+        source: "traces",
+        properties: [
+          {
+            id: "prompt_text",
+            name: "Prompt text",
+            category: "attribute",
+            type: "string",
+            apiColType: "SPAN_ATTRIBUTE",
+          },
+        ],
+        currentFilters: [
+          {
+            field: "prompt_text",
+            fieldName: "Prompt text",
+            fieldCategory: "attribute",
+            fieldType: "string",
+            apiColType: "SPAN_ATTRIBUTE",
+            operator,
+            value: [],
+          },
+        ],
+        onApply,
+      });
+
+      fireEvent.click(
+        document.querySelector('[data-filter-value-trigger="prompt_text"]'),
+      );
+      const newlineOption = screen
+        .getByText("Prompt with newline")
+        .closest("[data-filter-value-option]");
+      const plainOption = screen
+        .getByText("Prompt without newline")
+        .closest("[data-filter-value-option]");
+      fireEvent.click(newlineOption);
+
+      await waitFor(() =>
+        expect(onApply).toHaveBeenLastCalledWith([
+          expect.objectContaining({
+            field: "prompt_text",
+            // Saved string equality hydrates to canonical list membership.
+            operator: "in",
+            value: ["Summarize this.\n"],
+            valueTypes: ["string"],
+          }),
+        ]),
+      );
+      expect(newlineOption).toHaveAttribute(
+        "data-filter-value-option",
+        "Summarize this.\n",
+      );
+      expect(newlineOption).toHaveAttribute("aria-checked", "true");
+      expect(plainOption).toHaveAttribute(
+        "data-filter-value-option",
+        "Summarize this.",
+      );
+      expect(plainOption).toHaveAttribute("aria-checked", "false");
+
+      document.body.removeChild(anchorEl);
+    },
+  );
 
   it("offers Retry and exact free-text entry only for a real request error", () => {
     const refetch = vi.fn();
@@ -6218,24 +6328,21 @@ describe("filter-value picker bounded-read UX", () => {
       fireEvent.click(
         document.querySelector(`[data-filter-value-trigger="${propertyId}"]`),
       );
-      fireEvent.change(screen.getByPlaceholderText("Search values..."), {
-        target: { value: "needle" },
-      });
+      await typeAndSettleSearch(
+        screen.getByPlaceholderText("Search values..."),
+        "needle",
+      );
 
-      await waitFor(
-        () =>
-          expect(dashboardFilterValuesMock).toHaveBeenCalledWith(
-            expect.objectContaining({
-              propertyId: expectedPropertyId,
-              metricName: expectedMetricName,
-              metricType: "system_metric",
-              pageSize: FILTER_VALUE_PAGE_SIZE,
-              search: "needle",
-              searchGesture: "needle",
-              source,
-            }),
-          ),
-        { timeout: 1_500 },
+      expect(dashboardFilterValuesMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          propertyId: expectedPropertyId,
+          metricName: expectedMetricName,
+          metricType: "system_metric",
+          pageSize: FILTER_VALUE_PAGE_SIZE,
+          search: "needle",
+          searchGesture: "needle",
+          source,
+        }),
       );
       document.body.removeChild(anchorEl);
     },
@@ -6305,23 +6412,20 @@ describe("filter-value picker bounded-read UX", () => {
       fireEvent.click(
         document.querySelector(`[data-filter-value-trigger="${propertyId}"]`),
       );
-      fireEvent.change(screen.getByPlaceholderText("Search values..."), {
-        target: { value: "needle" },
-      });
+      await typeAndSettleSearch(
+        screen.getByPlaceholderText("Search values..."),
+        "needle",
+      );
 
-      await waitFor(
-        () =>
-          expect(dashboardFilterValuesMock).toHaveBeenCalledWith(
-            expect.objectContaining({
-              metricName: propertyId,
-              metricType,
-              pageSize: FILTER_VALUE_PAGE_SIZE,
-              search: "needle",
-              searchGesture: "needle",
-              source: "traces",
-            }),
-          ),
-        { timeout: 1_500 },
+      expect(dashboardFilterValuesMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metricName: propertyId,
+          metricType,
+          pageSize: FILTER_VALUE_PAGE_SIZE,
+          search: "needle",
+          searchGesture: "needle",
+          source: "traces",
+        }),
       );
       document.body.removeChild(anchorEl);
     },
@@ -7092,7 +7196,7 @@ describe("filter-value picker bounded-read UX", () => {
     const mapToken = await screen.findByText(
       'Metadata contains entries {"z":3,"region":"us"}',
     );
-    expect(screen.getByText("Tags equals alpha – beta")).toBeInTheDocument();
+    expect(screen.getByText("Tags equals alpha, beta")).toBeInTheDocument();
 
     fireEvent.click(mapToken);
     const input = screen.getByRole("combobox");

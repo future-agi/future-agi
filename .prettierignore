@@ -5,6 +5,25 @@ deploy/helm/*/templates/
 # helm-ci) fails on any other formatting.
 deploy/helm/futureagi/values.schema.json
 deploy/helm/futureagi/README.md
+# Written by agentcc-gateway/scripts/update-openrouter-catalog.sh (compact, so
+# a catalog refresh diffs only the models that changed).
+agentcc-gateway/internal/catalog/openrouter_snapshot.json
 # Written by scripts/generate-mcp-tools.py; its `--check` (backend-contracts CI)
 # fails on any other formatting.
 futureagi/mcp_server/catalog/tools.generated.json
+# Webhooks conformance vectors and B8 fixtures: byte-exact files written by
+# futureagi/webhooks/core/conformance/tools/vectors.py; its `--check` (and the
+# sha256 manifest other repos vendor against) fails on any other formatting.
+futureagi/webhooks/core/conformance/
+# Written by agentcc-catalog build (CN6) with deterministic bytes that its
+# --check compares; the integrator regenerates it at every wave merge (AM-C20).
+agentcc-gateway/catalog/connectors/dist/
+# Release text: written by release-please and the gated release-notes process; byte-exact, so the
+# pre-commit formatter must never reflow it.
+/CHANGELOG.md
+# Written by e2e/scripts/flow-catalog.mjs; its check compares exact bytes.
+e2e/FLOWS.md
+api_contracts/openapi/swagger.json
+# Generated walk contract data (W01/W02 rows and their source pins): a re-pin
+# must stay line for line, so the pre-commit formatter must never reflow it.
+e2e/walks/contract-rows-*.json

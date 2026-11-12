@@ -15,6 +15,8 @@ import {
 import CustomTooltip from "src/components/tooltip";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import PropTypes from "prop-types";
+import RerunScopeField from "../AddColumn/RerunScopeField";
+import { EDIT_RUN_PROMPT_BODY, withRerunScope } from "../AddColumn/rerunScope";
 import React, {
   useImperativeHandle,
   useEffect,
@@ -46,11 +48,16 @@ import {
 } from "src/api/develop/develop-detail";
 import {
   arrayToLabelValueMap,
+  deletedColumnReferenceIds,
+  deletedColumnReferencesInMessages,
+  deletedColumnTestWarning,
   findInvalidVariables,
   getDefaultReasoningState,
   getOutputFormatForModelType,
+  isDeletedColumnReference,
   MODEL_TYPES,
   replaceVariablesWithFields,
+  stripDeletedColumnReferences,
   transformDefaultData,
   transformParameterType,
 } from "./common";
@@ -67,7 +74,7 @@ import {
 } from "./RunStyle";
 import IncrementerButton from "src/components/IncrementerButton/IncrementerButton";
 import { ConfirmDialog } from "src/components/custom-dialog";
-import { useApiKeysStatus } from "src/api/model/api-keys";
+import { useExecutionEligibilityGate } from "./executionEligibility";
 import SavePromptModal from "./Modals/SavePromptModal";
 import CustomToolModal from "./Modals/CustomToolModal";
 import ImportPrompt from "./Modals/ImportPrompt";
@@ -89,12 +96,15 @@ import { ShowComponent } from "../../../components/show";
 import HelperText from "../Common/HelperText";
 import SvgColor from "src/components/svg-color";
 import PromptTemplateSection from "./Components/PromptTemplateSection";
+import DeletedColumnReferences from "./Components/DeletedColumnReferences";
 import PromptTTSInput from "./Components/PromptTTSInput";
 import PromptSTTInput from "./Components/PromptSTTInput";
 import PromptImageInput from "./Components/PromptImageInput";
 import ChooseModelType from "./Components/ChooseModelType";
 import ModelOptionsState from "../Common/ModelOptionsState";
 import CustomAudioDialog from "../CustomAudioDialog";
+import { rerunResultToast } from "../AddColumn/rerunResult";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const DEFAULT_CONFIG_KEYS = [
   "responseFormat",
@@ -298,6 +308,8 @@ export const RunPromptForm = React.forwardRef(
   ) => {
     const { dataset } = useParams();
     const [testRun, setTestRun] = useState(Boolean);
+    // L5 G4: which rows `Update and Run` re-runs.
+    const [rerunScope, setRerunScope] = useState("all");
     const [, setShowOutput] = useState(Boolean);
     const [selected, setSelected] = useState("firstRows");
     const [rowNum, setRowNum] = useState("1,2,3,4,5");
@@ -369,7 +381,9 @@ export const RunPromptForm = React.forwardRef(
 
     const { refreshGrid } = useDevelopDetailContext();
 
-    const { data: apiKeysStatus } = useApiKeysStatus();
+    // One key (R1-02): create, edit/run and preview start only for a model
+    // that Future AGI credits or the workspace's own provider key can run.
+    const passesExecutionGate = useExecutionEligibilityGate();
 
     const isEditMode = Boolean(editConfigData);
     const [openImportPromptModal, setOpenImportPromptModal] = useState(false);
@@ -446,6 +460,16 @@ export const RunPromptForm = React.forwardRef(
     // Track which model the current modelParameters state belongs to
     const modelParametersModelRef = useRef(watchedModel);
     const watchedTemplateFormat = watch("config.template_format");
+    // Saved references to a deleted column stay as {{<id>}}: shown as chips,
+    // not flagged as unknown variables, and sent back unchanged.
+    const deletedColumnReferences =
+      editConfigData?.deleted_column_references ??
+      editConfigData?.deletedColumnReferences;
+    const deletedColumnIds = deletedColumnReferenceIds(deletedColumnReferences);
+    const shownDeletedColumns = deletedColumnReferencesInMessages(
+      deletedColumnReferences,
+      watchedMessages,
+    );
 
     if (watchedTemplateFormat === "jinja") {
       // Jinja mode: use AST extraction to find real input variables,
@@ -455,7 +479,9 @@ export const RunPromptForm = React.forwardRef(
         .filter((c) => c?.type === "text" && c?.text)
         .map((c) => c.text)
         .join("\n");
-      const jinjaVars = extractJinjaVariables(allText);
+      const jinjaVars = extractJinjaVariables(
+        stripDeletedColumnReferences(allText, deletedColumnIds),
+      );
       const normalize = (s) => (s || "").toLowerCase();
       jinjaVars.forEach((v) => {
         const isValid = allColumns?.some(
@@ -471,7 +497,7 @@ export const RunPromptForm = React.forwardRef(
           content.forEach((part) => {
             if (part.type === "text" && part.text) {
               const invalids = findInvalidVariables(
-                part.text,
+                stripDeletedColumnReferences(part.text, deletedColumnIds),
                 allColumns,
                 jsonSchemas,
                 derivedVariables,
@@ -607,7 +633,8 @@ export const RunPromptForm = React.forwardRef(
     const { data: voiceOptions, isLoading: isLoadingVoiceOptions } =
       useVoiceOptions({
         model: watchedModel,
-        enabled: !!watchedModel,
+        // v2.1 g8: voices are a TTS setting; other models never ask.
+        enabled: !!watchedModel && watchedModelType === MODEL_TYPES.TTS,
       });
 
     const { mutate: createRunPrompt, isPending: isSubmittingPrompt } =
@@ -629,10 +656,9 @@ export const RunPromptForm = React.forwardRef(
       useMutation({
         mutationFn: (data) =>
           axios.post(endpoints.develop.runPrompt.editRunPrompt(), data),
-        onSuccess: () => {
-          enqueueSnackbar("Run Prompt updated successfully", {
-            variant: "success",
-          });
+        onSuccess: (res) => {
+          const toast = rerunResultToast("Run Prompt", res);
+          enqueueSnackbar(toast.text, { variant: toast.variant });
           refreshGrid(null, true);
           resetPreviewData();
           onClose();
@@ -671,18 +697,6 @@ export const RunPromptForm = React.forwardRef(
       }
     };
 
-    // We have put this check here so that user is forced to put api key in case of Sample Dataset where a model is already selected
-    const performExtraCheckForSampleDataset = (submitObject) => {
-      if (submitObject.config.model === "gpt-4o-mini") {
-        if (!apiKeysStatus.find((key) => key.provider === "openai")?.hasKey) {
-          enqueueSnackbar("Please configure OpenAI API key", {
-            variant: "error",
-          });
-          return true;
-        }
-      }
-      return false;
-    };
     const { data: responseSchema } = useQuery({
       queryKey: ["response-schema"],
       queryFn: () => axios.get(endpoints.develop.runPrompt.responseSchema),
@@ -853,7 +867,7 @@ export const RunPromptForm = React.forwardRef(
       ...(modelParams?.responseFormat?.map((item) => item?.value) ?? []),
     ];
 
-    const onSubmit = (data) => {
+    const onSubmit = async (data) => {
       const inValidVariables = [];
 
       const modelType = data?.config?.modelType;
@@ -898,7 +912,12 @@ export const RunPromptForm = React.forwardRef(
 
                   // Extract all variables in the format {{ variable }}
                   const variablePattern = /{{\s*([^{}]+?)\s*}}/g;
-                  const matches = [...updatedText.matchAll(variablePattern)];
+                  const matches = [
+                    ...updatedText.matchAll(variablePattern),
+                  ].filter(
+                    (match) =>
+                      !isDeletedColumnReference(match[1], deletedColumnIds),
+                  );
 
                   const result = replaceVariablesWithFields(
                     updatedText,
@@ -930,7 +949,9 @@ export const RunPromptForm = React.forwardRef(
           .filter((c) => c.type === "text" && c.text)
           .map((c) => c.text)
           .join("\n");
-        const jinjaVars = extractJinjaVariables(allText);
+        const jinjaVars = extractJinjaVariables(
+          stripDeletedColumnReferences(allText, deletedColumnIds),
+        );
         const columnNames = (allColumns || []).map((c) =>
           (c.headerName || "").toLowerCase(),
         );
@@ -980,10 +1001,18 @@ export const RunPromptForm = React.forwardRef(
       }
 
       if (isEditMode) {
-        if (performExtraCheckForSampleDataset(submitObject)) return;
+        if (!(await passesExecutionGate(submitObject))) return;
         // @ts-ignore
-        updateRunPrompt({ column_id: editConfigData?.id, ...submitObject });
+        // L2: dev's edit_run_prompt_column is strict and declares no scope.
+        updateRunPrompt(
+          withRerunScope(
+            { column_id: editConfigData?.id, ...submitObject },
+            rerunScope,
+            EDIT_RUN_PROMPT_BODY,
+          ),
+        );
       } else {
+        if (!(await passesExecutionGate(submitObject))) return;
         // @ts-ignore
         createRunPrompt(submitObject);
         trackEvent(Events.datasetRunpromptRunClicked, {
@@ -1007,7 +1036,7 @@ export const RunPromptForm = React.forwardRef(
       }
     };
 
-    const onSubmitPreview = (data, testData) => {
+    const onSubmitPreview = async (data, testData) => {
       const inValidVariables = [];
 
       const modelType = data?.config?.modelType;
@@ -1106,7 +1135,7 @@ export const RunPromptForm = React.forwardRef(
       if (inValidVariables?.length > 0) {
         return;
       }
-      if (performExtraCheckForSampleDataset(submitObject)) return;
+      if (!(await passesExecutionGate(submitObject))) return;
 
       // @ts-ignore
       previewRunPrompt(submitObject);
@@ -1558,14 +1587,12 @@ export const RunPromptForm = React.forwardRef(
                         <IconButton
                           disabled={!watchedModel || isLoadingModelParams}
                           size="small"
+                          aria-label="Model options"
                           onClick={handleOpenModelParams}
                           sx={{
-                            height: "28px",
                             width: "28px",
-                            borderRadius: 0.25,
                             border: "1px solid",
                             borderColor: "divider",
-                            padding: "3px",
                             flexShrink: 0,
                             color: "text.primary",
                           }}
@@ -1634,7 +1661,7 @@ export const RunPromptForm = React.forwardRef(
                     >
                       <HelperText
                         sx={{
-                          color: "red.500",
+                          color: "status.danger.fg",
                           typography: "s2",
                         }}
                         text="Voice support isn't available for the selected model."
@@ -1710,6 +1737,7 @@ export const RunPromptForm = React.forwardRef(
                     setOpenImportPromptModal={setOpenImportPromptModal}
                   />
                 </ShowComponent>
+                <DeletedColumnReferences references={shownDeletedColumns} />
 
                 <Popover
                   open={Boolean(modelParamsAnchorEl)}
@@ -1801,9 +1829,7 @@ export const RunPromptForm = React.forwardRef(
                   color="primary"
                   variant="contained"
                   sx={{
-                    borderRadius: "8px",
                     minWidth: "128px",
-                    py: "6px",
                     ml: "auto",
                   }}
                 >
@@ -1825,15 +1851,18 @@ export const RunPromptForm = React.forwardRef(
                   alignItems: "center",
                   p: "15px",
                   "& .MuiModal-backdrop": {
-                    backgroundColor: "#00000040",
+                    backgroundColor: "rgba(0,0,0,0.25)",
                   },
                 }}
               >
                 <RunWrapper>
                   <RunHeader>
                     <RunTitle>Run Preview on Custom Rows</RunTitle>
-                    <IconButton onClick={() => setTestRun(false)}>
-                      <Iconify icon="mingcute:close-line" />
+                    <IconButton
+                      aria-label="Close test run"
+                      onClick={() => setTestRun(false)}
+                    >
+                      <Iconify icon="solar:close-linear" />
                     </IconButton>
                   </RunHeader>
                   <RunBody>
@@ -1948,10 +1977,7 @@ export const RunPromptForm = React.forwardRef(
                       fullWidth
                       variant="contained"
                       sx={{
-                        borderRadius: "6px",
                         color: "text.primary",
-                        boxShadow:
-                          "-20px 20px 40px -4px rgba(145, 158, 171, 0.24)",
                         backgroundColor: "action.hover",
                         "&:hover": {
                           backgroundColor: "action.hover",
@@ -1963,6 +1989,15 @@ export const RunPromptForm = React.forwardRef(
                   </RunBtnWrap>
                 </Box>
               </Popover>
+              {isEditMode && (
+                <Box sx={{ px: 2 }}>
+                  <RerunScopeField
+                    definition={EDIT_RUN_PROMPT_BODY}
+                    value={rerunScope}
+                    onChange={setRerunScope}
+                  />
+                </Box>
+              )}
               <Box
                 sx={{
                   display: "flex",
@@ -1977,6 +2012,14 @@ export const RunPromptForm = React.forwardRef(
                     const isFormValid = await validateForm();
                     if (!isFormValid) return false;
                     if (allInvalidVariables.length > 0) return;
+                    // A test run cannot fill a deleted column: name it, send nothing.
+                    if (shownDeletedColumns.length > 0) {
+                      enqueueSnackbar(
+                        deletedColumnTestWarning(shownDeletedColumns),
+                        { variant: "warning" },
+                      );
+                      return;
+                    }
                     setOpenRunPreViewModal(true);
                   }}
                   loading={isPreviewLoading || isLoadingModelParams}
@@ -1985,7 +2028,6 @@ export const RunPromptForm = React.forwardRef(
                   variant="outlined"
                   sx={{
                     color: "text.secondary",
-                    minHeight: (theme) => theme.spacing(38 / 8),
                     "&:hover": {
                       borderColor: "transparent !important",
                     },
@@ -2033,12 +2075,9 @@ export const RunPromptForm = React.forwardRef(
                     isUpdatingPrompt ||
                     isLoadingModelParams
                   }
-                  sx={{
-                    minHeight: (theme) => theme.spacing(38 / 8),
-                  }}
                 >
                   <Typography typography="s1" fontWeight={"fontWeightSemiBold"}>
-                    {isEditMode ? "Update" : "Run"}
+                    {isEditMode ? "Update and Run" : "Apply and Run"}
                   </Typography>
                 </LoadingButton>
               </Box>
@@ -2152,29 +2191,19 @@ export const RunPromptForm = React.forwardRef(
             size="small"
             variant="outlined"
             onClick={handleViewDocs}
-            startIcon={
-              <SvgColor
-                sx={{
-                  height: "16px",
-                  width: "16px",
-                }}
-                src="/assets/icons/ic_paper.svg"
-              />
-            }
-            sx={{
-              px: 1.5,
-            }}
+            startIcon={<SvgColor width={16} src="/assets/icons/ic_paper.svg" />}
           >
             View Docs
           </Button>
           <IconButton
+            aria-label="Close run prompt"
             onClick={onCloseHandler}
             size="small"
             sx={{
               color: "text.primary",
             }}
           >
-            <Iconify icon="akar-icons:cross" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
         <Box
@@ -2289,11 +2318,17 @@ const RunPrompt = () => {
   const runPromptData = runPromptDataRaw?.data?.result?.config;
 
   const transformedModelParamsSliders = modelParams?.sliders?.map((item) => {
-    if (runPromptConfig?.[_.camelCase(item?.label)] !== undefined) {
+    // Saved API keys are snake_case; null is an intentional cleared value.
+    const canonicalValue = runPromptConfig?.[_.snakeCase(item?.label)];
+    const savedValue =
+      canonicalValue !== undefined
+        ? canonicalValue
+        : runPromptConfig?.[_.camelCase(item?.label)];
+    if (savedValue !== undefined) {
       return {
         ...item,
         id: _.camelCase(item?.label),
-        value: runPromptConfig?.[_.camelCase(item?.label)] ?? item?.default,
+        value: savedValue,
       };
     }
     return {
@@ -2368,6 +2403,7 @@ const RunPrompt = () => {
     }
   };
 
+  const covered = useDrawerCovered(Boolean(openRunPrompt));
   return (
     <Drawer
       anchor="right"
@@ -2378,10 +2414,9 @@ const RunPrompt = () => {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           overflow: "visible",
-          // width: "613px",
+          // width: "640px",
         },
       }}
       ModalProps={{
@@ -2391,6 +2426,7 @@ const RunPrompt = () => {
       }}
       sx={{
         zIndex: 1099,
+        ...coveredDrawerSx(covered),
       }}
     >
       {showPromptForm && (

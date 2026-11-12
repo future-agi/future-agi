@@ -1,4 +1,6 @@
 import { Editor } from "@monaco-editor/react";
+import { usePersonalKeyText } from "src/components/personal-key-snippet-context";
+import { NO_RECORDING_CLASS } from "src/sections/omega/code/noRecording";
 import {
   Box,
   FormHelperText,
@@ -12,7 +14,7 @@ import PropTypes from "prop-types";
 import React, { useRef } from "react";
 import { Controller } from "react-hook-form";
 import Iconify from "../iconify";
-import { copyToClipboard } from "src/utils/utils";
+import { copyText } from "src/sections/omega/code/clipboard";
 import { enqueueSnackbar } from "notistack";
 
 export const FormCodeEditor = ({
@@ -29,17 +31,23 @@ export const FormCodeEditor = ({
   theme: customTheme = null,
   ...rest
 }) => {
+  const fill = usePersonalKeyText();
   const muiTheme = useTheme();
   const isDark = muiTheme.palette.mode === "dark";
   const editorTheme = customTheme || (isDark ? "vs-dark" : "vs");
   const editorRef = useRef(null);
-  const handleCopyClick = (data) => {
-    if (data) {
-      copyToClipboard(data);
-      enqueueSnackbar("Copied to clipboard", {
-        variant: "success",
-      });
-    }
+  const copyRoot = useRef(null);
+  const handleCopyClick = async (data) => {
+    if (!data) return;
+    const copied = await copyText(data, copyRoot.current);
+    enqueueSnackbar(
+      copied
+        ? "Copied to clipboard"
+        : "Could not copy. Select and copy the code.",
+      {
+        variant: copied ? "success" : "error",
+      },
+    );
   };
 
   const handleEditorMount = (editor) => {
@@ -72,9 +80,12 @@ export const FormCodeEditor = ({
       render={({ field: { ref, ...restField }, formState: { errors } }) => {
         const errorMessage = _.get(errors, `${fieldName}.message`);
         const isError = !!errorMessage;
+        const displayValue = readOnly ? fill(restField.value) : restField.value;
 
         return (
           <Box
+            className={NO_RECORDING_CLASS}
+            ref={copyRoot}
             sx={{
               position: "relative",
               display: "flex",
@@ -95,7 +106,7 @@ export const FormCodeEditor = ({
                 <Typography
                   position={"relative"}
                   top={-4}
-                  color={"red.500"}
+                  color={"status.danger.fg"}
                 >{`*`}</Typography>
               )}
             </Typography>
@@ -108,7 +119,7 @@ export const FormCodeEditor = ({
                 >
                   <IconButton onClick={handleFormatClick}>
                     <Iconify
-                      icon="material-symbols:format-align-left"
+                      icon="solar:notes-linear"
                       sx={{ color: "text.disabled" }}
                     />
                   </IconButton>
@@ -119,12 +130,12 @@ export const FormCodeEditor = ({
                 title="Copy"
                 arrow
               >
-                <IconButton onClick={() => handleCopyClick(restField.value)}>
+                <IconButton onClick={() => handleCopyClick(displayValue)}>
                   {rest?.copyIcon ? (
                     rest?.copyIcon
                   ) : (
                     <Iconify
-                      icon="basil:copy-outline"
+                      icon="solar:copy-linear"
                       sx={{ color: "text.disabled" }}
                     />
                   )}
@@ -147,9 +158,13 @@ export const FormCodeEditor = ({
                 </Typography>
               )}
 
+              {/* Controlled Monaco updates also emit changes. A read-only
+                  display must never write a filled credential into form state. */}
               <Editor
                 {...restField}
                 {...rest}
+                {...(readOnly ? { onChange: undefined } : {})}
+                value={displayValue}
                 theme={editorTheme}
                 onMount={handleEditorMount}
               />

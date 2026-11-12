@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from functools import wraps
 from inspect import Parameter, iscoroutinefunction, signature
 
@@ -9,15 +10,20 @@ from drf_yasg.inspectors import SwaggerAutoSchema
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers
 from rest_framework.response import Response
+from rest_framework.status import HTTP_200_OK, is_success
 
 from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.success_envelope import classify_view_action
 
 logger = structlog.get_logger(__name__)
 
 DEFAULT_ERROR_STATUS_CODE = "default"
 RUNTIME_REQUEST_VALIDATION_EXTENSION = "x-runtime-request-validation"
 RUNTIME_RESPONSE_VALIDATION_EXTENSION = "x-runtime-response-validation"
+# swagger_auto_schema/validated_request override; see
+# ManagementAPIAutoSchema._with_success_envelope.
+SUCCESS_ENVELOPE_OVERRIDE = "success_envelope"
 
 
 def hide_swagger_schema_for_actions(*action_names):
@@ -48,7 +54,14 @@ def _documented_response_has_schema(response):
 
 
 class ManagementAPIAutoSchema(SwaggerAutoSchema):
-    """Add a common typed error contract to management API operations."""
+    """Add the common typed error contract and the success envelope.
+
+    Every operation gets the default error response. Actions without an
+    explicit 2xx ``responses=`` contract that provably return through
+    ``GeneralMethods.success_response()``/``create_response()`` (see
+    ``tfc.utils.success_envelope``) document ``{status, result}`` around the
+    schema drf-yasg infers, at the status the action really answers.
+    """
 
     def get_operation(self, operation_keys=None):
         if (
@@ -69,8 +82,17 @@ class ManagementAPIAutoSchema(SwaggerAutoSchema):
 
         return operation
 
+    def serializer_to_schema(self, serializer):
+        schema = super().serializer_to_schema(serializer)
+        # Explicit compatibility types remain generated even when an endpoint
+        # replaces its request serializer. They are not alternate request bodies.
+        for retained_class in getattr(serializer, "swagger_retained_serializers", ()):
+            retained = super().serializer_to_schema(retained_class())
+            openapi.resolve_ref(retained, self.components)["x-client-retained"] = True
+        return schema
+
     def get_response_serializers(self):
-        responses = super().get_response_serializers()
+        responses = self._with_success_envelope(super().get_response_serializers())
 
         if not _documented_response_has_schema(
             responses.get(DEFAULT_ERROR_STATUS_CODE)
@@ -81,6 +103,88 @@ class ManagementAPIAutoSchema(SwaggerAutoSchema):
             )
 
         return responses
+
+    def _with_success_envelope(self, responses):
+        """Wrap drf-yasg's inferred 2xx response in the runtime success envelope.
+
+        Only the response drf-yasg *infers* is touched: drf-yasg adds it only
+        when ``responses=`` declares no 2xx status, so an action with an
+        explicit success contract is generated exactly as before. The inferred
+        schema becomes ``result``; nothing is wrapped when drf-yasg inferred no
+        body (for example DELETE's 204). The status comes from the action's
+        source, so ``success_response()`` on a POST is documented as the 200 it
+        answers rather than drf-yasg's guessed 201.
+
+        ``success_envelope`` in ``swagger_auto_schema``/``validated_request``
+        overrides the source analysis: ``False`` keeps the inferred response,
+        ``True`` wraps it at 200 (``success_response``'s default), and a status
+        code or a sequence of status codes wraps it at those statuses.
+        """
+
+        manual = self.overrides.get("responses") or {}
+        if any(_is_success_status_code(code) for code in manual):
+            return responses
+        statuses = self._success_envelope_statuses()
+        if not statuses:
+            return responses
+        inferred = [code for code in responses if _is_success_status_code(code)]
+        if len(inferred) != 1 or not responses[inferred[0]]:
+            return responses
+
+        wrapped = OrderedDict()
+        for code, response in responses.items():
+            if code != inferred[0]:
+                wrapped[code] = response
+                continue
+            for status_code in statuses:
+                wrapped[str(status_code)] = success_envelope_schema(response)
+        return wrapped
+
+    def _success_envelope_statuses(self):
+        override = self.overrides.get(SUCCESS_ENVELOPE_OVERRIDE)
+        if override is None:
+            classification = classify_view_action(self.view, self.method)
+            return classification.statuses if classification.is_envelope else ()
+        if override is False:
+            return ()
+        if override is True:
+            return (HTTP_200_OK,)
+        statuses = (override,) if isinstance(override, int) else tuple(override)
+        if not statuses or not all(
+            isinstance(code, int) and is_success(code) for code in statuses
+        ):
+            raise ValueError(
+                f"{SUCCESS_ENVELOPE_OVERRIDE} must be a bool, a 2xx status code "
+                f"or a sequence of 2xx status codes, not {override!r}."
+            )
+        return tuple(sorted(set(statuses)))
+
+
+def _is_success_status_code(code):
+    code = str(code)
+    return (
+        code != DEFAULT_ERROR_STATUS_CODE and code.isdigit() and is_success(int(code))
+    )
+
+
+def success_envelope_schema(result_schema):
+    """Return ``GeneralMethods.success_response``'s envelope around a schema.
+
+    Mirrors the hand-written ``*ApiResponseSerializer`` contracts
+    (``status = BooleanField(default=True)`` plus a required ``result``) so
+    inferred and declared envelopes look the same to generated clients.
+    """
+
+    return openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=["result"],
+        properties=OrderedDict(
+            status=openapi.Schema(
+                title="Status", type=openapi.TYPE_BOOLEAN, default=True
+            ),
+            result=result_schema,
+        ),
+    )
 
 
 class ExplicitQueryAutoSchema(ManagementAPIAutoSchema):

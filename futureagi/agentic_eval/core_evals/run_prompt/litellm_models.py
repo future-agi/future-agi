@@ -7,8 +7,72 @@ from accounts.models.workspace import Workspace
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 from model_hub.models.api_key import ApiKey
 from model_hub.models.custom_models import CustomAIModel
+from model_hub.utils.model_endpoints import (
+    assert_model_config_endpoints_allowed,
+    whitelist_model_config,
+)
 
 logger = structlog.get_logger(__name__)
+
+
+class MissingProviderKeyError(ValueError):
+    """No key saved under Settings -> AI Providers for a provider."""
+
+    def __init__(self, provider):
+        self.provider = provider
+        super().__init__(missing_provider_key_message(provider))
+
+
+def missing_provider_key_message(provider):
+    """User-facing text naming the key to add; only a known provider id is
+    echoed (a custom model's provider is free text)."""
+    from model_hub.models.choices import LiteLlmModelProvider
+
+    known = {choice.value for choice in LiteLlmModelProvider}
+    name = provider if provider in known else "this model's provider"
+    return f"API key not configured for {name}. Please add your API key in settings."
+
+
+class StoredCredentialLookup:
+    """Where the stored-credential (BYOK) resolution ended: the credential
+    (``found``) or the provider and workspace it looked under. Its repr
+    never shows the credential."""
+
+    __slots__ = ("found", "value", "provider", "workspace_id")
+
+    def __init__(self, found, value, provider, workspace_id):
+        self.found = found
+        self.value = value
+        self.provider = provider
+        self.workspace_id = workspace_id
+
+    def __repr__(self):
+        return (
+            f"StoredCredentialLookup(found={self.found!r}, provider={self.provider!r})"
+        )
+
+
+class StoredCredentialIndex:
+    """For which models ``stored_credential_lookup`` would find a stored
+    credential, so that availability labels match what the runtime does:
+    the organization's custom model names, and the providers whose chosen
+    ApiKey row (the workspace's row, else the organization row without a
+    workspace) has a key or a config. Holds no credential."""
+
+    __slots__ = ("custom_model_names", "providers")
+
+    def __init__(self, custom_model_names, providers):
+        self.custom_model_names = frozenset(custom_model_names)
+        self.providers = frozenset(providers)
+
+    def covers(self, model_name, provider):
+        return model_name in self.custom_model_names or provider in self.providers
+
+    def __repr__(self):
+        return (
+            f"StoredCredentialIndex(custom_models={len(self.custom_model_names)}, "
+            f"providers={sorted(self.providers)!r})"
+        )
 
 
 class LiteLLMModelManager:
@@ -145,20 +209,95 @@ class LiteLLMModelManager:
 
         os.environ[api_key_name] = api_key
 
-    def get_api_key(self, organization_id, workspace_id=None, provider=None):
+    def get_api_key(
+        self,
+        organization_id,
+        workspace_id=None,
+        provider=None,
+        *,
+        allow_managed=False,
+        operation=None,
+    ):
+        """The stored credentials for a provider call. A stored openai,
+        azure, bedrock or sagemaker config is cut down to the keys that
+        provider needs (``whitelist_model_config``), and a stored base URL
+        (openai/azure ``api_base``, a custom model's endpoint) is checked
+        against the deployment's address policy, on every call, so rows saved
+        before the save-time checks are covered too; EndpointBlocked (a
+        ValueError with generic text) when it is refused.
 
+        One key: a caller that can carry a managed route passes
+        ``allow_managed=True``. When no stored credential exists it then gets
+        a ``ManagedRouteBinding`` from ``model_hub.services.model_route`` (or
+        that module's typed refusal), never a provider key and never None.
+        The binding admits nothing: each completion dispatched with it is
+        admitted on its own, at the send. A stored credential always wins
+        and is returned exactly as before; without ``allow_managed`` nothing
+        changes."""
+        lookup = self.stored_credential_lookup(organization_id, workspace_id, provider)
+        if lookup.found:
+            return lookup.value
+        if not allow_managed:
+            raise MissingProviderKeyError(lookup.provider)
+
+        from model_hub.services.model_route import OP_RUN_PROMPT, bind_managed_route
+
+        return bind_managed_route(
+            organization_id=organization_id,
+            workspace_id=lookup.workspace_id,
+            model_name=self.model_name,
+            provider=lookup.provider,
+            operation=operation or OP_RUN_PROMPT,
+            model_mode=self.model_mode(),
+        )
+
+    def stored_credential_lookup(
+        self, organization_id, workspace_id=None, provider=None
+    ):
+        """The stored-credential resolution of ``get_api_key``, unchanged:
+        the organization's custom model, else the provider's workspace key,
+        else its organization key. ``found`` is False where ``get_api_key``
+        used to raise "API key not configured"."""
         try:
             custom_models = CustomAIModel.objects.get(
                 organization=organization_id,
                 user_model_id=self.model_name,
                 deleted=False,
             )
-            return custom_models.actual_json
+            key_config = whitelist_model_config(
+                custom_models.provider, custom_models.actual_json
+            )
+            assert_model_config_endpoints_allowed(key_config)
+            return StoredCredentialLookup(
+                True, key_config, custom_models.provider, workspace_id
+            )
         except CustomAIModel.DoesNotExist:
             pass
         if not provider:
             provider = self.get_provider(self.model_name)
 
+        return self._stored_provider_credential_lookup(
+            organization_id, provider, workspace_id
+        )
+
+    def get_provider_api_key(self, organization_id, provider, workspace_id=None):
+        """The key saved under Settings -> AI Providers for ``provider``.
+
+        Unlike get_api_key this never consults custom models, so a model with
+        its own transport (Jev's System One API) can't pick up a custom model's
+        credentials by name.
+        """
+        lookup = self._stored_provider_credential_lookup(
+            organization_id, provider, workspace_id
+        )
+        if not lookup.found:
+            raise MissingProviderKeyError(provider)
+        return lookup.value
+
+    def _stored_provider_credential_lookup(
+        self, organization_id, provider, workspace_id=None
+    ):
+        """Provider-only stored lookup shared by routing and the BYOK accessor."""
         if not workspace_id:
             workspace_id = self._resolve_default_workspace_id(organization_id)
 
@@ -166,19 +305,52 @@ class LiteLLMModelManager:
             organization_id, workspace_id, provider
         )
         if api_key_entry is None:
-            raise ValueError(
-                f"API key not configured for {provider}. Please add your API key in settings."
-            )
+            return StoredCredentialLookup(False, None, provider, workspace_id)
 
         if api_key_entry.key:
-            return api_key_entry.actual_key
+            return StoredCredentialLookup(
+                True, api_key_entry.actual_key, provider, workspace_id
+            )
 
         if api_key_entry.actual_json:
-            return api_key_entry.actual_json
+            config_json = whitelist_model_config(provider, api_key_entry.actual_json)
+            assert_model_config_endpoints_allowed(config_json)
+            return StoredCredentialLookup(True, config_json, provider, workspace_id)
 
-        raise ValueError(
-            f"API key not configured for {provider}. Please add your API key in settings."
+        return StoredCredentialLookup(False, None, provider, workspace_id)
+
+    def stored_credential_index(self, organization_id, workspace_id=None):
+        """``stored_credential_lookup``'s answer for many models at once, for
+        model lists: the same custom-model match, the same ApiKey row choice
+        (``_find_api_key_entry``, after the same default-workspace
+        resolution) and the same non-empty test (``key``, else
+        ``actual_json``). Values are only tested, never returned."""
+        if not organization_id:
+            return StoredCredentialIndex((), ())
+        custom_model_names = CustomAIModel.objects.filter(
+            organization=organization_id, deleted=False
+        ).values_list("user_model_id", flat=True)
+        if not workspace_id:
+            workspace_id = self._resolve_default_workspace_id(organization_id)
+        candidates = set(
+            ApiKey.objects.filter(organization_id=organization_id).values_list(
+                "provider", flat=True
+            )
         )
+        providers = set()
+        for provider in candidates:
+            entry = self._find_api_key_entry(organization_id, workspace_id, provider)
+            if entry is not None and (entry.key or entry.actual_json):
+                providers.add(provider)
+        return StoredCredentialIndex(custom_model_names, providers)
+
+    def model_mode(self, model_name=None):
+        """The catalog mode ("chat", "tts", ...) of a model, or None."""
+        name = self.model_name if model_name is None else model_name
+        for model in self.models:
+            if model.get("model_name") == name:
+                return model.get("mode")
+        return None
 
     def _resolve_default_workspace_id(self, organization_id):
         try:

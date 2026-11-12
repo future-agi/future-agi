@@ -293,7 +293,9 @@ class ExperimentWorkflowResponseSerializer(serializers.Serializer):
 
 class ExperimentStopWorkflowsCancelledSerializer(serializers.Serializer):
     main = serializers.BooleanField()
-    reruns = serializers.BooleanField()
+    reruns = serializers.IntegerField(
+        help_text="Number of rerun workflows this stop cancelled."
+    )
 
 
 class ExperimentStopResultSerializer(serializers.Serializer):

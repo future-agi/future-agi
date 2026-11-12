@@ -1,0 +1,321 @@
+{
+  "schema_version": 1,
+  "usage": "Provider identification as already used in the product. Trademarks remain with their owners.",
+  "assets": [
+    {
+      "providers": ["DEEPGRAM"],
+      "path": "/assets/provider-logos/deepgram.svg",
+      "original_url": "https://fi-content-dev.s3.ap-south-1.amazonaws.com/provider-logos/deepgram-small.png",
+      "sha256": "df235184321867637131a2cd24d7f887cc94d45630389132a3198e071659b76e",
+      "kind": "locked-dependency",
+      "source": "@iconify/json@2.2.548/json/simple-icons.json#deepgram",
+      "license": {
+        "title": "CC0 1.0",
+        "spdx": "CC0-1.0",
+        "url": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md"
+      }
+    },
+    {
+      "providers": ["ELEVENLABS"],
+      "path": "/assets/provider-logos/elevenlabs.svg",
+      "original_url": "https://fi-content-dev.s3.ap-south-1.amazonaws.com/provider-logos/elevenlabs-small.png",
+      "sha256": "b4ac02fdda0e781196f7b792d99f34040b3facfd438b311e10cc04b1c7fefd7d",
+      "kind": "repository",
+      "source": "frontend/src/assets/brand-logos/elevenlabs.svg"
+    },
+    {
+      "providers": ["CEREBRAS"],
+      "path": "/assets/provider-logos/Cerebras.jpg",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/Cerebras.jpg",
+      "sha256": "a5965b4035a6585f7b53c66904e308486449313eb92a2a0fa505f01a1297689d",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/Cerebras.jpg"
+    },
+    {
+      "providers": ["NLP_CLOUD"],
+      "path": "/assets/provider-logos/nlp-cloud.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/NLP+Cloud.png",
+      "sha256": "1a0e8154fe07f322466efe3090a5b160bef081248a54b12ce40e2ca1477e7533",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/NLP+Cloud.png"
+    },
+    {
+      "providers": ["SAGEMAKER"],
+      "path": "/assets/provider-logos/Sagemaker.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/Sagemaker.png",
+      "sha256": "2a19a4c10be26dda483b3d5a659e286524eff5d14b12b477f5feeb74b226eb7f",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/Sagemaker.png"
+    },
+    {
+      "providers": ["VOYAGE"],
+      "path": "/assets/provider-logos/voyage-ai.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/Voyage+ai.png",
+      "sha256": "58344e906e3061d4d9c683ee1b3a20e7f8ae7d1eb85c2432f324bf1d926b6eb3",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/Voyage+ai.png"
+    },
+    {
+      "providers": ["AI21"],
+      "path": "/assets/provider-logos/ai21-small.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/ai21-small.png",
+      "sha256": "d2afeb80370a4d93c65654aa118afe9fa9ca773a223c0cace6bb2f1368411fe6",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/ai21-small.png"
+    },
+    {
+      "providers": ["ALEPH_ALPHA"],
+      "path": "/assets/provider-logos/aleph-alpha-small.jpeg",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/aleph-alpha-small.jpeg",
+      "sha256": "4ac24278712545ae559985162759ecd37915f5edfe8d9cb802d313f0b6860b8a",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/aleph-alpha-small.jpeg"
+    },
+    {
+      "providers": ["ANYSCALE"],
+      "path": "/assets/provider-logos/anyscale-small.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/anyscale-small.png",
+      "sha256": "fa51d46b6a614b58ee44c4b5986decf04d18980cbba0489a05470bd71e3a0b3e",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/anyscale-small.png"
+    },
+    {
+      "providers": ["AZURE", "AZURE_AI"],
+      "path": "/icons/settings/azure.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/azure-icon.png",
+      "sha256": "f9d6553f385ba155d56adf3fc0e83311b1c5ec146823a94c625bab673ee4e1b8",
+      "kind": "repository",
+      "source": "frontend/public/icons/settings/azure.png"
+    },
+    {
+      "providers": ["BEDROCK"],
+      "path": "/assets/provider-logos/bedrock-small.svg",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/bedrock-small.svg",
+      "sha256": "91770aff640be44e29d34a446f59e6f9c1d26196e162aa0743f2ae4f609b5410",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/bedrock-small.svg"
+    },
+    {
+      "providers": ["CARTESIA"],
+      "path": "/assets/provider-logos/cartesia-small.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/cartesia-small.png",
+      "sha256": "3357bcaf77f3052d18e902bf2992e9da8a7cd21256ec28c97682d303b4d70e51",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/cartesia-small.png"
+    },
+    {
+      "providers": ["ANTHROPIC"],
+      "path": "/icons/settings/anthropic.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/claude-ai-icon.png",
+      "sha256": "f882009c3a91a8a98a6f5461d702a07b104531aced090bfbec712b5361605190",
+      "kind": "repository",
+      "source": "frontend/public/icons/settings/anthropic.png"
+    },
+    {
+      "providers": ["CLOUDFLARE"],
+      "path": "/assets/provider-logos/cloudflare-icon.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/cloudflare-icon.png",
+      "sha256": "b3be4801840e0eddc288ad5f408acd45802de408c4af6f65d63d05e028b58b24",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/cloudflare-icon.png"
+    },
+    {
+      "providers": ["COHERE", "COHERE_CHAT"],
+      "path": "/icons/settings/cohere.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/cohere-small.png",
+      "sha256": "2e0d2c5cd103fc347b0d288a56da8cc3867f9d65f2dd97b9447b79106e609136",
+      "kind": "repository",
+      "source": "frontend/public/icons/settings/cohere.png"
+    },
+    {
+      "providers": ["DATABRICKS"],
+      "path": "/assets/provider-logos/databricks-small.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/databricks-small.png",
+      "sha256": "40ead4dede3358138d1f64bb77a7944d9f353d62604ef5ebadb943d1e57f1d1f",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/databricks-small.png"
+    },
+    {
+      "providers": ["DEEPSEEK"],
+      "path": "/assets/provider-logos/deep-seek-small.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/deep-seek-small.png",
+      "sha256": "f5e2376724b3c6988103810442f7ce8bcf249e7547ea6077235c65919c3574c2",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/deep-seek-small.png"
+    },
+    {
+      "providers": ["DEEPINFRA"],
+      "path": "/assets/provider-logos/deepinfram-small.jpeg",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/deepinfram-small.jpeg",
+      "sha256": "81c48a0374b6686c0bccb7d0925784d3dbdec7ef79da19c8a5461277593166d7",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/deepinfram-small.jpeg"
+    },
+    {
+      "providers": ["FIREWORKS_AI", "FIREWORKS_AI_EMBEDDING_MODELS"],
+      "path": "/assets/provider-logos/fireworks-small.jpeg",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/fireworks-small.jpeg",
+      "sha256": "8a234fe1b19af1910c35163c21d2350506f73cae8de6279f336a8dd04ed5ddc9",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/fireworks-small.jpeg"
+    },
+    {
+      "providers": ["FRIENDLIAI"],
+      "path": "/assets/provider-logos/friendliai-small.jpeg",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/friendliai-small.jpeg",
+      "sha256": "4d92441703bad4386d5081083f8b2efa9ccbeac90cca15490b6b2b65d812c979",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/friendliai-small.jpeg"
+    },
+    {
+      "providers": ["GEMINI"],
+      "path": "/icons/settings/google.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/google-gemini-icon.png",
+      "sha256": "f023eedb3f0850fa013c11a006b930b922e406aefd1ad3e19bcdfada418043d8",
+      "kind": "repository",
+      "source": "frontend/public/icons/settings/google.png"
+    },
+    {
+      "providers": ["GROQ"],
+      "path": "/icons/settings/groq.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/groq-small.png",
+      "sha256": "4c93294365c71343a928ae2ff34880b4695d2e844e6eba2dfd8bee90539c9afc",
+      "kind": "repository",
+      "source": "frontend/public/icons/settings/groq.png"
+    },
+    {
+      "providers": ["HUGGINGFACE"],
+      "path": "/icons/settings/huggingface.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/hugginface.png",
+      "sha256": "51e5527f79faf2941d8ddf774666d681aaa5b1b707cc2aab717909f43cc13ff6",
+      "kind": "repository",
+      "source": "frontend/public/icons/settings/huggingface.png"
+    },
+    {
+      "providers": ["HUME"],
+      "path": "/assets/provider-logos/hume-small.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/hume-small.png",
+      "sha256": "10569b2b8d0ff317690b97352337020cec3495eb44612b0ea349229d8e25dfb5",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/hume-small.png"
+    },
+    {
+      "providers": ["INWORLD"],
+      "path": "/assets/provider-logos/inworld-small.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/inworld-small.png",
+      "sha256": "20fad3ec9215aae48fb93616f74daa29d4a73b163a609ee33918bc45d2aee509",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/inworld-small.png"
+    },
+    {
+      "providers": ["LMNT"],
+      "path": "/assets/provider-logos/lmnt-small.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/lmnt-small.png",
+      "sha256": "aa1d925858148d1679d2f12c22e7bd0a3fea35c7e9b118c8edbb71a3243b950f",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/lmnt-small.png"
+    },
+    {
+      "providers": ["TEXT_COMPLETION_CODESTRAL", "MISTRAL", "CODESTRAL"],
+      "path": "/icons/settings/mistral.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/mistral-ai-icon.png",
+      "sha256": "2105d9a002c3a937a7d66919dd54337a73bfe64484acfc740c35f28c14e436c9",
+      "kind": "repository",
+      "source": "frontend/public/icons/settings/mistral.png"
+    },
+    {
+      "providers": ["NEUPHONIC"],
+      "path": "/assets/provider-logos/neuphonic-small.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/neuphonic-small.png",
+      "sha256": "71ff76b8a780500212372bfdd290aceb12a7706d316632595d099e63141789e4",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/neuphonic-small.png"
+    },
+    {
+      "providers": ["OLLAMA"],
+      "path": "/assets/provider-logos/ollama.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/ollama.png",
+      "sha256": "5c5528504c307d34af504f39bc4e7007d2f6f31ee00dab699cc91584d1af8aca",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/ollama.png"
+    },
+    {
+      "providers": ["OPENAI", "TEXT_COMPLETION_OPENAI"],
+      "path": "/icons/settings/openai.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png",
+      "sha256": "dae332cffba30720a1ba4c5ed6a0568214f11aab84daf1aabdcc06dfaedc099b",
+      "kind": "repository",
+      "source": "frontend/public/icons/settings/openai.png"
+    },
+    {
+      "providers": ["OPENROUTER"],
+      "path": "/assets/provider-logos/openrouter.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openrouter.png",
+      "sha256": "27440b6e4885fa09378e8587d1cf134a1654aaa477a1bef62c75ebfe9ab1656c",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openrouter.png"
+    },
+    {
+      "providers": ["PALM"],
+      "path": "/assets/provider-logos/palm.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/palm.png",
+      "sha256": "2637e6b580c17a21f5b066f26e607173b98dd6940fc981e489cd98b495d1e5e4",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/palm.png"
+    },
+    {
+      "providers": ["PERPLEXITY"],
+      "path": "/icons/settings/perplexity.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/perplexity-ai-icon.png",
+      "sha256": "26e1aeafd895ef01649f758ec399ee00a46cb8aac9dcef5d53d0f28f02d60b09",
+      "kind": "repository",
+      "source": "frontend/public/icons/settings/perplexity.png"
+    },
+    {
+      "providers": ["REPLICATE"],
+      "path": "/assets/provider-logos/replicate-small.svg",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/replicate-small.svg",
+      "sha256": "ff02158db5bc4a693d7f690c36cd7d547b8ca3313accba0783b2d3af28dae1e6",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/replicate-small.svg"
+    },
+    {
+      "providers": ["RIME"],
+      "path": "/assets/provider-logos/rime-small.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/rime-small.png",
+      "sha256": "4236bcaa166908b91c0b6988d1ba99e792561a7f8f68e665405ce2e318741cfe",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/rime-small.png"
+    },
+    {
+      "providers": ["TOGETHER_AI"],
+      "path": "/icons/settings/together_ai.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/together-small.png",
+      "sha256": "eac2889162652d08be4a15c24cc109e7ceacb26e0bd1bb72192d3ea4f0c5527e",
+      "kind": "repository",
+      "source": "frontend/public/icons/settings/together_ai.png"
+    },
+    {
+      "providers": [
+        "VERTEX_AI",
+        "VERTEX_AI_EMBEDDING_MODELS",
+        "VERTEX_AI_ANTHROPIC_MODELS",
+        "VERTEX_AI_MISTRAL_MODELS",
+        "VERTEX_AI_TEXT_MODELS",
+        "VERTEX_AI_IMAGE_MODELS",
+        "VERTEX_AI_CODE_TEXT_MODELS",
+        "VERTEX_AI_LLAMA_MODELS",
+        "VERTEX_AI_LANGUAGE_MODELS",
+        "VERTEX_AI_VISION_MODELS",
+        "VERTEX_AI_AI21_MODELS",
+        "VERTEX_AI_CHAT_MODELS",
+        "VERTEX_AI_CODE_CHAT_MODELS"
+      ],
+      "path": "/assets/provider-logos/vertex-ai.png",
+      "original_url": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png",
+      "sha256": "f68f066dfaf9e87dceb1399e5cae2852b2b0ec3410d83c011f608080123f076b",
+      "kind": "exact-original-object",
+      "source": "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/vertex+ai.png"
+    }
+  ]
+}

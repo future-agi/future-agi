@@ -106,9 +106,33 @@ func TestWriteErrorFromError(t *testing.T) {
 
 	t.Run("generic error", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		WriteErrorFromError(w, json.Unmarshal([]byte("invalid"), nil))
+		WriteErrorFromError(w, json.Unmarshal([]byte("invalid"), new(any)))
 		if w.Code != http.StatusInternalServerError {
 			t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
 		}
 	})
+}
+
+// An UpstreamStatus the gateway keeps internal (an adapter's, or its own
+// synthetic 502) is never sent to the client; only a decision vendor's
+// answer shows it, with the vendor's Retry-After.
+func TestWriteErrorUpstreamStatusOnlyWhenVisible(t *testing.T) {
+	w := httptest.NewRecorder()
+	WriteError(w, &APIError{Status: http.StatusBadGateway, Type: ErrTypeUpstream, Code: "upstream_error", Message: "m", UpstreamStatus: http.StatusServiceUnavailable})
+	if got := w.Header().Get("x-agentcc-upstream-status"); got != "" {
+		t.Fatalf("an internal upstream status reached the client: %q", got)
+	}
+
+	w = httptest.NewRecorder()
+	WriteError(w, DecisionUpstreamError("V", http.StatusServiceUnavailable, http.Header{"Retry-After": {"3"}}, ""))
+	if w.Header().Get("x-agentcc-upstream-status") != "503" || w.Header().Get("Retry-After") != "3" {
+		t.Fatalf("decision vendor headers = %v", w.Header())
+	}
+
+	// The gateway's own Retry-After wins over an upstream's.
+	w = httptest.NewRecorder()
+	WriteError(w, &APIError{Status: http.StatusServiceUnavailable, Type: ErrTypeUpstream, Code: "c", Message: "m", RetryAfterSec: 30, RetryAfter: "3"})
+	if got := w.Header().Get("Retry-After"); got != "30" {
+		t.Fatalf("Retry-After = %q, want the gateway's 30", got)
+	}
 }

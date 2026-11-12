@@ -11,6 +11,10 @@ from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
+from simulate.services.github_app_tenancy import (
+    PRIVATE_GITHUB_UNAVAILABLE_MESSAGE,
+    platform_github_app_refused,
+)
 from simulate.services.harness_credentials import agent_version_secret_ref
 from tfc.utils.serializer_fields import JsonValueField
 
@@ -124,6 +128,15 @@ class HarnessSourceSerializer(serializers.Serializer):
             if not attrs.get("repository"):
                 raise serializers.ValidationError(
                     {"repository": "required for github sources"}
+                )
+            # Nothing yet ties an installation to the organization naming it, so
+            # where the platform App serves several organizations no source is
+            # reached through one; a private one would need one, so it is told too.
+            if (
+                attrs.get("installation_id") or attrs["visibility"] == "private"
+            ) and platform_github_app_refused():
+                raise serializers.ValidationError(
+                    {"installation_id": PRIVATE_GITHUB_UNAVAILABLE_MESSAGE}
                 )
             if attrs["visibility"] == "private" and not attrs.get("installation_id"):
                 raise serializers.ValidationError(
@@ -714,8 +727,6 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             )
             metadata["parallelism_warnings"] = warnings
         attrs["metadata"] = metadata
-
-
 
 
 LIVEKIT_ALIASES = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")

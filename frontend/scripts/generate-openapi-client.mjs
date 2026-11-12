@@ -8,6 +8,9 @@ import { fileURLToPath } from "node:url";
 import { generate } from "orval";
 import prettier from "prettier";
 
+import { buildManagementApiSwagger } from "./openapi-client-schema.mjs";
+import { normalizeExperimentEntrySchema } from "./experiment-entry-contract.mjs";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(frontendRoot, "..");
@@ -28,82 +31,65 @@ const mutatorPath = path.join(
   "openapi-mutator.js",
 );
 
-const HTTP_METHODS = new Set([
-  "get",
-  "put",
-  "post",
-  "delete",
-  "options",
-  "head",
-  "patch",
-  "trace",
-]);
-
-function collectDefinitionRefs(obj, refs = new Set()) {
-  if (!obj || typeof obj !== "object") return refs;
-  if (Array.isArray(obj)) {
-    obj.forEach((item) => collectDefinitionRefs(item, refs));
-    return refs;
+// Swagger 2 needs vendor extensions for nullability and discriminated unions.
+// Orval understands the equivalent OpenAPI 3 keywords, but drops x-nullable.
+// Normalize the host-status wire contract before generation rather than patching
+// generated TS/Zod. Keep existing endpoint generation/legacy rewrites unchanged.
+function normalizeHostStatusSchema(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(normalizeHostStatusSchema);
+  let result = Object.fromEntries(
+    Object.entries(schema).map(([key, value]) => [
+      key,
+      normalizeHostStatusSchema(value),
+    ]),
+  );
+  // The legacy alternative exposes additive properties for Swagger tooling,
+  // but maxProperties == required.length forbids every optional property.
+  // Orval drops maxProperties, so express that same closed branch structurally
+  // before generation. Otherwise a partial restore group matches the legacy
+  // branch and is silently accepted (or stripped) by the generated parser.
+  if (
+    result.type === "object" &&
+    result.additionalProperties === false &&
+    Array.isArray(result.required) &&
+    result.maxProperties === result.required.length
+  ) {
+    result.properties = Object.fromEntries(
+      Object.entries(result.properties || {}).filter(([key]) =>
+        result.required.includes(key),
+      ),
+    );
   }
-  if (typeof obj.$ref === "string" && obj.$ref.startsWith("#/definitions/")) {
-    refs.add(obj.$ref);
+  const nullable = result["x-nullable"] === true;
+  delete result["x-nullable"];
+  if (result["x-oneOf"]) {
+    result = { description: result.description, oneOf: result["x-oneOf"] };
+  } else if (result["x-anyOf"]) {
+    result = { description: result.description, anyOf: result["x-anyOf"] };
   }
-  Object.values(obj).forEach((value) => collectDefinitionRefs(value, refs));
-  return refs;
+  return nullable ? { anyOf: [result, { type: "null" }] } : result;
 }
 
-function resolveTransitiveDefinitions(allDefinitions, refs) {
-  const allRefs = new Set(refs);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const ref of [...allRefs]) {
-      const name = ref.replace("#/definitions/", "");
-      const definition = allDefinitions[name];
-      if (!definition) continue;
-      const nestedRefs = collectDefinitionRefs(definition);
-      for (const nestedRef of nestedRefs) {
-        if (!allRefs.has(nestedRef)) {
-          allRefs.add(nestedRef);
-          changed = true;
-        }
-      }
-    }
-  }
-  return allRefs;
-}
-
-function buildManagementApiSwagger(swagger) {
-  const paths = {};
-  const refs = new Set();
-
-  Object.entries(swagger.paths || {}).forEach(([pathName, pathSpec]) => {
-    const filteredSpec = {};
-    Object.entries(pathSpec || {}).forEach(([method, operation]) => {
-      if (method === "parameters" || HTTP_METHODS.has(method)) {
-        filteredSpec[method] = operation;
-        collectDefinitionRefs(operation, refs);
-      }
-    });
-    paths[pathName] = filteredSpec;
-  });
-
-  const allRefs = resolveTransitiveDefinitions(swagger.definitions || {}, refs);
-  const definitions = {};
-  for (const ref of allRefs) {
-    const name = ref.replace("#/definitions/", "");
-    if (swagger.definitions?.[name])
-      definitions[name] = swagger.definitions[name];
-  }
-
+// The Orval input transformer runs AFTER its validated Swagger-to-OpenAPI 3.1
+// upgrade. Never insert native unions/null types into the Swagger 2 input, or
+// disable validation to make a nonconforming input pass.
+function normalizeHostStatusSpec(spec) {
   return {
-    ...swagger,
-    info: {
-      ...(swagger.info || {}),
-      title: `${swagger.info?.title || "Future AGI API"} - management contracts`,
+    ...spec,
+    components: {
+      ...spec.components,
+      schemas: Object.fromEntries(
+        Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
+          name,
+          name === "PromptConfigEntry"
+            ? normalizeExperimentEntrySchema(schema)
+            : name.startsWith("HostUpdateStatusResponse")
+              ? normalizeHostStatusSchema(schema)
+              : schema,
+        ]),
+      ),
     },
-    paths,
-    definitions,
   };
 }
 
@@ -195,7 +181,10 @@ async function runGeneration(schemaPath) {
   };
 
   await generate({
-    input: schemaPath,
+    input: {
+      target: schemaPath,
+      override: { transformer: normalizeHostStatusSpec },
+    },
     output: {
       target: apiOutputPath,
       mode: "split",
@@ -206,7 +195,10 @@ async function runGeneration(schemaPath) {
   });
 
   await generate({
-    input: schemaPath,
+    input: {
+      target: schemaPath,
+      override: { transformer: normalizeHostStatusSpec },
+    },
     output: {
       target: zodOutputPath,
       mode: "single",
@@ -215,6 +207,14 @@ async function runGeneration(schemaPath) {
       override: {
         header: baseOverride.header,
         components: baseOverride.components,
+        // This endpoint is a closed public report, including both exact legacy
+        // and complete restore alternatives. Do not change the permissive
+        // generation semantics of unrelated, established API operations.
+        operations: {
+          "api_host-update-status_list": {
+            zod: { strict: { response: true } },
+          },
+        },
         zod: {
           generate: {
             body: true,
@@ -228,6 +228,13 @@ async function runGeneration(schemaPath) {
     },
   });
 
+  // Orval can log a validation error without rejecting generate(). Treat
+  // missing output as failure and let the caller restore the previous snapshot.
+  for (const name of ["api.ts", "api.schemas.ts", "api.zod.ts"]) {
+    if (!fs.existsSync(path.join(outputDir, name))) {
+      throw new Error(`OpenAPI generation did not produce ${name}`);
+    }
+  }
   normalizeGeneratedQueryParamSerialization();
 
   // Post-processing for orval-narrow types.
@@ -375,6 +382,27 @@ async function runGeneration(schemaPath) {
   if (fs.existsSync(schemasOutputPath)) {
     let schemas = fs.readFileSync(schemasOutputPath, "utf8");
 
+    // BEGIN F44 optional owners types
+    // tfc.settings.openapi always advertises these; runtime remains default-OFF.
+    for (const field of ["created_by", "created_by_name"]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface DatasetListItemApi {",
+        `${field}?: string;`,
+        `${field}?: string | null;`,
+        `DatasetListItemApi.${field} optional nullable`,
+      );
+    }
+    // The pre-existing nullable folder UUID loses x-nullable in Orval too.
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface DatasetListItemApi {",
+      "folder_id: string;",
+      "folder_id: string | null;",
+      "DatasetListItemApi.folder_id required nullable",
+    );
+    // END F44 optional owners types
+
     for (const [typeName, fields] of Object.entries(
       interruptionNullableFields,
     )) {
@@ -449,6 +477,15 @@ export type SpanAttributeTopValueApiValue = JsonValueApi;`,
       "EvalRollupSpanApiValue",
       "EvalRollupEvalApiChoicesMap",
       "EvalRollupEvalApiAggregate",
+      "DatasetVersionItemCreateApiExpected",
+      "DatasetVersionItemReadApiExpected",
+      "ExternalRunBindingApiBindingConfig",
+      "ExternalRunBindingApiPromptMessages",
+      "ExternalRunBindingApiConfigSnapshot",
+      "ExternalRunBindingApiChoiceScores",
+      "ExternalRunResultApiOutput",
+      "ExternalRunResultApiError",
+      "ExternalRunResultApiTokenUsage",
     ]) {
       schemas = assertReplace(
         schemas,
@@ -462,6 +499,188 @@ export type ${jsonAlias} = { [key: string]: unknown };`,
 export type ${jsonAlias} = JsonValueApi;`,
         `${jsonAlias} → recursive JSON value`,
       );
+    }
+
+    for (const alias of [
+      "DatasetVersionItemCreateApiInput",
+      "DatasetVersionItemReadApiInput",
+    ]) {
+      schemas = assertReplace(
+        schemas,
+        `export type ${alias} = { [key: string]: unknown };`,
+        `export type ${alias} = Exclude<JsonValueApi, null>;`,
+        `${alias} excludes top-level null`,
+      );
+    }
+    for (const alias of [
+      "DatasetVersionCreateApiMetadata",
+      "DatasetVersionItemCreateApiMetadata",
+      "DatasetVersionItemReadApiMetadata",
+      "RunComparisonRequestApiMetadataEquals",
+      "ComparisonSelectionApiMetadataEquals",
+      "HttpExperimentConfigOutputApiVariableMapping",
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        `export type ${alias} = {`,
+        "[key: string]: { [key: string]: unknown }",
+        "[key: string]: JsonValueApi",
+        `${alias} JSON values`,
+      );
+    }
+    // The endpoint Test response is any JSON, but its legacy Swagger field
+    // has no x-json-value description for the jsonAlias rewrite above.
+    schemas = assertReplace(
+      schemas,
+      "export type HttpEndpointTestResultApiResponse = { [key: string]: unknown };",
+      "export type HttpEndpointTestResultApiResponse = JsonValueApi;",
+      "HttpEndpointTestResultApiResponse recursive JSON value",
+    );
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export type HttpEndpointTestRequestApiMapping = {",
+      "[key: string]: string",
+      "[key: string]: string | null",
+      "HttpEndpointTestRequestApiMapping nullable values",
+    );
+
+    for (const [typeName, fields] of [
+      ["DatasetVersionCreateApi", ["parent_version_id"]],
+      [
+        "DatasetVersionItemCreateApi",
+        [
+          "example_id",
+          "external_id",
+          "source_trace_id",
+          "source_span_id",
+          "legacy_row_id",
+        ],
+      ],
+    ]) {
+      for (const field of fields) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          `${field}?: string;`,
+          `${field}?: string | null;`,
+          `${typeName}.${field} nullable`,
+        );
+      }
+    }
+
+    for (const alias of [
+      "ExternalRunCreateRequestApiModelConfig",
+      "ExternalRunCreateRequestApiMetadata",
+      "ExternalRunHeaderApiModelConfig",
+      "ExternalRunHeaderApiMetadata",
+      "OutputDiffSideApiOutputPreview",
+    ]) {
+      if (alias === "OutputDiffSideApiOutputPreview") {
+        schemas = assertReplace(
+          schemas,
+          `export type ${alias} = { [key: string]: unknown };`,
+          `export type ${alias} = JsonValueApi;`,
+          `${alias} recursive JSON value`,
+        );
+        continue;
+      }
+      schemas = assertReplace(
+        schemas,
+        `export type ${alias} = {[key: string]: unknown};`,
+        `export type ${alias} = { [key: string]: JsonValueApi };`,
+        `${alias} recursive JSON object values`,
+      );
+    }
+    for (const [typeName, fields] of [
+      ["HttpExperimentConfigOutputApi", ["id"]],
+      [
+        "HttpEndpointTestRequestApi",
+        ["transform", "dataset_id", "row_id", "trace_context"],
+      ],
+      [
+        "HttpEndpointTestResultApi",
+        ["status", "traceparent", "echoed", "error"],
+      ],
+      ["ExternalRunCreateRequestApi", ["experiment_id"]],
+      [
+        "ExternalRunHeaderApi",
+        [
+          "ordinal",
+          "label",
+          "app_url",
+          "experiment_id",
+          "started_at",
+          "completed_at",
+        ],
+      ],
+      [
+        "ExternalRunBindingApi",
+        [
+          "binding_model",
+          "criteria",
+          "model",
+          "output_type_normalized",
+          "pass_threshold",
+        ],
+      ],
+      [
+        "ExternalRunResultApi",
+        ["trace_id", "root_span_id", "latency_ms", "cost"],
+      ],
+      ["ExternalRunScoreApi", ["value", "explanation", "trace_id", "span_id"]],
+      ["ExternalRunItemReceiptApi", ["trace_id", "root_span_id"]],
+      [
+        "DatasetVersionReadApi",
+        ["parent_version", "created_by", "organization", "workspace"],
+      ],
+      ["DatasetVersionItemReadApi", ["external_id", "legacy_row"]],
+      ["RunComparisonRequestApi", ["passing_score"]],
+      ["ReleaseGateReportApi", ["passing_score"]],
+      ["ReleaseGateBlockerApi", ["example_id", "trial_number"]],
+      [
+        "RunAggregateApi",
+        ["score_average", "score_min", "score_max", "pass_count", "pass_rate"],
+      ],
+      [
+        "TrialAggregateApi",
+        ["score_average", "score_min", "score_max", "score_stddev"],
+      ],
+      ["TrialDeltaAggregateApi", ["delta_average", "delta_stddev"]],
+      [
+        "RunCaseComparisonApi",
+        [
+          "baseline_status",
+          "candidate_status",
+          "baseline_score",
+          "candidate_score",
+          "score_delta",
+          "missing_side",
+        ],
+      ],
+      ["RunTraceReferenceApi", ["trace_id", "root_span_id"]],
+      ["RunCaseTraceReferencesApi", ["baseline", "candidate"]],
+      [
+        "OutputDiffSideApi",
+        [
+          "item_id",
+          "status",
+          "output_digest",
+          "output_bytes",
+          "output_preview",
+        ],
+      ],
+      ["OutputDiffComparisonApi", ["missing_side", "changed_path_count"]],
+      ["ComparisonSelectionApi", ["split_name"]],
+    ]) {
+      for (const field of fields) {
+        schemas = assertReplaceRegexInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          new RegExp(`(^\\s*(?:readonly )?${field}\\??: [^;]+)(;)$`, "m"),
+          "$1 | null$2",
+          `${typeName}.${field} nullable`,
+        );
+      }
     }
 
     for (const rowType of [
@@ -965,6 +1184,15 @@ export type ${jsonAlias} = JsonValueApi;`,
       "APIKeyBulkItemApi.expires_at nullable",
     );
 
+    // shared-edit(F46): a copy preview has no persisted dataset ID yet.
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface DatasetTransferResultApi {",
+      "\n  dataset_id: string;",
+      "\n  dataset_id: string | null;",
+      "DatasetTransferResultApi.dataset_id nullable",
+    );
+
     // The compact conversation record passes provider values on as they were
     // logged, and the times it computes are null when the provider gave none.
     schemas = assertReplaceRegex(
@@ -977,6 +1205,8 @@ export type ${jsonAlias} = JsonValueApi;`,
       "ConversationVariablesApiConfigured",
       "ConversationVariablesApiCollected",
       "ConversationAnalysisApiFlags",
+      "AgentccProviderCredentialCreateApiExtraConfig",
+      "AgentccProviderCredentialUpdateApiExtraConfig",
     ]) {
       schemas = assertReplace(
         schemas,
@@ -1007,6 +1237,28 @@ export type ${jsonAlias} = JsonValueApi;`,
 
   if (fs.existsSync(zodOutputPath)) {
     let zod = fs.readFileSync(zodOutputPath, "utf8");
+
+    // BEGIN F44 optional owners zod
+    for (const [field, parser] of [
+      ["created_by", "zod.string().uuid()"],
+      ["created_by_name", "zod.string()"],
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        "export const ModelHubDevelopsGetDatasetsListResponse = zod.object({",
+        `"${field}": ${parser}.optional(),`,
+        `"${field}": ${parser}.nullable().optional(),`,
+        `DatasetListItemApi.${field} optional nullable`,
+      );
+    }
+    zod = assertReplaceInNamedBlock(
+      zod,
+      "export const ModelHubDevelopsGetDatasetsListResponse = zod.object({",
+      '"folder_id": zod.string().uuid(),',
+      '"folder_id": zod.string().uuid().nullable(),',
+      "DatasetListItemApi.folder_id required nullable",
+    );
+    // END F44 optional owners zod
 
     for (const field of new Set(
       Object.values(interruptionNullableFields).flat(),
@@ -1364,6 +1616,96 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "DashboardFilterValueOption zod value → recursive JSON value",
     );
 
+    // HTTP readback mappings carry column references and JSON values, not
+    // just objects. Both detail responses inline HttpExperimentConfigOutput;
+    // the create response currently returns a string ID, not http_configs.
+    for (const responseName of [
+      "ModelHubExperimentsV2ReadResponse",
+      "ModelHubExperimentsV2UpdateResponse",
+    ]) {
+      const declaration = `export const ${responseName} = zod.object({`;
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        declaration,
+        /zod\.object\(\{\s*\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+        "jsonValueSchema",
+        `${responseName} HTTP mapping values → recursive JSON value`,
+      );
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        declaration,
+        /("http_configs": zod\.array\(zod\.object\(\{\s*"id": zod\.string\(\)\.uuid\(\))\.optional\(\)/,
+        "$1.nullish()",
+        `${responseName}.http_configs.id nullable`,
+      );
+    }
+
+    // Orval also drops x-nullable from the endpoint Test request/diagnostics.
+    const httpTestBody =
+      "export const ModelHubR4EndpointsTestCreateBody = zod.object({";
+    for (const [field, schema] of [
+      ["transform", "zod.object({\n\n}).passthrough()"],
+      ["dataset_id", "zod.string().uuid()"],
+      ["row_id", "zod.string().uuid()"],
+      ["trace_context", "zod.object({\n\n}).passthrough()"],
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        httpTestBody,
+        `"${field}": ${schema}.optional()`,
+        `"${field}": ${schema}.nullish()`,
+        `ModelHubR4EndpointsTestCreateBody.${field} nullable`,
+      );
+    }
+    zod = assertReplaceInNamedBlock(
+      zod,
+      httpTestBody,
+      '"mapping": zod.record(zod.string(), zod.string()).optional()',
+      '"mapping": zod.record(zod.string(), zod.string().nullable()).optional()',
+      "ModelHubR4EndpointsTestCreateBody.mapping nullable values",
+    );
+    const httpTestResponse =
+      "export const ModelHubR4EndpointsTestCreateResponse = zod.object({";
+    // This JSONField has no x-json-value marker. Restrict the rewrite to the
+    // named result.response field; request/header objects stay object-only.
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      httpTestResponse,
+      /("response": )zod\.object\(\{\s*\}\)\.passthrough\(\)/,
+      "$1jsonValueSchema",
+      "ModelHubR4EndpointsTestCreateResponse.response recursive JSON value",
+    );
+    for (const [field, schema] of [
+      ["status", "zod.number()"],
+      ["traceparent", "zod.string()"],
+      ["echoed", "zod.string().min(1)"],
+      ["error", "zod.string().min(1)"],
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        httpTestResponse,
+        `"${field}": ${schema}`,
+        `"${field}": ${schema}.nullable()`,
+        `ModelHubR4EndpointsTestCreateResponse.${field} nullable`,
+      );
+    }
+
+    // Provider settings carry scalar values too (weight, api_path_prefix),
+    // not just objects. Preserve JsonValueField's contract in Orval output.
+    for (const bodyName of [
+      "AgentccProviderCredentialsCreateBody",
+      "AgentccProviderCredentialsUpdateBody",
+      "AgentccProviderCredentialsPartialUpdateBody",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${bodyName} = zod.object({`,
+        /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+        "jsonValueSchema",
+        `${bodyName} settings → recursive JSON value`,
+      );
+    }
+
     // Both detail endpoints expose the same typed rollup. Scope scalar
     // rewrites to that property so provider-level fields keep their own rules.
     for (const responseName of [
@@ -1421,6 +1763,296 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         `${exportName} JSON cells → recursive JSON value`,
       );
     }
+    const externalRunExports = [
+      "ExternalExperimentRunsCreateBody",
+      "ExternalExperimentRunsCreateResponse",
+      "ExternalExperimentRunResultsIngestBody",
+      "ExternalExperimentRunResultsIngestResponse",
+    ];
+    for (const exportName of externalRunExports) {
+      const declaration = `export const ${exportName} = zod.object({`;
+      if (exportName !== "ExternalExperimentRunsCreateBody") {
+        zod = assertReplaceRegexInNamedBlock(
+          zod,
+          declaration,
+          /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+          "jsonValueSchema",
+          `${exportName} arbitrary JSON values`,
+        );
+      }
+      if (exportName !== "ExternalExperimentRunResultsIngestBody") {
+        zod = assertReplaceInNamedBlock(
+          zod,
+          declaration,
+          "zod.record(zod.string(), zod.unknown())",
+          "zod.record(zod.string(), jsonValueSchema)",
+          `${exportName} JSON object values`,
+        );
+      }
+      const nullableFields =
+        exportName === "ExternalExperimentRunsCreateBody"
+          ? ["experiment_id"]
+          : exportName === "ExternalExperimentRunResultsIngestBody"
+            ? [
+                "trace_id",
+                "root_span_id",
+                "span_id",
+                "value",
+                "explanation",
+                "latency_ms",
+                "cost",
+              ]
+            : [
+                "ordinal",
+                "label",
+                "app_url",
+                "experiment_id",
+                "started_at",
+                "completed_at",
+                "binding_model",
+                "criteria",
+                "model",
+                "output_type_normalized",
+                "pass_threshold",
+                ...(exportName.endsWith("IngestResponse")
+                  ? [
+                      "trace_id",
+                      "root_span_id",
+                      "span_id",
+                      "value",
+                      "explanation",
+                    ]
+                  : []),
+              ];
+      for (const field of nullableFields) {
+        zod = assertReplaceRegexInNamedBlock(
+          zod,
+          declaration,
+          new RegExp(`("${field}": zod\\.[^\\n]+?)(,?)$`, "gm"),
+          "$1.nullable()$2",
+          `${exportName}.${field} nullable`,
+        );
+      }
+    }
+
+    for (const [exportName, anchors] of [
+      [
+        "ExternalExperimentRunsCreateBody",
+        [
+          [/("trial_number": [^\n]+)\n\}\)\)/, "$1\n}).strict())"],
+          [/("metadata": [^\n]+)\n\}\)/, "$1\n}).strict()"],
+        ],
+      ],
+      [
+        "ExternalExperimentRunResultsIngestBody",
+        [
+          [/("span_id": [^\n]+)\n\}\)\)/, "$1\n}).strict())"],
+          [
+            /(\.default\(externalExperimentRunResultsIngestBodyItemsItemScoreRefsDefault\))\n\}\)\)/,
+            "$1\n}).strict())",
+          ],
+          [
+            /(\.max\(externalExperimentRunResultsIngestBodyItemsMax\))\n\}\)/,
+            "$1\n}).strict()",
+          ],
+        ],
+      ],
+    ]) {
+      for (const [pattern, replacement] of anchors) {
+        zod = assertReplaceRegexInNamedBlock(
+          zod,
+          `export const ${exportName} = zod.object({`,
+          pattern,
+          replacement,
+          `${exportName} rejects unknown nested/request fields`,
+        );
+      }
+    }
+
+    for (const [exportName, nullableFields] of [
+      [
+        "ModelHubDatasetsVersionsListResponse",
+        ["parent_version", "created_by", "organization", "workspace"],
+      ],
+      [
+        "ModelHubDatasetsVersionsReadResponse",
+        [
+          "parent_version",
+          "created_by",
+          "organization",
+          "workspace",
+          "external_id",
+          "legacy_row",
+        ],
+      ],
+      ["ExperimentRunsCompareBody", ["passing_score"]],
+      [
+        "ExperimentRunsCompareResponse",
+        [
+          "score_average",
+          "score_min",
+          "score_max",
+          "pass_count",
+          "pass_rate",
+          "baseline_status",
+          "candidate_status",
+          "baseline_score",
+          "candidate_score",
+          "score_delta",
+          "missing_side",
+          "score_stddev",
+          "delta_average",
+          "delta_stddev",
+          "trace_id",
+          "root_span_id",
+          "passing_score",
+          "item_id",
+          "output_digest",
+          "output_bytes",
+          "changed_path_count",
+          "split_name",
+        ],
+      ],
+    ]) {
+      for (const field of nullableFields) {
+        zod = assertReplaceRegexInNamedBlock(
+          zod,
+          `export const ${exportName} = zod.object({`,
+          new RegExp(`("${field}": zod\\.[^\\n]+?)(,?)$`, "gm"),
+          "$1.nullable()$2",
+          `${exportName}.${field} nullable`,
+        );
+      }
+    }
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const ExperimentRunsCompareResponse = zod.object({",
+      /("(?:baseline|candidate)": zod\.object\(\{\n\s*"run_item_id":[\s\S]*?\n\s*\}\))/g,
+      "$1.nullable()",
+      "missing comparison trace references are nullable",
+    );
+    for (const field of ["max_regressions", "trial_number"]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        "export const ExperimentRunsCompareBody = zod.object({",
+        new RegExp(`("${field}": zod\\.number\\(\\))`, "g"),
+        "$1.int()",
+        `release gate ${field} is an integer`,
+      );
+    }
+    for (const [anchor, replacement] of [
+      [/("trial_number": [^\n]+)\n\}\)\)/, "$1\n}).strict())"],
+      [
+        /(\.default\(experimentRunsCompareBodyReleaseGateCriticalCasesDefault\))\n\}\)\.optional\(\)/,
+        "$1\n}).strict().optional()",
+      ],
+      [
+        /("diff_case": zod\.object\(\{\n[\s\S]*?\n\}\))\.optional\(\)/,
+        "$1.strict().optional()",
+      ],
+      [/\n\}\)(\s*)$/, "\n}).strict()$1"],
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        "export const ExperimentRunsCompareBody = zod.object({",
+        anchor,
+        replacement,
+        "release gate rejects unknown request and nested fields",
+      );
+    }
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const ExperimentRunsCompareResponse = zod.object({",
+      /("blockers": zod\.array\(zod\.object\(\{\n\s*"example_id": [^\n]+?)(,?)\n(\s*"trial_number": [^\n]+?)(,?)\n/g,
+      "$1.nullable()$2\n$3.nullable()$4\n",
+      "release gate empty-plan blocker preserves null identity",
+    );
+    // metadata_equals values are any JSON value (JsonValueField), at most 20 keys (the serializer's limit).
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const ExperimentRunsCompareBody = zod.object({",
+      /("metadata_equals": zod\.record\(zod\.string\(\), )zod\.object\(\{\n\n\}\)\.passthrough\(\)(\.describe\('Any valid JSON value\.'\)\))\.optional\(\)/,
+      "$1jsonValueSchema$2.refine((value) => Object.keys(value).length <= 20, { message: 'metadata_equals supports at most 20 keys' }).optional()",
+      "comparison metadata selector holds at most 20 JSON values",
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const ExperimentRunsCompareResponse = zod.object({",
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "comparison output previews and selection metadata are JSON values",
+    );
+    // The output diff sides' status is a nullable string; the cases' status enums stay required.
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const ExperimentRunsCompareResponse = zod.object({",
+      /("status": zod\.string\(\)\.min\(1\))(,?)$/gm,
+      "$1.nullable()$2",
+      "output diff side status nullable",
+    );
+    const versionRead =
+      "export const ModelHubDatasetsVersionsReadResponse = zod.object({";
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      versionRead,
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "dataset item expected and metadata JSON values",
+    );
+    zod = assertReplaceInNamedBlock(
+      zod,
+      versionRead,
+      "zod.object({\n\n}).passthrough().optional().describe('Any non-null JSON value; nested nulls are allowed.')",
+      "jsonValueSchema.refine((value) => value !== null).optional().describe('Any non-null JSON value; nested nulls are allowed.')",
+      "dataset read input preserves non-null JSON values",
+    );
+
+    const snapshotBody =
+      "export const DatasetVersionsCreateBody = zod.object({";
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      snapshotBody,
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "snapshot expected and metadata JSON values",
+    );
+    zod = assertReplaceInNamedBlock(
+      zod,
+      snapshotBody,
+      "zod.object({\n\n}).passthrough().describe('Any non-null JSON value; nested nulls are allowed.')",
+      "jsonValueSchema.refine((value) => value !== null).describe('Any non-null JSON value; nested nulls are allowed.')",
+      "snapshot input excludes top-level null",
+    );
+    for (const field of [
+      "parent_version_id",
+      "example_id",
+      "external_id",
+      "source_trace_id",
+      "source_span_id",
+      "legacy_row_id",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        snapshotBody,
+        new RegExp(`("${field}": zod\\.[^\\n]+)\\.optional\\(\\)`),
+        "$1.nullish()",
+        `snapshot ${field} nullable`,
+      );
+    }
+    zod = assertReplaceInNamedBlock(
+      zod,
+      snapshotBody,
+      '"legacy_row_id": zod.string().uuid().nullish()\n}))',
+      '"legacy_row_id": zod.string().uuid().nullish()\n}).strict())',
+      "snapshot item rejects unknown fields",
+    );
+    zod = assertReplaceInNamedBlock(
+      zod,
+      snapshotBody,
+      '"source_revision": zod.string().max(datasetVersionsCreateBodySourceRevisionMax).optional()\n})',
+      '"source_revision": zod.string().max(datasetVersionsCreateBodySourceRevisionMax).optional()\n}).strict()',
+      "snapshot body rejects unknown fields",
+    );
     const conversationEvidenceResponse =
       "export const TracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse = zod.object({";
     zod = assertReplaceRegexInNamedBlock(
@@ -1869,6 +2501,15 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "AgentccApiKeysBulkListResponse.expires_at nullable",
     );
 
+    // shared-edit(F46): preserve x-nullable without making the ID optional.
+    zod = assertReplaceInNamedBlock(
+      zod,
+      "export const ModelHubDatasetsTransferCreateResponse = zod.object({",
+      '"dataset_id": zod.string().uuid(),',
+      '"dataset_id": zod.string().uuid().nullable(),',
+      "ModelHubDatasetsTransferCreateResponse.dataset_id nullable",
+    );
+
     // x-string-or-array: orval generates zod.object({}).passthrough() for these
     // fields. Use the unique description emitted by StringOrArrayField as anchor.
     zod = assertReplace(
@@ -1964,6 +2605,12 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
     }
     fs.writeFileSync(zodOutputPath, zod);
   }
+  // hook(F49): Preserve the source schema's nullable saved-view continuation.
+  const savedViews = await import("./saved-view-contract.mjs");
+  savedViews.normalizeSavedViewContract(schemaPath, outputDir);
+  // hook(F82): Keep the row read's nullable and JSON cell values.
+  const rowRead = await import("./row-read-contract.mjs");
+  rowRead.normalizeRowReadContract(schemaPath, outputDir);
   await formatGeneratedFiles();
   normalizeGeneratedFileEndings();
 }
@@ -1979,7 +2626,7 @@ const before = snapshotGeneratedFiles();
 try {
   await runGeneration(tempSchemaPath);
 } catch (error) {
-  if (process.argv.includes("--check")) restoreSnapshot(before);
+  restoreSnapshot(before);
   throw error;
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });

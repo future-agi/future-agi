@@ -1,15 +1,16 @@
-import { Box, useTheme } from "@mui/material";
-import React, { useMemo } from "react";
+import { Box, Tab } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
+import React from "react";
 import InstructionCodeCopy from "src/sections/project/NewProject/InstructionCodeCopy";
 import InstructionTitle from "src/sections/project/NewProject/InstructionTitle";
-import {
-  CustomTab,
-  CustomTabs,
-  TabWrapper,
-} from "src/sections/develop/AddDatasetDrawer/AddDatasetStyle";
 import axios, { endpoints } from "src/utils/axios";
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
+
+// Every package the Python snippet below imports (openai, fi_instrumentation,
+// traceai_openai), so the snippet runs in a fresh environment.
+const INSTALL_COMMAND =
+  "pip install fi-instrumentation-otel traceai-openai openai";
 
 const UsersEmptyScreen = () => {
   const { observeId } = useParams();
@@ -26,16 +27,6 @@ const UsersEmptyScreen = () => {
     },
   });
 
-  const theme = useTheme();
-
-  const tabWrapperStyles = useMemo(
-    () => ({
-      marginBottom: 0,
-      alignSelf: "flex-start",
-    }),
-    [],
-  );
-
   return (
     <Box
       sx={{
@@ -46,42 +37,29 @@ const UsersEmptyScreen = () => {
         mt: 1.5,
       }}
     >
-      <InstructionTitle
-        title="Install Dependencies"
-        description="For more instructions, checkout our "
-        url="https://docs.futureagi.com/docs/observe/features/users"
-        urltext="Docs"
-      />
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+        <InstructionTitle
+          title="Install dependencies"
+          description="Run this command in your terminal. For more instructions, see our "
+          url="https://docs.futureagi.com/docs/observe/features/users"
+          urltext="Docs"
+        />
+        <InstructionCodeCopy text={INSTALL_COMMAND} language="bash" />
+      </Box>
 
       <InstructionTitle
-        title="Setup Telemetry"
+        title="Set up telemetry"
         description="Configure your application to send user ID's to Future AGI"
       />
 
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        <TabWrapper sx={tabWrapperStyles}>
-          <CustomTabs
-            textColor="primary"
-            value="JSON"
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-                opacity: 0.08,
-                height: "100%",
-                borderRadius: "8px",
-              },
-            }}
-          >
-            <CustomTab
-              key="telemetry-JSON"
-              label="JSON"
-              value="JSON"
-              sx={{ color: "primary.dark" }}
-            />
-          </CustomTabs>
-        </TabWrapper>
+        <Box sx={{ mb: 1.5 }}>
+          <SegmentedTabs value="Python">
+            <Tab key="telemetry-Python" label="Python" value="Python" />
+          </SegmentedTabs>
+        </Box>
 
-        <InstructionCodeCopy text={metricsData} language="typescript" />
+        <InstructionCodeCopy text={metricsData} language="python" />
       </Box>
     </Box>
   );

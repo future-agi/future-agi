@@ -144,8 +144,18 @@ def test_trace_list_v2_content_no_legacy():
     builder = _trace_list_builder()
     sql, _ = builder.build_content_query(
         trace_ids=["t1"],
-        root_identities=[(str(builder.project_id), "t1", "sp1", 1785542400123456,
-                          "span", "fixture", 1785542400000000, 1)],
+        root_identities=[
+            (
+                str(builder.project_id),
+                "t1",
+                "sp1",
+                1785542400123456,
+                "span",
+                "fixture",
+                1785542400000000,
+                1,
+            )
+        ],
     )
     _assert_no_legacy(sql, "TraceList.build_content_query")
 
@@ -285,7 +295,7 @@ def test_monitor_metrics_v2_historical_no_legacy(metric_type):
     from datetime import datetime
 
     sql, _ = _monitor_builder().build_historical_stats_query(
-        metric_type, datetime(2026, 8, 1), datetime(2026, 8, 8), interval_kind="hour"
+        metric_type, datetime(2026, 8, 1), datetime(2026, 8, 8), periods=168
     )
     _assert_no_legacy(
         sql,

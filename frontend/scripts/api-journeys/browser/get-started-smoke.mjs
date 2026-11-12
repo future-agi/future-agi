@@ -153,10 +153,15 @@ async function main() {
       buttonText: "Go to observe",
       expectedPath: "/dashboard/observe",
       beforeClick: async () => {
-        await clickVisibleText(page, "Setup observability in application");
-        await waitForVisibleText(page, "Set observability in application", {
-          exact: true,
-        });
+        await clickVisibleText(
+          page,
+          "Set up observability in your application",
+        );
+        await waitForVisibleText(
+          page,
+          "Set up observability in your application",
+          { exact: true },
+        );
       },
     });
     await page.goto(`${APP_BASE}/dashboard/get-started`, {
@@ -227,7 +232,7 @@ async function waitForGetStartedPage(page) {
     exact: true,
   });
   await waitForVisibleText(page, "Run your first experiment", { exact: true });
-  await waitForVisibleText(page, "Setup observability in application", {
+  await waitForVisibleText(page, "Set up observability in your application", {
     exact: true,
   });
   await waitForVisibleText(page, "Try out our features", { exact: true });

@@ -1,0 +1,115 @@
+{
+  "data": {
+    "id": "req_01JD8Z3K4M5N6P7Q8R9S",
+    "request_id": "req_01JD8Z3K4M5N6P7Q8R9S",
+    "upstream_id": "gen-1792056612-a8Kq2",
+    "session_id": "sess_9c1d",
+    "created_at": "2026-10-15T09:30:10.107Z",
+    "model": "anthropic/claude-sonnet-5.5",
+    "provider_name": "openrouter",
+    "router": "auto",
+    "api_type": "chat",
+    "streamed": false,
+    "cancelled": false,
+    "finish_reason": "stop",
+    "native_finish_reason": "end_turn",
+    "latency": 2311,
+    "generation_time": 1477,
+    "tokens_prompt": 1820,
+    "tokens_completion": 412,
+    "native_tokens_cached": 1024,
+    "native_tokens_cache_write": 0,
+    "native_tokens_reasoning": 96,
+    "total_cost": 0.011815,
+    "upstream_inference_cost": 0.011252,
+    "cache_discount": 0.0027648,
+    "is_byok": false,
+    "external_user": "customer-1932",
+    "http_referer": "https://research.example.com",
+    "app_title": "Deep Research",
+    "tags": ["research", "batch-7"],
+    "provider_responses": [
+      {
+        "status": 429,
+        "provider_name": "openrouter",
+        "endpoint_id": "openrouter:openai:openai/gpt-6-sol",
+        "model": "openai/gpt-6-sol",
+        "is_byok": false,
+        "latency": 180,
+        "error_class": "rate_limited",
+        "outcome": "error"
+      },
+      {
+        "status": 200,
+        "provider_name": "openrouter",
+        "endpoint_id": "openrouter:anthropic:anthropic/claude-sonnet-5.5",
+        "model": "anthropic/claude-sonnet-5.5",
+        "is_byok": false,
+        "latency": 2117,
+        "error_class": null,
+        "outcome": "success"
+      }
+    ],
+    "routing": {
+      "requested_model": "auto",
+      "resolved_model": "anthropic/claude-sonnet-5.5",
+      "final_provider": "openrouter",
+      "credential_type": "managed",
+      "reason": "standard task (complexity 41), needs tools, balanced preference: 6 of 9 models eligible",
+      "policy_version": "v12",
+      "policy_variant": "stable",
+      "catalog_snapshot_id": "3f9a1c0b2d4e",
+      "auto": {
+        "model": "openai/gpt-6-sol",
+        "tier": "standard",
+        "reason": "step act prefers balanced",
+        "step": "act",
+        "affinity": "hit"
+      },
+      "attempts": [
+        {
+          "attempt_id": "req_01JD8Z3K4M5N6P7Q8R9S.1",
+          "kind": "primary",
+          "reason": "",
+          "provider": "openrouter",
+          "model": "openai/gpt-6-sol",
+          "credential_type": "managed",
+          "status_code": 429,
+          "outcome": "error",
+          "error_class": "rate_limited",
+          "latency_ms": 180,
+          "upstream_cost_micros": 0,
+          "billed_cost_micros": 0
+        },
+        {
+          "attempt_id": "req_01JD8Z3K4M5N6P7Q8R9S.2",
+          "kind": "auto_fallback",
+          "reason": "status_429",
+          "provider": "openrouter",
+          "model": "anthropic/claude-sonnet-5.5",
+          "credential_type": "managed",
+          "status_code": 200,
+          "outcome": "success",
+          "latency_ms": 2117,
+          "upstream_cost_micros": 11252,
+          "billed_cost_micros": 11815
+        }
+      ]
+    },
+    "agent": {
+      "framework": "omega",
+      "agent_id": "researcher",
+      "agent_version": "3",
+      "run_id": "run_R2",
+      "parent_run_id": "run_R1",
+      "root_run_id": "run_R1",
+      "task_id": "task_17",
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "workflow": "deep-research",
+      "step": "act",
+      "turn": 4,
+      "env": "production",
+      "budget_scope": "run_R1"
+    }
+  }
+}

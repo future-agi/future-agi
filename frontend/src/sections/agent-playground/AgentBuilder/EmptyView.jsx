@@ -1,13 +1,40 @@
 import { Box, Link, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useState, useRef } from "react";
+import React, { useId, useState, useRef } from "react";
 import SvgColor from "src/components/svg-color";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import NodeSelectionPopper from "../components/NodeSelectionPopper";
-import ChooseAgentTemplateDrawer from "../components/ChooseAgentTemplateDrawer";
 import useCanEditAgent from "../hooks/useCanEditAgent";
 
-const Action = ({ anchorRef, iconSrc, label, sx = {}, onClick }) => {
+const NOT_IN_RELEASE = "Not available in this release";
+
+const Action = ({
+  anchorRef,
+  iconSrc,
+  label,
+  ariaLabel,
+  disabled = false,
+  hasPopup = false,
+  expanded = false,
+  sx = {},
+  onClick,
+  onClose,
+}) => {
+  // The tile is a div, so Enter and Space have to be wired by hand for
+  // keyboard users; they run the same handler as a click. Escape closes the
+  // menu the tile opened, and only while it is open.
+  const handleKeyDown = (event) => {
+    if (event.key === "Escape") {
+      if (!expanded) return;
+      event.preventDefault();
+      onClose?.();
+      return;
+    }
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    onClick?.(event);
+  };
+
   return (
     <Stack
       gap={1.5}
@@ -24,19 +51,26 @@ const Action = ({ anchorRef, iconSrc, label, sx = {}, onClick }) => {
     >
       <Box
         ref={anchorRef}
+        role="button"
+        tabIndex={0}
+        aria-label={ariaLabel}
+        aria-disabled={disabled || undefined}
+        aria-haspopup={hasPopup ? "true" : undefined}
+        aria-expanded={hasPopup ? expanded : undefined}
         sx={{
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           height: "66px",
           width: "66px",
           borderStyle: "dashed",
           cursor: "pointer",
         }}
         onClick={onClick}
+        onKeyDown={handleKeyDown}
       >
         <SvgColor
           src={iconSrc}
@@ -51,15 +85,20 @@ const Action = ({ anchorRef, iconSrc, label, sx = {}, onClick }) => {
 Action.propTypes = {
   iconSrc: PropTypes.string.isRequired,
   label: PropTypes.node,
+  ariaLabel: PropTypes.string,
+  disabled: PropTypes.bool,
+  hasPopup: PropTypes.bool,
+  expanded: PropTypes.bool,
   sx: PropTypes.object,
   onClick: PropTypes.func,
+  onClose: PropTypes.func,
   anchorRef: PropTypes.object,
 };
 
 export default function EmptyView() {
   const [open, setOpen] = useState(false);
-  const [templateDrawerOpen, setTemplateDrawerOpen] = useState(false);
   const anchorRef = useRef(null);
+  const templateReasonId = useId();
   const { canEditAgent } = useCanEditAgent();
 
   const handleToggle = () => {
@@ -69,22 +108,6 @@ export default function EmptyView() {
 
   const handleClose = () => {
     setOpen(false);
-  };
-
-  const handleOpenTemplateDrawer = (e) => {
-    e.stopPropagation();
-    if (!canEditAgent) return;
-    setTemplateDrawerOpen(true);
-  };
-
-  const handleCloseTemplateDrawer = () => {
-    setTemplateDrawerOpen(false);
-  };
-
-  const handleSelectTemplate = () => {
-    // Template loading is handled by the ChooseAgentTemplateDrawer
-    // which updates the store with the template data
-    setTemplateDrawerOpen(false);
   };
 
   return (
@@ -116,7 +139,12 @@ export default function EmptyView() {
           <Action
             anchorRef={anchorRef}
             onClick={handleToggle}
+            onClose={handleClose}
             iconSrc="/assets/icons/ic_add.svg"
+            ariaLabel="Add first node"
+            disabled={!canEditAgent}
+            hasPopup
+            expanded={open}
             sx={
               !canEditAgent
                 ? { opacity: 0.5, cursor: "not-allowed" }
@@ -131,15 +159,32 @@ export default function EmptyView() {
                 >
                   Add first node
                 </Typography>
+                {/* The template gallery only had mock templates, and the graph
+                    it loaded could not be saved or run. The link stays,
+                    turned off, with the reason under it; nothing opens. */}
                 {canEditAgent && (
-                  <Link
-                    typography={"s2_1"}
-                    fontWeight={"fontWeightMedium"}
-                    onClick={handleOpenTemplateDrawer}
-                    sx={{ cursor: "pointer" }}
-                  >
-                    or start from a template
-                  </Link>
+                  <>
+                    <Link
+                      component="button"
+                      type="button"
+                      disabled
+                      aria-describedby={templateReasonId}
+                      typography={"s2_1"}
+                      fontWeight={"fontWeightMedium"}
+                      underline="none"
+                      sx={{ color: "text.disabled", cursor: "not-allowed" }}
+                    >
+                      or start from a template
+                    </Link>
+                    <Typography
+                      id={templateReasonId}
+                      typography={"s2_1"}
+                      fontWeight={"fontWeightRegular"}
+                      color={"text.secondary"}
+                    >
+                      {NOT_IN_RELEASE}
+                    </Typography>
+                  </>
                 )}
               </Stack>
             }
@@ -156,7 +201,7 @@ export default function EmptyView() {
           }}
           typography={"s2_1"}
           fontWeight={"fontWeightMedium"}
-          color={"black.500"}
+          color={"text.secondary"}
         >
           Or
         </Typography>
@@ -168,7 +213,7 @@ export default function EmptyView() {
             <Typography
               typography={"s1_2"}
               fontWeight={"fontWeightMedium"}
-              color={"black.1000"}
+              color={"text.primary"}
             >
               Build with AI
             </Typography>
@@ -176,12 +221,6 @@ export default function EmptyView() {
           iconSrc="/assets/icons/components/ic_improve_prompt.svg"
         /> */}
       </Stack>
-
-      <ChooseAgentTemplateDrawer
-        open={templateDrawerOpen}
-        onClose={handleCloseTemplateDrawer}
-        onSelectTemplate={handleSelectTemplate}
-      />
     </Box>
   );
 }

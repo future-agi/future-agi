@@ -28,6 +28,18 @@ def reset_token_cache():
     mod._cached_token = None
 
 
+@pytest.fixture
+def licensed(settings):
+    """Opt in to a configured license key.
+
+    Token acquisition and activation refuse locally without one, so the
+    classes that exercise the licensed token lifecycle request this
+    explicitly instead of every test inheriting it. Keyless behavior is
+    covered by TestGetServiceTokenKeyless below and test_keyless_egress.py.
+    """
+    settings.EE_LICENSE_KEY = "fixture-license"
+
+
 class TestServiceToken:
     def test_not_expired_when_fresh(self):
         token = ServiceToken(
@@ -63,6 +75,7 @@ class TestServiceToken:
         assert token.is_expired is True
 
 
+@pytest.mark.usefixtures("licensed")
 class TestGetServiceToken:
     def test_returns_cached_token_if_valid(self):
         import ee.licensing.activation_client as mod
@@ -99,6 +112,29 @@ class TestGetServiceToken:
         assert result is None
 
 
+class TestGetServiceTokenKeyless:
+    @patch("ee.licensing.activation_client._activate")
+    def test_refuses_before_cache_or_activation(
+        self, mock_activate, settings, monkeypatch
+    ):
+        import ee.licensing.activation_client as mod
+
+        settings.EE_LICENSE_KEY = ""
+        monkeypatch.delenv("EE_LICENSE_KEY", raising=False)
+        mod._cached_token = ServiceToken(
+            access_token="cached_tok",
+            gateway_url="https://gw.test",
+            expires_at=time.time() + 3600,
+            allowed_services=["turing"],
+            allowed_models=["turing_large"],
+            scope="enterprise",
+        )
+        with pytest.raises(ManagedServiceError) as exc:
+            get_service_token()
+        assert exc.value.code == "NO_ENTERPRISE_LICENSE"
+        mock_activate.assert_not_called()
+
+
 class TestInvalidateToken:
     def test_clears_cached_token(self):
         import ee.licensing.activation_client as mod
@@ -115,6 +151,7 @@ class TestInvalidateToken:
         assert mod._cached_token is None
 
 
+@pytest.mark.usefixtures("licensed")
 class TestActivate:
     def test_reports_the_version_deployment_telemetry_reports(self, monkeypatch):
         """``latest`` is a placeholder tag: telemetry falls back to
@@ -259,6 +296,8 @@ class TestManagedStreamDispatch:
         assert exc.value.code == expected_code
 
 
+# The gateway send re-checks the license key after the (mocked) token.
+@pytest.mark.usefixtures("licensed")
 class TestStreamManagedService:
     @pytest.mark.asyncio
     async def test_unauthorized_invalidates_cached_token(self):
@@ -295,6 +334,8 @@ class TestStreamManagedService:
         invalidate.assert_called_once_with()
 
 
+# The gateway send re-checks the license key after the (mocked) token.
+@pytest.mark.usefixtures("licensed")
 class TestCallManagedService:
     def test_raises_on_no_token(self):
         with patch(

@@ -5,10 +5,9 @@ import uuid
 from decimal import Decimal
 
 import structlog
-from accounts.models.organization import Organization
 from django.db import close_old_connections
 
-logger = structlog.get_logger(__name__)
+from accounts.models.organization import Organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
@@ -20,11 +19,17 @@ from model_hub.views.eval_runner import (
     _extract_column_id_and_path,
     process_mapping,
 )
-from sdk.utils.helpers import _get_api_call_type
+from sdk.utils.helpers import (
+    _emit_jev_usage,
+    _get_api_call_type,
+    _get_billing_event_type,
+)
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_specific_error_message
+
+logger = structlog.get_logger(__name__)
 
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
@@ -143,8 +148,16 @@ def run_eval_func(
                 pass
         futureagi_eval = True if eval_id in FUTUREAGI_EVAL_TYPES else False
         source = kwargs.get("source", "eval_playground")
+        # The New experiment wizard's card Test previews the run, so it scores
+        # and bills with the model the run uses, not as an editor pick.
+        wizard_test = (
+            isinstance(row_context, dict)
+            and row_context.get("source") == "experiment_create"
+        )
+        # The evaluator type is resolved above; there is no dataset metric binding.
         runner = EvaluationRunner(
-            eval_id,
+            user_eval_metric_id=None,
+            standalone_eval_type_id=eval_id,
             is_only_eval=is_only_eval,
             format_output=True,
             futureagi_eval=futureagi_eval,
@@ -153,7 +166,12 @@ def run_eval_func(
             protect=protect,
             organization_id=org.id,
             workspace_id=workspace.id if workspace else None,
+            # A pinned composite child or jury seat runs its version.
+            version_number=kwargs.get("version_number"),
         )
+        # A composite link or jury seat that names its own model keeps it;
+        # the pinned version's model does not replace it.
+        runner.keep_selected_model = bool(kwargs.get("keep_selected_model"))
 
         source_config = {
             "reference_id": str(template.id),
@@ -173,6 +191,11 @@ def run_eval_func(
 
         # runner.load_user_eval_metric()
         runner.eval_template = template
+        runner.honour_selected_model = not wizard_test
+        # Only the playground request refuses a saved summary template it
+        # cannot use. The wizard card Test previews the run, and runs fall
+        # back to the concise summary.
+        runner.strict_summary = bool(kwargs.get("strict_summary")) and not wizard_test
         if "mapping" in data_config:
             data_config.pop("mapping")
 
@@ -183,6 +206,18 @@ def run_eval_func(
             kb_id=kb_id,
             runtime_config=config,
         )
+
+        # Attribute playground usage to the evaluator we actually constructed,
+        # only when the request picked a model. With none picked, the check and
+        # the log go by the template and the run's config, as the engine runs it.
+        attribute_playground_model = (
+            source == "eval_playground"
+            and not wizard_test
+            and bool(model)
+            and eval_id in {"CustomPromptEvaluator", "AgentEvaluator"}
+        )
+        if attribute_playground_model:
+            model = getattr(eval_instance, "model", None) or model
 
         if not mappings:
             for key, value in config.items():
@@ -254,6 +289,9 @@ def run_eval_func(
             source_config.update({"model": str(model)})
         if config is not None:
             source_config.update(config)
+        # Keep caller config precedence outside the repaired playground path.
+        if attribute_playground_model and model:
+            source_config.update({"model": str(model)})
         if input_data_types:
             source_config.update({"input_data_types": input_data_types})
 
@@ -283,7 +321,11 @@ def run_eval_func(
         api_call_type = (
             BillingEventType.CODE_EVALUATOR.value
             if _is_code_eval and BillingEventType is not None
-            else _get_api_call_type(model)
+            else (
+                _get_api_call_type(model)
+                if attribute_playground_model
+                else _get_api_call_type(model, template=template, runtime_config=config)
+            )
         )
 
         # Pre-check: enforce free tier limits before running eval
@@ -453,7 +495,9 @@ def run_eval_func(
             try:
                 from ee.usage.utils.event_properties import token_usage_properties
             except ImportError:
-                token_usage_properties = lambda token_usage: {}
+
+                def token_usage_properties(token_usage):
+                    return {}
 
             billing_config = None
             if BillingConfig is not None:
@@ -523,17 +567,24 @@ def run_eval_func(
                 emit is not None
                 and UsageEvent is not None
                 and BillingEventType is not None
+                and not _emit_jev_usage(
+                    eval_instance,
+                    org_id=str(org.id),
+                    run_id=str(api_call_log_row.log_id),
+                )
             ):
-
                 emit(
                     UsageEvent(
                         org_id=str(org.id),
-                        event_type=api_call_type,
+                        event_type=_get_billing_event_type(
+                            api_call_type, model, evaluator=eval_instance
+                        ),
                         amount=credits,
                         properties={
                             "source": source,
                             "source_id": str(template.id),
                             "raw_cost_usd": str(actual_cost),
+                            **({"model": model} if attribute_playground_model else {}),
                             **cost_properties,
                             **token_usage_properties(_token_usage),
                         },
@@ -572,11 +623,16 @@ def run_eval_func(
     except Exception as e:
         try:
             if api_call_log_row:
+                from tfc.ee_gates import jev_error_message
+
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
                 current_config = json.loads(api_call_log_row.config)
                 current_config.update(
                     {
-                        "output": {"output": None, "reason": str(e)},
+                        "output": {
+                            "output": None,
+                            "reason": jev_error_message(e) or str(e),
+                        },
                         "mappings": mappings,
                         "required_keys": list(mappings.keys()),
                     }

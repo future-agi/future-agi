@@ -7,6 +7,8 @@ an agent whose own code runs in our sandbox, an instrumenter in that code.
 Otherwise it creates an observe project and a provider row. A new row always
 gets a project of its own: when an observe project of the agent's name already
 exists in the workspace, a short tag from the agent's id is added to the name.
+A kept row follows the agent's provider: after an edit moves the agent to
+another provider, the row takes the new word and fetches from the start.
 """
 
 from __future__ import annotations
@@ -152,6 +154,29 @@ def _row_provider(
     except ProviderListNotPublished:
         return ProviderChoices.OTHERS.value
     return column if listed else ProviderChoices.OTHERS.value
+
+
+def _moved_provider(
+    agent_definition: AgentDefinition,
+    row: ObservabilityProvider,
+    summary: agent_setup.AgentSummary | None,
+) -> str | None:
+    """The provider word a kept row moves to, or None when it keeps its own.
+
+    The fetcher is picked by the row's word while the key and the provider's
+    agent id are read from the agent, so a row left on its old word after an
+    edit from Vapi to Retell asks Vapi with the Retell key and imports nothing.
+    """
+    if agent_definition.provider == row.provider:
+        # Nothing moved, so the agent is not read.
+        return None
+    if summary is None:
+        summary = _agent_summary(agent_definition.id)
+    provider = _row_provider(agent_definition, summary)
+    if provider == row.provider or provider not in ProviderChoices.values:
+        # An empty or unknown word could not make a row, so the row keeps its own.
+        return None
+    return provider
 
 
 def check_observability_prerequisites(agent_definition: AgentDefinition) -> None:
@@ -343,11 +368,35 @@ def set_agent_observability(
         # re-reads the link, so two quick turn-ons still make one project.
         row = None
     if row is not None:
+        summary = None
         if enabled and not row.enabled:
-            check_observability_prerequisites(agent_definition)
+            # Read once: the check and a moved row's provider word both need it.
+            summary = _agent_summary(agent_definition.id)
+            _check_prerequisites(agent_definition, summary)
         # Only these columns, so any other column written meanwhile is kept.
+        fields = ["enabled", "updated_at"]
+        provider = _moved_provider(agent_definition, row, summary)
+        if provider is not None:
+            logger.info(
+                "observability_switch_provider_moved",
+                agent_definition_id=str(agent_definition.id),
+                provider_from=_logged_provider(row.provider),
+                provider_to=provider,
+            )
+            # The old provider's watermark and paging state say nothing about
+            # the new provider's calls, so the row fetches as a new row would.
+            row.provider = provider
+            row.last_fetched_at = None
+            row.poll_state = {}
+            fields = [
+                "enabled",
+                "provider",
+                "last_fetched_at",
+                "poll_state",
+                "updated_at",
+            ]
         row.enabled = enabled
-        row.save(update_fields=["enabled", "updated_at"])
+        row.save(update_fields=fields)
         return row
     if not enabled:
         return None

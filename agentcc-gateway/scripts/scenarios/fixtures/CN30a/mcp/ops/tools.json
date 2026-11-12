@@ -1,0 +1,8 @@
+[
+  {
+    "name": "restart",
+    "description": "The operator's own YAML server (mcp.static.org_id only); no org key may see it.",
+    "inputSchema": { "type": "object" },
+    "result": { "content": [{ "type": "text", "text": "operator" }] }
+  }
+]

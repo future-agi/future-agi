@@ -18,7 +18,7 @@ class RemoveUserInput(PydanticBaseModel):
 class RemoveUserTool(BaseTool):
     name = "remove_user"
     description = (
-        "Removes a user from the organization entirely. This deactivates the user "
+        "Removes a user from the acting organization. This revokes tenant access "
         "and removes all their workspace memberships. Requires Owner or Admin permissions."
     )
     category = "users"
@@ -28,12 +28,16 @@ class RemoveUserTool(BaseTool):
 
         from accounts.models.user import User
         from accounts.models.workspace import OrganizationRoles, WorkspaceMembership
+        from accounts.services.offboarding import offboard_organization_member
+        from accounts.utils import resolve_org_role
+        from tfc.utils.tenant_scope import counts_as_member
 
         org = context.organization
         actor = context.user
 
         # Permission check
-        if actor.organization_role not in [
+        actor_role = resolve_org_role(actor, org)
+        if actor_role not in [
             OrganizationRoles.OWNER,
             OrganizationRoles.ADMIN,
         ]:
@@ -44,7 +48,9 @@ class RemoveUserTool(BaseTool):
             )
 
         try:
-            target_user = User.objects.get(id=params.user_id, organization=org)
+            target_user = User.objects.get(id=params.user_id)
+            if not counts_as_member(target_user, org):
+                return ToolResult.not_found("User", str(params.user_id))
         except User.DoesNotExist:
             return ToolResult.not_found("User", str(params.user_id))
 
@@ -57,8 +63,8 @@ class RemoveUserTool(BaseTool):
 
         # Prevent removing owners unless you're an owner
         if (
-            target_user.organization_role == OrganizationRoles.OWNER
-            and actor.organization_role != OrganizationRoles.OWNER
+            resolve_org_role(target_user, org) == OrganizationRoles.OWNER
+            and actor_role != OrganizationRoles.OWNER
         ):
             return ToolResult.error(
                 "Only Owners can remove another Owner.",
@@ -72,11 +78,10 @@ class RemoveUserTool(BaseTool):
             is_active=True,
         )
         ws_count = ws_memberships.count()
-        ws_memberships.update(is_active=False, deleted=True)
-
-        # Deactivate the user
-        target_user.is_active = False
-        target_user.save()
+        try:
+            offboard_organization_member(target_user, org, actor=actor)
+        except ValueError as exc:
+            return ToolResult.error(str(exc), error_code="VALIDATION_ERROR")
 
         info = key_value_block(
             [
@@ -86,7 +91,7 @@ class RemoveUserTool(BaseTool):
                 ("Workspace Memberships Removed", str(ws_count)),
                 (
                     "Action",
-                    "User has been deactivated and removed from all workspaces.",
+                    "Access to this organization and its workspaces has been removed.",
                 ),
             ]
         )

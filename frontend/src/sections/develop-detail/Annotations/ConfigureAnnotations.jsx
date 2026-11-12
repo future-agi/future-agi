@@ -18,6 +18,7 @@ import AnnotationsMainForm from "./AnnotationsMainForm";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { AnnotationFormSchema } from "./validation";
 import logger from "src/utils/logger";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const ConfigureAnnotationsForm = ({
   onClose,
@@ -254,7 +255,7 @@ const ConfigureAnnotationsForm = ({
       annotationUserData?.map(({ id, name }) => ({
         id: id,
         label: name,
-        img: "https://cdn-icons-png.flaticon.com/512/149/149071.png",
+        img: "/assets/icons/navbar/ic_user.svg",
       })) || [];
 
     // Map annotation users with additional fields
@@ -429,17 +430,19 @@ const ConfigureAnnotations = ({
   annotationId,
   handleSetRenderAnnotationTable,
 }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       // onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 99,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           width: "640px",
         },
@@ -454,7 +457,7 @@ const ConfigureAnnotations = ({
         onClick={onClose}
         sx={{ position: "absolute", top: "12px", right: "12px" }}
       >
-        <Iconify icon="mingcute:close-line" />
+        <Iconify icon="solar:close-linear" />
       </IconButton>
       <ConfigureAnnotationsForm
         onClose={onClose}

@@ -1,161 +1,105 @@
-import React from "react";
-import {
-  Card,
-  CardContent,
-  Typography,
-  Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Skeleton,
-  Chip,
-  LinearProgress,
-} from "@mui/material";
+import React, { useMemo } from "react";
+import Box from "@mui/material/Box";
+import Typography from "@mui/material/Typography";
+
+import { GatewayEmptyState, GatewayGrid } from "../components/frame";
+import { catalogEntry } from "./catalog";
 import { useGuardrailFeedbackSummary } from "./hooks/useGuardrailFeedback";
+import { EMPTY } from "../utils/formatters";
 
-function formatPct(val) {
-  if (val == null || isNaN(val)) return "0%";
-  return `${(Number(val) * 100).toFixed(1)}%`;
-}
+const n = (value) => Number(value || 0);
 
-function normalizeSummaryItem(item) {
+function toRow(item) {
+  const name = item.check_name ?? item.checkName ?? "";
+  const total = n(item.total_feedback ?? item.total);
+  const correct = n(item.correct_count ?? item.correctCount);
   return {
-    checkName: item.checkName ?? item.check_name ?? "",
-    total: item.total ?? item.total_feedback ?? 0,
-    correctCount: item.correctCount ?? item.correct_count ?? 0,
-    falsePositiveCount:
-      item.falsePositiveCount ?? item.false_positive_count ?? 0,
-    falseNegativeCount:
-      item.falseNegativeCount ?? item.false_negative_count ?? 0,
+    id: name,
+    label: catalogEntry(name)?.label || name,
+    total,
+    correct,
+    falsePositive: n(item.false_positive_count ?? item.falsePositiveCount),
+    falseNegative: n(item.false_negative_count ?? item.falseNegativeCount),
+    unsure: n(item.unsure_count ?? item.unsureCount),
+    accuracy: total > 0 ? (correct / total) * 100 : null,
   };
 }
 
+const NUMBER = { flex: 0, width: 130, minWidth: 110, type: "rightAligned" };
+
+const COLUMNS = [
+  { field: "label", headerName: "Check", minWidth: 200, flex: 2 },
+  { field: "total", headerName: "Reviews", ...NUMBER },
+  { field: "correct", headerName: "Correct", ...NUMBER },
+  {
+    field: "falsePositive",
+    headerName: "False positive",
+    ...NUMBER,
+    width: 170,
+  },
+  {
+    field: "falseNegative",
+    headerName: "False negative",
+    ...NUMBER,
+    width: 170,
+  },
+  { field: "unsure", headerName: "Unsure", ...NUMBER },
+  {
+    field: "accuracy",
+    headerName: "Accuracy",
+    headerTooltip: "Reviews marked correct, out of all reviews of this check",
+    valueFormatter: ({ value }) =>
+      value === null || value === undefined ? EMPTY : `${Math.round(value)}%`,
+    ...NUMBER,
+  },
+];
+
+/**
+ * How reviewers judged each check's matches. A review is given on a matched
+ * request's detail in the request logs.
+ */
 const FeedbackSummaryCard = () => {
-  const { data: summary, isLoading } = useGuardrailFeedbackSummary();
+  const summary = useGuardrailFeedbackSummary();
+  const rows = useMemo(
+    () => (Array.isArray(summary.data) ? summary.data.map(toRow) : undefined),
+    [summary.data],
+  );
 
-  if (isLoading) {
+  if (summary.isError) {
     return (
-      <Card>
-        <CardContent>
-          <Skeleton width={200} height={30} sx={{ mb: 2 }} />
-          <Stack spacing={1}>
-            {[...Array(4)].map((_, i) => (
-              <Skeleton key={i} width="100%" height={36} />
-            ))}
-          </Stack>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (!summary?.length) {
-    return (
-      <Card>
-        <CardContent>
-          <Typography variant="subtitle1" mb={1}>
-            Feedback Summary
-          </Typography>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            textAlign="center"
-            py={3}
-          >
-            No feedback data yet. Submit feedback on guardrail results in the
-            request log detail view.
-          </Typography>
-        </CardContent>
-      </Card>
+      <GatewayEmptyState
+        icon="guardrails"
+        title="Feedback could not be loaded"
+        description="The feedback service did not answer. Reviews already given are kept."
+        actionLabel="Retry"
+        onAction={() => summary.refetch()}
+      />
     );
   }
 
   return (
-    <Card>
-      <CardContent>
-        <Typography variant="subtitle1" mb={2}>
-          Feedback Summary by Check
-        </Typography>
-        <TableContainer>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Check Name</TableCell>
-                <TableCell align="right">Total</TableCell>
-                <TableCell align="right">Correct</TableCell>
-                <TableCell align="right">False Positive</TableCell>
-                <TableCell align="right">False Negative</TableCell>
-                <TableCell>Accuracy</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {summary.map((rawItem) => {
-                const item = normalizeSummaryItem(rawItem);
-                const accuracy =
-                  item.total > 0 ? item.correctCount / item.total : 0;
-                return (
-                  <TableRow key={item.checkName} hover>
-                    <TableCell>
-                      <Typography variant="body2" fontWeight={500}>
-                        {item.checkName}
-                      </Typography>
-                    </TableCell>
-                    <TableCell align="right">
-                      <Typography variant="body2">{item.total}</Typography>
-                    </TableCell>
-                    <TableCell align="right">
-                      <Chip
-                        label={item.correctCount || 0}
-                        color="success"
-                        size="small"
-                        variant="outlined"
-                      />
-                    </TableCell>
-                    <TableCell align="right">
-                      <Chip
-                        label={item.falsePositiveCount || 0}
-                        color="warning"
-                        size="small"
-                        variant="outlined"
-                      />
-                    </TableCell>
-                    <TableCell align="right">
-                      <Chip
-                        label={item.falseNegativeCount || 0}
-                        color="error"
-                        size="small"
-                        variant="outlined"
-                      />
-                    </TableCell>
-                    <TableCell sx={{ width: 130 }}>
-                      <Stack direction="row" alignItems="center" spacing={1}>
-                        <LinearProgress
-                          variant="determinate"
-                          value={accuracy * 100}
-                          color={
-                            accuracy > 0.8
-                              ? "success"
-                              : accuracy > 0.5
-                                ? "warning"
-                                : "error"
-                          }
-                          sx={{ flex: 1, height: 6, borderRadius: 3 }}
-                        />
-                        <Typography variant="caption" sx={{ minWidth: 36 }}>
-                          {formatPct(accuracy)}
-                        </Typography>
-                      </Stack>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </CardContent>
-    </Card>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Typography typography="s2" color="text.secondary">
+        Reviewers mark each match as correct, a false positive, a false negative
+        or unsure from the request&apos;s detail in Logs. Each reviewer has one
+        answer per check on each request: an edited answer counts once.
+      </Typography>
+      <GatewayGrid
+        rowData={rows}
+        loading={summary.isLoading}
+        columnDefs={COLUMNS}
+        getRowId={(p) => p.data.id}
+        stateKey="gateway-guardrail-feedback"
+        height="auto"
+        domLayout="autoHeight"
+        emptyState={{
+          icon: "guardrails",
+          title: "No feedback recorded",
+          description:
+            "Open a matched request in Logs and mark whether the rule was right. Accuracy per check appears here.",
+        }}
+      />
+    </Box>
   );
 };
 

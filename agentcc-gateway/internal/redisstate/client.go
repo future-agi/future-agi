@@ -48,6 +48,8 @@ func NewClient(cfg Config) (*Client, error) {
 		DialTimeout:  cfg.Timeout,
 		ReadTimeout:  cfg.Timeout,
 		WriteTimeout: cfg.Timeout,
+		// Auth revocation reads have a stricter per-call freshness deadline.
+		ContextTimeoutEnabled: true,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)

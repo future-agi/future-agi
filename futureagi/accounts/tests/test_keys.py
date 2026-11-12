@@ -12,7 +12,15 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from accounts.tests.personal_keys import personal_key_for, session_client_for
+
 SECRET_KEYS_URL = "/accounts/key/get_secret_keys/"
+
+
+@pytest.fixture
+def auth_client(user, workspace):
+    return session_client_for(user, user.organization, workspace)
+
 
 # Names of the rows created by the ``seeded_keys`` fixture, in ascending
 # alphabetical order. Assertions filter the response down to these so an
@@ -35,7 +43,9 @@ def _metadata(response):
 
 def _seeded_order(response):
     """Key names from the response, restricted to the seeded fixture rows."""
-    return [row["key_name"] for row in _rows(response) if row["key_name"] in SEEDED_NAMES]
+    return [
+        row["key_name"] for row in _rows(response) if row["key_name"] in SEEDED_NAMES
+    ]
 
 
 @pytest.fixture
@@ -62,13 +72,12 @@ def seeded_keys(db, user, organization):
     base = timezone.now() - timedelta(days=3)
     keys = []
     for index, name in enumerate(SEEDED_NAMES):
-        key = OrgApiKey.objects.create(
+        key = personal_key_for(
+            user,
+            organization,
             name=name,
             api_key=f"api-{name}-{uuid.uuid4().hex[:8]}",
             secret_key=f"secret-{name}-{uuid.uuid4().hex[:8]}",
-            organization=organization,
-            type="user",
-            user=user,
         )
         OrgApiKey.objects.filter(id=key.id).update(
             created_at=base + timedelta(days=index)
@@ -127,12 +136,12 @@ def member_user(user, db):
     """User with member role (not owner)."""
     from accounts.models.organization_membership import OrganizationMembership
 
-    user.organization_role = "member"
+    user.organization_role = "Member"
     user.save(update_fields=["organization_role"])
     # Also update the OrganizationMembership (source of truth for role checks)
     OrganizationMembership.no_workspace_objects.filter(
         user=user, is_active=True
-    ).update(role="Member")
+    ).update(role="Member", level=3)
     return user
 
 
@@ -150,9 +159,15 @@ class TestGetKeysAPI:
     """Tests for /accounts/keys/ endpoint (GetKeysView)."""
 
     def test_get_keys_authenticated(self, auth_client):
-        """Authenticated user can get their API keys."""
+        """A session receives retirement guidance, never an automatic key."""
+        from accounts.models import OrgApiKey
+
+        before = OrgApiKey._base_manager.count()
         response = auth_client.get("/accounts/keys/")
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_410_GONE
+        assert response.json()["code"] == "org_keys_retired"
+        assert response.json()["create_url"] == "/dashboard/keys"
+        assert OrgApiKey._base_manager.count() == before
 
     def test_get_keys_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -417,7 +432,9 @@ class TestGetSecretKeysPagination:
         self, auth_client, seeded_keys
     ):
         """The frontend sends current_page_index; the view accepts both spellings."""
-        via_alias = auth_client.get(f"{SECRET_KEYS_URL}?current_page_index=1&page_size=2")
+        via_alias = auth_client.get(
+            f"{SECRET_KEYS_URL}?current_page_index=1&page_size=2"
+        )
         via_legacy = auth_client.get(f"{SECRET_KEYS_URL}?page_number=1&page_size=2")
 
         assert via_alias.status_code == status.HTTP_200_OK
@@ -486,7 +503,9 @@ class TestGetSecretKeysSorting:
 
     def test_sort_by_key_name_asc(self, auth_client, seeded_keys):
         """Ascending name order is actually applied."""
-        response = auth_client.get(f"{SECRET_KEYS_URL}?sort_field=keyName&sort_order=asc")
+        response = auth_client.get(
+            f"{SECRET_KEYS_URL}?sort_field=keyName&sort_order=asc"
+        )
 
         assert response.status_code == status.HTTP_200_OK
         assert _seeded_order(response) == SEEDED_NAMES
@@ -696,10 +715,11 @@ class TestIngestKeysStayOffTheKeysPage:
 
         assert response.status_code == status.HTTP_200_OK
         rows = _rows(response)
-        assert {row["id"] for row in rows} == {str(system.id), str(listed.id)}
+        assert {row["id"] for row in rows} == {str(listed.id)}
+        assert str(system.id) not in {row["id"] for row in rows}
         assert str(ingest.id) not in {row["id"] for row in rows}
-        assert {row["type"] for row in rows} == {"system", "user"}
-        assert _metadata(response)["total_rows"] == 2
+        assert {row["type"] for row in rows} == {"user"}
+        assert _metadata(response)["total_rows"] == 1
         assert _metadata(response)["total_pages"] == 1
 
         by_name = auth_client.get(f"{SECRET_KEYS_URL}?search=simulation_export_key")
@@ -803,15 +823,10 @@ class TestEnableDisableKeyStates:
 @pytest.mark.integration
 @pytest.mark.api
 class TestDeleteKeyPermissions:
-    """Tests for delete key permissions (owner-only)."""
+    """Members revoke their own keys; administrators revoke member keys."""
 
-    def test_delete_key_as_member_fails(self, mocker, member_client, auth_client):
-        """Member (non-owner) cannot delete keys — and the key survives.
-
-        The status code alone would pass even if the view rejected the caller
-        *after* soft-deleting the row, so assert the row and the revocation
-        side effect too.
-        """
+    def test_delete_key_as_member_revokes_own(self, mocker, member_client, auth_client):
+        """The same Member scenario now explicitly revokes their own key."""
         from accounts.models.user import OrgApiKey
 
         create_response = auth_client.post(
@@ -819,7 +834,10 @@ class TestDeleteKeyPermissions:
             {"key_name": "Key To Delete By Member"},
             format="json",
         )
-        key_id = create_response.json().get("result", {}).get("key_id")
+        assert create_response.status_code == status.HTTP_200_OK
+        assert isinstance(create_response.json().get("result"), dict)
+        key_id = create_response.json()["result"].get("key_id")
+        assert key_id
         revoke = mocker.patch("accounts.views.keys._publish_key_revocation")
 
         response = member_client.delete(
@@ -828,11 +846,12 @@ class TestDeleteKeyPermissions:
             format="json",
         )
 
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-        revoke.assert_not_called()
+        assert response.status_code == status.HTTP_200_OK
+        revoke.assert_called_once()
         key = OrgApiKey.all_objects.get(id=key_id)
-        assert key.deleted is False
-        assert key.deleted_at is None
+        assert key.deleted is True
+        assert key.deleted_at is not None
+        assert key.enabled is False
 
     def test_delete_key_missing_key_id(self, auth_client):
         """Delete key without key_id fails."""
@@ -937,18 +956,22 @@ class TestGetKeysViewResponse:
     """Tests for GetKeysView response format."""
 
     def test_get_keys_response_format(self, auth_client):
-        """Get keys returns expected response structure."""
+        """Retirement has one stable envelope and carries no credentials."""
         response = auth_client.get("/accounts/keys/")
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_410_GONE
         data = response.json()
-        assert "status" in data
-        assert data["status"] == "success"
-        assert "data" in data
+        assert set(data) == {"code", "create_url"}
+        assert data["code"] == "org_keys_retired"
+        assert data["create_url"] == "/dashboard/keys"
+        assert not {"api_key", "secret_key"}.intersection(data)
 
-    def test_get_keys_creates_system_key_if_none(self, auth_client):
-        """GetKeysView creates system key if none exists."""
+    def test_get_keys_mints_nothing_if_none(self, auth_client, organization):
+        """Repeated bootstrap calls do not turn an empty account into an issuer."""
+        from accounts.models import OrgApiKey
+
+        assert not OrgApiKey._base_manager.filter(organization=organization).exists()
         response = auth_client.get("/accounts/keys/")
-        assert response.status_code == status.HTTP_200_OK
-        # Should have created a system key
-        data = response.json()
-        assert data.get("data") is not None
+        assert response.status_code == status.HTTP_410_GONE
+        assert not OrgApiKey._base_manager.filter(organization=organization).exists()
+        assert auth_client.get("/accounts/keys/").status_code == status.HTTP_410_GONE
+        assert not OrgApiKey._base_manager.filter(organization=organization).exists()

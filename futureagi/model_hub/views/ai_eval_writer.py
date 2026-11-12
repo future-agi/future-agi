@@ -56,6 +56,9 @@ class AIEvalWriterView(APIView):
             result = generate_eval_prompt(
                 description=request.validated_data.get("description", ""),
                 output_format=request.validated_data.get("output_format", "prompt"),
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+                workspace=getattr(request, "workspace", None),
             )
             return self._gm.success_response(result)
 

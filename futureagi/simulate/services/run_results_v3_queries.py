@@ -1130,6 +1130,36 @@ def _summary_from_values(values: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def run_outcome_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
+    """Batch history outcomes for executions of one run test, using the v3 verdicts."""
+    if not executions:
+        return {}
+    rows = (
+        run_calls_queryset(executions[0], [execution.id for execution in executions])
+        .order_by()
+        .values("test_execution_id")
+        .annotate(
+            total=Count("id"),
+            measured=Count("id", filter=Q(result_outcome__in=EVALUATED_OUTCOMES)),
+            **{
+                f"outcome_{outcome}": Count("id", filter=Q(result_outcome=outcome))
+                for outcome in OUTCOMES
+            },
+        )
+    )
+    values_by_execution = {row["test_execution_id"]: row for row in rows}
+    # Empty runs have no grouped row. Preserve v3's zero measured / null rate,
+    # rather than falling back to receipts or transport completion percentages.
+    summaries = {}
+    for execution in executions:
+        summary = _summary_from_values(values_by_execution.get(execution.id, {}))
+        summaries[execution.id] = {
+            field: summary[field]
+            for field in ("total", "outcomes", "measured", "pass_rate")
+        }
+    return summaries
+
+
 def _result_sub_goals_expression(*, pinned: bool = False) -> Coalesce:
     """A call's own sub-goals, else its authored scenario's, as the rows show."""
     empty = Value([], output_field=JSONField())

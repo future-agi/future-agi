@@ -95,7 +95,7 @@ const SliderRow = ({
       <Box sx={sliderContainerStyles}>
         <ModelOptionSlider
           {...rest}
-          aria-label="Slider"
+          aria-label={label || "Slider"}
           valueLabelDisplay={isNull ? "off" : "auto"}
           valueLabelFormat={(value) =>
             value.toString().includes(".") ? value?.toFixed(2) : value

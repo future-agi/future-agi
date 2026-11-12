@@ -12,16 +12,7 @@ import Iconify from "src/components/iconify";
 
 const InfoKnowledgeModal = ({ open, onClose, onCreateKnowledge }) => {
   return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      fullWidth
-      maxWidth="sm"
-      PaperProps={{
-        width: "660px",
-        maxWidth: "none",
-      }}
-    >
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
       <Box sx={{ padding: 2 }}>
         <DialogTitle sx={{ padding: 0, margin: 0 }}>
           <Box display="flex" justifyContent={"space-between"}>
@@ -34,7 +25,7 @@ const InfoKnowledgeModal = ({ open, onClose, onCreateKnowledge }) => {
               Steps to create knowledge base
             </Typography>
             <IconButton onClick={onClose}>
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
         </DialogTitle>

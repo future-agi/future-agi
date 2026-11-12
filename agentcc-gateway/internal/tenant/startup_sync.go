@@ -127,6 +127,9 @@ func jittered(d time.Duration) time.Duration {
 // until that half first loads, in either sync: until then the startup sync is
 // the one that warns about a long outage. Blocks; run it in a goroutine.
 func RunControlPlaneSync(ctx context.Context, startup bool, interval time.Duration, baseURL, adminToken string, store *Store, keyStore *auth.KeyStore) {
+	if keyStore != nil {
+		keyStore.SetDelegationSyncInterval(interval)
+	}
 	if !startup {
 		StartPeriodicSync(ctx, interval, baseURL, adminToken, store, keyStore)
 		return

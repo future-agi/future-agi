@@ -10,7 +10,7 @@ def backfill_is_default(apps, schema_editor):
     EvalTemplateVersion = apps.get_model("model_hub", "EvalTemplateVersion")
 
     templates_needing_fix = (
-        EvalTemplate.objects.filter(deleted=False, versions__deleted=False)
+        EvalTemplate.objects.using(schema_editor.connection.alias).filter(deleted=False, versions__deleted=False)
         .annotate(
             default_count=models.Count(
                 "versions", filter=models.Q(versions__is_default=True, versions__deleted=False)
@@ -23,7 +23,7 @@ def backfill_is_default(apps, schema_editor):
     fixed = 0
     for template in templates_needing_fix.iterator():
         latest = (
-            EvalTemplateVersion.objects.filter(
+            EvalTemplateVersion.objects.using(schema_editor.connection.alias).filter(
                 eval_template=template, deleted=False
             )
             .order_by("-version_number")
@@ -32,7 +32,7 @@ def backfill_is_default(apps, schema_editor):
         if latest is None:
             continue
         latest.is_default = True
-        latest.save(update_fields=["is_default"])
+        latest.save(using=schema_editor.connection.alias, update_fields=["is_default"])
         fixed += 1
 
     if fixed:

@@ -2,38 +2,35 @@ import React, { useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Button,
-  IconButton,
   ListItemIcon,
   ListItemText,
   Menu,
   MenuItem,
-  Stack,
   Tooltip,
-  Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { pillFilledSx } from "./toolbarStyles";
+import SelectionBar from "src/components/selection-bar/SelectionBar";
 
 const DEFAULT_ACTIONS = [
   {
     id: "dataset",
     label: "Move to dataset",
-    icon: "mdi:folder-move-outline",
+    icon: "solar:move-to-folder-linear",
   },
   {
     id: "tags",
     label: "Add tags",
-    icon: "mdi:tag-outline",
+    icon: "solar:tag-linear",
   },
   {
     id: "annotation-queue",
     label: "Add to annotation queue",
-    icon: "mdi:clipboard-list-outline",
+    icon: "solar:clipboard-list-linear",
   },
   {
     id: "annotate",
     label: "Annotate",
-    icon: "mdi:pencil-box-outline",
+    icon: "solar:pen-new-square-linear",
     requiresSingle: true,
   },
 ];
@@ -61,26 +58,22 @@ const BulkActionsBar = ({
 
   const formattedCount = `${selectedCountIsLowerBound ? "≥" : ""}${selectedCount.toLocaleString()}`;
 
-  return (
-    <Stack direction="row" spacing={1} alignItems="center">
-      <Typography
-        variant="body2"
-        sx={{ fontSize: 13, color: "text.secondary", whiteSpace: "nowrap" }}
-      >
-        {allMatching
-          ? selectedCountIsLowerBound
-            ? `All matching filter (${formattedCount})`
-            : `All ${formattedCount} matching filter`
-          : `${formattedCount} selected`}
-      </Typography>
+  const label = allMatching
+    ? selectedCountIsLowerBound
+      ? `All matching filter (${formattedCount})`
+      : `All ${formattedCount} matching filter`
+    : `${formattedCount} selected`;
 
+  const menu = (
+    <>
       <Button
         ref={anchorRef}
-        variant="outlined"
         size="small"
-        endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+        variant="text"
+        color="inherit"
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={16} />}
         onClick={() => setMenuOpen(true)}
-        sx={pillFilledSx}
+        sx={{ color: "text.secondary", "&:hover": { color: "text.primary" } }}
       >
         Actions
       </Button>
@@ -92,24 +85,39 @@ const BulkActionsBar = ({
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
         slotProps={{
-          paper: { sx: { minWidth: 220, mt: 0.5 } },
+          paper: { sx: { minWidth: 240, mt: 0.5 } },
         }}
+        // Arrow keys reach disabled items, so their reason can be read.
+        MenuListProps={{ disabledItemsFocusable: true }}
       >
         {visibleActions.map((action) => {
           const disabled = Boolean(action.disabled);
+          // A disabled item stays focusable (aria-disabled, not the MUI
+          // `disabled` prop, which also blocks pointer events) and does
+          // nothing on click or Enter.
           const item = (
             <MenuItem
               key={action.id}
-              disabled={disabled}
+              aria-disabled={disabled ? "true" : undefined}
+              disableRipple={disabled}
               onClick={() => {
                 if (disabled) return;
                 setMenuOpen(false);
                 onAction(action.id, { currentTarget: anchorRef.current });
               }}
               dense
+              sx={
+                disabled
+                  ? {
+                      opacity: (theme) => theme.palette.action.disabledOpacity,
+                      cursor: "default",
+                      "&:hover": { backgroundColor: "transparent" },
+                    }
+                  : undefined
+              }
             >
               <ListItemIcon>
-                <Iconify icon={action.icon} width={18} />
+                <Iconify icon={action.icon} width={16} />
               </ListItemIcon>
               <ListItemText
                 primaryTypographyProps={{ variant: "body2", fontSize: 13 }}
@@ -119,28 +127,44 @@ const BulkActionsBar = ({
             </MenuItem>
           );
 
+          // An optional one-line hint on an enabled action (`tooltip`).
+          if (!disabled && action.tooltip)
+            return (
+              <Tooltip
+                key={action.id}
+                title={action.tooltip}
+                placement="left"
+                describeChild
+              >
+                {item}
+              </Tooltip>
+            );
           if (!disabled || !action.disabledReason) return item;
 
+          // No wrapper element: the item stays a direct child of the menu
+          // list, so keyboard focus reaches it and shows the reason.
           return (
             <Tooltip
               key={action.id}
               title={action.disabledReason}
               placement="left"
+              describeChild
             >
-              <span>{item}</span>
+              {item}
             </Tooltip>
           );
         })}
       </Menu>
+    </>
+  );
 
-      <IconButton
-        size="small"
-        onClick={onClearSelection}
-        sx={{ color: "text.secondary", p: 0.5 }}
-      >
-        <Iconify icon="mdi:close" width={18} />
-      </IconButton>
-    </Stack>
+  return (
+    <SelectionBar
+      count={selectedCount}
+      label={label}
+      actions={[{ label: "Actions", node: menu }]}
+      onCancel={onClearSelection}
+    />
   );
 };
 

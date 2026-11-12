@@ -6,6 +6,7 @@ import WebEnvironmentsHeroCard from "../cards/WebEnvironmentsHeroCard";
 import { OPTIONS, OPTION_ID } from "../environmentOptions";
 
 const optionById = (id) => OPTIONS.find((o) => o.id === id);
+const LINE = "Not available in this release";
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
@@ -18,6 +19,7 @@ describe("OptionCard", () => {
     render(<OptionCard option={option} onClick={onClick} />);
 
     expect(screen.queryByLabelText("Coming soon")).toBeNull();
+    expect(screen.queryByText(LINE)).toBeNull();
     expect(screen.getByText(option.title)).toBeInTheDocument();
     expect(screen.getByText(option.blurb)).toBeInTheDocument();
     option.preview.forEach((chip) => {
@@ -30,7 +32,9 @@ describe("OptionCard", () => {
 
   it("live option: keyboard-focusable and fires on Enter", () => {
     const onClick = vi.fn();
-    render(<OptionCard option={optionById(OPTION_ID.SOURCE)} onClick={onClick} />);
+    render(
+      <OptionCard option={optionById(OPTION_ID.SOURCE)} onClick={onClick} />,
+    );
 
     const btn = screen.getByRole("button");
     expect(btn).toHaveAttribute("tabindex", "0");
@@ -38,26 +42,39 @@ describe("OptionCard", () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
-  it("coming-soon option: labelled and inert", () => {
-    const onClick = vi.fn();
-    render(<OptionCard option={optionById(OPTION_ID.MCP)} onClick={onClick} />);
+  it.each([OPTION_ID.MCP, OPTION_ID.LOCAL])(
+    "unreleased option %s: visible with the line, disabled and inert",
+    (id) => {
+      const onClick = vi.fn();
+      const option = optionById(id);
+      render(<OptionCard option={option} onClick={onClick} />);
 
-    expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
-    const btn = screen.getByRole("button");
-    expect(btn).toHaveAttribute("tabindex", "-1");
-    fireEvent.click(btn);
-    fireEvent.keyDown(btn, { key: "Enter" });
-    expect(onClick).not.toHaveBeenCalled();
-  });
+      expect(screen.getByText(option.title)).toBeInTheDocument();
+      expect(screen.getByText(LINE)).toBeInTheDocument();
+      expect(screen.queryByText(/coming soon/i)).toBeNull();
+      const btn = screen.getByRole("button");
+      expect(btn).toHaveAttribute("aria-disabled", "true");
+      expect(btn).toHaveAttribute("tabindex", "-1");
+      fireEvent.click(btn);
+      fireEvent.keyDown(btn, { key: "Enter" });
+      expect(onClick).not.toHaveBeenCalled();
+    },
+  );
 
   it("selected option: exposes aria-pressed", () => {
-    render(<OptionCard option={optionById(OPTION_ID.SOURCE)} selected onClick={vi.fn()} />);
+    render(
+      <OptionCard
+        option={optionById(OPTION_ID.SOURCE)}
+        selected
+        onClick={vi.fn()}
+      />,
+    );
     expect(screen.getByRole("button")).toHaveAttribute("aria-pressed", "true");
   });
 });
 
 describe("TemplateHeroCard", () => {
-  it("renders the coming-soon prebuilt hero and is inert", () => {
+  it("renders the unreleased prebuilt hero with the line, and it is inert", () => {
     const onClick = vi.fn();
     render(<TemplateHeroCard onClick={onClick} />);
 
@@ -68,25 +85,27 @@ describe("TemplateHeroCard", () => {
     expect(screen.getByText("Browser")).toBeInTheDocument();
     expect(screen.getByText("Airline Rebooking")).toBeInTheDocument();
     expect(screen.getByText("+ 10 more")).toBeInTheDocument();
-    expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
+    expect(screen.getByText(LINE)).toBeInTheDocument();
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
 
     fireEvent.click(screen.getByRole("button"));
     expect(onClick).not.toHaveBeenCalled();
   });
 
-  it("does not activate on Enter while coming soon", () => {
+  it("does not activate on Enter while not released", () => {
     const onClick = vi.fn();
     render(<TemplateHeroCard onClick={onClick} />);
 
     const btn = screen.getByRole("button");
     expect(btn).toHaveAttribute("tabindex", "-1");
+    expect(btn).toHaveAttribute("aria-disabled", "true");
     fireEvent.keyDown(btn, { key: "Enter" });
     expect(onClick).not.toHaveBeenCalled();
   });
 });
 
 describe("WebEnvironmentsHeroCard", () => {
-  it("renders the coming-soon web hero and is inert", () => {
+  it("renders the unreleased web hero with the line, and it is inert", () => {
     const onClick = vi.fn();
     render(<WebEnvironmentsHeroCard onClick={onClick} />);
 
@@ -95,7 +114,8 @@ describe("WebEnvironmentsHeroCard", () => {
       expect(screen.getByText(chip)).toBeInTheDocument();
     });
     expect(screen.getByText("+ 8 more")).toBeInTheDocument();
-    expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
+    expect(screen.getByText(LINE)).toBeInTheDocument();
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
 
     fireEvent.click(screen.getByRole("button"));
     expect(onClick).not.toHaveBeenCalled();

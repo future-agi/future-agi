@@ -14,6 +14,8 @@ import {
   ENVIRONMENTS_HEADER,
 } from "./environmentOptions";
 
+// Every way in is shown. Options not built in this release stay visible and
+// disabled with the shared line; `pick` ignores them.
 const BRING_YOUR_AGENT = BRING_YOUR_AGENT_ORDER.map((id) =>
   OPTIONS.find((o) => o.id === id),
 );
@@ -53,13 +55,20 @@ export default function BuildEnvironmentTab() {
         >
           <TemplateHeroCard
             selected={false}
-            onClick={() => navigate(paths.dashboard.simulate.environments.templates)}
+            onClick={() =>
+              navigate(paths.dashboard.simulate.environments.templates)
+            }
           />
           <WebEnvironmentsHeroCard />
         </Box>
         <Box>
-          <Stack direction="row" alignItems="baseline" spacing={1.5} sx={{ mb: 1.5 }}>
-            <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold", letterSpacing: 0.4, textTransform: "uppercase" }}>
+          <Stack
+            direction="row"
+            alignItems="baseline"
+            spacing={1.5}
+            sx={{ mb: 1.5 }}
+          >
+            <Typography sx={{ typography: "s1_2", fontWeight: 500 }}>
               {ENVIRONMENTS_HEADER.connectHeading}
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -70,7 +79,11 @@ export default function BuildEnvironmentTab() {
             sx={{
               display: "grid",
               gap: 1.25,
-              gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr", md: "repeat(3, 1fr)" },
+              gridTemplateColumns: {
+                xs: "1fr",
+                sm: "1fr 1fr",
+                md: "repeat(3, 1fr)",
+              },
             }}
           >
             {BRING_YOUR_AGENT.map((opt) => (

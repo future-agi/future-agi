@@ -1,0 +1,71 @@
+# ClickUp's MCP server takes OAuth 2.1 with PKCE only, never an API key.
+# Its authorization server registers public clients dynamically (token
+# endpoint auth "none") and grants authorization_code alone, with no
+# refresh_token grant, so a connection signs in again when its token ends.
+# Calls are limited per workspace and per client by the workspace's plan.
+# EE reads a pre-registered client id and secret from its environment and
+# cannot register a client, so it gets none.
+schema: "connector-manifest/v1#provider"
+app: clickup
+id: mcp
+version: 1.0.0
+kind: vendor_mcp
+publisher: vendor
+vendorStatus: { label: unknown }
+transport:
+  kind: http
+  url: https://mcp.clickup.com/mcp
+  era: auto
+hosted: true
+trusted: false
+accountModes: [agent, user]
+auth:
+  kind: oauth2
+  oauth2:
+    authorizeUrl: https://mcp.clickup.com/oauth/authorize
+    tokenUrl: https://mcp.clickup.com/oauth/token
+    scopes: [read, write]
+    pkce: true
+    tokenBody: form
+    clientAuth: body
+    refresh: { supported: false, rotates: false }
+    registration: [dcr]
+tools: { source: upstream_mcp, defaultPosture: ask }
+pricing: { model: vendor_plan }
+quality: { tier: listed, owner: connectors }
+lifecycle: { status: active }
+sources:
+  - fact: transport.url
+    url: https://developer.clickup.com/docs/connect-an-ai-assistant-to-clickups-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: transport.url
+    url: https://mcp.clickup.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.kind
+    url: https://developer.clickup.com/docs/connect-an-ai-assistant-to-clickups-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.authorizeUrl
+    url: https://mcp.clickup.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.tokenUrl
+    url: https://mcp.clickup.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.scopes
+    url: https://mcp.clickup.com/.well-known/oauth-protected-resource/mcp
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://developer.clickup.com/docs/connect-an-ai-assistant-to-clickups-mcp-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.pkce
+    url: https://mcp.clickup.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.clientAuth
+    url: https://mcp.clickup.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.refresh
+    url: https://mcp.clickup.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+  - fact: auth.oauth2.registration
+    url: https://mcp.clickup.com/.well-known/oauth-authorization-server
+    fetchedAt: 2026-10-21
+x-omega: { ee: exclude }

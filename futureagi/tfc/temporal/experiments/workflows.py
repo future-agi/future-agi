@@ -40,7 +40,11 @@ with workflow.unsafe.imports_passed_through():
     from tfc.temporal.agent_playground.types import (
         OutputSinkConfig,
     )
+    from tfc.temporal.experiments.run_control import ControlledRun
     from tfc.temporal.experiments.types import (  # V2 types; Rerun cells types; Stop experiment types; Error eval cells types; Error agent cells types
+        HttpSourceInput,
+        HttpRowInput,
+        HttpSourceWorkflowInput,
         AnalyzeDependenciesInput,
         CheckStatusInput,
         CleanupRunningCellsInput,
@@ -229,7 +233,7 @@ class ProcessPromptWorkflow:
             batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
 
             # Collect results from this batch
-            for row_id, result in zip(batch_row_ids, batch_results):
+            for row_id, result in zip(batch_row_ids, batch_results, strict=False):
                 if isinstance(result, Exception):
                     failed_count += 1
                 else:
@@ -375,12 +379,12 @@ class RunExperimentWorkflow:
 
             # Step 2 & 3: Launch prompt processing AND base evaluations IN PARALLEL
             # This matches the original Celery behavior
-            all_tasks = []
+            _all_tasks = []
 
             # Step 2: Start child workflows for each prompt_config x model combination
             child_workflow_handles = []
             for prompt_idx, prompt_config in enumerate(prompt_configs):
-                prompt_name = prompt_config.get("name", f"prompt-{prompt_idx}")
+                _prompt_name = prompt_config.get("name", f"prompt-{prompt_idx}")
                 models = prompt_config.get("model", [])
 
                 for model_idx, model in enumerate(models):
@@ -465,7 +469,7 @@ class RunExperimentWorkflow:
                 failed_rows=total_failed_rows,
             )
 
-        except Exception as e:
+        except Exception:
             # Cleanup: Mark any remaining running cells as error
             try:
                 await workflow.execute_activity(
@@ -498,7 +502,7 @@ class RunExperimentWorkflow:
 
 
 @workflow.defn
-class ProcessPromptV2Workflow:
+class ProcessPromptV2Workflow(ControlledRun):
     """
     V2 child workflow to process a single ExperimentPromptConfig.
 
@@ -513,6 +517,9 @@ class ProcessPromptV2Workflow:
     async def run(
         self, input: ProcessPromptV2WorkflowInput
     ) -> ProcessPromptV2WorkflowOutput:
+        await self.bind_control(
+            input.experiment_id, input.experiment_prompt_config_id, "prompt"
+        )
         # Step 1: Setup column + cells
         setup_result = await workflow.execute_activity(
             "setup_prompt_v2_activity",
@@ -522,6 +529,7 @@ class ProcessPromptV2Workflow:
                 experiment_prompt_config_id=input.experiment_prompt_config_id,
                 rerun_row_ids=input.rerun_row_ids,
                 failed_only=input.failed_only,
+                native_context=input.native_context,
             ),
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=SETUP_RETRY_POLICY,
@@ -549,6 +557,7 @@ class ProcessPromptV2Workflow:
         total_rows = len(row_ids)
 
         if total_rows == 0:
+            await self.complete_control()
             return ProcessPromptV2WorkflowOutput(
                 experiment_id=input.experiment_id,
                 experiment_prompt_config_id=input.experiment_prompt_config_id,
@@ -560,7 +569,9 @@ class ProcessPromptV2Workflow:
             )
 
         # Dependent eval template IDs (passed from parent via dependency analysis)
-        eval_template_ids = input.eval_template_ids
+        # Native rows seal output and all pinned evaluator outcomes together.
+        # Never schedule a second, unreceipted classic evaluation for them.
+        eval_template_ids = [] if input.native_context is not None else input.eval_template_ids
 
         # Step 2: Process rows in batches — only prompts gate batches,
         # evals are scheduled immediately via start_activity and never block prompts
@@ -570,6 +581,7 @@ class ProcessPromptV2Workflow:
         eval_handles = []
 
         for batch_start in range(0, total_rows, batch_size):
+            await self.control_checkpoint(eval_handles)
             batch_end = min(batch_start + batch_size, total_rows)
             batch_row_ids = row_ids[batch_start:batch_end]
 
@@ -586,6 +598,7 @@ class ProcessPromptV2Workflow:
                         model_config=model_config,
                         output_format=output_format,
                         run_prompt_config=run_prompt_config,
+                        native_context=input.native_context,
                     )
                 )
 
@@ -594,7 +607,7 @@ class ProcessPromptV2Workflow:
             # Schedule evals for each row:
             # - Completed rows: run eval normally
             # - Failed rows: create eval cells in ERROR state with descriptive message
-            for row_id, result in zip(batch_row_ids, batch_results):
+            for row_id, result in zip(batch_row_ids, batch_results, strict=False):
                 if not isinstance(result, Exception) and result == "COMPLETED":
                     completed_count += 1
                     if eval_template_ids:
@@ -632,6 +645,8 @@ class ProcessPromptV2Workflow:
                             )
                         )
 
+        await self.control_checkpoint(eval_handles)
+
         # All prompt rows are done — update prompt column status immediately
         # so the UI reflects completion while evals may still be running
         await workflow.execute_activity(
@@ -652,11 +667,13 @@ class ProcessPromptV2Workflow:
                 CheckStatusInput(
                     entity_type="experiment_dataset",
                     entity_id=experiment_dataset_id,
+                    native_context=input.native_context,
                 ),
                 start_to_close_timeout=timedelta(minutes=5),
                 retry_policy=STATUS_CHECK_RETRY_POLICY,
             )
 
+        await self.complete_control()
         return ProcessPromptV2WorkflowOutput(
             experiment_id=input.experiment_id,
             experiment_prompt_config_id=input.experiment_prompt_config_id,
@@ -678,6 +695,7 @@ class ProcessPromptV2Workflow:
         model_config: dict,
         output_format,
         run_prompt_config,
+        native_context=None,
     ) -> str:
         """Run the LLM prompt for a single row. Returns 'COMPLETED' or 'FAILED'."""
         row_result = await workflow.execute_activity(
@@ -692,6 +710,7 @@ class ProcessPromptV2Workflow:
                 model_config=model_config,
                 output_format=output_format,
                 run_prompt_config=run_prompt_config,
+                native_context=native_context,
             ),
             start_to_close_timeout=timedelta(hours=12),
             heartbeat_timeout=timedelta(minutes=5),
@@ -703,7 +722,7 @@ class ProcessPromptV2Workflow:
 
 
 @workflow.defn
-class ProcessAgentWorkflow:
+class ProcessAgentWorkflow(ControlledRun):
     """
     V2 child workflow to process a single ExperimentAgentConfig.
 
@@ -716,6 +735,9 @@ class ProcessAgentWorkflow:
 
     @workflow.run
     async def run(self, input: ProcessAgentWorkflowInput) -> ProcessAgentWorkflowOutput:
+        await self.bind_control(
+            input.experiment_id, input.experiment_agent_config_id, "agent"
+        )
         # Step 1: Setup agent columns + cells
         setup_result = await workflow.execute_activity(
             "setup_agent_activity",
@@ -725,11 +747,19 @@ class ProcessAgentWorkflow:
                 experiment_agent_config_id=input.experiment_agent_config_id,
                 rerun_row_ids=input.rerun_row_ids,
                 failed_only=input.failed_only,
+                native_context=input.native_context,
             ),
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=SETUP_RETRY_POLICY,
         )
 
+        if get_result_field(setup_result, 'status') == 'TERMINAL':
+            rows = get_result_field(setup_result, 'row_ids', [])
+            completed = get_result_field(setup_result, 'terminal_completed_rows', 0)
+            return ProcessAgentWorkflowOutput(experiment_id=input.experiment_id,
+                experiment_agent_config_id=input.experiment_agent_config_id, total_rows=len(rows),
+                completed_rows=completed, failed_rows=len(rows)-completed,
+                status='COMPLETED' if completed == len(rows) else 'PARTIAL')
         if get_result_field(setup_result, "status") == "FAILED":
             return ProcessAgentWorkflowOutput(
                 experiment_id=input.experiment_id,
@@ -747,6 +777,7 @@ class ProcessAgentWorkflow:
         total_rows = len(row_ids)
 
         if total_rows == 0:
+            await self.complete_control()
             return ProcessAgentWorkflowOutput(
                 experiment_id=input.experiment_id,
                 experiment_agent_config_id=input.experiment_agent_config_id,
@@ -756,7 +787,7 @@ class ProcessAgentWorkflow:
                 status="COMPLETED",
             )
 
-        eval_template_ids = input.eval_template_ids
+        eval_template_ids = [] if input.native_context is not None else input.eval_template_ids
 
         # Step 2: Process rows in batches — only agent execution gates batches,
         # evals are scheduled immediately via start_activity and never block agents
@@ -770,6 +801,7 @@ class ProcessAgentWorkflow:
             terminal_column_ids = [list(node_column_mapping.values())[-1]]
 
         for batch_start in range(0, total_rows, batch_size):
+            await self.control_checkpoint(eval_handles)
             batch_end = min(batch_start + batch_size, total_rows)
             batch_row_ids = row_ids[batch_start:batch_end]
 
@@ -784,15 +816,21 @@ class ProcessAgentWorkflow:
                         node_column_mapping=node_column_mapping,
                         task_queue=input.task_queue,
                         experiment_agent_config_id=input.experiment_agent_config_id,
+                        native_context=input.native_context,
                     )
                 )
 
             batch_results = await asyncio.gather(*agent_tasks, return_exceptions=True)
+            # Ordinary execution failures return only after output settlement.
+            # Remaining exceptions are persistence/authorization failures.
+            for result in batch_results:
+                if isinstance(result, BaseException):
+                    raise RuntimeError("Agent output settlement did not finish") from result
 
             # Schedule evals for each row:
             # - Completed rows: run eval normally against each terminal column
             # - Failed rows: create eval cells in ERROR state with descriptive message
-            for row_id, result in zip(batch_row_ids, batch_results):
+            for row_id, result in zip(batch_row_ids, batch_results, strict=False):
                 if not isinstance(result, Exception) and result == "COMPLETED":
                     completed_count += 1
                     if eval_template_ids and terminal_column_ids:
@@ -832,6 +870,8 @@ class ProcessAgentWorkflow:
                                 )
                             )
 
+        await self.control_checkpoint(eval_handles)
+
         # All agent rows are done — update agent output column statuses immediately
         # so the UI reflects completion while evals may still be running
         for col_id in node_column_mapping.values():
@@ -853,11 +893,13 @@ class ProcessAgentWorkflow:
                 CheckStatusInput(
                     entity_type="experiment_dataset",
                     entity_id=experiment_dataset_id,
+                    native_context=input.native_context,
                 ),
                 start_to_close_timeout=timedelta(minutes=5),
                 retry_policy=STATUS_CHECK_RETRY_POLICY,
             )
 
+        await self.complete_control()
         return ProcessAgentWorkflowOutput(
             experiment_id=input.experiment_id,
             experiment_agent_config_id=input.experiment_agent_config_id,
@@ -867,7 +909,7 @@ class ProcessAgentWorkflow:
             status="COMPLETED" if failed_count == 0 else "PARTIAL",
         )
 
-    async def _process_agent_for_row(
+    async def _execute_agent_for_row(
         self,
         row_id: str,
         dataset_id: str,
@@ -876,6 +918,7 @@ class ProcessAgentWorkflow:
         node_column_mapping: dict,
         task_queue: str = "tasks_l",
         experiment_agent_config_id: str = "",
+        native_context: dict | None = None,
     ) -> str:
         """Prepare and execute graph for a single row. Returns 'COMPLETED' or 'FAILED'."""
 
@@ -887,11 +930,15 @@ class ProcessAgentWorkflow:
                 dataset_id=dataset_id,
                 experiment_id=experiment_id,
                 graph_version_id=graph_version_id,
+                experiment_agent_config_id=experiment_agent_config_id,
+                native_context=native_context,
             ),
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=SETUP_RETRY_POLICY,
         )
 
+        if get_result_field(prep_result, 'status') == 'TERMINAL':
+            return 'FAILED' if get_result_field(prep_result, 'error') else 'COMPLETED'
         if get_result_field(prep_result, "status") != "READY":
             return "FAILED"
 
@@ -923,31 +970,53 @@ class ProcessAgentWorkflow:
                 graph_version_id=graph_version_id,
                 input_payload=input_payload,
                 task_queue=task_queue,
-                node_sink_overrides=node_sink_overrides,
+                node_sink_overrides={} if native_context is not None else node_sink_overrides,
+                native_context=({'experiment_id': experiment_id, 'dataset_id': dataset_id,
+                                 'row_id': row_id, 'dispatch': native_context}
+                                if native_context is not None else None),
             ),
-            id=f"graph-exec-{experiment_id[:8]}-{row_id[:8]}-{experiment_agent_config_id[:8]}",
+            id=(f"native-graph-{graph_execution_id}" if native_context is not None else
+                f"graph-exec-{experiment_id[:8]}-{row_id[:8]}-{experiment_agent_config_id[:8]}"),
             task_queue=task_queue,
         )
 
-        graph_status = get_result_field(graph_result, "status")
-        if graph_status != "SUCCESS":
-            # Write error cells for agent output columns still in RUNNING state
-            await workflow.execute_activity(
+        return "COMPLETED" if get_result_field(graph_result, "status") == "SUCCESS" else "FAILED"
+
+    async def _process_agent_for_row(self, *, row_id, dataset_id, experiment_id,
+                                     graph_version_id, node_column_mapping,
+                                     task_queue="tasks_l", experiment_agent_config_id="",
+                                     native_context=None):
+        """Preparation and child transport refusals share output settlement.
+
+        Cancellation is a BaseException and is not converted into failure here.
+        Stop retains ownership of its markers and cleanup.
+        """
+        try:
+            result = await self._execute_agent_for_row(
+                row_id=row_id, dataset_id=dataset_id, experiment_id=experiment_id,
+                graph_version_id=graph_version_id, node_column_mapping=node_column_mapping,
+                task_queue=task_queue, experiment_agent_config_id=experiment_agent_config_id,
+                native_context=native_context,
+            )
+        except Exception:
+            result = "FAILED"
+        if result != "COMPLETED":
+            settled = await workflow.execute_activity(
                 "create_error_agent_cells_activity",
                 CreateErrorAgentCellsInput(
-                    row_id=row_id,
-                    dataset_id=dataset_id,
-                    experiment_id=experiment_id,
+                    row_id=row_id, dataset_id=dataset_id, experiment_id=experiment_id,
                     node_column_mapping=node_column_mapping,
-                    error_message=get_result_field(
-                        graph_result, "error", "Agent execution failed"
-                    ),
+                    experiment_agent_config_id=experiment_agent_config_id,
+                    native_context=native_context,
+                    error_message="Agent preparation or execution failed",
                 ),
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=SETUP_RETRY_POLICY,
             )
-            return "FAILED"
-        return "COMPLETED"
+            if get_result_field(settled, "status") != "SUCCESS":
+                raise RuntimeError("Agent output settlement did not finish")
+            result = get_result_field(settled, "row_status") or result
+        return result
 
 
 @workflow.defn
@@ -968,15 +1037,54 @@ class RunExperimentV2Workflow:
 
     @workflow.run
     async def run(self, input: RunExperimentInput) -> RunExperimentOutput:
+        http_enabled = workflow.patched("http-experiment-sources-v1")
+        http_admission_id = workflow.memo().get("experiment_submission_id", "") if http_enabled else ""
         total_rows_processed = 0
         total_failed_rows = 0
 
         try:
+            # Admission is a durable handshake, not a three-retry setup error.
+            # Wait before any cleanup, control binding, cell mutation or child.
+            if input.native_runs or (http_admission_id and workflow.patched("http-admission-ack-v1")):
+                pending_polls = 0
+                while True:
+                    admission = await workflow.execute_activity(
+                        "setup_experiment_activity",
+                        SetupExperimentInput(
+                            experiment_id=input.experiment_id,
+                            native_runs=input.native_runs, admission_only=True,
+                            http_admission_id=http_admission_id,
+                        ),
+                        start_to_close_timeout=timedelta(minutes=2),
+                        retry_policy=SETUP_RETRY_POLICY,
+                    )
+                    phase = get_result_field(admission, "status")
+                    if phase == "ADMISSION_CANCELLED":
+                        return RunExperimentOutput(
+                            experiment_id=input.experiment_id, status="CANCELLED",
+                            total_rows_processed=0, failed_rows=0,
+                        )
+                    if phase == "READY":
+                        break
+                    if phase != "ADMISSION_PENDING":
+                        raise RuntimeError("Native admission acknowledgement is unavailable")
+                    pending_polls += 1
+                    if pending_polls >= 120:
+                        # Bound history without replacing the committed run IDs.
+                        admission_id = (next(iter(input.native_runs.values()))["execution_id"]
+                                        if input.native_runs else http_admission_id)
+                        workflow.continue_as_new(
+                            input, memo={"experiment_submission_id": admission_id},
+                        )
+                    await workflow.sleep(timedelta(seconds=30))
+
             # Step 0: Cleanup stale running cells
             try:
                 await workflow.execute_activity(
                     "cleanup_running_cells_activity",
-                    CleanupRunningCellsInput(experiment_id=input.experiment_id),
+                    CleanupRunningCellsInput(
+                        experiment_id=input.experiment_id, http_admission_id=http_admission_id,
+                    ),
                     start_to_close_timeout=timedelta(minutes=2),
                     retry_policy=SETUP_RETRY_POLICY,
                 )
@@ -1018,7 +1126,10 @@ class RunExperimentV2Workflow:
             else:
                 setup_result = await workflow.execute_activity(
                     "setup_experiment_activity",
-                    SetupExperimentInput(experiment_id=input.experiment_id),
+                    SetupExperimentInput(
+                        experiment_id=input.experiment_id,
+                        http_admission_id=(workflow.memo().get("experiment_submission_id", "") if http_enabled else ""),
+                    ),
                     start_to_close_timeout=timedelta(minutes=2),
                     retry_policy=SETUP_RETRY_POLICY,
                 )
@@ -1031,6 +1142,7 @@ class RunExperimentV2Workflow:
 
             prompt_config_ids = get_result_field(setup_result, "prompt_configs", [])
             agent_config_ids = get_result_field(setup_result, "agent_configs", [])
+            http_source_ids = get_result_field(setup_result, "http_sources", []) if http_enabled else []
             eval_template_ids = get_result_field(setup_result, "eval_template_ids", [])
             dataset_id = get_result_field(setup_result, "dataset_id")
             has_base_column = get_result_field(setup_result, "has_base_column", True)
@@ -1089,7 +1201,10 @@ class RunExperimentV2Workflow:
                 else:
                     agent_config_ids = []
 
-            configs_being_rerun = bool(prompt_config_ids) or bool(agent_config_ids)
+            if is_column_change_only or is_selective:
+                http_source_ids = []  # Classic selectors never schedule HTTP.
+                # HTTP mutations enumerate their committed plan during setup.
+            configs_being_rerun = bool(prompt_config_ids) or bool(agent_config_ids) or bool(http_source_ids)
 
             # Step 2: Analyze eval dependencies
             dependent_eval_ids = []
@@ -1186,8 +1301,19 @@ class RunExperimentV2Workflow:
             # handles base-column evals; per-EDT columns are filled here.
             all_child_eval_ids = dependent_eval_ids + independent_eval_ids
 
+            native_eval_ids = sorted(key for key, context in input.native_runs.items()
+                                     if context.get("execution_mode") == "eval_only")
+            dispatch_prompt_ids = prompt_config_ids + [key for key in native_eval_ids if key not in prompt_config_ids]
+            graph_ids = {key for key, context in input.native_runs.items()
+                         if context.get("execution_mode") == "graph"}
+            if (graph_ids - set(agent_config_ids)
+                    or (set(input.native_runs) - graph_ids) - set(dispatch_prompt_ids)
+                    or graph_ids & set(dispatch_prompt_ids)):
+                raise ValueError("An admitted native target is missing from the execution plan")
+            native_output_ids = {context.get("output_column_id") for context in input.native_runs.values()}
+            edt_column_ids = [column for column in edt_column_ids if column not in native_output_ids]
             prompt_handles = []
-            for idx, epc_id in enumerate(prompt_config_ids):
+            for idx, epc_id in enumerate(dispatch_prompt_ids):
                 workflow_id = (
                     f"process-prompt-v2-{input.experiment_id}-{idx}-{epc_id[:8]}"
                 )
@@ -1197,6 +1323,7 @@ class RunExperimentV2Workflow:
                         experiment_id=input.experiment_id,
                         dataset_id=dataset_id,
                         experiment_prompt_config_id=epc_id,
+                        native_context=input.native_runs.get(epc_id),
                         eval_template_ids=all_child_eval_ids,
                         max_concurrent_rows=input.max_concurrent_rows,
                         task_queue=input.task_queue,
@@ -1215,6 +1342,7 @@ class RunExperimentV2Workflow:
                         experiment_id=input.experiment_id,
                         dataset_id=dataset_id,
                         experiment_agent_config_id=eac_id,
+                        native_context=input.native_runs.get(eac_id),
                         eval_template_ids=all_child_eval_ids,
                         max_concurrent_rows=input.max_concurrent_rows,
                         task_queue=input.task_queue,
@@ -1223,6 +1351,23 @@ class RunExperimentV2Workflow:
                     task_queue=input.task_queue,
                 )
                 agent_handles.append(handle)
+
+            http_handles = []
+            for source_id in http_source_ids:
+                admission_id = workflow.memo().get("experiment_submission_id")
+                if not admission_id:
+                    raise ValueError("HTTP execution requires a committed submission identity")
+                handle = await workflow.start_child_workflow(
+                    ProcessHttpSourceWorkflow.run,
+                    HttpSourceWorkflowInput(
+                        experiment_id=input.experiment_id, source_id=source_id,
+                        admission_id=admission_id, eval_template_ids=all_child_eval_ids,
+                        max_concurrent_rows=input.max_concurrent_rows, task_queue=input.task_queue,
+                    ),
+                    id=f"http-source-{input.experiment_id}-{admission_id}-{source_id}",
+                    task_queue=input.task_queue,
+                )
+                http_handles.append(handle)
 
             # Independent eval activity coroutines (start when gathered)
             # Only run base column evaluations if the experiment has a base column.
@@ -1282,6 +1427,8 @@ class RunExperimentV2Workflow:
                                     dataset_id=dataset_id,
                                     experiment_id=input.experiment_id,
                                     eval_template_id=eval_tid,
+                                    # Stop between batches after a Stop.
+                                    rows_per_batch=10,
                                 ),
                                 start_to_close_timeout=timedelta(hours=12),
                                 heartbeat_timeout=timedelta(minutes=5),
@@ -1294,16 +1441,27 @@ class RunExperimentV2Workflow:
             all_results = await asyncio.gather(
                 *prompt_handles,
                 *agent_handles,
+                *http_handles,
                 *independent_eval_tasks,
                 *per_edt_eval_tasks,
                 return_exceptions=True,
             )
 
+            # An activity/child failure is not terminal canonical trial evidence.
+            # Abort unfinished native runs rather than report a successful bridge.
+            for epc_id, result in zip(dispatch_prompt_ids, all_results[:len(prompt_handles)]):
+                if epc_id in input.native_runs and isinstance(result, BaseException):
+                    raise RuntimeError("Native prompt evidence did not finish") from result
+
             # Process results — first N are prompts, next M are agents, rest are evals
             num_prompts = len(prompt_handles)
             num_agents = len(agent_handles)
 
-            for i, result in enumerate(all_results[: num_prompts + num_agents]):
+            http_start = num_prompts + num_agents
+            for result in all_results[http_start:http_start + len(http_handles)]:
+                if isinstance(result, BaseException):
+                    raise RuntimeError("HTTP source did not finish") from result
+            for _i, result in enumerate(all_results[: num_prompts + num_agents + len(http_handles)]):
                 if isinstance(result, Exception):
                     total_failed_rows += 1
                 else:
@@ -1341,6 +1499,8 @@ class RunExperimentV2Workflow:
                         "stop_experiment_cleanup_activity",
                         StopExperimentCleanupInput(
                             experiment_id=input.experiment_id,
+                            native_runs=input.native_runs,
+                            http_admission_id=http_admission_id,
                         ),
                         start_to_close_timeout=timedelta(minutes=2),
                         retry_policy=SETUP_RETRY_POLICY,
@@ -1356,12 +1516,15 @@ class RunExperimentV2Workflow:
                 failed_rows=total_failed_rows,
             )
 
-        except Exception as e:
+        except Exception:
             # Cleanup: Mark remaining running cells as error
             try:
                 await workflow.execute_activity(
                     "cleanup_running_cells_activity",
-                    CleanupRunningCellsInput(experiment_id=input.experiment_id),
+                    CleanupRunningCellsInput(
+                        experiment_id=input.experiment_id, native_runs=input.native_runs,
+                        http_admission_id=http_admission_id,
+                    ),
                     start_to_close_timeout=timedelta(minutes=2),
                     retry_policy=SETUP_RETRY_POLICY,
                 )
@@ -1370,12 +1533,13 @@ class RunExperimentV2Workflow:
 
             # Mark experiment as failed
             try:
-                await workflow.execute_activity(
-                    "mark_experiment_failed_activity",
-                    input.experiment_id,
-                    start_to_close_timeout=timedelta(seconds=30),
-                    retry_policy=SETUP_RETRY_POLICY,
-                )
+                if not input.native_runs:
+                    await workflow.execute_activity(
+                        "mark_http_experiment_failed_activity" if http_admission_id else "mark_experiment_failed_activity",
+                        HttpSourceInput(input.experiment_id, "", http_admission_id) if http_admission_id else input.experiment_id,
+                        start_to_close_timeout=timedelta(seconds=30),
+                        retry_policy=SETUP_RETRY_POLICY,
+                    )
             except Exception:
                 pass
 
@@ -1397,6 +1561,11 @@ class RerunCellsV2Workflow:
     3. Start child workflows per EPC/EAC with rerun_row_ids
     4. Wait for all to complete
     5. Check final experiment status
+
+    A plan-bound native subset (input.native_runs) first waits, read-only, for
+    its committed admission acknowledgement. Each config then schedules only
+    the rows of its persisted immutable plan, resolved by its own setup
+    activity, never a union of selected rows and never a failed-only re-scan.
     """
 
     @workflow.run
@@ -1405,6 +1574,50 @@ class RerunCellsV2Workflow:
         total_failed_rows = 0
 
         try:
+            if input.native_runs:
+                eval_ids = {key for key, context in input.native_runs.items()
+                            if context.get("execution_mode") == "eval_only"}
+                graph_ids = {key for key, context in input.native_runs.items()
+                             if context.get("execution_mode") == "graph"}
+                generated_ids = set(input.native_runs) - eval_ids - graph_ids
+                if (input.base_eval_only or graph_ids != set(input.agent_config_ids)
+                        or generated_ids != set(input.prompt_config_ids)
+                        or graph_ids & generated_ids
+                        or (input.eval_only and (generated_ids or graph_ids))
+                        or (not input.eval_only and (eval_ids or input.edt_ids))):
+                    raise ValueError("A native subset must contain exactly its admitted target/evaluator plan")
+                first = next(iter(input.native_runs.values()))
+                pending_polls = 0
+                while True:
+                    admission = await workflow.execute_activity(
+                        "setup_experiment_activity",
+                        SetupExperimentInput(
+                            experiment_id=input.experiment_id,
+                            native_runs=input.native_runs, admission_only=True,
+                        ),
+                        start_to_close_timeout=timedelta(minutes=2),
+                        retry_policy=SETUP_RETRY_POLICY,
+                    )
+                    phase = get_result_field(admission, "status")
+                    if phase == "ADMISSION_CANCELLED":
+                        return RerunCellsV2WorkflowOutput(
+                            experiment_id=input.experiment_id, status="CANCELLED",
+                            total_rows_processed=0, failed_rows=0,
+                        )
+                    if phase == "READY":
+                        break
+                    if phase != "ADMISSION_PENDING":
+                        raise RuntimeError("Native admission acknowledgement is unavailable")
+                    pending_polls += 1
+                    if pending_polls >= 120:
+                        # Bound history without replacing the committed plan.
+                        workflow.continue_as_new(
+                            input,
+                            memo={"experiment_submission_id": first["plan_id"],
+                                  "execution_plan_hash": first["plan_hash"]},
+                        )
+                    await workflow.sleep(timedelta(seconds=30))
+
             # Step 1: Mark experiment RUNNING (no eval column reset)
             mark_result = await workflow.execute_activity(
                 "mark_experiment_running_activity",
@@ -1449,8 +1662,23 @@ class RerunCellsV2Workflow:
             all_child_eval_ids = dependent_eval_ids + independent_eval_ids
 
             if input.eval_only:
-                # Step 3 (eval-only): Run eval activities directly, no child workflows
+                # Native eval-only work uses the same row receipts and finalizer;
+                # its child reads pinned output, never runs prompt generation.
                 eval_tasks = []
+                native_eval_handles = []
+                for config_id, context in sorted(input.native_runs.items()):
+                    handle = await workflow.start_child_workflow(
+                        ProcessPromptV2Workflow.run,
+                        ProcessPromptV2WorkflowInput(
+                            experiment_id=input.experiment_id, dataset_id=dataset_id,
+                            experiment_prompt_config_id=config_id, native_context=context,
+                            eval_template_ids=input.eval_template_ids,
+                            max_concurrent_rows=input.max_concurrent_rows, task_queue=input.task_queue,
+                        ),
+                        id=f"rerun-eval-v2-{input.experiment_id}-{context['plan_id']}-{config_id}",
+                        task_queue=input.task_queue,
+                    )
+                    native_eval_handles.append(handle)
                 row_ids = input.row_ids
 
                 if not input.base_eval_only:
@@ -1470,7 +1698,10 @@ class RerunCellsV2Workflow:
                     edt_row_ids = get_result_field(edt_cols_result, "row_ids", [])
                     row_ids = input.row_ids if input.row_ids else edt_row_ids
 
+                    native_output_ids = {context.get("output_column_id") for context in input.native_runs.values()}
                     for col_id in edt_column_ids:
+                        if col_id in native_output_ids:
+                            continue
                         for eval_tid in input.eval_template_ids:
                             eval_tasks.append(
                                 workflow.execute_activity(
@@ -1481,6 +1712,8 @@ class RerunCellsV2Workflow:
                                         dataset_id=dataset_id,
                                         experiment_id=input.experiment_id,
                                         eval_template_id=eval_tid,
+                                        # Stop between batches after a Stop.
+                                        rows_per_batch=10,
                                     ),
                                     start_to_close_timeout=timedelta(hours=12),
                                     heartbeat_timeout=timedelta(minutes=5),
@@ -1505,24 +1738,42 @@ class RerunCellsV2Workflow:
                         )
                     )
 
-                await asyncio.gather(*eval_tasks, return_exceptions=True)
+                eval_results = await asyncio.gather(*native_eval_handles, *eval_tasks, return_exceptions=True)
+                for result in eval_results[:len(native_eval_handles)]:
+                    if isinstance(result, BaseException):
+                        raise RuntimeError("Native evaluator evidence did not finish") from result
+                    total_rows_processed += get_result_field(result, "completed_rows", 0)
+                    total_failed_rows += get_result_field(result, "failed_rows", 0)
 
             else:
                 # Step 3: Start child workflows per EPC with rerun_row_ids
                 prompt_handles = []
                 for idx, epc_id in enumerate(input.prompt_config_ids):
-                    wf_id = f"rerun-prompt-v2-{input.experiment_id}-{idx}-{epc_id[:8]}"
+                    native_context = input.native_runs.get(epc_id)
+                    if native_context is None:
+                        wf_id = f"rerun-prompt-v2-{input.experiment_id}-{idx}-{epc_id[:8]}"
+                        # Preserve recorded child IDs on pre-patch history replay.
+                        if workflow.patched("legacy-rerun-parent-child-id-v1"):
+                            wf_id = f"{wf_id}-{workflow.info().workflow_id}"
+                    else:
+                        # Plan identity keeps retries and later plans distinct.
+                        wf_id = (
+                            f"rerun-prompt-v2-{input.experiment_id}-"
+                            f"{native_context['plan_id']}-{idx}-{epc_id[:8]}"
+                        )
                     handle = await workflow.start_child_workflow(
                         ProcessPromptV2Workflow.run,
                         ProcessPromptV2WorkflowInput(
                             experiment_id=input.experiment_id,
                             dataset_id=dataset_id,
                             experiment_prompt_config_id=epc_id,
+                            native_context=native_context,
                             eval_template_ids=all_child_eval_ids,
                             max_concurrent_rows=input.max_concurrent_rows,
                             task_queue=input.task_queue,
-                            rerun_row_ids=input.row_ids,
-                            failed_only=input.failed_only,
+                            # Native rows/failed-only were resolved at admission.
+                            rerun_row_ids=[] if native_context else input.row_ids,
+                            failed_only=False if native_context else input.failed_only,
                         ),
                         id=wf_id,
                         task_queue=input.task_queue,
@@ -1532,18 +1783,24 @@ class RerunCellsV2Workflow:
                 # Step 3b: Start child workflows per EAC with rerun_row_ids
                 agent_handles = []
                 for idx, eac_id in enumerate(input.agent_config_ids):
-                    wf_id = f"rerun-agent-{input.experiment_id}-{idx}-{eac_id[:8]}"
+                    native_context = input.native_runs.get(eac_id)
+                    wf_id = (f"rerun-agent-{input.experiment_id}-{native_context['plan_id']}-{eac_id}"
+                             if native_context else f"rerun-agent-{input.experiment_id}-{idx}-{eac_id[:8]}")
+                    # Native plan IDs and pre-patch history IDs stay unchanged.
+                    if not native_context and workflow.patched("legacy-rerun-parent-child-id-v1"):
+                        wf_id = f"{wf_id}-{workflow.info().workflow_id}"
                     handle = await workflow.start_child_workflow(
                         ProcessAgentWorkflow.run,
                         ProcessAgentWorkflowInput(
                             experiment_id=input.experiment_id,
                             dataset_id=dataset_id,
                             experiment_agent_config_id=eac_id,
+                            native_context=native_context,
                             eval_template_ids=all_child_eval_ids,
                             max_concurrent_rows=input.max_concurrent_rows,
                             task_queue=input.task_queue,
-                            rerun_row_ids=input.row_ids,
-                            failed_only=input.failed_only,
+                            rerun_row_ids=[] if native_context else input.row_ids,
+                            failed_only=False if native_context else input.failed_only,
                         ),
                         id=wf_id,
                         task_queue=input.task_queue,
@@ -1556,6 +1813,18 @@ class RerunCellsV2Workflow:
                     *agent_handles,
                     return_exceptions=True,
                 )
+
+                # A failed child is not terminal canonical trial evidence.
+                for epc_id, result in zip(
+                    input.prompt_config_ids, all_results[: len(prompt_handles)]
+                ):
+                    if epc_id in input.native_runs and isinstance(result, BaseException):
+                        raise RuntimeError("Native prompt evidence did not finish") from result
+
+                for eac_id, result in zip(input.agent_config_ids,
+                                          all_results[len(prompt_handles):len(prompt_handles) + len(agent_handles)]):
+                    if eac_id in input.native_runs and isinstance(result, BaseException):
+                        raise RuntimeError("Native graph evidence did not finish") from result
 
                 for result in all_results:
                     if isinstance(result, Exception):
@@ -1595,6 +1864,7 @@ class RerunCellsV2Workflow:
                         "stop_experiment_cleanup_activity",
                         StopExperimentCleanupInput(
                             experiment_id=input.experiment_id,
+                            native_runs=input.native_runs,
                         ),
                         start_to_close_timeout=timedelta(minutes=2),
                         retry_policy=SETUP_RETRY_POLICY,
@@ -1611,14 +1881,31 @@ class RerunCellsV2Workflow:
             )
 
         except Exception:
+            if input.native_runs:
+                # Abort unfinished native runs; never report partial evidence
+                # as a successful bridge. An unconfirmed draft stays untouched.
+                try:
+                    await workflow.execute_activity(
+                        "cleanup_running_cells_activity",
+                        CleanupRunningCellsInput(
+                            experiment_id=input.experiment_id,
+                            native_runs=input.native_runs,
+                        ),
+                        start_to_close_timeout=timedelta(minutes=2),
+                        retry_policy=SETUP_RETRY_POLICY,
+                    )
+                except Exception:
+                    pass
+
             # On failure, mark experiment as failed
             try:
-                await workflow.execute_activity(
-                    "mark_experiment_failed_activity",
-                    input.experiment_id,
-                    start_to_close_timeout=timedelta(seconds=30),
-                    retry_policy=SETUP_RETRY_POLICY,
-                )
+                if not input.native_runs:
+                    await workflow.execute_activity(
+                        "mark_experiment_failed_activity",
+                        input.experiment_id,
+                        start_to_close_timeout=timedelta(seconds=30),
+                        retry_policy=SETUP_RETRY_POLICY,
+                    )
             except Exception:
                 pass
 
@@ -1646,3 +1933,89 @@ __all__ = [
     "RerunCellsV2WorkflowInput",
     "RerunCellsV2WorkflowOutput",
 ]
+
+
+# A timeout or worker loss can follow an externally committed POST. Activity
+# delivery retries must never turn an unknown outcome into another request.
+HTTP_REQUEST_RETRY_POLICY = RetryPolicy(maximum_attempts=1)
+
+
+@workflow.defn
+class ProcessHttpSourceWorkflow:
+    @workflow.run
+    async def run(self, input: HttpSourceWorkflowInput) -> dict:
+        identity = HttpSourceInput(input.experiment_id, input.source_id, input.admission_id)
+        plan = await workflow.execute_activity(
+            "setup_http_source_activity", identity,
+            start_to_close_timeout=timedelta(minutes=2), retry_policy=SETUP_RETRY_POLICY,
+        )
+        column_id = get_result_field(plan, "column_id")
+        dataset_id = get_result_field(plan, "dataset_id")
+        row_ids = get_result_field(plan, "row_ids", [])
+        http_context = {
+            "experiment_id": input.experiment_id, "source_id": input.source_id,
+            "admission_id": input.admission_id, "dataset_id": dataset_id,
+            "column_id": column_id,
+        }
+        width = max(1, min(input.max_concurrent_rows, 32))
+
+        async def run_row(row_id):
+            request = HttpRowInput(input.experiment_id, input.source_id, input.admission_id, row_id)
+            try:
+                result = await workflow.execute_activity(
+                    "process_http_row_activity", request,
+                    start_to_close_timeout=timedelta(seconds=90),
+                    retry_policy=HTTP_REQUEST_RETRY_POLICY,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                result = {"status": "BLOCKED"}
+            if get_result_field(result, "status") == "BLOCKED":
+                # A duplicate is not success. Recover only a committed terminal
+                # result, or record an unknown outcome without calling HTTP.
+                result = await workflow.execute_activity(
+                    "settle_http_row_activity", request,
+                    start_to_close_timeout=timedelta(minutes=2), retry_policy=SETUP_RETRY_POLICY,
+                )
+            if get_result_field(result, "status") not in {"COMPLETED", "FAILED"}:
+                raise RuntimeError("HTTP attempt has no terminal evidence")
+            return row_id, get_result_field(result, "status")
+
+        for offset in range(0, len(row_ids), width):
+            outcomes = await asyncio.gather(*(run_row(row) for row in row_ids[offset:offset + width]))
+            succeeded = [row for row, status in outcomes if status == "COMPLETED"]
+            failed = [row for row, status in outcomes if status == "FAILED"]
+            for eval_id in input.eval_template_ids:
+                if succeeded:
+                    result = await workflow.execute_activity(
+                        "process_batch_template_eval_activity",
+                        ProcessBatchEvalInput(succeeded, column_id, dataset_id, input.experiment_id, eval_id,
+                                              http_context=http_context),
+                        start_to_close_timeout=timedelta(hours=12),
+                        heartbeat_timeout=timedelta(minutes=5), retry_policy=ROW_PROCESSING_RETRY_POLICY,
+                    )
+                    if get_result_field(result, "status") != "COMPLETED":
+                        raise RuntimeError("HTTP output evaluation did not complete")
+            if failed and input.eval_template_ids:
+                result = await workflow.execute_activity(
+                    "create_error_eval_cells_activity",
+                    CreateErrorEvalCellsInput(
+                        failed, column_id, dataset_id, input.experiment_id, input.eval_template_ids,
+                        "Evaluation skipped: HTTP source failed. Check the row error before rerunning.",
+                        http_context=http_context,
+                    ),
+                    start_to_close_timeout=timedelta(minutes=5), retry_policy=SETUP_RETRY_POLICY,
+                )
+                if get_result_field(result, "status") != "COMPLETED":
+                    raise RuntimeError("HTTP failed-row policy did not settle")
+        result = await workflow.execute_activity(
+            "finish_http_source_activity", identity,
+            start_to_close_timeout=timedelta(minutes=5), retry_policy=SETUP_RETRY_POLICY,
+        )
+        await workflow.execute_activity(
+            "check_experiment_dataset_status_activity",
+            CheckStatusInput(entity_type="experiment_dataset", entity_id=input.source_id),
+            start_to_close_timeout=timedelta(minutes=2), retry_policy=STATUS_CHECK_RETRY_POLICY,
+        )
+        return result

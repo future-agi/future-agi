@@ -41,7 +41,7 @@ EVAL_PROCESS_WORKER_COUNT = 10
 # from ee.agenthub.prompt_template_agent.eval_prompt_template import EvalPromptTemplateLLM
 
 
-def create_criteria_text_prompt(text_prompt, llm=None):
+def create_criteria_text_prompt(text_prompt, llm=None, *, organization=None, workspace=None):
     # Check if the criteria_breakdown is already cached
     try:
         cached_criteria = CriteriaCache.objects.filter(text_prompt=text_prompt).first()
@@ -49,12 +49,18 @@ def create_criteria_text_prompt(text_prompt, llm=None):
     except Exception as e:
         logger.error(f"{e} *****e*****")
 
+    from model_hub.services.model_route import OP_CRITERIA_HELPER, platform_llm
+
     _cfg = ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN
-    llm = LLM(
+    llm = platform_llm(
+        organization=organization,
+        workspace=workspace,
+        operation=OP_CRITERIA_HELPER,
+        provider=_cfg.provider,
         model_name=_cfg.model_name,
         temperature=_cfg.temperature,
         max_tokens=_cfg.max_tokens,
-        provider=_cfg.provider,
+        llm_class=LLM,
     )
     try:
         output_eval_prompt = get_qualitative_eval_parameter_prompt_v2(llm, text_prompt)
@@ -75,7 +81,13 @@ def create_criteria_text_prompt(text_prompt, llm=None):
 
 
 def create_criteria(metric):
-    criteria_breakdown = create_criteria_text_prompt(metric.text_prompt)
+    # One key: the criteria helper's LLM runs for the metric's organization
+    # and workspace (Metric.model is an AIModel, which carries both).
+    criteria_breakdown = create_criteria_text_prompt(
+        metric.text_prompt,
+        organization=metric.model.organization_id,
+        workspace=metric.model.workspace_id,
+    )
 
     metric.criteria_breakdown = criteria_breakdown
     metric.save()

@@ -4,6 +4,7 @@ import PropTypes from "prop-types";
 import Image from "../image";
 import { ShowComponent } from "../show";
 import { LoadingButton } from "@mui/lab";
+import { NOT_IN_RELEASE } from "../NotInRelease/notInRelease";
 
 const LandingPageCard = ({
   title,
@@ -91,15 +92,17 @@ const LandingPageCard = ({
               Get started
             </LoadingButton>
           </ShowComponent>
+          {/* A card for a part that isn't built stays visible; its action is
+              disabled and carries the shared line. */}
           <ShowComponent condition={!availableFeature}>
             <Button
               variant="contained"
               color="primary"
               disabled
               sx={{ "&.Mui-disabled": { color: "text.primary" } }}
-              type="buttom"
+              type="button"
             >
-              Coming soon
+              {NOT_IN_RELEASE}
             </Button>
           </ShowComponent>
         </Box>

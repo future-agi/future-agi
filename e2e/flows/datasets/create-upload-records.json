@@ -1,0 +1,31 @@
+[
+  {
+    "sku": "007",
+    "title": "Desk lamp",
+    "in_stock": true,
+    "price": 12.5,
+    "qty": 2,
+    "restocked_at": "2026-05-01T10:00:00Z",
+    "dims": { "w": 20, "h": 45 },
+    "note": null
+  },
+  {
+    "sku": "042",
+    "title": "Café chair",
+    "in_stock": false,
+    "price": 40.0,
+    "qty": null,
+    "restocked_at": "2026-05-02T11:30:00Z",
+    "dims": { "w": 48, "h": 90 },
+    "note": "ships flat"
+  },
+  {
+    "sku": "100",
+    "title": "Shelf",
+    "in_stock": true,
+    "price": 0.75,
+    "qty": 11,
+    "restocked_at": "2026-05-03T09:15:00Z",
+    "dims": { "w": 80, "h": 180 }
+  }
+]

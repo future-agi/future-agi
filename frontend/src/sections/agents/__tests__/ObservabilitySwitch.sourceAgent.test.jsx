@@ -198,7 +198,72 @@ beforeEach(() => {
   );
 });
 
+it("agent-page switch-on sends exactly the two production credential-validation POSTs", async () => {
+  useAgentDetailsStore.setState({ agentDetails: HOSTED_VAPI });
+  MOUNTS[0].mount();
+  const box = switchBox();
+  expect(box).not.toBeChecked();
+  fireEvent.click(box);
+  await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
+  expect(axios.post.mock.calls).toEqual([
+    [
+      endpoints.agentDefinitions.verifyApiKey,
+      {
+        provider: "vapi",
+        api_key: "sk-test",
+        agent_id: "agent-1",
+      },
+    ],
+    [
+      endpoints.agentDefinitions.verifyAssistantId,
+      {
+        provider: "vapi",
+        api_key: "sk-test",
+        assistant_id: "asst_1",
+        agent_id: "agent-1",
+      },
+    ],
+  ]);
+  expect(box).toBeChecked();
+});
+
 describe.each(MOUNTS)("observability switch on $name", ({ mount, save }) => {
+  it.each([
+    [
+      "source",
+      "Calls imported from connected voice providers and spans from agents run in hosted sandboxes aren't stored in Observe in this release.",
+    ],
+    [
+      "hosted",
+      "Calls imported from connected voice providers and spans from agents run in hosted sandboxes aren't stored in Observe in this release.",
+    ],
+  ])(
+    "keeps controls and release notice visible for %s agents",
+    async (kind, notice) => {
+      useAgentDetailsStore.setState({
+        agentDetails: versionDetail({
+          kind,
+          ...VAPI,
+          apiKey: "fixture-key",
+          assistant_id: "fixture-agent",
+        }),
+        selectedVersion: "v1",
+      });
+      mount();
+      expect(await screen.findByText(notice)).toBeInTheDocument();
+      expect(switchBox()).toBeEnabled();
+      expect(
+        screen.getByRole("link", { name: "2.0.0 release notes: Known issues" }),
+      ).toHaveAttribute(
+        "href",
+        "https://github.com/future-agi/future-agi/releases/tag/v2.0.0",
+      );
+      expect(
+        screen.getByRole("link", { name: "2.0.0 release notes: Known issues" }),
+      ).toHaveAttribute("target", "_blank");
+    },
+  );
+
   describe.each([
     ["a chat code agent", CHAT],
     ["a voice code agent", VOICE_LIVEKIT],

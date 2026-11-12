@@ -1,5 +1,5 @@
-import { useReducer } from "react";
-import { Box, Stack } from "@mui/material";
+import { useEffect, useReducer } from "react";
+import { Box, Stack, Typography } from "@mui/material";
 import { parseGitHubInput } from "src/pages/dashboard/harness/requestMapper";
 import Field from "../components/Field";
 import Label from "../components/Label";
@@ -14,6 +14,8 @@ import RuntimePreflight from "./RuntimePreflight";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import ParallelismField from "./ParallelismField";
 import usePanelBuild from "../hooks/usePanelBuild";
+import usePrivateGithubAvailable from "../hooks/usePrivateGithubAvailable";
+import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import {
   REPO_PROVIDERS,
   DEFAULT_REPO_PROVIDER,
@@ -24,6 +26,7 @@ import {
   INSTALLATION_ID_LABEL,
   INSTALLATION_ID_HELPER,
   INSTALLATION_ID_PLACEHOLDER,
+  PRIVATE_GITHUB_UNAVAILABLE_MESSAGE,
 } from "../repoProviders";
 
 const initial = {
@@ -46,22 +49,71 @@ function reducer(s, a) {
   return { ...s, [a.field]: value };
 }
 
+// Start from the kept repo draft when there is one (EnvironmentsHome keeps it
+// only for "Start a new build" on the environment it built), else blank. Only
+// non-secret fields come back: pasted environment values are never stored and
+// credential files are uploaded again, so both start empty.
+function fromDraft(draft) {
+  if (draft?.kind !== "repo") return initial;
+  return {
+    ...initial,
+    provider: draft.provider || initial.provider,
+    repo: draft.value || "",
+    branch: draft.ref || initial.branch,
+    entry: draft.entry || "",
+    visibility: draft.visibility || initial.visibility,
+    installationId: draft.installationId || "",
+    egress: draft.egress || "",
+    // The field holds text; the draft keeps the parsed number.
+    scenarioCount: draft.scenarioCount
+      ? String(draft.scenarioCount)
+      : initial.scenarioCount,
+    observabilityEnabled: !!draft.observabilityEnabled,
+  };
+}
+
 export default function PanelSourceRepo() {
-  const [form, dispatch] = useReducer(reducer, initial);
+  const [form, dispatch] = useReducer(reducer, undefined, () =>
+    fromDraft(useEnvironmentsStore.getState().draft),
+  );
   const build = usePanelBuild();
   // Any edit invalidates a prior preflight result, so re-disable Build.
   const set = (field) => (value) => {
     dispatch({ field, value });
     build.resetPreflight();
   };
-  const { provider, repo, branch, entry, visibility, installationId, envText, egress, secretFiles, scenarioCount, observabilityEnabled } = form;
-  const isPrivate = visibility === REPO_VISIBILITY.PRIVATE;
+  const {
+    provider,
+    repo,
+    branch,
+    entry,
+    visibility,
+    installationId,
+    envText,
+    egress,
+    secretFiles,
+    scenarioCount,
+    observabilityEnabled,
+  } = form;
+  // Only a definite `false` from the backend withdraws Private; while the answer
+  // is loading or failed, the form stays as it was (self-hosted is never blocked).
+  const privateUnavailable = usePrivateGithubAvailable() === false;
+  const isPrivate =
+    !privateUnavailable && visibility === REPO_VISIBILITY.PRIVATE;
+  // A kept draft that was Private becomes Public here, so neither the form nor
+  // the request carries a private source this deployment would refuse.
+  useEffect(() => {
+    if (privateUnavailable && visibility === REPO_VISIBILITY.PRIVATE) {
+      dispatch({ field: "visibility", value: REPO_VISIBILITY.PUBLIC });
+    }
+  }, [privateUnavailable, visibility]);
   // The repo must parse to owner/repo (or a GitHub URL) before we can preflight.
   // Only flag a non-empty, unparseable value so the field isn't red before typing.
   const parsedRepo = parseGitHubInput(repo);
-  const repoError = repo.trim() && !parsedRepo
-    ? "Enter a repository as owner/repo or a GitHub URL."
-    : "";
+  const repoError =
+    repo.trim() && !parsedRepo
+      ? "Enter a repository as owner/repo or a GitHub URL."
+      : "";
   const canGo = !!parsedRepo;
 
   const buildSource = () => ({
@@ -70,8 +122,8 @@ export default function PanelSourceRepo() {
     value: repo.trim(),
     ref: branch.trim() || DEFAULT_BRANCH,
     entry: entry.trim(),
-    visibility,
-    installationId: isPrivate ? (installationId.trim() || null) : null,
+    visibility: privateUnavailable ? REPO_VISIBILITY.PUBLIC : visibility,
+    installationId: isPrivate ? installationId.trim() || null : null,
     envText: envText.trim() || null,
     egress: egress.trim() || null,
     secretFiles,
@@ -80,7 +132,7 @@ export default function PanelSourceRepo() {
   });
 
   return (
-    <Stack spacing={1.75} sx={{ p: 2.5 }}>
+    <Stack spacing={1.5} sx={{ p: 1.5 }}>
       <ProviderRow
         options={REPO_PROVIDERS}
         value={provider}
@@ -90,7 +142,8 @@ export default function PanelSourceRepo() {
         label="Repository"
         required
         placeholder="owner/repo"
-        value={repo} onChange={set("repo")}
+        value={repo}
+        onChange={set("repo")}
         mono
         error={repoError}
         helper="We read the code so scenarios stay in sync with your actual tools."
@@ -98,14 +151,16 @@ export default function PanelSourceRepo() {
       <Stack direction="row" spacing={1.5}>
         <Field
           label="Branch or tag"
-          value={branch} onChange={set("branch")}
+          value={branch}
+          onChange={set("branch")}
           mono
           fullWidth
         />
         <Field
           label="Entry path (optional)"
           placeholder="src/agent/index.ts"
-          value={entry} onChange={set("entry")}
+          value={entry}
+          onChange={set("entry")}
           mono
           fullWidth
         />
@@ -114,35 +169,70 @@ export default function PanelSourceRepo() {
           private repositories (github_private_unsupported, shown on Build). */}
       <Box>
         <Label>Visibility</Label>
-        <Box sx={{ display: "grid", gap: 0.75, gridTemplateColumns: "1fr 1fr", mt: 0.75 }}>
+        <Box
+          sx={{
+            display: "grid",
+            gap: 0.75,
+            gridTemplateColumns: "1fr 1fr",
+            mt: 0.75,
+          }}
+        >
           <ChipCard
             label={REPO_VISIBILITY_LABEL[REPO_VISIBILITY.PUBLIC]}
             on={!isPrivate}
             onClick={() => set("visibility")(REPO_VISIBILITY.PUBLIC)}
           />
-          <ChipCard
-            label={REPO_VISIBILITY_LABEL[REPO_VISIBILITY.PRIVATE]}
-            on={isPrivate}
-            onClick={() => set("visibility")(REPO_VISIBILITY.PRIVATE)}
-          />
+          {/* ChipCard has no disabled state, so the wrapper withholds the click. */}
+          <Box
+            aria-disabled={privateUnavailable || undefined}
+            sx={
+              privateUnavailable
+                ? { opacity: 0.48, pointerEvents: "none" }
+                : undefined
+            }
+          >
+            <ChipCard
+              label={REPO_VISIBILITY_LABEL[REPO_VISIBILITY.PRIVATE]}
+              on={isPrivate}
+              onClick={
+                privateUnavailable
+                  ? undefined
+                  : () => set("visibility")(REPO_VISIBILITY.PRIVATE)
+              }
+            />
+          </Box>
         </Box>
+        {privateUnavailable && (
+          <Typography
+            sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}
+          >
+            {PRIVATE_GITHUB_UNAVAILABLE_MESSAGE}
+          </Typography>
+        )}
       </Box>
       {isPrivate && (
         <Field
           label={INSTALLATION_ID_LABEL}
           placeholder={INSTALLATION_ID_PLACEHOLDER}
-          value={installationId} onChange={set("installationId")}
+          value={installationId}
+          onChange={set("installationId")}
           mono
           helper={INSTALLATION_ID_HELPER}
         />
       )}
       <EnvironmentValues
-        envText={envText} onEnvText={set("envText")}
-        egress={egress} onEgress={set("egress")}
-        secretFiles={secretFiles} onSecretFiles={set("secretFiles")}
+        envText={envText}
+        onEnvText={set("envText")}
+        egress={egress}
+        onEgress={set("egress")}
+        secretFiles={secretFiles}
+        onSecretFiles={set("secretFiles")}
       />
       <ScenarioCount value={scenarioCount} onChange={set("scenarioCount")} />
-      <ObservabilityChoice checked={observabilityEnabled} onChange={set("observabilityEnabled")} />
+      <ObservabilityChoice
+        checked={observabilityEnabled}
+        onChange={set("observabilityEnabled")}
+      />
       <ParallelismField
         value={build.parallelism}
         input={build.parallelismInput}
@@ -165,7 +255,11 @@ export default function PanelSourceRepo() {
       <ContinueRow
         disabled={!build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
         busy={build.committing}
-        hint={build.status === "done" ? "Resolve the failed preflight checks above to continue" : "Run preflight to check your setup before building"}
+        hint={
+          build.status === "done"
+            ? "Resolve the failed preflight checks above to continue"
+            : "Run preflight to check your setup before building"
+        }
         onClick={build.commitBuild}
       />
     </Stack>

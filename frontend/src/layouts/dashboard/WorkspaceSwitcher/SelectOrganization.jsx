@@ -1,4 +1,5 @@
-import { Box, Button, Popper, Skeleton, Typography } from "@mui/material";
+import { Box, Button, ButtonBase, Skeleton, Typography } from "@mui/material";
+import SwitcherSubmenu from "./SwitcherSubmenu";
 import React, { useMemo } from "react";
 import PropTypes from "prop-types";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -9,12 +10,14 @@ import { useOrganization } from "src/contexts/OrganizationContext";
 import { useCreateOrganizationModal } from "../states";
 import Iconify from "src/components/iconify";
 import { Events, trackEvent } from "src/utils/Mixpanel";
+import { isPrototypeMode } from "src/utils/prototype";
+import { ORG_CREATE_SSO_REASON } from "./orgCreateReason";
 
 const SelectOrganizationChild = React.forwardRef(
-  ({ setOpen }, popperTimeoutRef) => {
+  ({ setOpen, canCreateOrganization }, popperTimeoutRef) => {
     const { currentOrganizationId, switchOrganization } = useOrganization();
 
-    const { data, isPending } = useQuery({
+    const { data, isPending, isError, isFetching, refetch } = useQuery({
       queryFn: () => axios.get(endpoints.organizations.list),
       queryKey: ["organizations-list"],
       staleTime: 30_000,
@@ -49,7 +52,8 @@ const SelectOrganizationChild = React.forwardRef(
           }
           setOpen(true);
         }}
-        onMouseLeave={() => {
+        onMouseLeave={(event) => {
+          if (event.currentTarget.contains(document.activeElement)) return;
           popperTimeoutRef.current = setTimeout(() => {
             setOpen(false);
           }, 100);
@@ -59,7 +63,7 @@ const SelectOrganizationChild = React.forwardRef(
           border: "1px solid",
           borderColor: "divider",
           borderRadius: 1,
-          boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.1)",
+          boxShadow: (theme) => theme.customShadows?.dropdown,
           p: 1,
           minWidth: "200px",
           display: "flex",
@@ -79,24 +83,47 @@ const SelectOrganizationChild = React.forwardRef(
           <ShowComponent condition={isPending}>
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
               height={20}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
               height={20}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
               height={20}
             />
           </ShowComponent>
+          {isError && (
+            <Box role="alert" sx={{ px: 1 }}>
+              <Typography typography="s2_1" color="text.secondary">
+                {organizations.length
+                  ? "Could not refresh organizations. Showing the last loaded list."
+                  : "Could not load organizations"}
+              </Typography>
+              <Button
+                size="small"
+                disabled={isFetching}
+                onClick={() => refetch()}
+              >
+                {isFetching ? "Retrying…" : "Retry"}
+              </Button>
+            </Box>
+          )}
+          {!isPending && !isError && organizations.length === 0 && (
+            <Typography typography="s2_1" color="text.secondary" sx={{ px: 1 }}>
+              No organizations available
+            </Typography>
+          )}
           <ShowComponent condition={!isPending}>
             {organizations.map((org) => (
-              <Box
+              <ButtonBase
                 key={org.id}
+                disabled={isSwitching}
+                aria-pressed={org.id === currentOrganizationId}
                 onClick={() => {
                   if (isSwitching || org.id === currentOrganizationId) return;
                   setOpen(false);
@@ -106,14 +133,15 @@ const SelectOrganizationChild = React.forwardRef(
                   px: 1,
                   py: 0.5,
                   cursor: isSwitching ? "wait" : "pointer",
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   backgroundColor:
                     org.id === currentOrganizationId
                       ? "background.neutral"
                       : "background.paper",
-                  "&:hover": {
+                  "&:hover, &:focus-visible": {
                     backgroundColor: "background.neutral",
                   },
+                  "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main" },
                   opacity: isSwitching ? 0.6 : 1,
                   display: "flex",
                   alignItems: "center",
@@ -129,30 +157,43 @@ const SelectOrganizationChild = React.forwardRef(
                 </Typography>
                 <ShowComponent condition={org.id === currentOrganizationId}>
                   <Iconify
-                    icon="eva:checkmark-fill"
+                    icon="solar:check-linear"
                     sx={{ width: 16, height: 16, color: "primary.main" }}
                   />
                 </ShowComponent>
-              </Box>
+              </ButtonBase>
             ))}
           </ShowComponent>
         </Box>
-        <Box>
-          <Button
-            variant="text"
-            color="primary"
-            fullWidth
-            size="small"
-            startIcon={<SVGColor src="/assets/icons/ic_add.svg" />}
-            sx={{ justifyContent: "flex-start" }}
-            onClick={() => {
-              setOpen(false);
-              useCreateOrganizationModal.getState().setOpen(true);
-            }}
-          >
-            Create Organization
-          </Button>
-        </Box>
+        {/* L7b absent-sweep: not mocked, so absent in prototype builds. */}
+        {!isPrototypeMode() && (
+          <Box>
+            <Button
+              variant="text"
+              color="primary"
+              fullWidth
+              size="small"
+              startIcon={<SVGColor src="/assets/icons/ic_add.svg" />}
+              sx={{ justifyContent: "flex-start" }}
+              disabled={!canCreateOrganization}
+              onClick={() => {
+                setOpen(false);
+                useCreateOrganizationModal.getState().setOpen(true);
+              }}
+            >
+              Create Organization
+            </Button>
+            {!canCreateOrganization && (
+              <Typography
+                variant="caption"
+                component="p"
+                sx={{ px: 1, pb: 0.5, color: "text.secondary" }}
+              >
+                {ORG_CREATE_SSO_REASON}
+              </Typography>
+            )}
+          </Box>
+        )}
       </Box>
     );
   },
@@ -162,34 +203,31 @@ SelectOrganizationChild.displayName = "SelectOrganizationChild";
 
 SelectOrganizationChild.propTypes = {
   setOpen: PropTypes.func,
+  canCreateOrganization: PropTypes.bool,
 };
 
 const SelectOrganization = React.forwardRef(
-  ({ open, anchorEl, setOpen }, popperTimeoutRef) => {
-    return (
-      <Popper
-        open={open}
-        anchorEl={anchorEl}
-        placement="right-start"
-        modifiers={[
-          {
-            name: "offset",
-            options: {
-              offset: [0, 8],
-            },
-          },
-        ]}
-        style={{ zIndex: 1300 }}
-      >
-        <SelectOrganizationChild setOpen={setOpen} ref={popperTimeoutRef} />
-      </Popper>
-    );
-  },
+  (
+    { open, anchorEl, setOpen, autoFocus, canCreateOrganization = true },
+    popperTimeoutRef,
+  ) => (
+    <SwitcherSubmenu open={open} anchorEl={anchorEl} setOpen={setOpen} autoFocus={autoFocus} label="Organizations">
+      {(changeOpen) => (
+        <SelectOrganizationChild
+          setOpen={changeOpen}
+          canCreateOrganization={canCreateOrganization}
+          ref={popperTimeoutRef}
+        />
+      )}
+    </SwitcherSubmenu>
+  ),
 );
 
 SelectOrganization.displayName = "SelectOrganization";
 
 SelectOrganization.propTypes = {
+  autoFocus: PropTypes.bool,
+  canCreateOrganization: PropTypes.bool,
   open: PropTypes.bool,
   anchorEl: PropTypes.object,
   setOpen: PropTypes.func,

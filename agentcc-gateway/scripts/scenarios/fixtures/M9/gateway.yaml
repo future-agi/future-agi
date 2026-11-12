@@ -1,0 +1,44 @@
+# 65_m9_tenancy.sh's gateway config. The script fills in the mock ports,
+# lib_mcp.sh's scn_mcp_gateway_template adds the fixed test state key under
+# `mcp:`, and lib.sh's scn_up fills base.yaml's placeholders and appends
+# `redis:`. One operator YAML server ("ops") serves only mcp.static.org_id;
+# orgs A and B push their own servers through PUT /-/orgs/{id}/config. Every
+# key and token below is a fake value for the local mocks.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  keys:
+    - name: "m9-org-a"
+      key: "scn-test-key-m9-org-a"
+      owner: "org-a"
+      key_type: "byok"
+      metadata:
+        org_id: "org-m9-a"
+    - name: "m9-org-b"
+      key: "scn-test-key-m9-org-b"
+      owner: "org-b"
+      key_type: "byok"
+      metadata:
+        org_id: "org-m9-b"
+logging:
+  level: "info"
+mcp:
+  enabled: true
+  static:
+    org_id: "org-m9-ops"
+  egress:
+    # The mocks, by their loopback ports, for the SSRF-guarded client;
+    # today's client dials directly.
+    private_allow:
+      - "127.0.0.1:@@M9_A_PORT@@"
+      - "127.0.0.1:@@M9_B_PORT@@"
+      - "127.0.0.1:@@M9_LATE_PORT@@"
+      - "127.0.0.1:@@M9_OPS_PORT@@"
+  servers:
+    ops:
+      url: "@@MCP_OPS_URL@@"
+      transport: "http"

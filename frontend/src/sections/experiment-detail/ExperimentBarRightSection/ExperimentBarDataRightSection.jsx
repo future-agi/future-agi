@@ -1,253 +1,257 @@
-import { Box, Button, IconButton, Switch, Typography } from "@mui/material";
-import React, { useRef, useState } from "react";
-import Iconify from "src/components/iconify";
-import { useExperimentDetailContext } from "../experiment-context";
-import { useParams } from "react-router";
-import { enqueueSnackbar } from "src/components/snackbar";
-import axios, { endpoints } from "src/utils/axios";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import SvgColor from "src/components/svg-color";
-import { ShowComponent } from "src/components/show";
+import React, { useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { defaultRowHeightMapping } from "src/utils/constants";
+import { Box, useMediaQuery } from "@mui/material";
+import { useLocation } from "react-router-dom";
+import CustomTooltip from "src/components/tooltip";
+import { ResultsExportDialog } from "src/sections/common/export/ExportDialog";
+import { resultsViewOf } from "src/sections/common/export/resultsExport";
 import RunExperimentWithProvider from "src/sections/develop-detail/Experiment/RunExperiment";
 import { useRunExperimentStoreShallow } from "src/sections/develop-detail/states";
-import { shouldShowDiffModeButton } from "../ExperimentData/Common";
-import DisplayMenu from "./DisplayMenu";
+import StartReviewButton from "src/sections/develop-detail/Review/StartReviewButton";
+import { NO_REVIEW_FILTER } from "../reviewDoor";
+import ActionBar from "src/sections/common/ux/oneview/ActionBar";
+
+/** `Diff` target and its disabled reason (pure; exported for tests). */
+export function diffTarget({ runCount, hasExpected }) {
+  const target = runCount > 1 ? "baseline" : "expected";
+  const reason =
+    target === "expected" && !hasExpected
+      ? "This dataset has no expected column to diff against"
+      : null;
+  return { target, reason };
+}
+
+const REVIEW_TEXT_SX = {
+  typography: "s2",
+  color: "text.secondary",
+  minWidth: 0,
+  px: 1,
+  whiteSpace: "nowrap",
+  "& .MuiTypography-root": { typography: "s2", fontWeight: 500 },
+};
+const REVIEW_ICON_SX = {
+  ...REVIEW_TEXT_SX,
+  px: 0.75,
+  "& .MuiTypography-root": { display: "none" },
+  "& .MuiButton-startIcon": { mr: 0 },
+  "& .MuiButton-endIcon": { ml: 0.25 },
+};
+
+/**
+ * Right side of the results toolbar, one view (A3-10/11): an ActionBar
+ * (`surface="results"`) that keeps every control and folds by width:
+ * `Diff` (toggle, ⇧D, priority 1) · `Review ▾` (icon-only below 1366 px,
+ * tooltip `Review rows`) · `View` (density, columns, Why column, saved
+ * views, Reset) · `More ▾` with `Edit` · `Download…` · `Add evaluations`
+ * (experiment page; priority 3, shown as buttons when the window has room).
+ * Every action is in ⌘K by its label. While rows are selected the page
+ * shows SelectionBar here instead.
+ */
 const ExperimentBarDataRightSection = ({
-  outputFormat,
-  gridApiRef,
-  columns,
-  experimentData,
+  mode = "experiment",
+  datasetId,
+  experimentId,
+  runIds = [],
+  baselineId,
+  pills = [],
+  diff = "off",
+  onDiffChange,
+  hasExpected = true,
+  readOnly = false,
+  onAddEvaluations,
+  onExperimentEdited,
+  viewMenu,
+  view: viewProp,
+  datasetName,
 }) => {
-  const { experimentId } = useParams();
-  const queryClient = useQueryClient();
-  const allowedColumns = columns.filter((col) =>
-    ["OTHERS", "run_prompt"].includes(col?.originType),
-  );
-  const {
-    setEvaluateOpen,
-    diffMode,
-    handleToggleDiffMode,
-    setExperimentDetailColumnSize,
-    setShowAllColumns,
-    showAllColumns,
-    viewAllPrompts,
-    setViewAllPrompts,
-  } = useExperimentDetailContext();
-  const displayMenuRef = useRef();
-  const [openDisplayMenu, setOpenDisplayMenu] = useState(false);
-  const [currentRowHeight, setCurrentRowHeight] = useState("Short");
-
-  const hasBaseColumn = shouldShowDiffModeButton(experimentData);
-  const handleHeightSelect = (mappingObject) => {
-    const height = mappingObject.height;
-    if (gridApiRef && gridApiRef.current) {
-      gridApiRef?.current?.api.forEachNode((node) => {
-        node.setRowHeight(height);
-      });
-    }
-
-    gridApiRef?.current?.api.onRowHeightChanged();
-  };
-
-  const handleRowHeightChange = (heightKey) => {
-    setCurrentRowHeight(heightKey);
-    const mappingObject = defaultRowHeightMapping[heightKey];
-    setExperimentDetailColumnSize(heightKey);
-    handleHeightSelect(mappingObject);
-  };
-  const { mutate: downloadExperiment } = useMutation({
-    mutationFn: () =>
-      axios.get(endpoints.develop.experiment.downloadExperiment(experimentId), {
-        responseType: "blob",
-      }),
-    onSuccess: (response) => {
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `experiment-${experimentId}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-
-      enqueueSnackbar("Experiment downloaded successfully", {
-        variant: "success",
-      });
-    },
-  });
-  const disabledDiffMode = outputFormat !== "string";
+  const isExperiment = mode === "experiment";
+  const reviewIconOnly = useMediaQuery("(max-width:1365.95px)");
+  const reviewRef = useRef(null);
   const { initiateEditMode } = useRunExperimentStoreShallow((state) => ({
     initiateEditMode: state.initiateEditMode,
   }));
+
+  const { search: locationSearch } = useLocation();
+  const [exportOpen, setExportOpen] = useState(false);
+  const runKey = runIds.join(",");
+  const exportView = useMemo(
+    () =>
+      resultsViewOf({
+        search: locationSearch,
+        runIds,
+        baselineId,
+        view: viewProp,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [locationSearch, runKey, baselineId, viewProp],
+  );
+
+  const { target, reason } = diffTarget({
+    runCount: runIds.length,
+    hasExpected,
+  });
+  const on = diff !== "off";
+
+  const actions = useMemo(
+    () =>
+      [
+        {
+          id: "diff",
+          label: "Diff",
+          icon: "mdi:vector-difference",
+          priority: 1,
+          shortcut: "diffToggle",
+          keywords: ["diff", target, "highlight changes", "compare output"],
+          toggle: { on },
+          disabled: Boolean(reason),
+          reason,
+          run: () => onDiffChange?.(on ? "off" : target),
+        },
+        {
+          id: "review",
+          label: "Review rows",
+          icon: "mdi:account-check-outline",
+          priority: 1,
+          keywords: ["pairwise", "rubric", "annotate", "judge"],
+          run: () => reviewRef.current?.querySelector("button")?.click(),
+          render: () => (
+            <CustomTooltip
+              show={reviewIconOnly}
+              size="small"
+              placement="top"
+              arrow
+              title="Review rows"
+            >
+              <Box ref={reviewRef} sx={{ display: "inline-flex" }}>
+                <StartReviewButton
+                  datasetId={datasetId}
+                  runIds={runIds}
+                  baselineId={baselineId}
+                  // L7c g6 (grid:review-rows, HIDE): `Current filter` is
+                  // not offered from this door: the dialog counted a page
+                  // filter against the rubric run only (`Current filter
+                  // (0)`, no queue). All rows stays; owed to g8's dialog.
+                  filters={NO_REVIEW_FILTER}
+                  buttonProps={{
+                    size: "small",
+                    variant: "text",
+                    color: "inherit",
+                    "aria-label": "Review rows",
+                    "data-testid": "results-review",
+                    sx: reviewIconOnly ? REVIEW_ICON_SX : REVIEW_TEXT_SX,
+                  }}
+                />
+              </Box>
+            </CustomTooltip>
+          ),
+        },
+        viewMenu && {
+          id: "view",
+          label: "View",
+          priority: 1,
+          render: () => viewMenu,
+        },
+        isExperiment && {
+          id: "edit",
+          label: "Edit",
+          icon: "mdi:pencil-outline",
+          priority: 3,
+          keywords: ["edit experiment", "change runs", "settings"],
+          disabled: readOnly,
+          reason: readOnly ? "Editors can edit the experiment" : undefined,
+          run: () => initiateEditMode(experimentId),
+        },
+        {
+          // W3-6 B3: exactly this view (filters, show, sort) or every
+          // row, as CSV / JSON / JSONL (was the run's CSV).
+          id: "csv",
+          label: "Download…",
+          icon: "solar:download-minimalistic-linear",
+          priority: 3,
+          keywords: ["export", "csv", "json", "jsonl", "download", "this view"],
+          disabled: !runIds.length,
+          reason: runIds.length ? undefined : "No run to export yet",
+          run: () => setExportOpen(true),
+        },
+        isExperiment && {
+          id: "addEvaluations",
+          label: "Add evaluations",
+          icon: "solar:add-linear",
+          priority: 3,
+          keywords: ["eval", "metric", "score", "judge"],
+          disabled: readOnly || !onAddEvaluations,
+          reason: readOnly ? "Editors can add evaluations" : undefined,
+          run: () => onAddEvaluations?.(),
+        },
+      ].filter(Boolean),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      on,
+      target,
+      reason,
+      reviewIconOnly,
+      datasetId,
+      runIds.join(","),
+      baselineId,
+      pills,
+      viewMenu,
+      isExperiment,
+      readOnly,
+      experimentId,
+      onAddEvaluations,
+      onDiffChange,
+    ],
+  );
+
   return (
-    <Box display="flex" alignItems="center" flexDirection={"row"} gap={1.5}>
-      <ShowComponent condition={diffMode}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          <SvgColor
-            src="/icons/datasets/diff_pencil.svg"
-            sx={{ height: "16px", width: "16px", color: "red.500" }}
-          />
-          <Typography
-            variant="s3"
-            color="text.primary"
-            fontWeight={"fontWeightRegular"}
-          >
-            Missing Text
-          </Typography>
-        </Box>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          <SvgColor
-            src="/icons/datasets/diff_pencil.svg"
-            sx={{ height: "16px", width: "16px", color: "green.500" }}
-          />
-          <Typography
-            variant="s3"
-            color="text.primary"
-            fontWeight={"fontWeightRegular"}
-          >
-            New Text
-          </Typography>
-        </Box>
-      </ShowComponent>
-      <ShowComponent condition={!disabledDiffMode && hasBaseColumn}>
-        <Button
-          size="medium"
-          variant="outlined"
-          onClick={handleToggleDiffMode}
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            color: disabledDiffMode ? "black.400" : "black.1000",
-            cursor: disabledDiffMode ? "not-allowed" : "pointer",
-            padding: "8px 8px",
-          }}
-          disabled={disabledDiffMode}
-        >
-          <Typography
-            typography={"s1"}
-            fontWeight={"fontWeightMedium"}
-            sx={{
-              color: disabledDiffMode ? "text.disabled" : "text.primary",
-            }}
-          >
-            Show Diff
-          </Typography>
-          <Switch
-            size="small"
-            sx={{
-              "& .Mui-checked+.MuiSwitch-track": {
-                backgroundColor: (theme) =>
-                  `${theme.palette.primary.main} !important`,
-              },
-            }}
-            checked={diffMode}
-            disabled={disabledDiffMode}
-          />
-        </Button>
-      </ShowComponent>
-
-      <Button
-        ref={displayMenuRef}
-        onClick={() => setOpenDisplayMenu(true)}
-        variant="outlined"
-        size="medium"
-        startIcon={
-          <SvgColor
-            src="/assets/icons/ic_display.svg"
-            height={"16px"}
-            width={"16px"}
-          />
-        }
-        endIcon={
-          <Iconify icon="mdi:chevron-down" height={"16px"} width={"16px"} />
-        }
-        sx={{ padding: "8px 12px" }}
-      >
-        <Typography typography={"s1"} fontWeight={"fontWeightMedium"}>
-          Display
-        </Typography>
-      </Button>
-
-      <DisplayMenu
-        anchorEl={displayMenuRef.current}
-        open={openDisplayMenu}
-        onClose={() => setOpenDisplayMenu(false)}
-        viewAllPrompts={viewAllPrompts}
-        onViewAllPromptsChange={setViewAllPrompts}
-        showAllColumns={showAllColumns}
-        onShowAllColumnsChange={setShowAllColumns}
-        rowHeightMapping={defaultRowHeightMapping}
-        currentRowHeight={currentRowHeight}
-        onRowHeightChange={handleRowHeightChange}
-        hasAgentConfigs={!!experimentData?.agentConfigs?.length}
-      />
-
-      <Button
-        variant="outlined"
-        size="medium"
-        sx={{ padding: "8px 12px" }}
-        startIcon={
-          <SvgColor
-            src="/assets/icons/ic_edit_pencil.svg"
-            sx={{ height: "16px", width: "16px" }}
-          />
-        }
-        onClick={() => {
-          initiateEditMode(experimentId);
-        }}
-      >
-        <Typography typography={"s1"} fontWeight={"fontWeightMedium"}>
-          Edit
-        </Typography>
-      </Button>
-
-      <IconButton
-        size="small"
+    <>
+      {/* Calm below 1536 px: Diff · Review · View · More (Edit, Download
+          CSV, Add evaluations fold into More); wider windows show them. */}
+      <ActionBar
+        surface="results"
+        actions={actions}
         sx={{
-          color: "text.primary",
-          borderRadius: 0.75,
-          border: "1px solid",
-          height: "38px",
-          width: "38px",
-          borderColor: "divider",
+          ml: "auto",
+          // Room for the priority-1 actions + More only (icon Review and
+          // View below 1366 px, labelled up to 1536 px).
+          "@media (max-width:1365.95px)": { maxWidth: 222 },
+          "@media (min-width:1366px) and (max-width:1535.95px)": {
+            maxWidth: 310,
+          },
         }}
-        onClick={() => downloadExperiment()}
-      >
-        <Iconify icon="material-symbols:download" color="text.primary" />
-      </IconButton>
-      <Button
-        variant="contained"
-        color="primary"
-        sx={{ padding: "8px 12px" }}
-        startIcon={<Iconify icon="mdi:plus" />}
-        onClick={() => setEvaluateOpen(true)}
-      >
-        <Typography typography={"s1"} fontWeight={"fontWeightMedium"}>
-          Add Evaluations
-        </Typography>
-      </Button>
-      <RunExperimentWithProvider
-        onSuccessfulSubmit={() => {
-          gridApiRef?.current?.api?.refreshServerSide({ force: true });
-          queryClient.invalidateQueries({
-            queryKey: ["experiment-column-config", experimentId],
-            type: "all",
-          });
-        }}
-        experimentColumns={allowedColumns}
-        tabRef={gridApiRef}
       />
-    </Box>
+      {isExperiment && (
+        <RunExperimentWithProvider onSuccessfulSubmit={onExperimentEdited} />
+      )}
+      <ResultsExportDialog
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        datasetId={datasetId}
+        view={exportView}
+        name={datasetName}
+      />
+    </>
   );
 };
 
-export default ExperimentBarDataRightSection;
-
 ExperimentBarDataRightSection.propTypes = {
-  outputFormat: PropTypes.string,
-  gridApiRef: PropTypes.object,
-  columns: PropTypes.array,
-  experimentData: PropTypes.object,
+  mode: PropTypes.oneOf(["experiment", "compare"]),
+  datasetId: PropTypes.string,
+  experimentId: PropTypes.string,
+  runIds: PropTypes.arrayOf(PropTypes.string),
+  baselineId: PropTypes.string,
+  pills: PropTypes.array,
+  diff: PropTypes.oneOf(["off", "baseline", "expected"]),
+  onDiffChange: PropTypes.func,
+  hasExpected: PropTypes.bool,
+  readOnly: PropTypes.bool,
+  onAddEvaluations: PropTypes.func,
+  onExperimentEdited: PropTypes.func,
+  viewMenu: PropTypes.node,
+  // W3-6 B3 (optional): the grid's view `{runIds, baselineId, pills, show,
+  // search, sort, agg}`; without it the URL's view is used (no search).
+  view: PropTypes.object,
+  datasetName: PropTypes.string,
 };
+
+export default ExperimentBarDataRightSection;

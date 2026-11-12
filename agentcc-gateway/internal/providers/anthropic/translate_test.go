@@ -681,7 +681,7 @@ func TestTranslateResponse_TextResponse(t *testing.T) {
 			{Type: "text", Text: "Hello! How can I help?"},
 		},
 		StopReason: "end_turn",
-		Usage:      anthropicUsage{InputTokens: 10, OutputTokens: 15},
+		Usage:      &anthropicUsage{InputTokens: usageCount(10), OutputTokens: usageCount(15)},
 	}
 
 	result := translateResponse(resp)
@@ -733,7 +733,7 @@ func TestTranslateResponse_ToolUseResponse(t *testing.T) {
 			},
 		},
 		StopReason: "tool_use",
-		Usage:      anthropicUsage{InputTokens: 20, OutputTokens: 30},
+		Usage:      &anthropicUsage{InputTokens: usageCount(20), OutputTokens: usageCount(30)},
 	}
 
 	result := translateResponse(resp)
@@ -781,7 +781,7 @@ func TestTranslateResponse_FinishReasonMapping(t *testing.T) {
 				Role:       "assistant",
 				Content:    []anthropicContentBlock{{Type: "text", Text: "ok"}},
 				StopReason: tt.stopReason,
-				Usage:      anthropicUsage{InputTokens: 1, OutputTokens: 1},
+				Usage:      &anthropicUsage{InputTokens: usageCount(1), OutputTokens: usageCount(1)},
 			}
 			result := translateResponse(resp)
 			if result.Choices[0].FinishReason != tt.wantFinish {
@@ -798,7 +798,7 @@ func TestTranslateResponse_UsageMapping(t *testing.T) {
 		Role:       "assistant",
 		Content:    []anthropicContentBlock{{Type: "text", Text: "ok"}},
 		StopReason: "end_turn",
-		Usage:      anthropicUsage{InputTokens: 100, OutputTokens: 50},
+		Usage:      &anthropicUsage{InputTokens: usageCount(100), OutputTokens: usageCount(50)},
 	}
 
 	result := translateResponse(resp)
@@ -827,7 +827,7 @@ func TestTranslateResponse_MultipleTextBlocks(t *testing.T) {
 			{Type: "text", Text: "world!"},
 		},
 		StopReason: "end_turn",
-		Usage:      anthropicUsage{InputTokens: 5, OutputTokens: 5},
+		Usage:      &anthropicUsage{InputTokens: usageCount(5), OutputTokens: usageCount(5)},
 	}
 
 	result := translateResponse(resp)
@@ -876,8 +876,8 @@ func TestStreamParse_MessageStart(t *testing.T) {
 	if state.messageID != "msg_stream1" {
 		t.Errorf("state messageID = %q, want %q", state.messageID, "msg_stream1")
 	}
-	if state.inputTokens != 25 {
-		t.Errorf("state inputTokens = %d, want 25", state.inputTokens)
+	if state.inputTokens == nil || *state.inputTokens != 25 {
+		t.Errorf("state inputTokens = %v, want 25", state.inputTokens)
 	}
 }
 
@@ -935,7 +935,7 @@ func TestStreamParse_ContentBlockDelta_InputJSONDelta(t *testing.T) {
 }
 
 func TestStreamParse_MessageDelta_StopReason(t *testing.T) {
-	state := &streamState{messageID: "msg_3", model: "claude-3", inputTokens: 10}
+	state := &streamState{messageID: "msg_3", model: "claude-3", inputTokens: usageCount(10)}
 	data := `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":20}}`
 
 	chunk, done, err := state.parseSSELine("message_delta", data)
@@ -970,7 +970,7 @@ func TestStreamParse_MessageDelta_StopReason(t *testing.T) {
 }
 
 func TestStreamParse_MessageDelta_ToolUseStopReason(t *testing.T) {
-	state := &streamState{messageID: "msg_4", model: "claude-3", inputTokens: 5}
+	state := &streamState{messageID: "msg_4", model: "claude-3", inputTokens: usageCount(5)}
 	data := `{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":15}}`
 
 	chunk, done, err := state.parseSSELine("message_delta", data)
@@ -1802,9 +1802,9 @@ func TestTranslateResponse_CarriesServerToolUsage(t *testing.T) {
 		Model:      "claude-sonnet-4-20250514",
 		Content:    []anthropicContentBlock{{Type: "text", Text: "ok"}},
 		StopReason: "end_turn",
-		Usage: anthropicUsage{
-			InputTokens:   6039,
-			OutputTokens:  931,
+		Usage: &anthropicUsage{
+			InputTokens:   usageCount(6039),
+			OutputTokens:  usageCount(931),
 			ServerToolUse: &anthropicServerTool{WebSearchRequests: 3},
 		},
 	}
@@ -1824,7 +1824,7 @@ func TestTranslateResponse_NoServerToolUsageWhenAbsent(t *testing.T) {
 		Model:      "claude-sonnet-4-20250514",
 		Content:    []anthropicContentBlock{{Type: "text", Text: "ok"}},
 		StopReason: "end_turn",
-		Usage:      anthropicUsage{InputTokens: 10, OutputTokens: 5},
+		Usage:      &anthropicUsage{InputTokens: usageCount(10), OutputTokens: usageCount(5)},
 	}
 	if out := translateResponse(resp); out.Usage.ServerToolUse != nil {
 		t.Errorf("server_tool_use = %+v, want nil for a request that ran no server tools", out.Usage.ServerToolUse)

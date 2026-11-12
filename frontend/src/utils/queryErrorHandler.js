@@ -1,6 +1,18 @@
 import { enqueueSnackbar } from "notistack";
+import {
+  isWorkspaceRecoveryHandled,
+  keepForUnexplainedRecovery,
+} from "src/contexts/workspaceRefusalHold";
 import { RESPONSE_CODES } from "./constants";
-import { getSafeActionErrorMessage } from "./errorUtils";
+import {
+  getGatewayAuthenticationErrorMessage,
+  getSafeActionErrorMessage,
+} from "./errorUtils";
+import {
+  MIXED_RUNS_TOAST_KEY,
+  MIXED_RUNS_WORDS,
+  isMixedRunsRefusal,
+} from "./mixedRunsRefusal";
 
 const _extractParts = (result) => {
   if (result == null || result === "") return "";
@@ -31,6 +43,31 @@ export const handleError = (error, variable, context, mutation) => {
     variable?.options?.meta?.errorHandled
   )
     return;
+  // The workspace recovery explains this refusal (one info line). If it ends
+  // without a line of its own, the usual toast is shown after all.
+  if (isWorkspaceRecoveryHandled(error)) {
+    const unhandled = { ...error };
+    delete unhandled.handledBy;
+    keepForUnexplainedRecovery(() =>
+      handleError(unhandled, variable, context, mutation),
+    );
+    return;
+  }
+  const gatewayRemedy = getGatewayAuthenticationErrorMessage(error);
+  if (gatewayRemedy) {
+    enqueueSnackbar(gatewayRemedy, { variant: "error" });
+    return;
+  }
+  // Runs that can't be lined up (different dataset version, trial plan or
+  // evaluators): plain words, one toast at a time.
+  if (isMixedRunsRefusal(error)) {
+    enqueueSnackbar(MIXED_RUNS_WORDS, {
+      variant: "error",
+      key: MIXED_RUNS_TOAST_KEY,
+      preventDuplicate: true,
+    });
+    return;
+  }
   if (error?.result) {
     const message = getSafeActionErrorMessage(
       {

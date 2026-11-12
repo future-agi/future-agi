@@ -1399,48 +1399,6 @@
         {
             "row_id": "38d62aa1-e3cf-4b46-a57e-363509287f28",
             "order": 10,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: 'Sorry, I need clarification on what you mean by converting the content into a valid number format. If you mean extracting any numerical information or encoding the email into a numerical code, please provide more specific instructions.'",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image accurately reflects the text instructions with a beige tent, white interior, single door, simple design, and white background, fully meeting the relevance criteria.",
                 "metadata": {
@@ -1578,48 +1536,6 @@
         {
             "row_id": "96e3ca0b-eb0d-4f8b-a311-0a1b3312d491",
             "order": 11,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"I'm sorry, but it seems there is an expectation of a numerical conversion for the provided textual content, which primarily consists of a descriptive passage and has no direct numerical equivalent. If there are specific elements or quantities within the text that require conversion to a number format, please clarify or list them so I can assist you accurately.\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image accurately depicts a snowy suburban street with a red car and a green truck, but lacks a visible sign on the left side, affecting full relevance.",
                 "metadata": {
@@ -1757,48 +1673,6 @@
         {
             "row_id": "846096a0-1c7c-4da0-80fa-1d7bdcb672d3",
             "order": 12,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: 'Unfortunately, the content you provided is not suitable for conversion into a numerical format, as it is a narrative text rather than numeric data. Could you provide some financial figures, dates, or other numerical content that you need converted into a different format?'",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image accurately depicts all elements described in the text instructions, including the man in a suit, podium, microphone, light blue tie, and background, ensuring full relevance to the scenario.",
                 "metadata": {
@@ -1936,48 +1810,6 @@
         {
             "row_id": "8c14785f-3e7b-4380-b4a7-52b6ab03712c",
             "order": 13,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"I'm sorry, but the content provided is a text-based product description and doesn't contain any numbers that need converting into a number format. Could you clarify or provide specific content that requires such conversion?\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image accurately depicts a red helmet with a black chin strap and a white background, but the logo's presence and color details are unclear, affecting full relevance.",
                 "metadata": {
@@ -2115,48 +1947,6 @@
         {
             "row_id": "810dc8a3-ff46-4f26-86a9-9de5b999129d",
             "order": 14,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"It seems like the email you provided is a textual description of a record store and doesn't contain any specific number data that needs conversion into a number format. If you need assistance with another type of conversion or have specific details that need converting to a number, please provide more information.\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image accurately represents the described elements and atmosphere, including vinyl records, organization, and eclectic charm, fully aligning with the text instructions.",
                 "metadata": {
@@ -2294,48 +2084,6 @@
         {
             "row_id": "13500bb9-51b9-423b-8952-52235cb6c909",
             "order": 15,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"It seems like you're asking for a conversion of specific content into a number format, but the content you've provided is a description of an image commission request, not numerical data that can be directly converted into a number. Could you clarify if there is a specific part of this text you want to be translated into a number, or if there\u2019s a particular meaning or concept you want expressed numerically? Without further context, it\u2019s challenging to provide a relevant numerical conversion.\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image accurately includes all specified elements, such as the heart-shaped pile, green background, text, smaller piles, and paw prints, maintaining thematic consistency with the instructions.",
                 "metadata": {
@@ -2473,48 +2221,6 @@
         {
             "row_id": "2075a10d-8037-4267-805d-dcb74a317e1f",
             "order": 16,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: 'The content provided seems to be a text-based communication and does not contain any numerical data that can be converted into a valid number format. If you have specific numerical information or require a particular conversion from text to a numerical format, please provide that information, and I would be happy to assist!'",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image does not follow the instructions as the text is incorrect and the image is not cropped as specified.",
                 "metadata": {
@@ -2943,69 +2649,6 @@
         {
             "row_id": "b618b2de-9692-47cf-a598-e5d01b87d03e",
             "order": 17,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "1413253243.0",
-                "metadata": {
-                    "response_time_ms": 5440.59419631958,
-                    "token_count": 300,
-                    "annotation": null
-                },
-                "status": "pass",
-                "value_infos": {
-                    "name": null,
-                    "data": {
-                        "response": "Subject: Capturing a Joyful Moment\n\nDear [Recipient's Name],\n\nI hope this email finds you well. I wanted to share a delightful scene that brought a smile to my face and reminded me of the simple joys in life.\n\nPicture this: A young girl with beautiful blonde hair is sitting comfortably on the floor, dressed in an adorable red dress adorned with playful polka dots. In her hands, she holds a charming wooden bowl brimming with an assortment of snacks\u2014crackers and cookies being the stars of her little feast. Her radiant smile speaks volumes about how much she's enjoying her snack time.\n\nThis moment captures pure happiness and innocence, reminding us all to take pleasure in life's small delights. It's amazing how such simple moments can bring so much joy!\n\nWishing you many joyful moments like these.\n\nWarm regards,\n\n[Your Name]"
-                    },
-                    "failure": null,
-                    "reason": 1413253243.0,
-                    "runtime": 5440.59419631958,
-                    "model": "gpt-4o-2024-08-06",
-                    "metrics": [],
-                    "metadata": {
-                        "usage": {
-                            "completion_tokens": 168,
-                            "prompt_tokens": 132,
-                            "total_tokens": 300
-                        },
-                        "cost": {
-                            "total_cost": 0.00201,
-                            "prompt_cost": 0.00033,
-                            "completion_cost": 0.00168
-                        },
-                        "response_time": 5440.59419631958
-                    },
-                    "output": null
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image perfectly matches the text instructions with all described elements present, accurately represented, and harmoniously aligned with the intended scenario.",
                 "metadata": {
@@ -3143,48 +2786,6 @@
         {
             "row_id": "2654b504-babf-4782-b575-78cefd950ea1",
             "order": 18,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: 'Subject: Unique Patch Design - \"It\\'s Not The Destination, It\\'s The Journey\"\\n\\n0. Hi [Recipient\\'s Name],\\n\\n1. I hope this email finds you well.\\n\\n2. I wanted to share with you a unique design that caught my eye recently\u2014a black and yellow patch featuring a stylized bird and the inspiring text, \"It\\'s Not The Destination, It\\'s The Journey.\"\\n\\n3. This striking piece is pinned against a clean white background, making its bold colors and message stand out even more.\\n\\n4. The combination of the vibrant color scheme and the motivational phrase makes it not only visually appealing but also meaningful.\\n\\n5. It serves as a reminder to appreciate every step of our journey rather than just focusing on the end goal.\\n\\n6. If you\\'re interested in seeing this design or discussing how we might incorporate similar elements into our projects, please let me know.\\n\\n7. I\\'d be happy to provide more details or arrange for us to view it together.\\n\\n8. Looking forward to hearing your thoughts!\\n\\nBest regards,\\n\\n[Your Name]  \\n[Your Position]  \\n[Your Contact Information]'",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image fully matches the text instructions with accurate colors, design, text, and background, demonstrating complete relevance.",
                 "metadata": {
@@ -3322,48 +2923,6 @@
         {
             "row_id": "f4dfdb9e-79c4-4e33-abbc-80d58bd42a90",
             "order": 19,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"There doesn't appear to be any data within your email content that needs to be directly converted into a number format. Could you please clarify if you meant something else, or provide the specific numbers or data you are referring to for conversion?\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image accurately depicts a modern brick building with black and white windows, a flat roof, surrounding buildings, specific cars, clear sky, and power lines, fully aligning with the text instructions.",
                 "metadata": {
@@ -3501,48 +3060,6 @@
         {
             "row_id": "bd713f80-69f1-43de-807b-eda58e0b81ba",
             "order": 20,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"As there are no numerical or quantitative elements in the scene description you've provided, it's not possible to directly convert it into a number format while preserving its original essence. Could you clarify or specify a different aspect of this content that you're looking to convert into a numerical form?\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image fully matches the text instructions with all specified elements present, accurate colors, and correct positioning, ensuring high relevance.",
                 "metadata": {
@@ -3797,48 +3314,6 @@
         {
             "row_id": "1066ade9-b933-41bb-a61e-8330574b9f8b",
             "order": 21,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: 'It seems like you\\'re asking to convert the content of a message into a \"number format,\" but the content provided is not numerical data or something that can be directly converted into a standard numerical format without context.\\n\\nIf you\\'re looking to extract any numerical data from the content, there appears to be none directly in the text provided. If you have any specific requirements for conversion or any particular information you think I might be overlooking, please clarify what you would like in a numerical format.'",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image perfectly matches the text instructions, with accurate color, pattern, character design, and sticker details, ensuring full relevance.",
                 "metadata": {
@@ -3976,48 +3451,6 @@
         {
             "row_id": "76c67747-8e0b-4ed9-b290-92cd0b80b136",
             "order": 22,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"It seems like there might be some confusion. The content provided is an email about introducing gourmet crackers, and it does not contain numerical data that needs conversion into a number format. Could you please clarify what specific information or part of the content you'd like to be converted into a number format?\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image accurately depicts small, square-shaped crackers with a golden-brown color, visible seasoning, and a neat arrangement on a wire rack over a wooden surface, matching all key elements of the text instructions.",
                 "metadata": {
@@ -4155,48 +3588,6 @@
         {
             "row_id": "45977e14-bfb1-423f-8d4d-9259c7685aaa",
             "order": 23,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"Unfortunately, the content you've provided is textual and descriptive, focusing on an inquiry about a vintage page featuring a T.S. Eliot poem. Since it does not contain any numerical information or anything that can be directly converted into a numerical format, I cannot convert it into a valid number format. If you could provide specific details or numbers within the text that you wish to convert, I'd be happy to assist!\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image includes the correct title and author, but the text is mostly gibberish and does not reflect the formal, archaic style or themes of mortality and time, impacting relevance.",
                 "metadata": {
@@ -4334,69 +3725,6 @@
         {
             "row_id": "67b1d8bf-d0ff-4af0-b783-94d514103438",
             "order": 24,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "42.0",
-                "metadata": {
-                    "response_time_ms": 6123.680830001831,
-                    "token_count": 334,
-                    "annotation": null
-                },
-                "status": "pass",
-                "value_infos": {
-                    "name": null,
-                    "data": {
-                        "response": "Subject: Introducing Our Exclusive University of Illinois USB Flash Drive\n\nDear [Recipient's Name],\n\nI hope this message finds you well. I am excited to introduce a unique and stylish addition to our product lineup that is perfect for students, alumni, and faculty alike\u2014a sleek silver USB flash drive featuring the iconic University of Illinois logo engraved on it.\n\nThis elegant device not only serves as a practical tool for storing your important documents, photos, and presentations but also showcases your pride in being part of the Illini community. With its durable design and ample storage capacity, it's an ideal companion for both academic and professional use.\n\nKey Features:\n- Sleek silver finish with high-quality engraving\n- Available in various storage capacities to suit your needs\n- Compact design for easy portability\n- Compatible with multiple devices\n\nWhether you're looking to keep your digital files organized or searching for the perfect gift for a fellow Illini enthusiast, this USB flash drive is sure to impress.\n\nTo learn more about pricing or place an order, please feel free to contact us at [Your Contact Information]. We look forward to helping you stay connected with the University of Illinois spirit wherever you go!\n\nThank you for considering our exclusive offering. Go Illini!\n\nWarm regards,\n\n[Your Full Name]  \n[Your Position]  \n[Your Company/Organization Name]  \n[Contact Information]  "
-                    },
-                    "failure": null,
-                    "reason": 42.0,
-                    "runtime": 6123.680830001831,
-                    "model": "gpt-4o-2024-08-06",
-                    "metrics": [],
-                    "metadata": {
-                        "usage": {
-                            "completion_tokens": 270,
-                            "prompt_tokens": 64,
-                            "total_tokens": 334
-                        },
-                        "cost": {
-                            "total_cost": 0.00286,
-                            "prompt_cost": 0.00016,
-                            "completion_cost": 0.0027
-                        },
-                        "response_time": 6123.680830001831
-                    },
-                    "output": null
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image accurately depicts a silver USB flash drive, but the logo does not clearly resemble the University of Illinois logo, affecting relevance.",
                 "metadata": {
@@ -4534,48 +3862,6 @@
         {
             "row_id": "80e28588-44ca-434a-9660-bbf570584649",
             "order": 25,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"It seems there is a misunderstanding. The content you've provided is a text inquiry about a rug and does not contain numeric information that can be directly converted into a number format. If you need assistance with a different conversion or if there is a specific part of the text that involves numbers that you need help with, please let me know!\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image accurately represents a beige textured rug with a blue border on the left side, fully aligning with the text instructions and meeting the relevance criteria.",
                 "metadata": {
@@ -4713,48 +3999,6 @@
         {
             "row_id": "0644117c-09e2-44bc-aeaa-2dd114720d28",
             "order": 26,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"I'm sorry, but the provided content is a descriptive text and not directly related to numerical data that can be converted into a number format. Could you please clarify which specific part or element of the text you'd like to be represented in a number format?\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image perfectly aligns with the text instructions, featuring all specified elements like the red heart-shaped truffle, glossy finish, wooden surface, chocolate chips, white flowers, and a lit candle, ensuring full relevance.",
                 "metadata": {
@@ -4892,48 +4136,6 @@
         {
             "row_id": "861f5976-b6bd-45d8-8453-ac275e2f12dd",
             "order": 27,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"It seems there isn't a direct numerical component in the given text that can be converted into a number format typically used for data like phone numbers, account numbers, or similar. The content is a descriptive text about modifications to an image, and as such, doesn't contain inherent numerical data that would need direct conversion. If you meant something different, such as extracting potential dates or quantities, please clarify, and I'd be happy to help!\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image accurately reflects the specified modifications with larger 'o's in 'Hop' and 'Pop', while maintaining the original elements unchanged, ensuring full relevance.",
                 "metadata": {
@@ -5071,69 +4273,6 @@
         {
             "row_id": "fe17a7a4-b5ce-4149-bdb3-b8938fda493a",
             "order": 28,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "101011100110000.0",
-                "metadata": {
-                    "response_time_ms": 7907.159805297852,
-                    "token_count": 373,
-                    "annotation": null
-                },
-                "status": "pass",
-                "value_infos": {
-                    "name": null,
-                    "data": {
-                        "response": "Subject: Stunning Crystal Chandelier with Silver Finish - A Touch of Elegance for Your Space\n\nDear [Recipient's Name],\n\nI hope this email finds you well. I am writing to introduce a truly exquisite piece that could add a touch of elegance and sophistication to your space\u2014a crystal chandelier with a silver finish, featuring multiple tiers of dazzling crystal drops.\n\nThis stunning chandelier is designed to captivate and enhance any room it graces. The combination of its sleek silver finish and the intricate arrangement of sparkling crystal drops creates an ambiance that is both luxurious and timeless. Whether you're looking to elevate the aesthetic appeal of your living room, dining area, or entryway, this chandelier serves as a perfect centerpiece.\n\nKey Features:\n- Elegant silver finish\n- Multiple tiers adorned with high-quality crystal drops\n- Suitable for various interior styles\n- Ideal for creating an inviting atmosphere\n\nThe white background in which it hangs accentuates its beauty even further, allowing each detail to shine brilliantly. This piece not only illuminates but also transforms spaces into something extraordinary.\n\nIf you are interested in learning more about this magnificent chandelier or wish to see additional images or specifications, please feel free to reach out at your earliest convenience. We would be delighted to assist you in making this exceptional addition part of your home or project.\n\nThank you for considering our offering. We look forward to the opportunity to serve you.\n\nWarm regards,\n\n[Your Full Name]  \n[Your Position]  \n[Your Company/Organization Name]  \n[Contact Information]  "
-                    },
-                    "failure": null,
-                    "reason": 101011100110000.0,
-                    "runtime": 7907.159805297852,
-                    "model": "gpt-4o-2024-08-06",
-                    "metrics": [],
-                    "metadata": {
-                        "usage": {
-                            "completion_tokens": 303,
-                            "prompt_tokens": 70,
-                            "total_tokens": 373
-                        },
-                        "cost": {
-                            "total_cost": 0.003205,
-                            "prompt_cost": 0.000175,
-                            "completion_cost": 0.00303
-                        },
-                        "response_time": 7907.159805297852
-                    },
-                    "output": null
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The chandelier matches the crystal and silver finish description, but lacks clear multiple tiers of crystal drops, affecting design relevance.",
                 "metadata": {
@@ -5388,48 +4527,6 @@
         {
             "row_id": "64e79372-87a1-43ed-9e8b-ea0d83e7ca24",
             "order": 29,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"I'm sorry, but it seems there isn't a numerical value to be extracted or converted from the content you've provided. The content appears to be a sample email text concerning an inquiry about using an image. Could you clarify what specific information or part of the text you'd like converted into a numerical format?\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image is mostly relevant, accurately depicting the foot, blue string, bow-like knot, and vintage feel, but lacks visibility of the leg up to the knee.",
                 "metadata": {
@@ -5742,48 +4839,6 @@
         {
             "row_id": "d4fbb956-007f-4502-bef3-36dc19e985ed",
             "order": 30,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: 'The content provided does not contain any specific numerical data or elements that can be directly converted into a numeric format. If you intended to extract or convert part of the text into a number in some way, please clarify the specifics or context in which you want the conversion to occur.'",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image is fully relevant and accurately matches the text instructions, with all elements correctly depicted and arranged as described.",
                 "metadata": {
@@ -5921,48 +4976,6 @@
         {
             "row_id": "56592699-53cc-4bf7-b80f-96bf59feef16",
             "order": 31,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"Unfortunately, the content you've provided doesn't contain any specific numbers or numerical information that can be converted into a valid number format. If you have specific numerical data or figures you need to be formatted, please provide that information, and I'll be happy to assist you.\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image accurately includes all elements described in the text instructions, with correct arrangement and relevance to the criteria.",
                 "metadata": {
@@ -6100,48 +5113,6 @@
         {
             "row_id": "abaf914c-2469-4d6c-aed5-3ce3ac6e370f",
             "order": 32,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"Unfortunately, the content you've provided is a descriptive text related to an image, and it doesn't contain any numerical data or content that can be converted into a valid numerical format. If you have specific numerical information or data you need help with converting or formatting, please share that, and I'd be happy to assist!\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image mostly matches the instructions but lacks the orange button and the phone is not a flip phone, affecting relevance.",
                 "metadata": {
@@ -6279,48 +5250,6 @@
         {
             "row_id": "8f2f8a4a-c63a-4953-8ac5-e7f81935d8a3",
             "order": 33,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"I'm sorry for the confusion, but the content you provided is descriptive text about a product and doesn't seem to include any specific numerical data that needs conversion to a number format. Could you please clarify or provide the specific numbers or information you want to be converted?\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image fully matches the text instructions with a black leather backpack featuring a mesh panel, zipper closure, two shoulder straps, a handle, and a white background, ensuring complete relevance.",
                 "metadata": {
@@ -6458,69 +5387,6 @@
         {
             "row_id": "df8f7227-ad2b-4224-931d-aaaf1af74f0e",
             "order": 34,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "2014.0",
-                "metadata": {
-                    "response_time_ms": 39783.72097015381,
-                    "token_count": 394,
-                    "annotation": null
-                },
-                "status": "pass",
-                "value_infos": {
-                    "name": null,
-                    "data": {
-                        "response": "Subject: Introducing Our Elegant Black Rectangular Box with Silver Foil Stamp\n\nDear [Recipient's Name],\n\nI hope this email finds you well. I am excited to introduce our latest packaging innovation, designed to combine elegance and functionality in one stunning presentation.\n\nOur new black rectangular box features a glossy finish that exudes sophistication and style. The highlight of this exquisite design is the silver foil stamp emblazoned with the text 'HOLMES' alongside the number '2014', both rendered in a striking metallic font that captures attention instantly.\n\nThis box is not only visually appealing but also practical, thanks to its magnetic closure which ensures secure storage while maintaining an effortless opening experience. Its sleek design against a white background makes it perfect for showcasing your premium products or gifts.\n\nWe believe this packaging solution will enhance your brand's image and leave a lasting impression on your customers. If you're interested in learning more about how our elegant black rectangular box can elevate your product offerings, please feel free to reach out at your earliest convenience.\n\nThank you for considering our innovative packaging option. We look forward to the opportunity of working together.\n\nWarm regards,\n\n[Your Full Name]  \n[Your Position]  \n[Your Company Name]  \n[Contact Information]"
-                    },
-                    "failure": null,
-                    "reason": 2014.0,
-                    "runtime": 39783.72097015381,
-                    "model": "gpt-4o-2024-08-06",
-                    "metrics": [],
-                    "metadata": {
-                        "usage": {
-                            "completion_tokens": 244,
-                            "prompt_tokens": 150,
-                            "total_tokens": 394
-                        },
-                        "cost": {
-                            "total_cost": 0.002815,
-                            "prompt_cost": 0.000375,
-                            "completion_cost": 0.00244
-                        },
-                        "response_time": 39783.72097015381
-                    },
-                    "output": null
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image fully matches the text instructions, featuring a black rectangular box with a glossy finish, silver foil stamped text 'HOLMES 2014', a metallic font, and a white background, ensuring complete relevance.",
                 "metadata": {
@@ -6658,69 +5524,6 @@
         {
             "row_id": "43055417-bad5-4d0b-96b6-1dcdf55682cc",
             "order": 35,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "34.0",
-                "metadata": {
-                    "response_time_ms": 11606.159687042236,
-                    "token_count": 473,
-                    "annotation": null
-                },
-                "status": "pass",
-                "value_infos": {
-                    "name": null,
-                    "data": {
-                        "response": "Subject: Captivating Framed Artwork of Football Player #34\n\nDear [Recipient's Name],\n\nI hope this email finds you well. I am writing to share with you a remarkable piece of artwork that might pique your interest, especially if you're a fan of football or unique graphic art styles.\n\nThe artwork in question is a framed image depicting a football player wearing the number 34 jersey, dressed in an eye-catching blue and red uniform. The player's helmet features an intricate red and blue design that complements the overall color scheme beautifully. What truly sets this piece apart is its dynamic portrayal; the athlete is captured mid-movement, with one arm extended forward while the other remains bent at the elbow, suggesting both agility and strength.\n\nThis image boasts a pixelated, graphic art style that adds a modern twist to traditional sports imagery. It\u2019s displayed within a sleek black frame against an exposed brick wall backdrop, which enhances its visual appeal and makes it suitable for various settings\u2014be it an office space, living room, or even as part of a gallery collection.\n\nIf you're interested in viewing this captivating piece or would like more information about acquiring it for your collection or space, please feel free to reach out. I'd be delighted to assist further.\n\nThank you for considering this unique addition to your artistic repertoire!\n\nWarm regards,\n\n[Your Full Name]  \n[Your Contact Information]  \n[Your Position/Title] (if applicable)"
-                    },
-                    "failure": null,
-                    "reason": 34.0,
-                    "runtime": 11606.159687042236,
-                    "model": "gpt-4o-2024-08-06",
-                    "metrics": [],
-                    "metadata": {
-                        "usage": {
-                            "completion_tokens": 285,
-                            "prompt_tokens": 188,
-                            "total_tokens": 473
-                        },
-                        "cost": {
-                            "total_cost": 0.00332,
-                            "prompt_cost": 0.00047,
-                            "completion_cost": 0.00285
-                        },
-                        "response_time": 11606.159687042236
-                    },
-                    "output": null
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image accurately reflects all specified elements from the text instructions, including the uniform, number, helmet, pose, style, frame, and wall, demonstrating full relevance.",
                 "metadata": {
@@ -6858,48 +5661,6 @@
         {
             "row_id": "19c59d6e-7657-43a4-abca-cf22eb9b31e9",
             "order": 36,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"Unfortunately, the content you provided doesn't include numerical information that can be directly converted into a numeric format. If you have specific values or figures from this text you'd like to convert or analyze, please provide them, and I'll be happy to help.\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image accurately includes all key elements from the text instructions, such as the blue and yellow boat named 'Misty', the pier, red buoy, orange life jackets, red umbrella, textured water, and overcast sky, ensuring full relevance.",
                 "metadata": {
@@ -7037,48 +5798,6 @@
         {
             "row_id": "d7df9539-e68f-4867-b7ff-cce2b2072f4d",
             "order": 37,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"I'm sorry, but the provided content is descriptive narrative and not inherently numerical, so it's not possible to convert it into a valid number format. If you have specific data or figures from the text you'd like converted or interpreted, please provide that particular information.\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image accurately depicts a man standing beside a stone wall with a water trough, surrounded by lush greenery and fallen leaves, fully aligning with the text instructions.",
                 "metadata": {
@@ -7449,48 +6168,6 @@
         {
             "row_id": "a865f73c-1f11-4231-8721-70a953bc6a0d",
             "order": 38,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"I'm sorry, but the provided content does not appear to contain any obvious data or information that can be directly converted into a numerical format. If there is a specific element in the message or a particular context in which you would like a number conversion, please provide more details or clarify your request.\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image accurately depicts all described elements, including the man with a microphone, black background, person with a ruler, and the man's attire, ensuring full relevance to the text instructions.",
                 "metadata": {
@@ -7628,48 +6305,6 @@
         {
             "row_id": "c92d41cb-b1a9-4ed2-bef1-8065e4dce2e6",
             "order": 39,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"It seems like you're asking for a conversion of the content into a number format, but the text provided is an email request and not something that can be directly converted into a numeric format. Could you please clarify if you're looking for something specific, like a tally of the elements, word count, or perhaps a different type of conversion entirely?\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image is mostly relevant to the text instructions, accurately depicting the elements described, but the message 'Devices Not Hand' contains a typographical error affecting clarity.",
                 "metadata": {
@@ -7924,48 +6559,6 @@
         {
             "row_id": "0b29d9f4-e60a-44e0-b43c-65c2bb722566",
             "order": 40,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"I'm sorry, but there doesn't appear to be any numerical content in your message that requires conversion to a valid number format. If you need assistance with something specific, such as extracting numeric data or converting any particular figures, please let me know!\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image accurately reflects the text instructions, showcasing the driver's side with a steering wheel, black leather upholstery, adjustable armrest, center console features, modern dashboard, and spacious interior, ensuring full relevance.",
                 "metadata": {
@@ -8103,48 +6696,6 @@
         {
             "row_id": "f84fca33-200d-4cf9-9422-f4340cfa0324",
             "order": 41,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: 'The numbers mentioned in the email are dosage values ranging from 10mg to 80mg. These are typically expressed as numerical values without units in standard number format:\\n\\n10, 20, 30, 40, 50, 60, 70, 80'",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image partially matches the instructions, showing a cup with yellow liquid and some text, but the text is incomplete and does not fully adhere to the instructions.",
                 "metadata": {
@@ -8399,48 +6950,6 @@
         {
             "row_id": "602708af-8e59-4603-a11f-882bc7b5baf0",
             "order": 42,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"Unfortunately, the content you've provided does not contain any numbers to convert into a valid number format. It seems to be a formal invitation to a museum exhibit. If there are specific details or numbers within the text you'd like assistance with, please provide that information for further help.\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image accurately represents an ancient Native American village diorama with a central fire pit, pottery, tools, and a museum exhibit setting, fulfilling all text instructions and relevance criteria.",
                 "metadata": {
@@ -8578,48 +7087,6 @@
         {
             "row_id": "e78a5bed-b41a-428c-9d70-7e9f0f6ba767",
             "order": 43,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"I'm sorry, but the content provided does not contain any numerical information to convert into a valid number format. Could you please specify the content or elements you would like to be converted into a number format?\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image accurately depicts a silver pot with a reflective surface on a wooden surface with visible grain and knots, including a curved handle, lid, and soft reflection, fully aligning with the text instructions.",
                 "metadata": {
@@ -8757,48 +7224,6 @@
         {
             "row_id": "eff8e157-0d3b-4764-bbf4-bc17c66de978",
             "order": 44,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"I'm sorry, but the content you provided is text-based and doesn't contain any numerical information to convert into a number format. If you have specific text or data that needs to be converted to a numerical format, please provide it, and I'll be happy to help.\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image accurately matches the text instructions with correct color scheme, brand visibility, sleek design, and visor shape, fulfilling all relevance criteria.",
                 "metadata": {
@@ -8936,48 +7361,6 @@
         {
             "row_id": "5703c86f-7fa0-4ee1-956b-56beecddbc01",
             "order": 45,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"I'm sorry, but the provided content does not contain any information that can be directly converted into a number format. If you meant to convert some specific part of the content into numbers or if you are looking for specific numeric information related to the medication, could you please clarify or provide more context?\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image accurately depicts two identical blue and white pills with the text 'GILEAD' and a green leaf logo against a grey background, fully aligning with the instructions.",
                 "metadata": {
@@ -9115,48 +7498,6 @@
         {
             "row_id": "133000f0-8ff4-42d8-9438-244357a9adc8",
             "order": 46,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"I'm sorry, but it seems there is no numerical information in the given content that can be converted into a number format. The content provided is a written inquiry about a tarnished silver locket with no specific data or figures to convert. If you meant to include numerical details or have another task in mind, please let me know!\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image accurately depicts a tarnished silver locket with a yellowish patina, a hinged design, and an empty interior, fully aligning with the text instructions.",
                 "metadata": {
@@ -9294,48 +7635,6 @@
         {
             "row_id": "fb539b7f-e20d-474b-998b-0dc6a47d6e4d",
             "order": 47,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"I'm sorry, but the content you provided doesn't include any specific numerical data that can be directly converted into a valid number format. If you meant to extract numerical values or identify a specific number from the content, please provide more details or clarify your request.\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image fully matches the text instructions with accurate color scheme, design elements, placement, and background, ensuring complete relevance.",
                 "metadata": {
@@ -9473,48 +7772,6 @@
         {
             "row_id": "d4b22813-0bbf-4980-9f87-3fa923b1a16e",
             "order": 48,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "could not convert string to float: \"The content does not correspond to a typical numerical format or value. However, based on the structure and listing of magazine covers, it seems you need the items to be numbered. Here's the numerical conversion of the list of magazine covers:\\n\\n1. Top Left Cover\\n2. Top Right Cover\\n3. Bottom Left Cover\\n4. Bottom Right Cover\\n\\nIf you are asking for another type of conversion or a specific number representation from this content, could you please clarify further?\"",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The output image mostly aligns with the text instructions, but the bottom right cover text differs slightly, affecting relevance.",
                 "metadata": {
@@ -9711,69 +7968,6 @@
         {
             "row_id": "965d955f-eae1-4f00-93f3-24f33a7a4bb6",
             "order": 49,
-            "3d0fd8c5-e67f-413f-be8b-8901dd34fa15": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
-            "6461444b-defa-4716-893f-235fc3d1660b": {
-                "cell_value": "2018.0",
-                "metadata": {
-                    "response_time_ms": 9600.086212158203,
-                    "token_count": 567,
-                    "annotation": null
-                },
-                "status": "pass",
-                "value_infos": {
-                    "name": null,
-                    "data": {
-                        "response": "Subject: Detailed Overview of the Second Image in Our Series\n\nDear [Recipient's Name],\n\nI hope this email finds you well. I am writing to provide a detailed description of the second image from our recent series, which focuses on the intricate design elements within the word \"Electronica.\"\n\nThe second image is a close-up view of the letter 'E' from \"Electronica,\" showcasing its unique composition. This particular 'E' is crafted using various electronic components and wires, giving it an appearance reminiscent of a complex circuit board. The attention to detail in this depiction highlights both creativity and technical precision.\n\nSet against a plain white background, this image stands out with its vibrant red border. The top and bottom sections of the frame are inscribed with \"MARKET & TECHNIK TREND GUIDE\" and \"ELECTRONICA COMPASS 2018,\" respectively, adding context and thematic relevance to the visual presentation.\n\nCompared to the first image in our series, this one offers a more technical and detailed perspective that may appeal particularly to those interested in electronics or design innovation.\n\nPlease feel free to reach out if you have any questions or need further information about these images.\n\nBest regards,\n\n[Your Name]  \n[Your Position]  \n[Your Contact Information]"
-                    },
-                    "failure": null,
-                    "reason": 2018.0,
-                    "runtime": 9600.086212158203,
-                    "model": "gpt-4o-2024-08-06",
-                    "metrics": [],
-                    "metadata": {
-                        "usage": {
-                            "completion_tokens": 253,
-                            "prompt_tokens": 314,
-                            "total_tokens": 567
-                        },
-                        "cost": {
-                            "total_cost": 0.003315,
-                            "prompt_cost": 0.000785,
-                            "completion_cost": 0.00253
-                        },
-                        "response_time": 9600.086212158203
-                    },
-                    "output": null
-                },
-                "feedback_info": {}
-            },
-            "e816ffb3-bbac-4d1f-9cb8-6eace5889342": {
-                "cell_value": "BadRequestError: OpenAIException - Error code: 400 - {'error': {'message': \"Missing required parameter: 'tools[0].type'.\", 'type': 'invalid_request_error', 'param': 'tools[0].type', 'code': 'missing_required_parameter'}}",
-                "metadata": {
-                    "response_time_ms": null,
-                    "token_count": null,
-                    "annotation": null
-                },
-                "status": "error",
-                "value_infos": {
-                    "reason": "Evaluation failed. Please verify your inputs and ensure your API key is valid.",
-                    "metadata": {}
-                },
-                "feedback_info": {}
-            },
             "b995d503-b0db-48e3-bfd9-db9d22522ae4": {
                 "cell_value": "The image accurately represents the description with electronic components forming an 'E', a plain white background, and a red border, effectively conveying the theme of electronics and technology.",
                 "metadata": {

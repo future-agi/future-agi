@@ -18,9 +18,12 @@ from model_hub.models.develop_dataset import Cell, Column
 logger = structlog.get_logger(__name__)
 
 
-def mark_eval_cells_stopped(user_eval_metric, *, reason: str) -> int:
+def mark_eval_cells_stopped(user_eval_metric, *, reason: str, dataset_ids=None) -> int:
     """Flip RUNNING cells of an eval (and its paired EVALUATION_REASON cells)
     to ERROR with a human-readable `reason`.
+
+    With ``dataset_ids``, only cells in those datasets: an experiment's stop
+    must not touch another run's cells of the same eval.
 
     Covers:
     - Dataset evals: Column.source = EVALUATION, source_id = eval_id
@@ -67,6 +70,12 @@ def mark_eval_cells_stopped(user_eval_metric, *, reason: str) -> int:
         )
 
         column_ids = eval_column_ids + reason_column_ids
+        if dataset_ids is not None:
+            column_ids = list(
+                Column.objects.filter(
+                    id__in=column_ids, dataset_id__in=list(dataset_ids)
+                ).values_list("id", flat=True)
+            )
         if not column_ids:
             return 0
 

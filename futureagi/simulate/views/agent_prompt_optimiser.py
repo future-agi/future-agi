@@ -5,6 +5,7 @@ from django.http import Http404
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
@@ -155,6 +156,8 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
     serializer_class = AgentPromptOptimiserRunSerializer
+    # A run's organization is its test execution's run test's.
+    organization_lookup = "test_execution__run_test__organization"
 
     def get_queryset(self):
         queryset = (
@@ -219,6 +222,8 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "column_config": AGENT_PROMPT_OPTIMISER_RUN_TABLE_CONFIG,
                 }
             )
+        except APIException:
+            raise
         except Exception as e:
             logger.exception(f"Error listing AgentPromptOptimiserRuns: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))

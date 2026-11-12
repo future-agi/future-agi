@@ -11,7 +11,10 @@ from django.core.management import call_command
 from django.db import connection
 from django.test import override_settings
 
-from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSION
+from tracer.constants.grouping_versions import (
+    GROUPING_POLICY_VERSION,
+    SAMPLED_GROUPING_POLICY_VERSION,
+)
 from tracer.models.trace_error_analysis import ErrorClusterTraces, TraceErrorGroup
 from tracer.models.trace_grouping import (
     TraceGroupingAttempt,
@@ -586,8 +589,13 @@ def test_cohort_call_cap_refuses_101st_reservation_but_keeps_cached_receipts(
 def test_activation_is_explicit_and_does_not_requeue_or_reconcile(
     observe_project, monkeypatch
 ):
+    scope = TraceGroupingScope.no_workspace_objects.create(
+        project=observe_project,
+        organization_id=observe_project.organization_id,
+        workspace_id=observe_project.workspace_id,
+        policy_version=GROUPING_POLICY_VERSION,
+    )
     _prepare_runtime(observe_project, monkeypatch, identity="activation-preview")
-    scope = TraceGroupingScope.no_workspace_objects.get(project=observe_project)
     before = list(
         TraceGroupingWork.no_workspace_objects.filter(scope=scope).values(
             "id", "state", "attempt_number"
@@ -890,9 +898,10 @@ def test_reviewed_attachment_preserves_identity_and_reopens_resolved_issue(
 ):
     old = _prepare_runtime(observe_project, monkeypatch, identity="reviewed-existing")
     scope = TraceGroupingScope.no_workspace_objects.get(project=observe_project)
-    if sampled:
-        scope.policy_version = SAMPLED_GROUPING_POLICY_VERSION
-        scope.save(update_fields=["policy_version", "updated_at"])
+    scope.policy_version = (
+        SAMPLED_GROUPING_POLICY_VERSION if sampled else GROUPING_POLICY_VERSION
+    )
+    scope.save(update_fields=["policy_version", "updated_at"])
     mechanism = {
         "title": "Refund uses the wrong amount",
         "mechanism": "Incorrect refund amount",
@@ -1011,7 +1020,7 @@ def test_reviewed_attachment_preserves_identity_and_reopens_resolved_issue(
     issue.cluster.refresh_from_db()
     second.refresh_from_db()
     assert second.cluster_id == issue.cluster_id and issue.cluster.error_count == 2
-    assert issue.mechanism == mechanism and issue.revision == 1
+    assert issue.mechanism == mechanism and issue.revision == 2
     assert issue.cluster.title == mechanism["title"]
     assert issue.cluster.rca_synthesis == "Human-reviewed root cause"
     assert issue.cluster.rca_fix == "Human-reviewed fix"

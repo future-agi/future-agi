@@ -50,6 +50,15 @@ func TestErrorFromCanonical(t *testing.T) {
 			wantType:   "rate_limit_error",
 		},
 		{
+			// A guardrail's refusal is a permission error, as the native
+			// Anthropic surface writes a 403; api_error reads as Anthropic's
+			// own failure.
+			name:       "guardrail_block",
+			apiErr:     models.ErrGuardrailBlocked("content_blocked", "Request blocked by guardrail: pii"),
+			wantStatus: 403,
+			wantType:   "permission_error",
+		},
+		{
 			name:       "server_error",
 			apiErr:     &models.APIError{Status: 500, Type: models.ErrTypeServer, Message: "internal error"},
 			wantStatus: 500,

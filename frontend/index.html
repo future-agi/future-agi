@@ -2,6 +2,170 @@
 <html lang="en" style="max-height: 100vh;">
   <head>
     <meta charset="utf-8" />
+    <!-- Keep product links clickable without speculative cross-origin DNS. -->
+    <meta http-equiv="x-dns-prefetch-control" content="off" />
+    <!-- Omega connect intake. Keep this the FIRST script on the page.
+         `omega dev` prints links such as /dashboard/studio#connect=<url>&t=<token>.
+         Take connect and t out of the address bar before GTM or any analytics
+         SDK can read the URL, and hold them in memory only:
+         window.__omegaConnect is non-enumerable and returns its value once.
+         Nothing is written to storage. A link opened while a Future AGI page
+         is already showing arrives as a fragment navigation, not a page load,
+         so the same intake runs on popstate and hashchange; its listeners are
+         registered before any other script's. A connect link without a usable
+         key holds nothing; window.__omegaConnectKeyless (true, no key, no
+         address) tells the Studio connect screen to say so. See
+         src/sections/omega/embed and src/sections/omega/studio. -->
+    <script data-omega-connect-intake>
+      (function () {
+        // The browser's own replaceState, saved before GTM or any SDK can wrap
+        // it, so no wrapper ever sees the URL that still holds the token.
+        const replaceState = window.history.replaceState;
+        // Backend auth redirects must be cleaned before any telemetry starts.
+        // This handoff is repeat-readable until its reader finishes, unlike
+        // the one-shot Omega connect handoff below. Only marketplace onboarding
+        // survives reload in tab storage; session credentials stay memory-only.
+        function takeAuthRedirect() {
+          const query = new URLSearchParams(window.location.search);
+          const credentials = [
+            "sso_token", "access_token", "refresh_token",
+            "onboarding_token", "onboarding_gcp_token",
+          ];
+          if (window.location.pathname === "/sos") {
+            credentials.push("access", "refresh");
+          }
+          if (!credentials.some(function (key) { return query.has(key); })) return;
+          const keys = credentials.concat(["is_new_user", "new_org", "auth", "next"]);
+          const params = new URLSearchParams();
+          const keep = [];
+          // Keep unrelated query bytes as-is (including duplicate parameters,
+          // percent encoding and valueless flags), not a reserialized query.
+          window.location.search.slice(1).split("&").forEach(function (part) {
+            const entry = new URLSearchParams("&" + part);
+            const key = entry.keys().next().value;
+            if (keys.indexOf(key) === -1) keep.push(part);
+            else entry.forEach(function (value, name) { params.append(name, value); });
+          });
+          // A pathname can start with // without changing this page's origin.
+          // Passing it alone would be interpreted as a protocol-relative host.
+          const cleanUrl = new URL(window.location.href);
+          cleanUrl.search = keep.length ? "?" + keep.join("&") : "";
+          replaceState.call(window.history, window.history.state, "", cleanUrl.href);
+          // Publish only after cleanup succeeds. If the browser rejects the
+          // history write, do not expose a second copy through the handoff.
+          Object.defineProperty(window, "__faiAuthRedirect", {
+            configurable: true,
+            enumerable: false,
+            value: { pathname: window.location.pathname, params: params },
+          });
+          const onboarding = [];
+          params.forEach(function (value, key) {
+            if (key === "onboarding_token" || key === "onboarding_gcp_token") {
+              onboarding.push([key, value]);
+            }
+          });
+          if (onboarding.length) {
+            try {
+              // Keep this key/schema in sync with src/auth/auth-url-intake.js.
+              window.sessionStorage.setItem("fai.auth.onboarding.v1", JSON.stringify({
+                pathname: window.location.pathname,
+                params: onboarding,
+              }));
+            } catch (e) {
+              // Storage may be blocked; the in-memory handoff must still work.
+            }
+          }
+        }
+        try {
+          takeAuthRedirect();
+        } catch (e) {
+          // Fail closed for the in-memory handoff, not the app: URL fallback
+          // still works, but history-write failure cannot publish credentials.
+          delete window.__faiAuthRedirect;
+        }
+        window.addEventListener("pagehide", function () {
+          delete window.__faiAuthRedirect;
+        });
+        function take() {
+          const hash = window.location.hash;
+          if (!hash || hash.indexOf("connect=") === -1) return false;
+          let rawUrl = null;
+          let rawToken = null;
+          const keep = [];
+          const parts = hash.slice(1).split("&");
+          for (let i = 0; i < parts.length; i++) {
+            const cut = parts[i].indexOf("=");
+            const key = cut === -1 ? parts[i] : parts[i].slice(0, cut);
+            const value = cut === -1 ? "" : parts[i].slice(cut + 1);
+            if (key === "connect") rawUrl = value;
+            else if (key === "t") rawToken = value;
+            else if (parts[i]) keep.push(parts[i]);
+          }
+          if (rawUrl === null) return false;
+          // Remove the secret from the address bar before anything else.
+          replaceState.call(
+            window.history,
+            window.history.state,
+            "",
+            window.location.pathname +
+              window.location.search +
+              (keep.length ? "#" + keep.join("&") : ""),
+          );
+          let held = null;
+          try {
+            if (rawToken) {
+              held = {
+                url: decodeURIComponent(rawUrl),
+                token: decodeURIComponent(rawToken),
+              };
+            }
+          } catch (e) {
+            held = null;
+          }
+          Object.defineProperty(window, "__omegaConnect", {
+            configurable: true,
+            enumerable: false,
+            get: function () {
+              const value = held;
+              held = null;
+              return value;
+            },
+          });
+          // A link cut off where the terminal wrapped it, or copied without
+          // its t=, opens nothing. Mark that fact alone, so the Studio connect
+          // screen can say what happened instead of showing nothing.
+          if (held) {
+            delete window.__omegaConnectKeyless;
+          } else {
+            Object.defineProperty(window, "__omegaConnectKeyless", {
+              configurable: true,
+              enumerable: false,
+              value: true,
+            });
+          }
+          return true;
+        }
+        function onNavigation() {
+          try {
+            if (take()) {
+              window.dispatchEvent(new Event("omega:connect"));
+              // A connect screen already showing read the mark during the
+              // event; a screen shown later must not report this link.
+              delete window.__omegaConnectKeyless;
+            }
+          } catch (e) {
+            /* never break navigation */
+          }
+        }
+        try {
+          take();
+        } catch (e) {
+          /* A malformed link must never stop the app from starting. */
+        }
+        window.addEventListener("popstate", onNavigation);
+        window.addEventListener("hashchange", onNavigation);
+      })();
+    </script>
     <!-- Google Tag Manager (gated on VITE_GTM_ID at build time so OSS
          builds don't load third-party tracking) -->
     <script>(function(){
@@ -19,7 +183,7 @@
     <meta name="theme-color" content="#000000" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, maximum-scale=1"
+      content="width=device-width, initial-scale=1"
     />
     <link rel="manifest" href="/manifest.json" />
 
@@ -89,15 +253,9 @@
     <script>
       const global = globalThis;
     </script>
-    <!-- Handle Vite dynamic import errors (e.g. after a new deployment when old chunks are removed) -->
-    <script>
-      window.addEventListener('vite:preloadError', (event) => {
-        event.preventDefault();
-        // Allow reload to proceed without beforeunload confirmation (e.g. from ReplayDrawer)
-        window.__RELOADING_FOR_VITE_PRELOAD_ERROR = true;
-        window.location.reload();
-      });
-    </script>
+    <!-- Track document departure before imports start. Leave preload failures
+         uncancelled: lazyWithRetry owns route-aware, bounded deploy recovery. -->
+    <script type="module" src="/src/utils/chunkRecovery.js"></script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

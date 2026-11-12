@@ -1,0 +1,713 @@
+{
+  "base": "31f27e01aca7b8f3c7817c2de239e26de5051b5e",
+  "surfaces": [
+    {
+      "id": "shell.real",
+      "ships": "shown"
+    },
+    {
+      "id": "shell.protoOnly",
+      "ships": "hidden",
+      "entries": {
+        "routes": [
+          {
+            "re": {
+              "regex": "^\\/dashboard\\/develop\\/r4-lab(\\/|$)",
+              "flags": ""
+            },
+            "sample": "/dashboard/develop/r4-lab",
+            "fallback": "/dashboard/develop"
+          }
+        ],
+        "search": [
+          {
+            "key": "proto_*",
+            "on": {
+              "regex": "^\\/",
+              "flags": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "runners.connect",
+      "ships": "hidden"
+    },
+    {
+      "id": "palette.runs",
+      "ships": "hidden",
+      "experiments": true,
+      "entries": {
+        "verbs": ["run.*"]
+      }
+    },
+    {
+      "id": "palette.glossary",
+      "ships": "hidden",
+      "entries": {
+        "verbs": ["help.glossary", "glossary.*"],
+        "glossary": ["*"]
+      }
+    },
+    {
+      "id": "launch.fixes",
+      "ships": "shown"
+    },
+    {
+      "id": "falcon.protoChip",
+      "ships": "hidden"
+    },
+    {
+      "id": "falcon.dsx",
+      "ships": "hidden"
+    },
+    {
+      "id": "errors.requestId",
+      "ships": "hidden"
+    },
+    {
+      "id": "shell.notFound",
+      "ships": "hidden"
+    },
+    {
+      "id": "keys.ingestScopes",
+      "ships": "hidden"
+    },
+    {
+      "id": "models.decision",
+      "ships": "hidden"
+    },
+    {
+      "id": "list.real",
+      "ships": "hidden"
+    },
+    {
+      "id": "list.organize",
+      "ships": "hidden"
+    },
+    {
+      "id": "dataset.tab.summary",
+      "ships": "hidden",
+      "entries": {
+        "tabs": ["summary"]
+      }
+    },
+    {
+      "id": "dataset.tab.experiments",
+      "ships": "hidden",
+      "experiments": true,
+      "entries": {
+        "tabs": ["experiments"],
+        "shortcuts": ["leaderboard:*", "experiments:*"],
+        "verbs": ["leaderboard.*", "experiments.*"]
+      }
+    },
+    {
+      "id": "dataset.versions",
+      "ships": "hidden",
+      "entries": {
+        "shortcuts": ["grid:history", "row:saveVersion"],
+        "verbs": [
+          "versions.*",
+          "grid.history",
+          "row.history",
+          "row.saveVersion",
+          "version.*",
+          "selection.restoreRows"
+        ],
+        "search": [
+          {
+            "key": "history",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "version",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "hcmp",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "version_id",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dataset.splits",
+      "ships": "hidden",
+      "entries": {
+        "shortcuts": ["row:splits"],
+        "verbs": ["row.splits"],
+        "search": [
+          {
+            "key": "splits",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "split",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dataset.savedViews",
+      "ships": "hidden",
+      "entries": {
+        "search": [
+          {
+            "key": "view",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dataset.filtersSystem",
+      "ships": "hidden",
+      "entries": {
+        "search": [
+          {
+            "key": "expr",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "failed",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "fevals",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dataset.collab",
+      "ships": "hidden",
+      "entries": {
+        "search": [
+          {
+            "key": "ract",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "rcs",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "rcompose",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "ranchor",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "rtranslate",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dataset.rowExtras",
+      "ships": "hidden",
+      "entries": {
+        "shortcuts": ["row:tab"],
+        "search": [
+          {
+            "key": "rowTab",
+            "values": [
+              "runs",
+              "activity",
+              "conversation",
+              "task",
+              "trajectory"
+            ],
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "run",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "rshow",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "rsort",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dataset.gridWrites",
+      "ships": "hidden"
+    },
+    {
+      "id": "dataset.columnRole",
+      "ships": "hidden"
+    },
+    {
+      "id": "dataset.settings",
+      "ships": "hidden",
+      "entries": {
+        "verbs": ["dataset.configure"]
+      }
+    },
+    {
+      "id": "dataset.share",
+      "ships": "hidden",
+      "entries": {
+        "verbs": ["dataset.share"]
+      }
+    },
+    {
+      "id": "dataset.audit",
+      "ships": "hidden",
+      "entries": {
+        "verbs": ["dataset.auditLog"],
+        "routes": [
+          {
+            "re": {
+              "regex": "^\\/dashboard\\/settings\\/workspace\\/[^/]+\\/audit-log(\\/|$)",
+              "flags": ""
+            },
+            "sample": "/dashboard/settings/workspace/w1/audit-log",
+            "fallback": "/dashboard/settings/workspace"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dataset.fromProduction",
+      "ships": "hidden",
+      "entries": {
+        "search": [
+          {
+            "key": "add",
+            "values": ["production"],
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          }
+        ],
+        "verbs": ["datasets.fromTraces"]
+      }
+    },
+    {
+      "id": "dataset.imports",
+      "ships": "hidden",
+      "entries": {
+        "verbs": ["grid.importRows"]
+      }
+    },
+    {
+      "id": "dataset.addRows",
+      "ships": "hidden"
+    },
+    {
+      "id": "dataset.addBlankRow",
+      "ships": "hidden",
+      "entries": {
+        "verbs": ["grid.addRow"]
+      }
+    },
+    {
+      "id": "dataset.upload",
+      "ships": "hidden"
+    },
+    {
+      "id": "dataset.switcher",
+      "ships": "hidden"
+    },
+    {
+      "id": "dataset.runPromptEdit",
+      "ships": "hidden"
+    },
+    {
+      "id": "dataset.evalVersions",
+      "ships": "hidden"
+    },
+    {
+      "id": "dataset.evalVersionNotice",
+      "ships": "hidden"
+    },
+    {
+      "id": "dataset.experimentDefaults",
+      "ships": "hidden",
+      "experiments": true
+    },
+    {
+      "id": "hf.revision",
+      "ships": "hidden"
+    },
+    {
+      "id": "hf.curated",
+      "ships": "hidden"
+    },
+    {
+      "id": "hf.create",
+      "ships": "hidden",
+      "entries": {
+        "routes": [
+          {
+            "re": {
+              "regex": "^\\/dashboard\\/huggingface(\\/|$)",
+              "flags": ""
+            },
+            "sample": "/dashboard/huggingface",
+            "fallback": "/dashboard/develop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "hf.addToExisting",
+      "ships": "hidden"
+    },
+    {
+      "id": "synthetic.extras",
+      "ships": "hidden"
+    },
+    {
+      "id": "exp.new",
+      "ships": "experimentsBasic",
+      "entries": {
+        "search": [
+          {
+            "key": "new_experiment",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "newExperiment",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "source",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "entry",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "src",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "rows",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          },
+          {
+            "key": "form",
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          }
+        ],
+        "verbs": ["dataset.newExperiment", "newexp.*", "experiment.new*"],
+        "shortcuts": ["newExperiment:*"]
+      }
+    },
+    {
+      "id": "exp.new.kindMenu",
+      "ships": "hidden",
+      "parent": "exp.new",
+      "experiments": true
+    },
+    {
+      "id": "exp.new.runningSources",
+      "ships": "hidden",
+      "parent": "exp.new",
+      "experiments": true,
+      "entries": {
+        "search": [
+          {
+            "key": "entry",
+            "values": ["http", "a2a", "mcp_tool"],
+            "on": {
+              "regex": "^\\/dashboard\\/develop\\/(?!(?:experiment|individual-experiment|leaderboards|r4-lab|create-synthetic-dataset|edit-synthetic-dataset)(?:\\/|$))[^/?#]+\\/?$",
+              "flags": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "exp.new.unhonoured",
+      "ships": "hidden",
+      "parent": "exp.new",
+      "experiments": true
+    },
+    {
+      "id": "exp.new.readsTable",
+      "ships": "hidden",
+      "parent": "exp.new",
+      "experiments": true
+    },
+    {
+      "id": "exp.page",
+      "ships": "experimentsBasic",
+      "entries": {
+        "routes": [
+          {
+            "re": {
+              "regex": "^\\/dashboard\\/develop\\/experiment\\/[^/?#]+(\\/(data)?)?\\/?$",
+              "flags": ""
+            },
+            "sample": "/dashboard/develop/experiment/e1/data",
+            "fallback": "/dashboard/develop"
+          },
+          {
+            "re": {
+              "regex": "^\\/dashboard\\/develop\\/individual-experiment\\/[^/?#]+(\\/(data|summary))?\\/?$",
+              "flags": ""
+            },
+            "sample": "/dashboard/develop/individual-experiment/e1/data",
+            "fallback": "/dashboard/develop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "exp.results",
+      "ships": "hidden",
+      "experiments": true,
+      "entries": {
+        "routes": [
+          {
+            "re": {
+              "regex": "^\\/dashboard\\/develop\\/experiment\\/[^/?#]+\\/(matrix|paths|summary|traces)(\\/|$)",
+              "flags": ""
+            },
+            "sample": "/dashboard/develop/experiment/e1/matrix",
+            "fallback": "/dashboard/develop"
+          }
+        ],
+        "search": [
+          {
+            "key": "view",
+            "values": ["jury"],
+            "on": {
+              "regex": "^\\/dashboard\\/evaluations(\\/|$)",
+              "flags": ""
+            }
+          }
+        ],
+        "shortcuts": [
+          "results:*",
+          "drawer:*",
+          "matrix:*",
+          "summary:*",
+          "paths:*"
+        ]
+      }
+    },
+    {
+      "id": "exp.compare",
+      "ships": "hidden",
+      "experiments": true,
+      "entries": {
+        "routes": [
+          {
+            "re": {
+              "regex": "^\\/dashboard\\/develop\\/([^/?#]+)\\/compare(\\/|$)",
+              "flags": ""
+            },
+            "sample": "/dashboard/develop/d1/compare/data",
+            "fallback": "/dashboard/develop/$1"
+          }
+        ],
+        "shortcuts": ["taskCompare:*"],
+        "verbs": ["row.*.side-by-side"]
+      }
+    },
+    {
+      "id": "exp.iterate",
+      "ships": "hidden",
+      "experiments": true
+    },
+    {
+      "id": "exp.rerun",
+      "ships": "hidden",
+      "experiments": true
+    },
+    {
+      "id": "exp.leaderboards",
+      "ships": "hidden",
+      "experiments": true,
+      "entries": {
+        "routes": [
+          {
+            "re": {
+              "regex": "^\\/dashboard\\/develop\\/leaderboards(\\/|$)",
+              "flags": ""
+            },
+            "sample": "/dashboard/develop/leaderboards",
+            "fallback": "/dashboard/develop"
+          }
+        ],
+        "verbs": ["go.leaderboards"]
+      }
+    },
+    {
+      "id": "evals.dag",
+      "ships": "hidden",
+      "entries": {
+        "search": [
+          {
+            "key": "type",
+            "values": ["dag"],
+            "on": {
+              "regex": "^\\/dashboard\\/evaluations(\\/|$)",
+              "flags": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "evals.remote",
+      "ships": "hidden",
+      "entries": {
+        "search": [
+          {
+            "key": "type",
+            "values": ["remote"],
+            "on": {
+              "regex": "^\\/dashboard\\/evaluations(\\/|$)",
+              "flags": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "evals.jury",
+      "ships": "hidden"
+    },
+    {
+      "id": "evals.agreement",
+      "ships": "hidden",
+      "entries": {
+        "search": [
+          {
+            "key": "tab",
+            "values": ["agreement"],
+            "replace": "details",
+            "on": {
+              "regex": "^\\/dashboard\\/evaluations(\\/|$)",
+              "flags": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "evals.extras",
+      "ships": "hidden"
+    }
+  ],
+  "claims": {
+    "L1": ["list.real", "dataset.gridWrites"],
+    "L2": [],
+    "L3": ["dataset.tab.experiments"],
+    "L4": ["dataset.columnRole"],
+    "L5": [],
+    "L6": []
+  },
+  "paths": {
+    "L1": [],
+    "L2": [],
+    "L3": [],
+    "L4": [],
+    "L5": [],
+    "L6": []
+  },
+  "claimSource": "\n  L1: Object.freeze([\n    // Backend dataset list supports name search, sorting and pagination.\n    \"list.real\",\n    // Cell edits, row deletion and row duplication use the classic grid API.\n    \"dataset.gridWrites\",\n  ]),\n  L2: Object.freeze([]),\n  // The classic Experiments tab uses experiments/v2/list/ and still requires\n  // experimentsBasic to be enabled.\n  L3: Object.freeze([\"dataset.tab.experiments\"]),\n  // Column writes persist role metadata; get-dataset-table returns it.\n  // Experiment wizard actions remain gated by experimentsBasic.\n  L4: Object.freeze([\"dataset.columnRole\"]),\n  L5: Object.freeze([]),\n  // Registry-native surfaces are controlled by their own shown flags.\n  L6: Object.freeze([]),",
+  "pathSource": "\n  L1: Object.freeze([]),\n  L2: Object.freeze([]),\n  L3: Object.freeze([]),\n  L4: Object.freeze([]),\n  L5: Object.freeze([]),\n  L6: Object.freeze([]),"
+}

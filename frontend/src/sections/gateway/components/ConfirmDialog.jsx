@@ -14,9 +14,11 @@ const ConfirmDialog = ({
   open,
   onClose,
   onConfirm,
+  onExited,
   title = "Confirm Action",
   message,
   confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
   confirmColor = "error",
   typeToConfirm,
   isLoading = false,
@@ -27,17 +29,27 @@ const ConfirmDialog = ({
   const canConfirm = needsTyping ? confirmText === typeToConfirm : true;
 
   const handleClose = () => {
+    if (isLoading) return;
     setConfirmText("");
     onClose();
   };
 
   const handleConfirm = () => {
+    if (isLoading || !canConfirm) return;
     onConfirm();
     setConfirmText("");
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      disableEscapeKeyDown={isLoading}
+      TransitionProps={{ onExited }}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>{title}</DialogTitle>
       <DialogContent>
         {message && (
@@ -58,7 +70,7 @@ const ConfirmDialog = ({
       </DialogContent>
       <DialogActions>
         <Button onClick={handleClose} disabled={isLoading}>
-          Cancel
+          {cancelLabel}
         </Button>
         <Button
           color={confirmColor}
@@ -77,9 +89,11 @@ ConfirmDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   onConfirm: PropTypes.func.isRequired,
+  onExited: PropTypes.func,
   title: PropTypes.string,
   message: PropTypes.string,
   confirmLabel: PropTypes.string,
+  cancelLabel: PropTypes.string,
   confirmColor: PropTypes.string,
   typeToConfirm: PropTypes.string,
   isLoading: PropTypes.bool,

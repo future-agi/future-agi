@@ -1,6 +1,8 @@
-import { Box, Button, Divider, Typography } from "@mui/material";
+import { Box, Button } from "@mui/material";
+import PageHeader from "src/components/page-header";
+import ListToolbar from "src/components/list-toolbar";
 import { AgGridReact } from "ag-grid-react";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { ShowComponent } from "src/components/show";
 import { useDebounce } from "src/hooks/use-debounce";
@@ -10,7 +12,12 @@ import axios, { endpoints } from "src/utils/axios";
 import { fDateLocal } from "src/utils/format-time";
 import { LocalDateTime } from "src/components/date-time/LocalDateTime";
 import Iconify from "src/components/iconify";
-import Image from "src/components/image";
+import KeysEmptyState from "src/sections/keys/view/KeysEmptyState";
+import { personalKeyRows } from "src/sections/keys/view/personalKeys";
+import SecretKeyRenderer from "src/sections/keys/view/SecretKeyRenderer";
+import { useSafeAuthContext } from "src/auth/hooks/use-auth-context";
+import { useOrganization } from "src/contexts/OrganizationContext";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 import CreateApiKey from "./CreateApiKey";
 import CellRenderer from "./CellRenderer";
 
@@ -24,12 +31,18 @@ const defaultColDef = {
 };
 
 const ApiKeysLandingPage = () => {
+  const { user } = useSafeAuthContext();
+  const { currentOrganizationId } = useOrganization();
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.withColumnBorder);
   const [searchQuery, setSearchQuery] = useState("");
   const [hasData, setHasData] = useState(true);
   const gridRef = useRef(null);
   const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
   const [openCreateApiKey, setOpenCreateApiKey] = useState(false);
+
+  useEffect(() => {
+    setHasData(true);
+  }, [user?.id, currentOrganizationId]);
 
   const dataSource = useMemo(
     () => ({
@@ -49,7 +62,11 @@ const ApiKeysLandingPage = () => {
             params: apiParams,
           });
 
-          const rows = data?.status ? data?.result?.table : [];
+          // Each row keeps the masked hints the list answer sent, so an Owner
+          // can tell keys apart.
+          const rows = personalKeyRows(
+            (data?.status ? data?.result?.table : []) ?? [],
+          );
           if (rows.length === 0 && !debouncedSearchQuery) {
             setHasData(false);
           }
@@ -63,7 +80,7 @@ const ApiKeysLandingPage = () => {
       },
       getRowId: (data) => data.id,
     }),
-    [debouncedSearchQuery, hasData],
+    [debouncedSearchQuery, user?.id, currentOrganizationId],
   );
 
   const columnDefs = useMemo(
@@ -78,13 +95,13 @@ const ApiKeysLandingPage = () => {
         headerName: "API Key",
         field: "api_key",
         flex: 1,
-        cellRenderer: CellRenderer,
+        cellRenderer: (params) => <SecretKeyRenderer value={params.value} />,
       },
       {
         headerName: "Secret Key",
         field: "secret_key",
         flex: 1,
-        cellRenderer: CellRenderer,
+        cellRenderer: (params) => <SecretKeyRenderer value={params.value} />,
       },
       {
         headerName: "Created By",
@@ -125,69 +142,79 @@ const ApiKeysLandingPage = () => {
   };
 
   return (
-    <Box sx={{ height: "100%" }}>
+    <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      {/* On a wide screen this is one row; on a phone the description and the
+          controls wrap onto their own rows, so nothing scrolls sideways. */}
       <Box
+        data-testid="api-keys-header"
         sx={{
           display: "flex",
+          flexWrap: "wrap",
           justifyContent: "space-between",
           alignItems: "center",
+          gap: 1.5,
         }}
       >
-        <Typography
-          typography={"s3"}
-          fontWeight={"fontWeightRegular"}
-          color="text.primary"
-        >
-          Your secret API keys are listed below. These keys are encrypted
-        </Typography>
-        <Box
+        <PageHeader
+          title="API Keys"
+          description="Create and manage API keys to send traces and call Future AGI from your code. API keys are personal. Secrets are shown only when you create a key."
+          sx={{ mb: 0, flex: "1 1 260px", minWidth: 0 }}
+        />
+        <ListToolbar
+          data-testid="api-keys-controls"
           sx={{
             display: "flex",
-            justifyContent: "space-between",
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
             alignItems: "center",
             gap: 1.5,
+            flex: "1 1 100%",
+            minWidth: 0,
           }}
         >
           <FormSearchField
             size="small"
             placeholder="Search"
             sx={{
-              minWidth: "250px",
+              flex: "1 1 160px",
+              minWidth: 0,
+              maxWidth: "250px",
               "& .MuiOutlinedInput-root": { height: "30px" },
             }}
             autoFocus
             searchQuery={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
-          <Divider orientation="vertical" variant="middle" flexItem />
-          <Box>
-            <Button
-              onClick={handleCreateClick}
-              variant="contained"
-              color="primary"
-              startIcon={
-                <Iconify
-                  icon="octicon:plus-24"
-                  color="background.paper"
-                  sx={{
-                    width: "20px",
-                    height: "20px",
-                  }}
-                />
-              }
-              sx={{ px: "24px", typography: "s1" }}
-            >
-              Add API Key
-            </Button>
-          </Box>
-        </Box>
+          <Box sx={{ flex: 1 }} />
+          <Button
+            onClick={handleCreateClick}
+            variant="contained"
+            color="primary"
+            startIcon={
+              <Iconify
+                width={16}
+                icon="solar:add-linear"
+                color="background.paper"
+              />
+            }
+            sx={{
+              typography: "s1",
+              flexShrink: 0,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Add API Key
+          </Button>
+        </ListToolbar>
       </Box>
       <ShowComponent condition={hasData}>
+        {/* Takes the height the header leaves, however many rows it wraps to. */}
         <Box
           className="ag-theme-quartz"
-          style={{ height: "calc(100% - 40px)", paddingTop: "12px" }}
+          style={{ flex: 1, minHeight: 0, paddingTop: "12px" }}
         >
           <AgGridReact
+            key={`${user?.id}:${currentOrganizationId}`}
             ref={gridRef}
             getRowHeight={40}
             rowSelection="none"
@@ -216,43 +243,19 @@ const ApiKeysLandingPage = () => {
         }}
       />
       <ShowComponent condition={!hasData}>
-        <Box
-          display="flex"
-          flexDirection={"column"}
-          justifyContent={"center"}
-          alignItems={"center"}
-          gap={2}
-          height={"100%"}
-        >
-          <Image
-            src="/assets/icons/blank_table_icon.png"
-            sx={{ width: 68, height: 68 }}
-          />
-          <Box
-            display="flex"
-            flexDirection={"column"}
-            gap={"2px"}
-            textAlign={"center"}
-          >
-            <Typography
-              typography={"m3"}
-              fontWeight={"fontWeightMedium"}
-              color="text.primary"
-            >
-              No keys has been added yet
-            </Typography>
-            <Typography
-              typography={"s1"}
-              fontWeight={"fontWeightRegular"}
-              color="text.primary"
-            >
-              Click on + Add API Key to create and manage your API key
-            </Typography>
-          </Box>
-        </Box>
+        <KeysEmptyState onCreate={handleCreateClick} />
       </ShowComponent>
     </Box>
   );
 };
 
-export default ApiKeysLandingPage;
+export default function ScopedApiKeysPage() {
+  const { user } = useSafeAuthContext();
+  const { currentOrganizationId } = useOrganization();
+  const { currentWorkspaceId } = useWorkspace();
+  return (
+    <ApiKeysLandingPage
+      key={`${user?.id}:${currentOrganizationId}:${currentWorkspaceId}`}
+    />
+  );
+}

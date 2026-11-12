@@ -1,0 +1,87 @@
+name: Connector REST generator
+
+# CN4's REST-to-tools generator (scripts/connector-gen/rest; CONNECTORS-PLAN
+# CN4, README.md beside this directory).
+#
+# This is the job definition. GitHub runs it from
+# .github/workflows/connector-gen.yml, a byte-identical copy (IR-CN4b-1):
+# rest/tests/test_ci_job.py fails when the two differ, so edit both.
+#
+# - The generator's tests, including the Go cross-check (agentcc-catalog
+#   check --sources-only over the generated example catalog). The job sets
+#   CONNECTOR_GEN_REQUIRE_GO, so a runner without go fails that test instead
+#   of skipping it.
+# - generate.py --check over the repository catalog: every rest provider's
+#   tools.generated.json must equal what its tools.yaml and pinned spec
+#   generate. A hand-edited output (an x-origin pointed at another host, a
+#   loosened posture or annotation) is drift, exit 1; an output with no
+#   tools.yaml beside it is a problem, exit 2. With no rest provider in the
+#   catalog it passes. It runs even when a test fails, so both are reported.
+# - No secrets. The tests read only files under scripts/connector-gen/rest/
+#   tests/fixtures; the network is used only to fetch the actions, pip
+#   packages and Go modules.
+# - checkout and setup-python are pinned by commit SHA, as in
+#   connector-smoke.yml (the tags they were at are in comments). setup-go is
+#   at @v5 as in agentcc-gateway-ci.yml; pin it by SHA when the repository
+#   does.
+
+on:
+  pull_request:
+    paths:
+      - "scripts/connector-gen/**"
+      - "agentcc-gateway/catalog/connectors/**"
+      - "agentcc-gateway/cmd/agentcc-catalog/**"
+      - "agentcc-gateway/internal/connectorcatalog/**"
+      - "agentcc-gateway/go.mod"
+      - "agentcc-gateway/go.sum"
+      - ".github/workflows/connector-gen.yml"
+  push:
+    branches: [main, develop, dev]
+    paths:
+      - "scripts/connector-gen/**"
+      - "agentcc-gateway/catalog/connectors/**"
+      - "agentcc-gateway/cmd/agentcc-catalog/**"
+      - "agentcc-gateway/internal/connectorcatalog/**"
+      - "agentcc-gateway/go.mod"
+      - "agentcc-gateway/go.sum"
+      - ".github/workflows/connector-gen.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rest:
+    name: REST generator tests and drift check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CONNECTOR_GEN_REQUIRE_GO: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agentcc-gateway/go.mod
+          cache-dependency-path: agentcc-gateway/go.sum
+
+      - name: Install the test dependencies
+        run: python3 -m pip install pytest==9.0.2 PyYAML==6.0.3
+
+      - name: Download the gateway's Go modules (for the catalog cross-check)
+        working-directory: agentcc-gateway
+        run: go mod download
+
+      - name: Run the generator's tests
+        run: python3 -m pytest scripts/connector-gen/rest/tests -q
+
+      - name: Check every rest provider's tools.generated.json is what its overlay and spec generate
+        if: ${{ !cancelled() }}
+        run: python3 scripts/connector-gen/rest/generate.py --check

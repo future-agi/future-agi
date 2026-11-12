@@ -1,0 +1,32 @@
+{
+  "vendor": "azure_document_intelligence",
+  "capability": "documents",
+  "skus": [
+    {
+      "sku": "azure_document_intelligence.read",
+      "unit": "page",
+      "usd_per_unit": 0.0015,
+      "free_on_failure": false
+    },
+    {
+      "sku": "azure_document_intelligence.prebuilt",
+      "unit": "page",
+      "usd_per_unit": 0.01,
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "byok_only",
+  "resale_terms_ref": "",
+  "terms_url": "https://www.microsoft.com/licensing/terms/productoffering/MicrosoftAzure/MCA",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": false,
+  "trains_on_input": "no",
+  "improvement_license": false,
+  "regions": [],
+  "results_retention": "full",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}

@@ -61,17 +61,13 @@ const FeatureCard = ({
           }}
         >
           <Typography
-            variant="s2"
+            variant="title_xs"
             fontWeight={"fontWeightSemiBold"}
-            color="text.secondary"
+            color="text.primary"
           >
             {title}
           </Typography>
-          <Typography
-            variant="s1"
-            fontWeight={"fontWeightRegular"}
-            color="text.secondary"
-          >
+          <Typography variant="body_sm" color="text.secondary">
             {description}
           </Typography>
         </Box>
@@ -100,18 +96,17 @@ const FeatureCard = ({
                 },
               }}
             >
-              Learn more
+              View docs
             </Link>
             <Button
               color="primary"
-              variant="contained"
+              variant="outlined"
               onClick={() => navigate(actionLink)}
-              sx={{ height: "38px", padding: "8px 24px" }}
             >
               <Typography
                 variant="s1"
                 fontWeight={"fontWeightSemiBold"}
-                color="background.paper"
+                color="inherit"
               >
                 {buttonTitle}
               </Typography>

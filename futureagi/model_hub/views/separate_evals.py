@@ -32,6 +32,10 @@ from agentic_eval.core.embeddings.serving_client import (
     serving_available,
 )
 from agentic_eval.core_evals.fi_utils.exceptions import CodeEvalSetupError
+from agentic_eval.core_evals.run_prompt.litellm_models import (
+    MissingProviderKeyError,
+    missing_provider_key_message,
+)
 from model_hub.constants import (
     EVAL_PLAYGROUND_CURL_CODE,
     EVAL_PLAYGROUND_JS_CODE,
@@ -138,6 +142,12 @@ from model_hub.utils.function_eval_params import (
     normalize_eval_runtime_config,
 )
 from model_hub.utils.SQL_queries import SQLQueryHandler
+from model_hub.utils.unsaved_eval_definition import (
+    UNSAVED_DEFINITION_KEY,
+    UnsavedDefinitionError,
+    unsaved_eval_template,
+)
+from model_hub.utils.workspace_scope import knowledge_base_in_scope
 from model_hub.views.utils.evals import run_eval_func, run_eval_func_task
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_workspace
@@ -698,13 +708,10 @@ def _eval_metric_workspace(request):
 
 
 def _get_eval_metric_template(request, eval_template_id):
-    organization = getattr(request, "organization", None) or request.user.organization
+    # Same rule as opening the eval: the list shows no-workspace user evals
+    # in every workspace.
     return EvalTemplate.no_workspace_objects.filter(
-        Q(owner=OwnerChoices.SYSTEM.value)
-        | (
-            Q(owner=OwnerChoices.USER.value, organization=organization)
-            & _request_workspace_filter(request)
-        ),
+        accessible_eval_templates_q(request),
         id=eval_template_id,
         deleted=False,
     ).first()
@@ -1659,11 +1666,8 @@ class GetAPICallLogView(APIView):
             if not eval_id:
                 return self._gm.bad_request(get_error_message("EVAL_ID_REQUIRED."))
             column_config = validated_data.get("column_config")
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
             try:
-                _get_accessible_eval_template(eval_id, organization)
+                _get_accessible_eval_template_for_request(eval_id, request)
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found(get_error_message("EVAL_TEMP_NOT_FOUND"))
 
@@ -1770,7 +1774,6 @@ class CellErrorLocalizerView(APIView):
     )
     def post(self, request, cell_id=None, *args, **kwargs):
         try:
-            from model_hub.models.develop_dataset import Cell
             from model_hub.models.error_localizer_model import (
                 ErrorLocalizerSource,
                 ErrorLocalizerTask,
@@ -1783,14 +1786,15 @@ class CellErrorLocalizerView(APIView):
 
             org = getattr(request, "organization", None) or request.user.organization
 
-            try:
-                cell = Cell.objects.select_related("column", "row", "dataset").get(
-                    id=cell_id, deleted=False
-                )
-            except Cell.DoesNotExist:
-                return self._gm.not_found("Cell not found.")
+            from model_hub.utils.workspace_scope import scoped_cell_queryset
 
-            if cell.dataset and cell.dataset.organization_id != org.id:
+            cell = (
+                scoped_cell_queryset(request)
+                .select_related("column", "row", "dataset")
+                .filter(id=cell_id)
+                .first()
+            )
+            if cell is None:
                 return self._gm.not_found("Cell not found.")
 
             column = cell.column
@@ -1830,8 +1834,9 @@ class CellErrorLocalizerView(APIView):
                 # Bulk fetch the source cells in one query
                 source_cells = {
                     str(c.column_id): c
-                    for c in Cell.objects.filter(
-                        row_id=row_id, column_id__in=col_ids, deleted=False
+                    for c in scoped_cell_queryset(request).filter(
+                        row_id=row_id,
+                        column_id__in=col_ids,
                     )
                 }
                 for var_name, col_uuid in mapping.items():
@@ -1944,17 +1949,16 @@ class CellErrorLocalizerView(APIView):
         for a given cell, including the analysis once completed.
         """
         try:
-            from model_hub.models.develop_dataset import Cell
             from model_hub.models.error_localizer_model import ErrorLocalizerTask
+            from model_hub.utils.workspace_scope import scoped_cell_queryset
 
-            org = getattr(request, "organization", None) or request.user.organization
-            try:
-                cell = Cell.objects.select_related("dataset").get(
-                    id=cell_id, deleted=False
-                )
-            except Cell.DoesNotExist:
-                return self._gm.not_found("Cell not found.")
-            if cell.dataset and cell.dataset.organization_id != org.id:
+            cell = (
+                scoped_cell_queryset(request)
+                .select_related("dataset")
+                .filter(id=cell_id)
+                .first()
+            )
+            if cell is None:
                 return self._gm.not_found("Cell not found.")
 
             # Prefer task row when present, but fall back to stored cell metadata
@@ -2483,7 +2487,6 @@ class EvalTemplateListView(APIView):
             derive_eval_type,
             derive_output_type,
             fetch_version_metadata,
-            get_organization_display_name,
         )
 
         try:
@@ -2494,7 +2497,7 @@ class EvalTemplateListView(APIView):
             )
             workspace = getattr(request, "workspace", None)
 
-            # 2. Build queryset with prefetch to avoid N+1
+            # 2. Build queryset; it carries created_by_display for each row
             qs = build_eval_list_queryset(
                 organization=organization,
                 workspace=workspace,
@@ -2503,26 +2506,15 @@ class EvalTemplateListView(APIView):
                 filters=req.get("filters"),
             )
 
-            # Prefetch evaluators + user and versions + user to avoid N+1 in get_created_by_name
-            from django.db.models import Prefetch
-
-            from model_hub.models.evals_metric import EvalTemplateVersion, Evaluator
-
-            qs = qs.prefetch_related(
-                Prefetch(
-                    "evaluators",
-                    queryset=Evaluator.objects.select_related("user").filter(
-                        user__isnull=False
-                    )[:1],
-                    to_attr="_prefetched_evaluators",
-                ),
-            ).select_related("organization")
-
-            # 3. Sort
-            order_field = req.get("sort_by", "updated_at")
-            if req.get("sort_order", "desc") == "desc":
-                order_field = f"-{order_field}"
-            qs = qs.order_by(order_field)
+            # 3. Sort. Created By sorts by the creator each row shows
+            # (created_by_display); name and id keep tied rows, such as all
+            # system evals, in a stable order across pages.
+            sort_by = req.get("sort_by", "updated_at")
+            direction = "-" if req.get("sort_order", "desc") == "desc" else ""
+            if sort_by == "created_by_name":
+                qs = qs.order_by(f"{direction}created_by_display", "name", "id")
+            else:
+                qs = qs.order_by(f"{direction}{sort_by}")
 
             # 4. Handle eval_type filter
             filters = req.get("filters") or {}
@@ -2548,26 +2540,6 @@ class EvalTemplateListView(APIView):
             offset = page * page_size
             templates = list(qs[offset : offset + page_size])
 
-            # 6. Bulk-fetch version creator names for user-owned templates
-            user_template_ids = [
-                str(t.id) for t in templates if t.owner != OwnerChoices.SYSTEM.value
-            ]
-            version_creators = {}
-            if user_template_ids:
-                versions = (
-                    EvalTemplateVersion.objects.filter(
-                        eval_template_id__in=user_template_ids, created_by__isnull=False
-                    )
-                    .select_related("created_by")
-                    .order_by("eval_template_id", "version_number")
-                    .distinct("eval_template_id")
-                )
-                for v in versions:
-                    name = getattr(v.created_by, "name", "") or ""
-                    version_creators[str(v.eval_template_id)] = (
-                        name.strip() if name.strip() else v.created_by.email
-                    )
-
             version_counts, default_version_numbers = fetch_version_metadata(
                 str(t.id) for t in templates
             )
@@ -2579,19 +2551,8 @@ class EvalTemplateListView(APIView):
 
                 eval_type = derive_eval_type(template)
 
-                # Fast created_by resolution
-                if template.owner == OwnerChoices.SYSTEM.value:
-                    created_by = "System"
-                else:
-                    # Try prefetched evaluators first
-                    prefetched = getattr(template, "_prefetched_evaluators", [])
-                    if prefetched and prefetched[0].user:
-                        u = prefetched[0].user
-                        created_by = (getattr(u, "name", "") or "").strip() or u.email
-                    else:
-                        created_by = version_creators.get(tid) or (
-                            get_organization_display_name(template)
-                        )
+                # The same creator the Created By filter and sort use.
+                created_by = template.created_by_display
 
                 vcount = version_counts.get(tid, 0)
                 default_vnum = default_version_numbers.get(tid)
@@ -2599,6 +2560,8 @@ class EvalTemplateListView(APIView):
                     EvalListItem(
                         id=tid,
                         name=template.name,
+                        model=template.model,
+                        jev_mapping=(template.config or {}).get("jev_mapping"),
                         template_type=template.template_type or "single",
                         eval_type=eval_type,
                         output_type=derive_output_type(template),
@@ -2965,15 +2928,22 @@ class EvalTemplateCreateV2View(APIView):
                         )
                         return self._gm.bad_request("Instructions are required.")
 
-            # 5. Validate scoring fields
+            from model_hub.utils.jev_templates import validate_jev_template_save
+            from tfc.ee_gates import is_jev_model
+
+            # 5. Validate scoring fields. A Jev model reports missing choices
+            # with its own typed code (validate_jev_template_save below); the
+            # scores themselves are checked the same for every model.
             if req.output_type == "deterministic":
                 if not req.choice_scores:
-                    return self._gm.bad_request(
-                        "choice_scores is required when output_type is 'deterministic'."
-                    )
-                errors = validate_choice_scores(req.choice_scores)
-                if errors:
-                    return self._gm.bad_request("; ".join(errors))
+                    if not is_jev_model(req.model):
+                        return self._gm.bad_request(
+                            "choice_scores is required when output_type is 'deterministic'."
+                        )
+                else:
+                    errors = validate_choice_scores(req.choice_scores)
+                    if errors:
+                        return self._gm.bad_request("; ".join(errors))
 
             threshold_errors = validate_pass_threshold(req.pass_threshold)
             if threshold_errors:
@@ -3104,7 +3074,7 @@ class EvalTemplateCreateV2View(APIView):
                     config["choices"] = choices_list
                 if choices_map:
                     config["choices_map"] = choices_map
-                    config["multi_choice"] = False
+                    config["multi_choice"] = req.multi_choice
                 criteria = req.instructions
 
             else:
@@ -3134,7 +3104,7 @@ class EvalTemplateCreateV2View(APIView):
                     config["choices"] = choices_list
                 if choices_map:
                     config["choices_map"] = choices_map
-                    config["multi_choice"] = False
+                    config["multi_choice"] = req.multi_choice
                 criteria = req.instructions
 
             # Store template_format in config
@@ -3144,6 +3114,34 @@ class EvalTemplateCreateV2View(APIView):
             config["pass_threshold"] = req.pass_threshold
             config["choice_scores"] = req.choice_scores
             config["error_localizer_enabled"] = bool(req.error_localizer_enabled)
+
+            if is_jev_model(req.model) or "jev_mapping" in request.validated_data:
+                if "jev_mapping" in request.validated_data:
+                    config["jev_mapping"] = req.jev_mapping
+                for key in (
+                    "tools",
+                    "knowledge_bases",
+                    "data_injection",
+                    "input_data_types",
+                ):
+                    value = getattr(req, key, None)
+                    if value is not None:
+                        config[key] = value
+                if req.mode is not None:
+                    config["agent_mode"] = req.mode
+                if req.few_shot_examples:
+                    config["few_shot_examples"] = req.few_shot_examples
+                if req.messages:
+                    config["messages"] = req.messages
+            jev_error = validate_jev_template_save(
+                config,
+                model=req.model,
+                mapping_provided="jev_mapping" in request.validated_data,
+                choice_scores=req.choice_scores,
+                multi_choice=req.multi_choice,
+            )
+            if jev_error is not None:
+                return jev_error
 
             # Build eval_tags — category tags only (not type)
             eval_tags = list(req.tags) if req.tags else []
@@ -3159,7 +3157,7 @@ class EvalTemplateCreateV2View(APIView):
                 choices=choices_list,
                 description=req.description or "",
                 criteria=criteria,
-                multi_choice=False,
+                multi_choice=req.multi_choice,
                 proxy_agi=True,
                 visible_ui=not is_draft,
                 model=req.model,
@@ -3229,22 +3227,11 @@ class EvalTemplateDetailView(APIView):
         )
 
         try:
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
-
             try:
-                template = EvalTemplate.no_workspace_objects.get(
-                    id=template_id, deleted=False
+                template = _get_accessible_eval_template_for_request(
+                    template_id, request
                 )
             except EvalTemplate.DoesNotExist:
-                return self._gm.not_found("Eval template not found.")
-
-            # Check access: system evals are visible to all, user evals only to their org
-            if (
-                template.owner == OwnerChoices.USER.value
-                and template.organization_id != organization.id
-            ):
                 return self._gm.not_found("Eval template not found.")
 
             # Get actual version info
@@ -3293,6 +3280,7 @@ class EvalTemplateDetailView(APIView):
                 eval_type=derive_eval_type(template),
                 instructions=detail_criteria,
                 model=detail_model,
+                jev_mapping=config.get("jev_mapping"),
                 output_type=(
                     template.output_type_normalized
                     if template.output_type_normalized
@@ -3659,6 +3647,33 @@ class EvalTemplateUpdateView(APIView):
                 template.config = {}
             template.config["template_format"] = template_format
 
+            from model_hub.utils.jev_templates import (
+                drop_jev_model_from_code_eval,
+                validate_jev_template_save,
+            )
+
+            if "jev_mapping" in request.validated_data:
+                template.config["jev_mapping"] = req.jev_mapping
+            # A code eval runs no model: a Jev model kept from an LLM draft
+            # would route it to Jev, which can't run code, and the picker that
+            # could change it is hidden on the Code tab.
+            drop_jev_model_from_code_eval(template)
+            if req.input_data_types is not None:
+                template.config["input_data_types"] = req.input_data_types
+            jev_error = validate_jev_template_save(
+                template.config,
+                model=template.model or template.config.get("model"),
+                template=template,
+                previous_model=_original_field_values.get("model")
+                or (_original_field_values.get("config") or {}).get("model"),
+                mapping_provided="jev_mapping" in request.validated_data
+                and "jev_mapping" in template.config,
+                choice_scores=template.choice_scores,
+                multi_choice=template.multi_choice,
+            )
+            if jev_error is not None:
+                return jev_error
+
             # Publish draft → make visible in UI
             if req.publish:
                 template.visible_ui = True
@@ -3734,24 +3749,10 @@ class EvalTemplateVersionListView(APIView):
         from model_hub.types import EvalVersionItem, EvalVersionListResponse
 
         try:
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
-
-            # Verify template exists and user has access
+            # Verify template exists in the caller's organization and workspace.
             try:
-                template = EvalTemplate.no_workspace_objects.get(
-                    id=template_id, deleted=False
-                )
+                _get_accessible_eval_template_for_request(template_id, request)
             except EvalTemplate.DoesNotExist:
-                return self._gm.not_found("Eval template not found.")
-
-            # Check org access for user evals
-            if (
-                template.owner == OwnerChoices.USER.value
-                and template.organization_id
-                and template.organization_id != organization.id
-            ):
                 return self._gm.not_found("Eval template not found.")
 
             versions = (
@@ -3776,6 +3777,7 @@ class EvalTemplateVersionListView(APIView):
                         criteria=v.criteria or "",
                         model=v.model or "",
                         config_snapshot=cs,
+                        jev_mapping=cs.get("jev_mapping"),
                         created_by_name=created_by_name,
                         created_at=v.created_at.isoformat() if v.created_at else "",
                         # Column-level fields the FE reads directly.
@@ -3854,7 +3856,35 @@ class EvalTemplateVersionCreateView(APIView):
                 return self._gm.not_found("Eval template not found or not editable.")
 
             # Use live template.config; FE-supplied snapshot is incomplete.
-            effective_config = template.config or {}
+            from model_hub.utils.jev_templates import validate_jev_template_save
+
+            effective_config = copy.deepcopy(template.config or {})
+            supplied_snapshot = req.config_snapshot or {}
+            mapping_provided = (
+                "jev_mapping" in request.validated_data
+                or "jev_mapping" in supplied_snapshot
+            )
+            if mapping_provided:
+                effective_config["jev_mapping"] = (
+                    req.jev_mapping
+                    if "jev_mapping" in request.validated_data
+                    else supplied_snapshot["jev_mapping"]
+                )
+            effective_model = (
+                req.model or template.model or effective_config.get("model") or ""
+            )
+            effective_config["model"] = effective_model
+            jev_error = validate_jev_template_save(
+                effective_config,
+                model=effective_model,
+                previous_model=template.model,
+                template=template,
+                mapping_provided=mapping_provided,
+                choice_scores=template.choice_scores,
+                multi_choice=template.multi_choice,
+            )
+            if jev_error is not None:
+                return jev_error
             version = EvalTemplateVersion.objects.create_version(
                 eval_template=template,
                 prompt_messages=effective_config.get("messages") or [],
@@ -4084,6 +4114,8 @@ class RestoreVersionView(APIView):
                     eval_template=template,
                     prompt_messages=source_version.prompt_messages or [],
                     config_snapshot=source_version.config_snapshot or {},
+                    # hook(F68): the mirror keeps the saved snapshot as given.
+                    restore=True,
                     criteria=source_version.criteria or "",
                     model=source_version.model or "",
                     user=request.user,
@@ -4201,17 +4233,6 @@ def _validate_child_matches_axis(child_template, axis: str) -> None:
     raise ValueError(f"Unknown composite child axis: {axis}")
 
 
-def _get_accessible_eval_template(template_id, organization, template_type=None):
-    queryset = EvalTemplate.no_workspace_objects.filter(id=template_id, deleted=False)
-    if template_type:
-        queryset = queryset.filter(template_type=template_type)
-
-    return queryset.filter(
-        Q(owner=OwnerChoices.SYSTEM.value)
-        | Q(owner=OwnerChoices.USER.value, organization=organization)
-    ).get()
-
-
 def _request_organization(request):
     return getattr(request, "organization", None) or request.user.organization
 
@@ -4219,7 +4240,9 @@ def _request_organization(request):
 def _request_workspace_filter(request, field_name="workspace"):
     workspace = getattr(request, "workspace", None) or get_current_workspace()
     if not workspace:
-        return Q()
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
 
     if getattr(workspace, "is_default", False):
         return (
@@ -4236,19 +4259,50 @@ def _request_workspace_filter(request, field_name="workspace"):
     return Q(**{field_name: workspace})
 
 
-def _get_accessible_eval_template_for_request(template_id, request, template_type=None):
-    organization = _request_organization(request)
+def _listed_eval_template_workspace_filter(request, field_name="workspace"):
+    """The eval list's and picker's workspace rule for user templates.
+
+    ``build_eval_list_queryset`` (model_hub/utils/eval_list.py) lists a user
+    template in the request workspace or with no workspace, in every
+    workspace. Opening one must admit the same rows. The caller binds the
+    organization; a missing authenticated scope still admits nothing.
+    """
+    workspace = getattr(request, "workspace", None) or get_current_workspace()
+    if not workspace:
+        from tfc.utils.workspace_scope import empty_workspace_filter
+
+        return empty_workspace_filter()
+
+    return Q(**{field_name: workspace}) | Q(**{f"{field_name}__isnull": True})
+
+
+def accessible_eval_templates_q(request, *, writable=False):
+    """SYSTEM templates, and user templates of the request organization.
+
+    Reads and runs follow the list (request workspace or no workspace).
+    ``writable=True`` keeps the default-workspace rule production used for
+    writes against a template, so a no-workspace template is not writable
+    from a second workspace.
+    """
+    workspace_filter = (
+        _request_workspace_filter(request)
+        if writable
+        else _listed_eval_template_workspace_filter(request)
+    )
+    return Q(owner=OwnerChoices.SYSTEM.value) | (
+        Q(owner=OwnerChoices.USER.value, organization=_request_organization(request))
+        & workspace_filter
+    )
+
+
+def _get_accessible_eval_template_for_request(
+    template_id, request, template_type=None, *, writable=False
+):
     queryset = EvalTemplate.no_workspace_objects.filter(id=template_id, deleted=False)
     if template_type:
         queryset = queryset.filter(template_type=template_type)
 
-    return queryset.filter(
-        Q(owner=OwnerChoices.SYSTEM.value)
-        | (
-            Q(owner=OwnerChoices.USER.value, organization=organization)
-            & _request_workspace_filter(request)
-        )
-    ).get()
+    return queryset.filter(accessible_eval_templates_q(request, writable=writable)).get()
 
 
 def _get_accessible_ground_truth(ground_truth_id, request):
@@ -4413,11 +4467,16 @@ class CompositeEvalCreateView(APIView):
                     f"{', '.join(COMPOSITE_CHILD_AXES)}"
                 )
 
-            # Block nested composites
+            # Block children that ordinary composite execution cannot dispatch.
             for child in children:
                 if child.template_type == "composite":
                     return self._gm.bad_request(
                         "Composite evals cannot contain other composite evals."
+                    )
+                if child.eval_type == "dag":
+                    return self._gm.bad_request(
+                        "DAG evaluations cannot be used as composite children. "
+                        "Run them separately."
                     )
 
             # Enforce homogeneity — every child must match the axis.
@@ -4438,6 +4497,18 @@ class CompositeEvalCreateView(APIView):
                 )
             except ValueError as ve:
                 return self._gm.bad_request(str(ve))
+
+            from model_hub.utils.scoring import (
+                ChoiceScoreOverrideError,
+                validate_child_choice_score_overrides,
+            )
+
+            try:
+                validate_child_choice_score_overrides(
+                    {str(c.id): c for c in children}, req.child_configs
+                )
+            except ChoiceScoreOverrideError as e:
+                return self._gm.bad_request(str(e))
 
             # Create the composite parent template
             parent = EvalTemplate.objects.create(
@@ -4654,7 +4725,13 @@ class CompositeEvalDetailView(APIView):
           name, description, tags,
           aggregation_enabled, aggregation_function,
           child_template_ids (replaces the child list),
-          child_weights (map of child_id -> weight).
+          child_weights (map of child_id -> weight),
+          child_pinned_versions (map of child_id -> version_id or null).
+
+        When replacing the child list, omitted child_pinned_versions preserves
+        retained children's pins; new children start unpinned. An explicit map
+        replaces all pins (missing or null entries clear); null or {} clears all.
+        Without a child list, a map updates only its keys; null is a no-op.
         """
         import re
 
@@ -4669,6 +4746,10 @@ class CompositeEvalDetailView(APIView):
         from model_hub.utils.eval_list import (
             derive_eval_type,
             infer_composite_eval_type,
+        )
+        from model_hub.utils.scoring import (
+            ChoiceScoreOverrideError,
+            validate_child_choice_score_overrides,
         )
 
         try:
@@ -4804,11 +4885,16 @@ class CompositeEvalDetailView(APIView):
                     return self._gm.bad_request(
                         "One or more child template IDs are invalid or not accessible."
                     )
-                # Prevent nested composites
+                # Block children that ordinary composite execution cannot dispatch.
                 for c in child_qs:
                     if c.template_type == "composite":
                         return self._gm.bad_request(
                             "Composite evals cannot contain other composite evals."
+                        )
+                    if c.eval_type == "dag":
+                        return self._gm.bad_request(
+                            "DAG evaluations cannot be used as composite children. "
+                            "Run them separately."
                         )
 
                 # Enforce homogeneity against the effective axis
@@ -4822,15 +4908,32 @@ class CompositeEvalDetailView(APIView):
                 parent.eval_type = infer_composite_eval_type(
                     derive_eval_type(child) for child in child_qs
                 )
-                try:
-                    pinned_versions = (
-                        _resolve_child_pinned_versions(
-                            req.child_template_ids, req.child_pinned_versions
+                if "child_pinned_versions" not in request_data:
+                    # Capture live links before deletion. The serializer preserves
+                    # field presence, unlike req's default None for omitted pins.
+                    pinned_versions = {
+                        str(link.child_id): link.pinned_version
+                        for link in CompositeEvalChild.objects.filter(
+                            parent=parent, deleted=False
+                        ).select_related("pinned_version")
+                    }
+                else:
+                    try:
+                        pinned_versions = (
+                            _resolve_child_pinned_versions(
+                                req.child_template_ids, req.child_pinned_versions
+                            )
+                            or {}
                         )
-                        or {}
+                    except ValueError as ve:
+                        return self._gm.bad_request(str(ve))
+
+                try:
+                    validate_child_choice_score_overrides(
+                        {str(c.id): c for c in child_qs}, req.child_configs
                     )
-                except ValueError as ve:
-                    return self._gm.bad_request(str(ve))
+                except ChoiceScoreOverrideError as e:
+                    return self._gm.bad_request(str(e))
 
                 # Soft-delete existing children links, then recreate
                 CompositeEvalChild.objects.filter(parent=parent, deleted=False).update(
@@ -4865,6 +4968,14 @@ class CompositeEvalDetailView(APIView):
                     )
                 except ValueError as ve:
                     return self._gm.bad_request(str(ve))
+
+                try:
+                    validate_child_choice_score_overrides(
+                        {str(link.child_id): link.child for link in existing_links},
+                        req.child_configs,
+                    )
+                except ChoiceScoreOverrideError as e:
+                    return self._gm.bad_request(str(e))
 
                 for link in existing_links:
                     cid = str(link.child_id)
@@ -5006,6 +5117,11 @@ def _persist_composite_evaluation(
                 "aggregate_score": outcome.aggregate_score,
                 "aggregate_pass": outcome.aggregate_pass,
                 "summary": outcome.summary,
+                **(
+                    {"jury": outcome.jury_report}
+                    if outcome.jury_report is not None
+                    else {}
+                ),
             },
             reason=outcome.summary or "",
             value=(
@@ -5268,6 +5384,16 @@ class CompositeEvalAdhocExecuteView(APIView):
                     except ValueError as ve:
                         return self._gm.bad_request(str(ve))
 
+            from model_hub.utils.scoring import (
+                ChoiceScoreOverrideError,
+                validate_child_choice_score_overrides,
+            )
+
+            try:
+                validate_child_choice_score_overrides(children_by_id, req.child_configs)
+            except ChoiceScoreOverrideError as e:
+                return self._gm.bad_request(str(e))
+
             # Build an unsaved parent template carrying the aggregation config
             # the runner reads. Never .save() this — it must stay in-memory.
             parent = EvalTemplate(
@@ -5456,7 +5582,10 @@ class GroundTruthUploadView(APIView):
         )
 
         try:
-            template = _get_accessible_eval_template_for_request(template_id, request)
+            # A write against the template keeps production's rule.
+            template = _get_accessible_eval_template_for_request(
+                template_id, request, writable=True
+            )
         except EvalTemplate.DoesNotExist:
             return self._gm.not_found("Eval template not found.")
 
@@ -6314,7 +6443,8 @@ class EvalUsageStatsView(APIView):
                 result_label = ""
                 if isinstance(output_data, dict):
                     raw_output = output_data.get("output")
-                    reason = output_data.get("reason", "")
+                    # A stored null reason (older Jev runs) reads as no reason.
+                    reason = output_data.get("reason") or ""
                     if isinstance(raw_output, dict):
                         # Choice object
                         result_label = raw_output.get("label", "")
@@ -6536,7 +6666,7 @@ class EvalFeedbackListView(APIView):
             try:
                 if APICallLog is None:
                     return self._gm.success_response([])
-                _get_accessible_eval_template(template_id, organization)
+                _get_accessible_eval_template_for_request(template_id, request)
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found("Eval template not found.")
 
@@ -6583,10 +6713,15 @@ class EvalFeedbackListView(APIView):
                         "id": str(fb.id),
                         "value": str(fb.value),
                         "explanation": fb.explanation or "",
+                        # Trace feedback keeps the person's note here and the
+                        # eval's own explanation in `explanation`.
+                        "feedback_improvement": fb.feedback_improvement or "",
                         "source": fb.source or "",
                         "source_id": fb.source_id or "",
                         "action_type": fb.action_type or "",
                         "user_name": user_name,
+                        # Trace feedback is editable only by its author.
+                        "user_id": str(fb.user_id) if fb.user_id else "",
                         "created_at": (
                             fb.created_at.isoformat() if fb.created_at else ""
                         ),
@@ -6715,6 +6850,8 @@ class TraceEvalView(APIView):
                 )
 
             except Exception as eval_error:
+                from tfc.ee_gates import jev_error_message
+
                 logger.exception(
                     "trace_evaluation_execution_failed",
                     error_type=type(eval_error).__name__,
@@ -6723,7 +6860,10 @@ class TraceEvalView(APIView):
                     template_id=str(template_id),
                     trace_id=req.trace_id,
                     status="failed",
-                    reason="Evaluation could not be completed. Please retry.",
+                    reason=(
+                        jev_error_message(eval_error)
+                        or "Evaluation could not be completed. Please retry."
+                    ),
                 )
 
             return self._gm.success_response(response.model_dump())
@@ -6872,22 +7012,70 @@ class EvalPlayGroundAPIView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
+        from tfc.ee_gates import jev_gate_for_template, turing_oss_gate_for_template
 
         validated_data = request.validated_data
-        gate = turing_oss_gate_for_template(
-            validated_data.get("model"), validated_data.get("template_id")
-        )
+        from model_hub.utils.jev_templates import binding_model
+
+        # Admit before Jev, preserving Jev-before-Turing without an ID lookup
+        # inside either gate. The scoped execution admission below stays intact.
+        try:
+            gate_template = _get_accessible_eval_template_for_request(
+                validated_data.get("template_id"), request
+            )
+            gate = jev_gate_for_template(
+                binding_model(gate_template, model=validated_data.get("model"))
+            )
+        except EvalTemplate.DoesNotExist:
+            return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
+        except Exception as exc:
+            logger.exception(
+                "eval_playground_request_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request(
+                "Evaluation playground request could not be completed"
+            )
         if gate is not None:
             return gate
 
         try:
             org = getattr(request, "organization", None) or request.user.organization
+            template_id = validated_data.get("template_id", None)
+            try:
+                eval_template = _get_accessible_eval_template_for_request(
+                    template_id, request
+                )
+            except EvalTemplate.DoesNotExist:
+                return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
+
+            # Entitlement may inspect only an admitted template, never a raw ID.
+            gate = turing_oss_gate_for_template(
+                validated_data.get("model"),
+                eval_type=eval_template.eval_type,
+            )
+            if gate is not None:
+                return gate
 
             model = validated_data.get("model", None)
             kb_id = validated_data.get("kb_id", None)
+            if kb_id and not knowledge_base_in_scope(request, kb_id):
+                return self._gm.not_found("Knowledge base not found")
             error_localizer = validated_data.get("error_localizer", False)
             runtime_config = validated_data.get("config", {}) or {}
+            # The editor's Test sends its unsaved definition here. Taken out
+            # first, so nothing reads it as run config, and run on an
+            # in-memory copy of the template that is never saved.
+            if (
+                isinstance(runtime_config, dict)
+                and UNSAVED_DEFINITION_KEY in runtime_config
+            ):
+                try:
+                    eval_template = unsaved_eval_template(
+                        eval_template, runtime_config.pop(UNSAVED_DEFINITION_KEY)
+                    )
+                except UnsavedDefinitionError as exc:
+                    return self._gm.bad_request(str(exc))
             top_level_params = validated_data.get("params", {}) or {}
             mapping = validated_data.get("mapping", {})
             if not mapping and isinstance(runtime_config, dict):
@@ -6895,7 +7083,6 @@ class EvalPlayGroundAPIView(APIView):
             mapping_paths = validated_data.get("mapping_paths") or {}
             if not mapping_paths and isinstance(runtime_config, dict):
                 mapping_paths = runtime_config.get("mapping_paths", {}) or {}
-            template_id = validated_data.get("template_id", None)
             input_data_types = validated_data.get("input_data_types", {})
             if not input_data_types and isinstance(runtime_config, dict):
                 input_data_types = runtime_config.get("input_data_types", {})
@@ -6946,96 +7133,81 @@ class EvalPlayGroundAPIView(APIView):
                     logger.warning(f"Failed to fetch span {_span_id}: {_e}")
             if trace_context is None and _trace_id:
                 try:
-                    from tracer.models.trace import Trace
-                    from tracer.services.clickhouse.v2 import get_reader
+                    from model_hub.services.eval_trace_context import resolve_eval_trace
+                    from tracer.models.project import Project
 
-                    # Codex P1: scope Trace lookup to org so a caller can't
-                    # feed another tenant's trace_id into the playground.
-                    _t = Trace.objects.filter(
-                        id=_trace_id, project__organization=org
-                    ).first()
-                    if _t:
-                        # CH read replaces two ObservationSpan ORM calls:
-                        #   1. .filter(trace=_t, deleted=False).aggregate(...)
-                        #   2. .filter(trace=_t, deleted=False)
-                        #        .order_by("start_time").values(...)[:200]
-                        # CHSpanReader doesn't expose an `error_count`/
-                        # `total_latency` aggregate, so we list spans once
-                        # (already filtered to is_deleted=0 + ordered by
-                        # start_time, id) and compute aggregates in Python.
-                        # A trace's span count is bounded (FutureAGI caps
-                        # writes via the OTLP ingest pipeline) so a single
-                        # in-process pass is cheaper than two CH round-trips.
-                        with get_reader() as reader:
-                            _ch_spans = reader.list_by_trace(str(_t.id))
-                        _span_count = len(_ch_spans)
-                        _error_count = sum(1 for s in _ch_spans if s.status == "ERROR")
-                        _total_tokens = sum((s.total_tokens or 0) for s in _ch_spans)
-                        _total_cost = sum((s.cost or 0.0) for s in _ch_spans)
-                        _total_latency = sum((s.latency_ms or 0) for s in _ch_spans)
-                        _start_times = [s.start_time for s in _ch_spans if s.start_time]
-                        _end_times = [s.end_time for s in _ch_spans if s.end_time]
-                        _agg_start = min(_start_times) if _start_times else None
-                        _agg_end = max(_end_times) if _end_times else None
+                    # Authorize projects before either storage path reads spans.
+                    _projects = Project.no_workspace_objects.filter(
+                        _request_workspace_filter(request), organization=org
+                    )
+                    _t, _ch_spans = resolve_eval_trace(_trace_id, projects=_projects)
+                    _span_count = len(_ch_spans)
+                    _error_count = sum(1 for s in _ch_spans if s.status == "ERROR")
+                    _total_tokens = sum((s.total_tokens or 0) for s in _ch_spans)
+                    _total_cost = sum((s.cost or 0.0) for s in _ch_spans)
+                    _total_latency = sum((s.latency_ms or 0) for s in _ch_spans)
+                    _start_times = [s.start_time for s in _ch_spans if s.start_time]
+                    _end_times = [s.end_time for s in _ch_spans if s.end_time]
+                    _agg_start = min(_start_times) if _start_times else None
+                    _agg_end = max(_end_times) if _end_times else None
 
-                        # Lightweight span summaries for the agent to browse
-                        # and decide which to drill into. Only fetch essential
-                        # fields, cap at 200 spans (matches the prior
-                        # ``.values(...)[:200]`` slice).
-                        _span_summaries = [
-                            {
-                                "id": s.id,
-                                "name": s.name,
-                                "observation_type": s.observation_type,
-                                "status": s.status,
-                                "status_message": s.status_message,
-                                "latency_ms": s.latency_ms,
-                                "model": s.model,
-                                "total_tokens": s.total_tokens,
-                                "cost": s.cost,
-                                "parent_span_id": s.parent_span_id or None,
-                            }
-                            for s in _ch_spans[:200]
-                        ]
-
-                        trace_context = {
-                            "id": str(_t.id),
-                            "project_id": (
-                                str(_t.project_id) if _t.project_id else None
-                            ),
-                            "name": _t.name,
-                            "session_id": (
-                                str(_t.session_id) if _t.session_id else None
-                            ),
-                            "metadata": _t.metadata or {},
-                            "tags": _t.tags or [],
-                            "input": _t.input,
-                            "output": _t.output,
-                            "error": _t.error,
-                            "created_at": (
-                                _t.created_at.isoformat() if _t.created_at else None
-                            ),
-                            "span_count": _span_count,
-                            "error_count": _error_count,
-                            "total_tokens": _total_tokens,
-                            "total_cost": (
-                                float(round(_total_cost, 6)) if _total_cost else 0
-                            ),
-                            "total_latency_ms": _total_latency,
-                            "start_time": (str(_agg_start) if _agg_start else None),
-                            "end_time": (str(_agg_end) if _agg_end else None),
-                            "spans": _span_summaries,
+                    # Lightweight summaries retain the existing 200-span cap;
+                    # aggregates cover the complete authorized trace read.
+                    _span_summaries = [
+                        {
+                            "id": s.id,
+                            "name": s.name,
+                            "observation_type": s.observation_type,
+                            "status": s.status,
+                            "status_message": s.status_message,
+                            "latency_ms": s.latency_ms,
+                            "model": s.model,
+                            "total_tokens": s.total_tokens,
+                            "cost": s.cost,
+                            "parent_span_id": s.parent_span_id or None,
                         }
+                        for s in _ch_spans[:200]
+                    ]
+
+                    trace_context = {
+                        "id": str(_t.id),
+                        "project_id": str(_t.project_id) if _t.project_id else None,
+                        "name": _t.name,
+                        "session_id": str(_t.session_id) if _t.session_id else None,
+                        "metadata": _t.metadata or {},
+                        "tags": _t.tags or [],
+                        "input": _t.input,
+                        "output": _t.output,
+                        "error": _t.error,
+                        "created_at": (
+                            _t.created_at.isoformat() if _t.created_at else None
+                        ),
+                        "span_count": _span_count,
+                        "error_count": _error_count,
+                        "total_tokens": _total_tokens,
+                        "total_cost": float(round(_total_cost, 6))
+                        if _total_cost
+                        else 0,
+                        "total_latency_ms": _total_latency,
+                        "start_time": str(_agg_start) if _agg_start else None,
+                        "end_time": str(_agg_end) if _agg_end else None,
+                        "spans": _span_summaries,
+                    }
                 except Exception as _e:
-                    logger.warning(f"Failed to fetch trace {_trace_id}: {_e}")
+                    logger.warning(
+                        "eval_playground_trace_context_unavailable",
+                        error_type=type(_e).__name__,
+                    )
+                    return self._gm.bad_request("The selected trace is unavailable.")
             if session_context is None and _session_id:
                 try:
                     from tracer.models.project import Project
-                    from tracer.models.trace import Trace
+                    from tracer.models.trace_session import TraceSession
                     from tracer.services.clickhouse.v2 import get_reader
                     from tracer.services.clickhouse.v2.trace_session_dict_reader import (
                         resolve_session_fields,
                     )
+                    from tracer.utils.eval import build_session_context
 
                     # Resolve the session identity from CH (Slice D, DESIGN §5 /
                     # PG_ORM_READ_MIGRATION), NOT PG ``TraceSession``: a net-new
@@ -7064,139 +7236,26 @@ class EvalPlayGroundAPIView(APIView):
                         ).exists()
                     )
                     if _ss_fields and _ss_in_org:
-                        # Trace SET via CH spans, NOT the dead ``Trace.session`` FK
-                        # (None post-flip → empty for ALL sessions). Trace stays PG
-                        # → the CH-derived ids drive a PG ``id__in`` filter.
+                        # The builder's span read expects the survivor id, not
+                        # a remapped alias. Resolve only after the project check.
                         with get_reader() as reader:
-                            _trace_id_list = reader.session_trace_ids(
-                                str(_ss_project_id), str(_session_id)
+                            _canonical_session_id = (
+                                reader._resolve_session_ids_to_canonical(
+                                    [str(_session_id)]
+                                )[str(_session_id)]
                             )
-                        _trace_qs = Trace.objects.filter(
-                            id__in=_trace_id_list, deleted=False
-                        )
-
-                        # CH read replaces two ObservationSpan ORM queries:
-                        #   1. .filter(trace__in=_trace_qs, deleted=False).aggregate(...)
-                        #   2. .filter(trace_id__in=_trace_ids, deleted=False)
-                        #        .values("trace_id").annotate(...)
-                        # CHSpanReader doesn't expose `error_count` / per-trace
-                        # `error_count` or `total_latency` aggregates, so we
-                        # list session spans once (already filtered to
-                        # is_deleted=0) and compute both rollups in Python.
-                        # Sessions are bounded by product semantics (a single
-                        # conversation/workflow), so the in-process scan is
-                        # cheaper than two CH round-trips.
-                        # ``list_by_session`` matches the RAW ``_session_id``; the
-                        # ``session_trace_ids`` trace set above resolves the input
-                        # id. They agree because the eval-context ``session_id`` is
-                        # always a SURVIVOR (old) or NET-NEW id (the session
-                        # list/detail surfaces resolved/old ids), never a
-                        # straddler's raw NEW id — for those the input resolves to
-                        # itself, so both reads see the same session.
-                        with get_reader() as reader:
-                            _ch_session_spans = reader.list_by_session(str(_session_id))
-                        _total_spans = len(_ch_session_spans)
-                        _sess_error_count = sum(
-                            1 for s in _ch_session_spans if s.status == "ERROR"
-                        )
-                        _sess_total_tokens = sum(
-                            (s.total_tokens or 0) for s in _ch_session_spans
-                        )
-                        _sess_total_cost = sum(
-                            (s.cost or 0.0) for s in _ch_session_spans
-                        )
-                        _sess_start_times = [
-                            s.start_time for s in _ch_session_spans if s.start_time
-                        ]
-                        _sess_end_times = [
-                            s.end_time for s in _ch_session_spans if s.end_time
-                        ]
-                        _start = min(_sess_start_times) if _sess_start_times else None
-                        _end = max(_sess_end_times) if _sess_end_times else None
-
-                        # Lightweight trace summaries for the agent to browse
-                        # and decide which to drill into. Page-scoped (first
-                        # 100 traces by created_at) to match the prior PG path
-                        # which annotated only over `trace_id__in=_trace_ids`.
-                        _traces_page = list(_trace_qs.order_by("created_at")[:100])
-                        _trace_id_set = {str(_tr.id) for _tr in _traces_page}
-                        _per_trace: dict[str, dict] = {}
-                        for s in _ch_session_spans:
-                            if s.trace_id not in _trace_id_set:
-                                continue
-                            row = _per_trace.setdefault(
-                                s.trace_id,
-                                {
-                                    "span_count": 0,
-                                    "error_count": 0,
-                                    "total_tokens": 0,
-                                    "total_latency": 0,
-                                },
+                        session_context = build_session_context(
+                            TraceSession(
+                                id=_canonical_session_id,
+                                project_id=_ss_project_id,
+                                name=(
+                                    _ss_fields["display_name"]
+                                    or _ss_fields["external_session_id"]
+                                ),
+                                bookmarked=bool(_ss_fields["bookmarked"]),
+                                created_at=_ss_fields["first_seen"],
                             )
-                            row["span_count"] += 1
-                            if s.status == "ERROR":
-                                row["error_count"] += 1
-                            row["total_tokens"] += s.total_tokens or 0
-                            row["total_latency"] += s.latency_ms or 0
-
-                        _trace_summaries = []
-                        for _tr in _traces_page:
-                            _agg = _per_trace.get(str(_tr.id), {})
-                            _err_count = _agg.get("error_count") or 0
-                            _trace_summaries.append(
-                                {
-                                    "id": str(_tr.id),
-                                    "name": _tr.name,
-                                    "created_at": (
-                                        _tr.created_at.isoformat()
-                                        if _tr.created_at
-                                        else None
-                                    ),
-                                    "span_count": _agg.get("span_count") or 0,
-                                    "error_count": _err_count,
-                                    "total_tokens": _agg.get("total_tokens") or 0,
-                                    "total_latency_ms": _agg.get("total_latency") or 0,
-                                    "has_error": bool(_tr.error or _err_count > 0),
-                                }
-                            )
-
-                        _duration = None
-                        if _start and _end:
-                            _duration = (_end - _start).total_seconds()
-
-                        # Session identity fields now come from the CH record +
-                        # PG overlay (``resolve_session_fields``), NOT a PG
-                        # TraceSession row: name = display_name override else the
-                        # external session id (DESIGN §5.2 COALESCE); created_at =
-                        # first_seen (the session's first observed activity).
-                        _ss_first_seen = _ss_fields["first_seen"]
-                        session_context = {
-                            "id": str(_session_id),
-                            "name": (
-                                _ss_fields["display_name"]
-                                or _ss_fields["external_session_id"]
-                            ),
-                            "project_id": (
-                                str(_ss_project_id) if _ss_project_id else None
-                            ),
-                            "bookmarked": bool(_ss_fields["bookmarked"]),
-                            "created_at": (
-                                _ss_first_seen.isoformat() if _ss_first_seen else None
-                            ),
-                            "trace_count": _trace_qs.count(),
-                            "total_spans": _total_spans,
-                            "error_count": _sess_error_count,
-                            "total_tokens": _sess_total_tokens,
-                            "total_cost": (
-                                float(round(_sess_total_cost, 6))
-                                if _sess_total_cost
-                                else 0
-                            ),
-                            "start_time": (str(_start) if _start else None),
-                            "end_time": (str(_end) if _end else None),
-                            "duration_seconds": _duration,
-                            "traces": _trace_summaries,
-                        }
+                        )
                 except Exception as _e:
                     logger.warning(f"Failed to fetch session {_session_id}: {_e}")
 
@@ -7222,6 +7281,7 @@ class EvalPlayGroundAPIView(APIView):
                 },
             )
             if _session_id and isinstance(mapping_paths, dict) and mapping_paths:
+                from tracer.models.project import Project
                 from tracer.models.trace_session import TraceSession
                 from tracer.services.clickhouse.v2.trace_session_dict_reader import (
                     resolve_session_fields,
@@ -7242,6 +7302,17 @@ class EvalPlayGroundAPIView(APIView):
                     str(_session_id)
                 )
                 if _map_fields is None:
+                    return self._gm.bad_request(f"Session {_session_id} not found")
+                # Same org guard as the session_context branch: a session whose
+                # project is outside the caller's org is answered exactly like a
+                # missing one, and nothing is resolved from it.
+                _map_project_id = _map_fields.get("project_id")
+                if not (
+                    _map_project_id
+                    and Project.objects.filter(
+                        id=_map_project_id, organization=org
+                    ).exists()
+                ):
                     return self._gm.bad_request(f"Session {_session_id} not found")
                 _ss_for_mapping = TraceSession(
                     id=_session_id,
@@ -7370,10 +7441,13 @@ class EvalPlayGroundAPIView(APIView):
                 ) and isinstance(top_level_params, dict):
                     runtime_config["params"] = top_level_params
 
-            try:
-                eval_template = _get_accessible_eval_template(template_id, org)
-            except EvalTemplate.DoesNotExist:
-                return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
+            from model_hub.utils.jev_templates import validate_jev_binding
+
+            jev_error = validate_jev_binding(
+                eval_template, model=model, runtime_config=runtime_config
+            )
+            if jev_error is not None:
+                return jev_error
 
             # Validate + coerce function params (matches Dataset / Experiments
             # paths). Without this, FE-sent blank strings flow straight into
@@ -7382,8 +7456,18 @@ class EvalPlayGroundAPIView(APIView):
                 runtime_config = normalize_eval_runtime_config(
                     eval_template.config, runtime_config
                 )
+                # No save here: the request's Choices override is checked
+                # before it is applied.
+                from model_hub.utils.scoring import validate_choice_score_override
+
+                validate_choice_score_override(eval_template, runtime_config)
             except ValueError as ve:
                 return self._gm.bad_request(str(ve))
+
+            from evaluations.engine.instance import (
+                SUMMARY_TEMPLATE_UNAVAILABLE_MESSAGE,
+                SummaryTemplateUnavailable,
+            )
 
             try:
                 # Run the evaluation with the provided config
@@ -7403,6 +7487,7 @@ class EvalPlayGroundAPIView(APIView):
                     trace_context=trace_context,
                     session_context=session_context,
                     call_context=call_context,
+                    strict_summary=True,
                 )
 
                 return self._gm.success_response(
@@ -7417,6 +7502,22 @@ class EvalPlayGroundAPIView(APIView):
                     error_type=type(exc).__name__,
                 )
                 return self._gm.bad_request(str(exc))
+            except MissingProviderKeyError as exc:
+                from model_hub.utils.jev_templates import jev_error_response
+
+                # A missing TypeSafe key is the typed JEV_KEY_MISSING, as on the
+                # SDK path, so the frontend can key off the code.
+                jev_error = jev_error_response(exc)
+                if jev_error is not None:
+                    return jev_error
+                # Bring-your-own-key models: say which key to add, from a fixed
+                # template rather than the exception text.
+                return self._gm.bad_request(missing_provider_key_message(exc.provider))
+            except SummaryTemplateUnavailable:
+                # The chosen saved summary is deleted, malformed or belongs to
+                # another organization: say so and what to do, from fixed text.
+                logger.warning("eval_playground_summary_template_unavailable")
+                return self._gm.bad_request(SUMMARY_TEMPLATE_UNAVAILABLE_MESSAGE)
             except Exception as exc:
                 if UsageLimitExceeded is not None and isinstance(
                     exc, UsageLimitExceeded
@@ -7426,6 +7527,27 @@ class EvalPlayGroundAPIView(APIView):
                         error_type=type(exc).__name__,
                     )
                     return self._gm.usage_limit_response(exc.check_result)
+                from model_hub.utils.jev_templates import jev_error_response
+
+                # A failed Jev run says what to fix: a rejected key will never
+                # succeed on retry. The text is fixed per typed code.
+                jev_error = jev_error_response(exc)
+                if jev_error is not None:
+                    logger.warning(
+                        "eval_playground_jev_error", code=jev_error.data["code"]
+                    )
+                    return jev_error
+                from agentic_eval.core.llm.llm import find_custom_model_endpoint_error
+
+                # A custom judge model that did not answer: which model, why
+                # (fixed text) and where to fix it.
+                endpoint_error = find_custom_model_endpoint_error(exc)
+                if endpoint_error is not None:
+                    logger.warning(
+                        "eval_playground_custom_model_unreachable",
+                        reason=endpoint_error.reason,
+                    )
+                    return self._gm.bad_request(str(endpoint_error))
                 logger.exception(
                     "eval_playground_execution_failed",
                     error_type=type(exc).__name__,
@@ -7453,7 +7575,6 @@ class EvalCodeSnippetAPIView(APIView):
     )
     def get(self, request, *args, **kwargs):
         try:
-            org = getattr(request, "organization", None) or request.user.organization
             model = request.query_params.get("model", None)
             mapping = request.query_params.get("mapping", "")
             template_id = request.query_params.get("template_id", None)
@@ -7467,7 +7588,9 @@ class EvalCodeSnippetAPIView(APIView):
                 return self._gm.bad_request({"error": "template_id is required"})
 
             try:
-                eval_template = _get_accessible_eval_template(template_id, org)
+                eval_template = _get_accessible_eval_template_for_request(
+                    template_id, request
+                )
             except EvalTemplate.DoesNotExist:
                 return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
 
@@ -7562,6 +7685,19 @@ class EvalPlayGroundFeedbackAPIView(APIView):
             except APICallLog.DoesNotExist:
                 return self._gm.bad_request("Invalid Evaluation Id provided")
 
+            if (
+                action_type == "recalculate"
+                and config.get("kb_id")
+                and not knowledge_base_in_scope(request, config.get("kb_id"))
+            ):
+                return self._gm.not_found("Knowledge base not found")
+
+            # New feedback, and its vector, carry the request's workspace, so
+            # it is read in that workspace and never across workspaces.
+            feedback_workspace = (
+                getattr(request, "workspace", None) or get_current_workspace()
+            )
+
             try:
                 feedback = Feedback.objects.get(
                     source_id=log_id,
@@ -7581,10 +7717,8 @@ class EvalPlayGroundFeedbackAPIView(APIView):
                 # Link feedback to the eval template via the log's source_id
                 eval_template = None
                 try:
-                    eval_template = _get_accessible_eval_template(
-                        log.source_id,
-                        getattr(request, "organization", None)
-                        or request.user.organization,
+                    eval_template = _get_accessible_eval_template_for_request(
+                        log.source_id, request
                     )
                 except Exception:
                     pass
@@ -7599,7 +7733,7 @@ class EvalPlayGroundFeedbackAPIView(APIView):
                     action_type=action_type,
                     organization=getattr(request, "organization", None)
                     or request.user.organization,
-                    workspace=None,
+                    workspace=feedback_workspace,
                 )
                 print(
                     f"[FEEDBACK] Created new feedback id={feedback.id} source_id={log_id} eval_template={eval_template.id if eval_template else None} value='{value}' explanation='{explanation}' action_type='{action_type}'",
@@ -7624,7 +7758,9 @@ class EvalPlayGroundFeedbackAPIView(APIView):
                     inputs_formater=required_keys,
                     insert=True,
                     organization_id=org_for_embedding,
-                    workspace_id=None,
+                    workspace_id=(
+                        str(feedback_workspace.id) if feedback_workspace else None
+                    ),
                 )
             except Exception:
                 import traceback
@@ -7956,20 +8092,32 @@ class TestEvaluationTemplateAPIView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
+        from tfc.ee_gates import jev_gate_for_template, turing_oss_gate_for_template
 
         validated_data = request.validated_data
-        gate = turing_oss_gate_for_template(
+        # ee_model_gate_for_template's Jev gate, then its Turing gate with the
+        # template resolved within the caller's organization (positional:
+        # model, template_id, eval_type, organization).
+        gate = jev_gate_for_template(
             validated_data.get("model"),
-            template_id=validated_data.get("template_id"),
-            eval_type=validated_data.get("eval_type"),
+            validated_data.get("template_id"),
+            validated_data.get("eval_type"),
         )
+        if gate is None:
+            gate = turing_oss_gate_for_template(
+                validated_data.get("model"),
+                validated_data.get("template_id"),
+                validated_data.get("eval_type"),
+                getattr(request, "organization", None) or request.user.organization,
+            )
         if gate is not None:
             return gate
 
         try:
             template_type = validated_data.get("template_type", None)
-            mappings = validated_data["config"].get("mapping", {})
+            mappings = validated_data.get("mapping") or validated_data["config"].get(
+                "mapping", {}
+            )
             input_data_types = validated_data.get("input_data_types", {})
             model = validated_data.get("model", None)
             config = validated_data.get("config", {})
@@ -8001,7 +8149,9 @@ class TestEvaluationTemplateAPIView(APIView):
 
                 template_id = validated_data.get("template_id")
                 if template_id:
-                    function_template = _get_accessible_eval_template(template_id, org)
+                    function_template = _get_accessible_eval_template_for_request(
+                        template_id, request
+                    )
                     template_config = function_template.config or {}
                     template_config_eval_id = template_config.get("eval_type_id")
                     if template_config_eval_id and str(template_config_eval_id) != str(
@@ -8024,7 +8174,13 @@ class TestEvaluationTemplateAPIView(APIView):
                     function_template = EvalTemplate.no_workspace_objects.filter(
                         config__eval_type_id=eval_id,
                         deleted=False,
-                    ).filter(Q(organization=org) | Q(organization__isnull=True))
+                    ).filter(
+                        Q(owner=OwnerChoices.SYSTEM.value)
+                        | (
+                            Q(owner=OwnerChoices.USER.value, organization=org)
+                            & _request_workspace_filter(request)
+                        )
+                    )
 
                     function_template = function_template.order_by(
                         "-updated_at"
@@ -8081,6 +8237,14 @@ class TestEvaluationTemplateAPIView(APIView):
                     model=model,
                 )
 
+            from model_hub.utils.jev_templates import validate_jev_binding
+
+            jev_error = validate_jev_binding(
+                eval_template, model=model, runtime_config=config
+            )
+            if jev_error is not None:
+                return jev_error
+
             # Run the evaluation with the provided config
             response = run_eval_func(
                 config,
@@ -8106,7 +8270,34 @@ class TestEvaluationTemplateAPIView(APIView):
                 error_type=type(exc).__name__,
             )
             return self._gm.bad_request(str(exc))
+        except MissingProviderKeyError as exc:
+            from model_hub.utils.jev_templates import jev_error_response
+
+            # As in the eval playground: a missing TypeSafe key is typed, any
+            # other says which key to add.
+            jev_error = jev_error_response(exc)
+            if jev_error is not None:
+                return jev_error
+            return self._gm.bad_request(missing_provider_key_message(exc.provider))
         except Exception as exc:
+            from model_hub.utils.jev_templates import jev_error_response
+
+            jev_error = jev_error_response(exc)
+            if jev_error is not None:
+                logger.warning(
+                    "evaluation_template_test_jev_error", code=jev_error.data["code"]
+                )
+                return jev_error
+            from agentic_eval.core.llm.llm import find_custom_model_endpoint_error
+
+            # As in the eval playground: an unreachable custom judge model.
+            endpoint_error = find_custom_model_endpoint_error(exc)
+            if endpoint_error is not None:
+                logger.warning(
+                    "evaluation_template_test_custom_model_unreachable",
+                    reason=endpoint_error.reason,
+                )
+                return self._gm.bad_request(str(endpoint_error))
             logger.exception(
                 "evaluation_template_test_failed",
                 error_type=type(exc).__name__,

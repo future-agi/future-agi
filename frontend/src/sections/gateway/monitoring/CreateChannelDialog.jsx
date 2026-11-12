@@ -13,6 +13,7 @@ import {
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import { useUpdateConfig } from "../providers/hooks/useGatewayConfig";
+import { reportAlertingSaved } from "./alertingModel";
 import { ALERT_CHANNEL_TYPE_OPTIONS } from "../constants/alerting";
 
 const CreateChannelDialog = ({
@@ -26,6 +27,14 @@ const CreateChannelDialog = ({
   const [url, setUrl] = useState("");
 
   const updateConfig = useUpdateConfig();
+  const duplicateName = existingChannels.some(
+    (channel) => channel?.name === name.trim(),
+  );
+  const canCreate =
+    Boolean(name.trim()) &&
+    !duplicateName &&
+    (type === "log" || Boolean(url.trim())) &&
+    !updateConfig.isPending;
 
   const resetForm = () => {
     setName("");
@@ -39,6 +48,7 @@ const CreateChannelDialog = ({
   };
 
   const handleCreate = () => {
+    if (!canCreate) return;
     const channelName = name.trim();
     const channel = { name: channelName, type };
     if (url.trim()) channel.url = url.trim();
@@ -46,39 +56,48 @@ const CreateChannelDialog = ({
     // Send the whole array, for the same reason the rule dialog does: a
     // name-keyed object would replace a channels array saved from
     // Settings → Alerting.
-    const channels = [
-      ...existingChannels.filter((c) => c?.name !== channelName),
-      channel,
-    ];
+    const channels = [...existingChannels, channel];
 
     updateConfig.mutate(
       { gatewayId, config: { alerting: { channels } } },
       {
-        onSuccess: () => {
-          enqueueSnackbar(`Channel "${channelName}" created`, {
-            variant: "success",
-          });
+        onSuccess: (result) => {
+          reportAlertingSaved(result, `Channel "${channelName}" created`);
           handleClose();
         },
         onError: () => {
-          enqueueSnackbar("Failed to create channel", { variant: "error" });
+          enqueueSnackbar("The channel could not be created", {
+            variant: "error",
+          });
         },
       },
     );
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Add Notification Channel</DialogTitle>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
+      <DialogTitle>Add notification channel</DialogTitle>
       <DialogContent>
         <Stack spacing={2} mt={1}>
           <TextField
-            label="Channel Name"
+            label="Channel name"
             fullWidth
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g., slack-alerts"
+            error={duplicateName}
+            helperText={
+              duplicateName
+                ? "A channel with this name already exists. Choose a different name to keep existing alert destinations unchanged."
+                : undefined
+            }
           />
           <TextField
             label="Type"
@@ -100,14 +119,13 @@ const CreateChannelDialog = ({
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder={
-              type === "slack"
-                ? "https://hooks.slack.com/..."
-                : "Endpoint URL"
+              type === "slack" ? "https://hooks.slack.com/..." : "Endpoint URL"
             }
           />
           {updateConfig.isError && (
             <Alert severity="error">
-              {updateConfig.error?.message || "Failed to create channel"}
+              {updateConfig.error?.message ||
+                "The channel could not be created"}
             </Alert>
           )}
         </Stack>
@@ -116,14 +134,11 @@ const CreateChannelDialog = ({
         <Button onClick={handleClose}>Cancel</Button>
         <Button
           variant="contained"
+          color="primary"
           onClick={handleCreate}
-          disabled={
-            !name.trim() ||
-            (type !== "log" && !url.trim()) ||
-            updateConfig.isPending
-          }
+          disabled={!canCreate}
         >
-          {updateConfig.isPending ? "Creating..." : "Add Channel"}
+          {updateConfig.isPending ? "Creating..." : "Add channel"}
         </Button>
       </DialogActions>
     </Dialog>

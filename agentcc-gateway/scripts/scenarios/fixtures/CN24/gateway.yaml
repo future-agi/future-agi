@@ -1,0 +1,44 @@
+# 98a_cn_shared_oauth.sh's gateway config. The script fills in the @@CN24_*@@
+# values first; lib_mcp.sh's scn_mcp_gateway_template then adds the test state
+# key under mcp:, and lib.sh's scn_up fills base.yaml's placeholders and
+# appends redis:. The control plane is Django's dev server: the gateway syncs
+# keys and org configs from it every 2 s, and fetches each organization's
+# signed-in account token from its internal token endpoint (mcp.django) with
+# a secret of its own. Each org's shared OAuth server is its own
+# agentcc-mcpmock in OAuth mode, listed for egress by its loopback port.
+# Every key, token and secret is a fake value made for the run.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+providers:
+  operator-openai:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-operator-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["gpt-4o"]
+logging:
+  level: "info"
+  request_logging:
+    enabled: true
+control_plane:
+  url: "@@CN24_DJANGO_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  webhook_secret: "@@CN24_WEBHOOK_SECRET@@"
+  sync_on_startup: true
+  sync_interval: 2s
+mcp:
+  enabled: true
+  static:
+    org_id: "org-cn24-static"
+  django:
+    base_url: "@@CN24_DJANGO_URL@@"
+    internal_token_secret: "@@CN24_DJANGO_SECRET@@"
+  egress:
+    private_allow:
+      - "127.0.0.1:@@CN24_CRMA_PORT@@"
+      - "127.0.0.1:@@CN24_CRMB_PORT@@"

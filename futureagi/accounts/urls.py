@@ -1,18 +1,13 @@
-from django.urls import include, path
-from rest_framework.routers import DefaultRouter
-
 from accounts.views.appsmith import SOSLoginView, UserApiView
-from accounts.views.aws_marketplace import (
-    aws_marketplace_launch_software,
-    aws_marketplace_signup,
-    aws_marketplace_verify_token,
-)
 from accounts.views.config import public_config
 from accounts.views.gcp_marketplace import (
     gcp_marketplace_signup,
     gcp_marketplace_verify_token,
 )
 from accounts.views.keys import GetKeysView, SecretKeyAPIViewSet
+from accounts.views.omega_observe_target import OmegaObserveTargetView
+from accounts.views.omega_session import OmegaSessionExchangeView
+from accounts.views.omega_trigger_admission import OmegaTriggerAdmissionView
 from accounts.views.organization_selection import (
     OrganizationSelectionView,
     SwitchOrganizationView,
@@ -89,14 +84,42 @@ from accounts.views.workspace_management import (
     WorkspaceInviteAPIView,
     WorkspaceListAPIView,
 )
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
 from tfc.ee_gating import is_oss
+
+from accounts.views.aws_marketplace import (
+    AWSOnboardingExchangeView,
+    aws_marketplace_launch_software,
+    aws_marketplace_signup,
+    aws_marketplace_verify_token,
+)
+from accounts.views.handoff_exchange import HandoffRedeemView, WebSocketTicketView
 
 router = DefaultRouter()
 router.register("key", SecretKeyAPIViewSet, basename="user-secret-keys")
 
 auth_urls = [
+    path(
+        "omega/trigger-admission/",
+        OmegaTriggerAdmissionView.as_view(),
+        name="omega-trigger-admission",
+    ),
+    path(
+        "omega/observe-target/",
+        OmegaObserveTargetView.as_view(),
+        name="omega-observe-target",
+    ),
+    path(
+        "omega/session-exchange/",
+        OmegaSessionExchangeView.as_view(),
+        name="omega-session-exchange",
+    ),
     path("token/", CustomTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("token/refresh/", CustomTokenRefreshView.as_view(), name="token_refresh"),
+    # CR-07: sign-in redirects carry a one-time code; the app redeems it here.
+    path("handoff/redeem/", HandoffRedeemView.as_view(), name="handoff-redeem"),
+    path("handoff/ws-ticket/", WebSocketTicketView.as_view(), name="handoff-ws-ticket"),
     path("redis-key/", manage_redis_key, name="manage-redis-key"),
 ]
 
@@ -301,6 +324,11 @@ organization_urls = [
 ]
 
 aws_marketplace_urls = [
+    path(
+        "aws-marketplace/onboarding-exchange/",
+        AWSOnboardingExchangeView.as_view(),
+        name="aws-marketplace-onboarding-exchange",
+    ),
     path(
         "aws-marketplace/verify-token/",
         aws_marketplace_verify_token,

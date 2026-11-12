@@ -2,7 +2,6 @@ package language
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -33,7 +32,7 @@ func New(cfg map[string]interface{}) *LanguageGuardrail {
 	return g
 }
 
-func (g *LanguageGuardrail) Name() string           { return "language-detection" }
+func (g *LanguageGuardrail) Name() string            { return "language-detection" }
 func (g *LanguageGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check detects non-Latin/non-allowed scripts that might indicate language mismatch attacks.
@@ -134,20 +133,9 @@ func extractUserText(input *guardrails.CheckInput) string {
 		if m.Role != "user" {
 			continue
 		}
-		if t, ok := extractContentText(m.Content); ok {
+		if t, ok := guardrails.ContentText(m.Content); ok {
 			parts = append(parts, t)
 		}
 	}
 	return strings.Join(parts, " ")
-}
-
-func extractContentText(raw json.RawMessage) (string, bool) {
-	if len(raw) == 0 {
-		return "", false
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		return s, true
-	}
-	return "", false
 }

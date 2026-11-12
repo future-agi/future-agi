@@ -1,566 +1,90 @@
-import React, { useMemo } from "react";
+import React from "react";
+import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Typography from "@mui/material/Typography";
 import { RouterLink } from "src/routes/components";
-import { Box, useTheme } from "@mui/material";
 import Iconify from "src/components/iconify";
 
-const FUNNY_404_MESSAGES = [
-  // Space / navigation
-  "This page has drifted beyond our sensors.",
-  "The coordinates you entered don't exist in this sector.",
-  "Our star charts don't show anything at this location.",
-  "You've ventured into uncharted space. Bold, but empty.",
-  "This route was last seen near the Andromeda galaxy.",
-  "The navigation computer says: 'Nice try, astronaut.'",
-  "Our deep-space scanners found nothing. Not even dust.",
-  "You've gone where no URL has gone before. It's empty here.",
-  "This sector was decommissioned after the Great 404 Incident.",
-  "The warp drive brought you to the wrong coordinates.",
-
-  // Dev humor
-  "Looks like someone forgot to build this route.",
-  "The page you're looking for is in another repo.",
-  "This link was valid in a parallel universe. Not this one.",
-  "A developer promised this page 'by next sprint.' Three sprints ago.",
-  "The page was here a moment ago. It saw you coming and hid.",
-  "This URL is as real as our zero-bug backlog.",
-  "404: Page not found. Also not lost. It just never existed.",
-  "We searched everywhere. Under the couch, behind the server rack. Nothing.",
-  "This page is on vacation. It didn't leave a forwarding address.",
-  "The page you want is probably stuck in a code review.",
-
-  // AI / existential
-  "Our AI looked for this page and hallucinated a different one.",
-  "Even our most advanced models can't predict where this page went.",
-  "The neural network that stored this page had an identity crisis.",
-  "We asked ChatGPT where this page is. It confidently made something up.",
-  "This page was deprecated by an AI that thought it knew better.",
-  "The page has achieved sentience and left to find itself.",
-  "In the multiverse of URLs, you picked the empty one.",
-  "This page exists only in the training data, not in production.",
-  "Our model gives this page a 0% probability of existing. Accurate.",
-  "The transformer attended to everything except this page.",
-
-  // Absurd
-  "A black hole ate this page. Classic astrophysics.",
-  "This page was abducted by aliens. We've filed a report.",
-  "The page eloped with a 500 error. We wish them happiness.",
-  "Mercury is in retrograde. The page refuses to load.",
-  "The page is on a coffee break. It's been 4 years.",
-  "You've found the void. The void is unimpressed.",
-  "This page was last seen arguing with a semicolon.",
-  "Legend has it, this page is still buffering somewhere.",
-  "The page was here but it got scared of the dark mode.",
-  "We'd show you this page but the hamsters powering it escaped.",
-
-  // Self-aware
-  "Hey, at least our 404 page works perfectly!",
-  "On the plus side, you discovered our coolest spaceship.",
-  "Silver lining: no bugs on a page that doesn't exist.",
-  "This is the most polished dead-end you'll ever see.",
-  "You found our secret page. It's just... very empty.",
-  "404: the page is a lie. The cake is also a lie.",
-  "Fun fact: this 404 page has 100% uptime.",
-  "You're lost, but at least you're lost with style.",
-  "Not all who wander are lost. You, however, definitely are.",
-  "Welcome to the edge of the known internet.",
-
-  // Workplace
-  "The product manager swears this page was in the spec.",
-  "QA marked this as 'works on my machine.'",
-  "This page was deleted in a force push. We don't talk about it.",
-  "Someone renamed this route and forgot to tell anyone.",
-  "The page was 'temporarily' removed in 2023.",
-  "This feature was cut in the last sprint planning. Sorry.",
-  "The intern's first commit took this page with it.",
-  "We deployed on a Friday. This is the result.",
-  "The page is blocked by a merge conflict. Classic.",
-  "This page is waiting in the deploy queue. Position: infinity.",
-
-  // Food
-  "This page is half-baked. Actually, not baked at all.",
-  "The URL recipe called for this page but we're out of stock.",
-  "This page was served... to /dev/null.",
-  "404: the digital equivalent of an empty fridge.",
-  "This page crumbled like a cookie. A very expired cookie.",
-
-  // Pop culture
-  "These aren't the pages you're looking for. Move along.",
-  "I find your lack of valid URLs disturbing.",
-  "Page? Where we're going, we don't need pages.",
-  "In a galaxy far, far away... this page still doesn't exist.",
-  "The page has left the building. Elvis-style.",
-
-  // Philosophical
-  "If a page doesn't exist and no one visits it, is it really 404?",
-  "The page is gone, but the memories remain. Wait, no they don't.",
-  "Nothing is here. Which is still something, philosophically.",
-  "You've reached the end of the internet. Turn back.",
-  "The page you seek is within you. Just kidding, it's gone.",
-  "Entropy claims another page.",
-  "The void stares back. It has nothing to show you.",
-  "Somewhere in the multiverse, this page exists. Not here though.",
-  "This page transcended to a higher plane of existence.",
-  "404: proof that nothing is certain in life.",
-];
-
-const NotFoundView = () => {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const strokeColor = isDark
-    ? theme.palette.text.disabled
-    : theme.palette.text.secondary;
-
-  const funnyMessage = useMemo(
-    () =>
-      FUNNY_404_MESSAGES[Math.floor(Math.random() * FUNNY_404_MESSAGES.length)],
-    [],
-  );
-
-  return (
+const NotFoundView = () => (
+  <Box
+    display="flex"
+    justifyContent="center"
+    alignItems="center"
+    height="100vh"
+    width="100vw"
+    flexDirection="column"
+    overflow="hidden"
+    bgcolor="background.default"
+    position="absolute"
+    left={0}
+    top={0}
+  >
     <Box
       display="flex"
       justifyContent="center"
       alignItems="center"
-      height="100vh"
-      width="100vw"
       flexDirection="column"
-      overflow="hidden"
-      bgcolor="background.default"
-      position="absolute"
-      left={0}
-      top={0}
+      maxWidth="480px"
+      width="90%"
+      gap={2}
+      textAlign="center"
     >
-      {/* Background */}
-      {!isDark && (
-        <img
-          src="/assets/errorfallback/BG.svg"
-          alt=""
-          style={{
-            width: "100vw",
-            height: "100vh",
-            position: "absolute",
-            objectFit: "cover",
-          }}
-        />
-      )}
-
-      {/* Starfield for dark mode */}
-      {isDark && (
-        <Box
-          sx={{
-            position: "absolute",
-            inset: 0,
-            pointerEvents: "none",
-            overflow: "hidden",
-            "& .star": {
-              position: "absolute",
-              background: "#fafafa",
-              borderRadius: "50%",
-            },
-            "& .star-far": {
-              width: "1px",
-              height: "1px",
-              opacity: 0.3,
-              animation: "twinkle 4s ease-in-out infinite",
-            },
-            "& .star-mid": {
-              width: 2,
-              height: 2,
-              opacity: 0.4,
-              animation: "twinkle 3s ease-in-out infinite",
-            },
-            "& .star-close": {
-              width: 3,
-              height: 3,
-              opacity: 0.6,
-              animation: "twinkle 2.5s ease-in-out infinite",
-            },
-            // Blueprint grid overlay
-            "&::before": {
-              content: '""',
-              position: "absolute",
-              inset: 0,
-              opacity: 0.015,
-              backgroundImage:
-                "linear-gradient(#fafafa 1px, transparent 1px), linear-gradient(90deg, #fafafa 1px, transparent 1px)",
-              backgroundSize: "60px 60px",
-            },
-            "@keyframes twinkle": {
-              "0%, 100%": { opacity: 0.2, transform: "scale(1)" },
-              "50%": { opacity: 1, transform: "scale(1.2)" },
-            },
-          }}
-        >
-          {[
-            { top: "5%", left: "8%", cls: "star star-far" },
-            { top: "12%", left: "25%", cls: "star star-far" },
-            { top: "8%", left: "45%", cls: "star star-far" },
-            { top: "15%", left: "72%", cls: "star star-far" },
-            { top: "6%", left: "88%", cls: "star star-far" },
-            { top: "10%", left: "15%", cls: "star star-mid" },
-            { top: "18%", left: "60%", cls: "star star-mid" },
-            { top: "22%", left: "85%", cls: "star star-mid" },
-            { top: "8%", left: "35%", cls: "star star-close" },
-            { top: "20%", left: "78%", cls: "star star-close" },
-            { top: "40%", left: "3%", cls: "star star-far" },
-            { top: "55%", left: "5%", cls: "star star-far" },
-            { top: "40%", right: "4%", cls: "star star-far" },
-            { top: "60%", right: "6%", cls: "star star-far" },
-            { top: "35%", left: "8%", cls: "star star-mid" },
-            { top: "50%", right: "10%", cls: "star star-mid" },
-            { top: "70%", left: "20%", cls: "star star-far" },
-            { top: "75%", left: "65%", cls: "star star-far" },
-            { top: "80%", left: "40%", cls: "star star-mid" },
-            { top: "85%", left: "90%", cls: "star star-close" },
-          ].map((s, i) => (
-            <div
-              key={i}
-              className={s.cls}
-              style={{
-                top: s.top,
-                left: s.left,
-                right: s.right,
-                animationDelay: `${i % 3 === 0 ? 0.5 : i % 3 === 1 ? 1.2 : 0.8}s`,
-              }}
-            />
-          ))}
-        </Box>
-      )}
-
-      {/* Floating debris */}
-      {isDark && (
-        <>
-          {[
-            { top: "20%", left: "15%", size: 4, delay: 0 },
-            { top: "60%", right: "20%", size: 8, delay: 5 },
-            { bottom: "30%", left: "25%", size: 6, delay: 10 },
-          ].map((d, i) => (
-            <Box
-              key={i}
-              sx={{
-                position: "absolute",
-                width: d.size,
-                height: d.size,
-                bgcolor: "text.disabled",
-                borderRadius: "50%",
-                top: d.top,
-                left: d.left,
-                right: d.right,
-                bottom: d.bottom,
-                animation: "debrisFloat 15s ease-in-out infinite",
-                animationDelay: `${d.delay}s`,
-                "@keyframes debrisFloat": {
-                  "0%, 100%": {
-                    transform: "translate(0, 0) rotate(0deg)",
-                    opacity: 0.3,
-                  },
-                  "25%": {
-                    transform: "translate(30px, -20px) rotate(90deg)",
-                    opacity: 0.5,
-                  },
-                  "50%": {
-                    transform: "translate(60px, 10px) rotate(180deg)",
-                    opacity: 0.3,
-                  },
-                  "75%": {
-                    transform: "translate(20px, 30px) rotate(270deg)",
-                    opacity: 0.4,
-                  },
-                },
-              }}
-            />
-          ))}
-        </>
-      )}
-
-      {/* Content */}
-      <Box
-        display="flex"
-        justifyContent="center"
-        alignItems="center"
-        flexDirection="column"
-        maxWidth="600px"
-        width="90%"
-        zIndex={1}
-        gap={2.5}
+      <Typography
+        color="text.secondary"
+        fontSize="14px"
+        fontWeight={600}
+        fontFamily="IBM Plex Sans"
+        letterSpacing="0.08em"
       >
-        {/* Drifting Starship — from landing page 404 */}
-        <Box
-          sx={{
-            animation: "drift 8s ease-in-out infinite",
-            mb: 1,
-            "@keyframes drift": {
-              "0%, 100%": { transform: "translate(0, 0) rotate(0deg)" },
-              "25%": { transform: "translate(10px, -5px) rotate(2deg)" },
-              "50%": { transform: "translate(5px, 5px) rotate(-1deg)" },
-              "75%": { transform: "translate(-5px, -3px) rotate(1deg)" },
-            },
-          }}
-        >
-          <svg
-            width="160"
-            height="160"
-            viewBox="0 0 200 200"
-            fill="none"
-            stroke={strokeColor}
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            {/* Drifting starship */}
-            <g transform="rotate(-15, 100, 100)">
-              {/* Main hull */}
-              <path
-                d="M100 40 L130 80 L130 140 L100 170 L70 140 L70 80 Z"
-                strokeWidth="2"
-              />
-              {/* Cockpit */}
-              <ellipse cx="100" cy="70" rx="12" ry="18" />
-              <path d="M88 65 Q100 55 112 65" />
-              {/* Engine pods */}
-              <ellipse cx="80" cy="155" rx="6" ry="10" />
-              <ellipse cx="120" cy="155" rx="6" ry="10" />
-              {/* Engine glow (flickering) */}
-              <path d="M80 165 L80 175" strokeWidth="3" opacity="0.4">
-                <animate
-                  attributeName="opacity"
-                  values="0.2;0.5;0.2"
-                  dur="0.5s"
-                  repeatCount="indefinite"
-                />
-              </path>
-              <path d="M120 165 L120 175" strokeWidth="3" opacity="0.4">
-                <animate
-                  attributeName="opacity"
-                  values="0.2;0.5;0.2"
-                  dur="0.5s"
-                  repeatCount="indefinite"
-                  begin="0.25s"
-                />
-              </path>
-              {/* Wings */}
-              <path d="M70 85 L40 70 L35 75 L35 100 L40 105 L70 95" />
-              <path d="M130 85 L160 70 L165 75 L165 100 L160 105 L130 95" />
-              {/* Wing tips */}
-              <circle cx="35" cy="75" r="3" fill={strokeColor} />
-              <circle cx="165" cy="75" r="3" fill={strokeColor} />
-              {/* Hull details */}
-              <line x1="85" y1="100" x2="85" y2="130" opacity="0.5" />
-              <line x1="115" y1="100" x2="115" y2="130" opacity="0.5" />
-              <circle cx="100" cy="115" r="8" strokeDasharray="2 2" />
-            </g>
+        404
+      </Typography>
 
-            {/* Signal waves (searching) */}
-            <g>
-              <circle
-                cx="100"
-                cy="100"
-                r="60"
-                strokeDasharray="4 4"
-                opacity="0.2"
-              >
-                <animate
-                  attributeName="r"
-                  values="48;72;48"
-                  dur="3s"
-                  repeatCount="indefinite"
-                />
-                <animate
-                  attributeName="opacity"
-                  values="0.3;0;0.3"
-                  dur="3s"
-                  repeatCount="indefinite"
-                />
-              </circle>
-              <circle
-                cx="100"
-                cy="100"
-                r="80"
-                strokeDasharray="4 4"
-                opacity="0.15"
-              >
-                <animate
-                  attributeName="r"
-                  values="64;96;64"
-                  dur="3s"
-                  repeatCount="indefinite"
-                  begin="1s"
-                />
-                <animate
-                  attributeName="opacity"
-                  values="0.3;0;0.3"
-                  dur="3s"
-                  repeatCount="indefinite"
-                  begin="1s"
-                />
-              </circle>
-              <circle
-                cx="100"
-                cy="100"
-                r="95"
-                strokeDasharray="4 4"
-                opacity="0.1"
-              >
-                <animate
-                  attributeName="r"
-                  values="76;114;76"
-                  dur="3s"
-                  repeatCount="indefinite"
-                  begin="2s"
-                />
-                <animate
-                  attributeName="opacity"
-                  values="0.3;0;0.3"
-                  dur="3s"
-                  repeatCount="indefinite"
-                  begin="2s"
-                />
-              </circle>
-            </g>
+      <Typography
+        component="h1"
+        color="text.primary"
+        fontSize={{ xs: "20px", sm: "24px" }}
+        fontWeight={600}
+        lineHeight={1.3}
+        fontFamily="IBM Plex Sans"
+      >
+        Page not found
+      </Typography>
 
-            {/* Question mark orbit */}
-            <g>
-              <text
-                x="165"
-                y="55"
-                fontSize="24"
-                fill={strokeColor}
-                opacity="0.4"
-                fontFamily="monospace"
-              >
-                ?
-              </text>
-              <animateTransform
-                attributeName="transform"
-                type="rotate"
-                from="0 100 100"
-                to="360 100 100"
-                dur="10s"
-                repeatCount="indefinite"
-              />
-            </g>
-          </svg>
-        </Box>
+      <Typography
+        color="text.secondary"
+        fontSize="13px"
+        lineHeight={1.6}
+        fontFamily="IBM Plex Sans"
+      >
+        This page does not exist, or your role does not have access to it.
+      </Typography>
 
-        {/* 404 Code */}
+      <Button
+        component={RouterLink}
+        href="/"
+        size="small"
+        variant="contained"
+        color="primary"
+        sx={{
+          mt: 1,
+        }}
+      >
+        <Iconify
+          icon="solar:alt-arrow-left-linear"
+          width="15px"
+          height="15px"
+        />
         <Typography
-          color="primary.main"
-          fontSize={{ xs: "72px", sm: "96px" }}
-          fontWeight={300}
-          lineHeight={1}
+          fontSize="12px"
           fontFamily="IBM Plex Sans"
-          letterSpacing="-0.04em"
-          sx={{ userSelect: "none" }}
-        >
-          404
-        </Typography>
-
-        {/* Headline */}
-        <Typography
-          color="text.primary"
-          fontSize={{ xs: "22px", sm: "28px" }}
           fontWeight={600}
-          lineHeight={1.3}
-          fontFamily="IBM Plex Sans"
-          textAlign="center"
+          ml="5px"
         >
-          Lost in deep space
+          Back to home
         </Typography>
-
-        {/* Funny message */}
-        <Typography
-          color="text.secondary"
-          fontWeight={400}
-          fontFamily="IBM Plex Sans"
-          textAlign="center"
-          fontSize="15px"
-          fontStyle="italic"
-          lineHeight={1.6}
-          maxWidth="450px"
-        >
-          &ldquo;{funnyMessage}&rdquo;
-        </Typography>
-
-        {/* Mission Log */}
-        <Box
-          sx={{
-            bgcolor: "background.neutral",
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: "8px",
-            p: 2,
-            width: "100%",
-            maxWidth: "340px",
-            fontFamily: "monospace",
-            fontSize: "12px",
-            boxShadow: (theme) =>
-              theme.palette.mode === "dark"
-                ? "0 0 0 1px rgba(255, 255, 255, 0.03), 0 4px 20px -4px rgba(0, 0, 0, 0.5)"
-                : "0 1px 3px rgba(0,0,0,0.08)",
-          }}
-        >
-          <Typography
-            fontFamily="monospace"
-            fontSize="11px"
-            color="text.disabled"
-            mb={1}
-          >
-            {"// MISSION LOG"}
-          </Typography>
-          <Typography
-            fontFamily="monospace"
-            fontSize="12px"
-            color="text.secondary"
-            component="div"
-          >
-            <Box component="span" color="error.main">
-              ERROR:
-            </Box>{" "}
-            Route not found
-            <br />
-            <Box component="span" color="text.secondary">
-              STATUS:
-            </Box>{" "}
-            Navigation failure
-            <br />
-            <Box component="span" color="text.secondary">
-              ACTION:
-            </Box>{" "}
-            Return to base
-          </Typography>
-        </Box>
-
-        {/* CTA */}
-        <Button
-          component={RouterLink}
-          href="/"
-          size="small"
-          variant="contained"
-          color="primary"
-          sx={{
-            textTransform: "none",
-            borderRadius: "8px",
-            px: "24px",
-            py: "6px",
-            boxShadow: 0,
-            mt: 1,
-          }}
-        >
-          <Iconify icon="ion:chevron-back" width="15px" height="15px" />
-          <Typography
-            fontSize="12px"
-            fontFamily="IBM Plex Sans"
-            fontWeight={600}
-            ml="5px"
-          >
-            Back to home
-          </Typography>
-        </Button>
-      </Box>
+      </Button>
     </Box>
-  );
-};
+  </Box>
+);
 
 export default NotFoundView;

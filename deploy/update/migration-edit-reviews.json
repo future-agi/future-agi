@@ -1,0 +1,390 @@
+{
+  "schema_version": 1,
+  "reviews": [
+    {
+      "path": "futureagi/accounts/migrations/0015_backfill_rbac_data.py",
+      "before_sha256": [
+        "75957ce4825a5699428c40915474681046334140b92291a1ea4ccb59eb19ab3c"
+      ],
+      "after_sha256": "f37e52da9e395565bf2ed2002bc4512ac00032f6333b2c26f9f7b15489369167",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/accounts/migrations/0020_reseed_broken_demo_data.py",
+      "before_sha256": [
+        "122f436c01e2c1f77e87fc384bcf22295ccc41333959fd2b26363e04ac7a2c1d",
+        "25559c29d648484085795219c5954ce69149b311841d346baf4cc944729b274b"
+      ],
+      "after_sha256": "7cf73555e33b59c069cec844072a61d3c28a4b9205d91527dc3db3fa1b3baa4b",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/accounts/migrations/0022_backfill_ws_org_membership_fk.py",
+      "before_sha256": [
+        "5671ab847cb89ccb725c3e39d7b8ace128365142bc508ebdf2f9fa5529ed04d9"
+      ],
+      "after_sha256": "9c8d4f90c39d12fece2015bbc6dfd5a0779719e4c3444112d556d7cb8bec3ab3",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/accounts/migrations/0023_create_missing_org_memberships.py",
+      "before_sha256": [
+        "bef38f8f8820632c9b5cd8d2665aa160859185c5cf2afab07afa6814e398e314"
+      ],
+      "after_sha256": "7eb4f06c0934efa4a9fa5df22dfe388691d10cb801772cfbb36bd4c540315e42",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/agent_playground/migrations/0004_remove_graph_agent_playg_workspa_79211d_idx_and_more.py",
+      "before_sha256": [
+        "921ac7a6edc42692dddda7beb3419d68680c9782dbf8aa2d92df345476852c94"
+      ],
+      "after_sha256": "9b961f924bad0e99dbac7cefdda5d5ea9c2fb28a1b444250b9d526a06b159696",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0026_clear_stuck_ui_guardrails_encrypted_configs.py",
+      "before_sha256": [
+        "8ef0d436d8490493be04f2a683cd57d96e5a2c6a4d7260b0bbedb12c998ee08c"
+      ],
+      "after_sha256": "8846472e2fe6e20340b9e60638fb48e109292920ac6c320fdbf87559f9748fc5",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/agentcc/migrations/0028_drop_rejected_org_config_keys.py",
+      "before_sha256": [
+        "c3cb344550e1a0b96c6d656393dd0f9fdadf9f105f10d14e4f9bfac98931a2ad"
+      ],
+      "after_sha256": "59963d687b181d32bf7ae3bfd7c53d37808c3e0b869794ad9318ae8be5d07ba9",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/ee/falcon_ai/migrations/0007_global_builtin_skills.py",
+      "before_sha256": [
+        "9a69eed197729ef0c749afef64bdf862eba108c019802b7ea65f5a8726541a22"
+      ],
+      "after_sha256": "0186ca46e2659d7c7f57c71073f103a23f3f9d81442ecd292da7367e9c809519",
+      "reason": "Seeds from a frozen copy of its skill helpers inside the migrations package instead of the live loader, so later loader changes cannot change what this historical migration writes; also uses the migration's own connection. No schema operation changed."
+    },
+    {
+      "path": "futureagi/ee/falcon_ai/migrations/0008_seed_cluster_rca_skill.py",
+      "before_sha256": [
+        "b135390f205683191c8e4ccdaef8c643e3f2d75657852fd0b4d9717e01be39d7"
+      ],
+      "after_sha256": "fd74e579a148a3c409caf8695584b3ab05df3ccfdf15f7c010476dcb84f2489a",
+      "reason": "Seeds from a frozen copy of its skill helpers inside the migrations package instead of the live loader, so later loader changes cannot change what this historical migration writes; also uses the migration's own connection. No schema operation changed."
+    },
+    {
+      "path": "futureagi/ee/falcon_ai/migrations/0009_resync_builtin_skills.py",
+      "before_sha256": [
+        "3cd62bb37f025cd09fcb008bcf837bc42b1deb1b00170195363f61a042dd5ff4"
+      ],
+      "after_sha256": "a3b21c15e06b2c84e871ee07e7c41927f0e74c2ae83fb434813c70fb6415f1eb",
+      "reason": "Re-syncs from a frozen copy of its skill helpers inside the migrations package instead of the live loader, so later loader changes cannot change what this historical migration writes; also uses the migration's own connection. No schema operation changed."
+    },
+    {
+      "path": "futureagi/ee/usage/migrations/0015_backfill_plan_and_wallet_credits.py",
+      "before_sha256": [
+        "21b66d71d5fba423deb186981f6ca3067be99cefd49afda65586cac7aaa8fad3"
+      ],
+      "after_sha256": "806b82bef10117e3c128bcea659f0576e1a3baa779ca3532e7ad1950d0a321c9",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/ee/usage/migrations/0023_unlock_features_free_tier.py",
+      "before_sha256": [
+        "7aa40a81caf08b5955f71f614af692624ee4e4e4127c7a8f0946597e80e034ee"
+      ],
+      "after_sha256": "0af587767f53c5992cf070394689eff351a9bc15cf97f68d306375bf91290314",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/integrations/migrations/0004_integrationconnection_uq_intconn_org_ws_action_only_active.py",
+      "before_sha256": [
+        "d14ae3405e78f3a256c72d7d5dc3964b670ff23a03d84e04b0ce7ba511874ea3"
+      ],
+      "after_sha256": "6b19a4c9af7038fc96ebe997a794ee0151689120a216c507c6e442d96641b758",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0059_clear_uc_session_ids_from_row_metadata.py",
+      "before_sha256": [
+        "48e962438e14e7f5ae38da13d84855183486821e9e6734a69c261f1d5563572f"
+      ],
+      "after_sha256": "d2ac5c91b3c3c8c52f218e1c45add7243bcb5cd48dc31da2e3e1785d16d64a8d",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0062_ttsvoice_score.py",
+      "before_sha256": [
+        "cd16c3afad58d5289c209c0434a0e62e63bea64d9b17b70a4c9351b74eeed300"
+      ],
+      "after_sha256": "a53e10d8c2c3c390bfcdfe51ce0faccef63004bafe6cc641d4377371552f4ccd",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0070_migrate_assigned_to_m2m.py",
+      "before_sha256": [
+        "08da1d704ae8c1b417b6b2dd957f4bd0d8ac56b4b8493f3de9a11f41356d68c3"
+      ],
+      "after_sha256": "381ab856cf177ff2242bd8dc8943346c0a55fe79757a4681e25d786d7af76eca",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0077_add_eval_type.py",
+      "before_sha256": [
+        "e4563fc9e61217f436bab4bbf3a7182057852411143a8a460b163689838707cd"
+      ],
+      "after_sha256": "5516f91a50c7ca23c1ad983a6138acfeeaf29e5a2033b9a86e4400d257b6b153",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0092_annotationqueueannotator_roles.py",
+      "before_sha256": [
+        "ee6d6bc80685c69d06c52bacea968fe012946c0fe5e3561ad444294e60256205"
+      ],
+      "after_sha256": "f4745fbb8511e760710562e2976df5786f69147e64f0e689668a7fd4f1b58bb4",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0094_queueitemreviewthread.py",
+      "before_sha256": [
+        "4b1b2f57671d6aa8d5f72b9bc247488cd2907bd022a7468ec52e16a87f7c3703"
+      ],
+      "after_sha256": "39d1571a98e366f0eb5c53759d4b97be8432202ec29f18e72930be5ecca28543",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0099_backfill_empty_eval_template_versions.py",
+      "before_sha256": [
+        "99ab2b705bbd7f225ed30b9f2ec5706d697d14e46dc6686dd529eb36711c37ec"
+      ],
+      "after_sha256": "1e53696add76a1d51fe0dac3097943b8032caaa65191c1c6a40413c72a35f16f",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0101_backfill_composite_v1_config_snapshots.py",
+      "before_sha256": [
+        "482a1d973de5846d8d541c29f40825dfbcad604ec421a222f04e98f50ebd64e6"
+      ],
+      "after_sha256": "b188c9fe63ab5506af1363e095b428a6b06a1b091132ad5828252c3bc7836f44",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0101_canonicalize_automation_rule_filter_fields.py",
+      "before_sha256": [
+        "a9a7b1ab2545b4ac5f4d9c3746608d36f747cb403157e8db60374ce91034713e"
+      ],
+      "after_sha256": "007360d0aab155700f4868c49c70eb688383111e50e511171ed0db081345ed38",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0102_canonicalize_performance_report_filters.py",
+      "before_sha256": [
+        "1b48fc0495e5ec0af897e99202241002d4afd8d65109bcecc924dadd65ac9268"
+      ],
+      "after_sha256": "377456761eb7210e451124bb9c287fa3e0075c0d7ebd74abb11270944716dab4",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0112_eval_ground_truth_tenant_scope.py",
+      "before_sha256": [
+        "b0088ad7f591e8f90d3f01798329fea3b87fa9f386973bece1aa3a8100286fe3"
+      ],
+      "after_sha256": "c773c12f6e276961295547d3b35ded59178db987edd29cde36413059f35eb3f8",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0114_backfill_eval_version_is_default.py",
+      "before_sha256": [
+        "750c37928b1009991b88e7c8bc1b9d8a6527a5dccf979d8be93793e4b2b8cc1c"
+      ],
+      "after_sha256": "337f01e3e1066735d204612793db8cb20daa0b68938242f1a7e9684243659667",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0115_eval_usage_version_backfill.py",
+      "before_sha256": [
+        "7de2a1ae24738d37904d09d37e007218cdc2fdd522eb793c983be5c306c5071b"
+      ],
+      "after_sha256": "f1e99b8d0ea50bb7541dc94bdb23e6838a74bf39481e9a78fcd3fd6076d978a6",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0117_backfill_queueitem_project.py",
+      "before_sha256": [
+        "9e5c9c6c99b7e54c848b5231c9f7ede66c0d6fc058f3001b4571d13c9a20fc3d"
+      ],
+      "after_sha256": "00a4ce61769ee3258100bf920c6703fef092273c335c1c919d117e8b6838e884",
+      "reason": "Looks up each queue item's session with include_overlay=False and prints a line when a session cannot be resolved, instead of skipping it silently; also uses the migration's own connection. No schema operation changed."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0120_backfill_score_tracer_project.py",
+      "before_sha256": [
+        "ab170e47801663978da0267a126b5fccc9840a8b0e95f67f186b75f82c817525"
+      ],
+      "after_sha256": "423bbad11f557b9789f98b943076c4aa05ca79b718a3f8bd0cd8ac0a63abdc19",
+      "reason": "Passes the migration's own connection into the backfill helper, so the backfill runs on default_direct when PG_DIRECT_HOST is set instead of on the pooled default connection. No schema operation changed."
+    },
+    {
+      "path": "futureagi/model_hub/migrations/0122_backfill_queueitem_source_preview.py",
+      "before_sha256": [
+        "352d578f499b6c670e61dd9a354a38394d8015eeb3b9a4c917472abe9fe6aecb"
+      ],
+      "after_sha256": "dc735057374553056808f236fed1bfa57c7b924722a6148d2956638431822ef1",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/simulate/migrations/0044_agentdefinition_webhook_secret.py",
+      "before_sha256": [
+        "a01843189101ba77919d34855e480e71a7bf530654c891c0fbed5e5df29cdd6b"
+      ],
+      "after_sha256": "d1324f48aadcef7e56765c1f8682ae0ae6ad6b7b582d832429c1005cd4c59e6e",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/simulate/migrations/0046_remove_agentdefinition_webhook_secret.py",
+      "before_sha256": [
+        "2531c277c4c4aa52ebb3c1899392ee976d76756b90c2266e994bc13e7a8d7f5d"
+      ],
+      "after_sha256": "e6f7e228e6ec993bf0899e6eae1db0d3803b7fac5580df50ca9dc14dab6691ef",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/simulate/migrations/0047_agentdefinition_authentication_method_and_more.py",
+      "before_sha256": [
+        "ad964e19dfb10647af1ac8cd50890c554293dd1c28f956d59f5e6c5ea0c161c4"
+      ],
+      "after_sha256": "e418562416f90506b9675831fd91eb5e1895afd5390c26988b4ff307ac9080df",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/simulate/migrations/0063_remove_callexecution_logurl_and_more.py",
+      "before_sha256": [
+        "6ebf5bbc6fea3beef9546d0b5a03fcc4b46791b6fd502d9b518188f511de4665"
+      ],
+      "after_sha256": "92c23870570aa7225d8448844f847584004ebbef94254931cc3fae07c7fc83ec",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/simulate/migrations/0071_provider_credentials.py",
+      "before_sha256": [
+        "6ed5768f5ae125eb096825a25ac52f113a3cf158f8536e70efde8dc424893074"
+      ],
+      "after_sha256": "d7bfff9639d276c6f282dc45115ae0393b4a88934d0914b3dd96d5deabbb4a33",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/simulate/migrations/0074_canonicalize_simulate_eval_config_filters.py",
+      "before_sha256": [
+        "f8affa4dc8a93673254fdbe785f805cf4d80b4157d281a3fd0dde7a9805fdf18"
+      ],
+      "after_sha256": "fad5729a48aada2043b469862997ad57aa3f5dec5467c014a9e56fdc9fbc7911",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/simulate/migrations/0076_backfill_provider_credentials.py",
+      "before_sha256": [
+        "f003d0bf8578669f689cf315c5abd4269a66626b8afeda5d5eb6ff54f028354e"
+      ],
+      "after_sha256": "0feaaf2e92741e32adaee1efbf4e77137081c05fbd73558ef7f791ee8aad86a7",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/simulate/migrations/0087_hostedharnessjob_content_updated_at.py",
+      "before_sha256": [
+        "0851f2a5e25cd428064c5b4d3b029e945d94645ccd2a05b2cb567cea8e7f36c7"
+      ],
+      "after_sha256": "a507f40fe3946bc694924839dfd7c5eccceed609c47d4f9f124bf68de3ddc52e",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/simulate/migrations/0088_hostedharnessjob_name.py",
+      "before_sha256": [
+        "0b318ce59ee80c1ae1914ce041674d4bcc1d1c24c98f16483d8ef12dff5ad536"
+      ],
+      "after_sha256": "403900cd8f7fae1545bde58fedd754af3822387c5851c1f193fa318f98449f55",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/tracer/migrations/0032_auto_20251030_1000.py",
+      "before_sha256": [
+        "e0db5c060462d5ca18279dbf14bd0f041356d23df51afcaaaa1accbc8d45d004"
+      ],
+      "after_sha256": "8325b4a36d3c3c5725a14252d0c6ca7bee0df85eeb3b6fba0133e7897163f3a8",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/tracer/migrations/0076_canonicalise_filter_ops.py",
+      "before_sha256": [
+        "bc964a9aef968c7b4626e181e4169eb03610f4358a443ded452083bba882ba17"
+      ],
+      "after_sha256": "83124311d022e837858eb52432e37075516ae6b06eda1098b50f0b567f35b945",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/tracer/migrations/0078_canonicalize_persisted_filter_contracts.py",
+      "before_sha256": [
+        "7d80b70b97ab623e36882b222b383960226a1d628776bbc6ce38f3b70f3f071e"
+      ],
+      "after_sha256": "45c52acbd541bba6e0172d43fbf14322b54ac67cbf5122c931530e8bfb5a65cd",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/tracer/migrations/0079_backfill_skipped_reason.py",
+      "before_sha256": [
+        "649973dda4ef9ffccb7b77b1251b9da0c180f237e4ddc3d5284a14e0125a9f9e"
+      ],
+      "after_sha256": "8db7b827526eb6050c55dc358ae87f0168a14e8d5980755358c2c5297196c938",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/tracer/migrations/0081_rename_eval_task_filters_key.py",
+      "before_sha256": [
+        "b336fc29cd8a883af981ac0a496c40bda65789e27c41615c983d4806bfc65b89"
+      ],
+      "after_sha256": "d30c16c7156bebf182ecb638a5aa0f4b37b762ae8b41dc14e8baf038a2c9a3f2",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/tracer/migrations/0084_rewrite_latency_ms_refs.py",
+      "before_sha256": [
+        "0c3836b660ef8c383a9554df347662f62704682667a145d24021b3e203abc1ce"
+      ],
+      "after_sha256": "cadf113cbec0c67dac9a64476d777fb3c0c2274bcea8d695eae11cfa33720ced",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/tracer/migrations/0087_eval_entry_baseline_backfill.py",
+      "before_sha256": [
+        "8fe6b87ac2c38ab26a749a4420b57a942ed455c9a471c39eb3aca76f9aa48080"
+      ],
+      "after_sha256": "e94fa16f4c4f1ea5a199b02e70d21e38fec838ed87f594256c5a572a81620435",
+      "reason": "Passes the migration's own connection into the backfill helper, so the backfill runs on default_direct when PG_DIRECT_HOST is set instead of on the pooled default connection. No schema operation changed."
+    },
+    {
+      "path": "futureagi/tracer/migrations/0094_canonicalize_dashboard_widget_configs.py",
+      "before_sha256": [
+        "f2324c060fd824ec4931c5f26c04ce371d09e0173e66f65682ebe2ed284149b5"
+      ],
+      "after_sha256": "afbf077d72b4a8ff209667f000ea46c691996a4b4d751cd3ca6c1cd80020414a",
+      "reason": "Threads the migration's own connection (schema_editor.connection.alias) through its helper calls and save(using=...), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/tracer/migrations/0094_normalize_eval_task_filter_casing.py",
+      "before_sha256": [
+        "fb29245acccc2e408bee15572fa929fb2734987ed5526e15f3c360f73db50945"
+      ],
+      "after_sha256": "04c2ec9fce70cdc12d4965dd47ad064cce22d19ed60e7ea5fcc5fe06066dbca7",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    },
+    {
+      "path": "futureagi/tracer/migrations/0096_repair_scanner_cluster_error_count.py",
+      "before_sha256": [
+        "31a76b03fa726af492508cfe102370264c0526b6a36bd1a243b27ba94f08976c"
+      ],
+      "after_sha256": "e265b9979d2180e824bd7cf88e7cda31b04d2979a6c708d9eac359f689c79d85",
+      "reason": "Its queries now run on the migration's own connection (schema_editor.connection.alias), so it reads and writes on default_direct when PG_DIRECT_HOST is set (hosted, and Helm with postgres.pooler.enabled). No operation, table or column changed; on a single connection it behaves exactly as before."
+    }
+  ]
+}

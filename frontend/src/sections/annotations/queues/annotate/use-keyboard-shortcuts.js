@@ -1,29 +1,32 @@
 import { useEffect } from "react";
+// Focus guards live in utils/keyboard-guards.js (one keymap, PRODUCT-SPEC §4.1).
+import { isSafeForSingleKey } from "src/utils/keyboard-guards";
 
-const isTextInput = (el) => {
-  const tag = el?.tagName?.toLowerCase();
-  return tag === "input" || tag === "textarea" || el?.isContentEditable;
-};
+/**
+ * iterate r3 G3 merge: ↓ / ↑ are next / previous on every keymap surface,
+ * review included (the `?` sheet shows J / ↓), so they move items here too;
+ * they stay with a widget that handled them already (a tree) or uses them
+ * itself (a radio group, listbox, menu, tree or grid).
+ */
+const ownsVerticalArrows = (e, focused) =>
+  e.defaultPrevented ||
+  (focused?.tagName === "INPUT" && focused.type === "radio") ||
+  !!focused?.closest?.(
+    '[role="radiogroup"], [role="tree"], [role="treegrid"], [role="grid"], [role="listbox"], [role="menu"]',
+  );
 
-/** Returns true when the focused element is safe for single-key shortcuts
- *  (body only — avoids accidental triggers on MUI Sliders, Ratings, etc.). */
-const isSafeForSingleKey = (el) => {
-  if (!el || el === document.body) return true;
-  // Block all interactive or focusable elements
-  const tag = el.tagName?.toLowerCase();
-  if (tag === "button" || tag === "a" || tag === "select") return false;
-  if (isTextInput(el)) return false;
-  // Block elements with role or tabindex (MUI Slider, Rating, etc.)
-  if (el.getAttribute("role") || el.hasAttribute("tabindex")) return false;
-  return true;
-};
-
+/**
+ * Review workspace keys (§4.1): ⌘↵ / ⌘S submit, S skip, ←/→, ↑/↓ and K/J
+ * previous / next, Esc exit, ? the shortcut sheet. Single keys only fire
+ * from safe contexts (never while typing).
+ */
 export default function useKeyboardShortcuts({
   onSubmit,
   onSkip,
   onPrev,
   onNext,
   onEscape,
+  onHelp,
   canPrev = true,
   canNext = true,
 }) {
@@ -37,6 +40,7 @@ export default function useKeyboardShortcuts({
         onSubmit?.();
         return;
       }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       // Remaining single-key shortcuts only fire from safe contexts
       if (!isSafeForSingleKey(focused)) return;
@@ -48,17 +52,36 @@ export default function useKeyboardShortcuts({
           onSkip?.();
           break;
         case "ArrowLeft":
+        case "k":
+        case "K":
           // Suppress native arrow scroll even at the boundary; only gate the nav.
           e.preventDefault();
           if (canPrev) onPrev?.();
           break;
         case "ArrowRight":
+        case "j":
+        case "J":
           e.preventDefault();
           if (canNext) onNext?.();
           break;
-        case "Escape":
+        case "ArrowUp":
+        case "ArrowDown":
+          if (ownsVerticalArrows(e, focused)) break;
+          // Like ← / →: no native scroll, even at the boundary.
           e.preventDefault();
-          onEscape?.();
+          if (e.key === "ArrowUp") {
+            if (canPrev) onPrev?.();
+          } else if (canNext) onNext?.();
+          break;
+        case "?":
+          if (!onHelp) break;
+          e.preventDefault();
+          onHelp();
+          break;
+        case "Escape":
+          if (!onEscape) break;
+          e.preventDefault();
+          onEscape();
           break;
         default:
           break;
@@ -67,5 +90,5 @@ export default function useKeyboardShortcuts({
 
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [onSubmit, onSkip, onPrev, onNext, onEscape, canPrev, canNext]);
+  }, [onSubmit, onSkip, onPrev, onNext, onEscape, onHelp, canPrev, canNext]);
 }

@@ -1,3 +1,6 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (span-type encodings) */
+import { formatExactMoney } from "src/sections/common/format/money";
+import { isIncompleteCost, monetaryCostLabel } from "./common";
 /**
  * AgentGraph — Aggregate agent DAG visualization
  *
@@ -23,9 +26,12 @@ import {
   useNodesState,
   useEdgesState,
   useReactFlow,
+  useNodesInitialized,
+  useStore,
   Handle,
   Position,
   MarkerType,
+  getViewportForBounds,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import Dagre from "@dagrejs/dagre";
@@ -47,13 +53,47 @@ const DIFF_STATUS = {
   PASS_ONLY_GHOST: "pass-only-ghost",
   MATCHED_REGRESSED: "matched-regressed",
   MATCHED: "matched",
+  // Two-run overlay (experiments): A = baseline run, B = the
+  // other run. The ring takes the run's colour from `data._diffColor`.
+  ONLY_A: "only-a",
+  ONLY_B: "only-b",
+  BOTH: "both",
+  BOTH_REGRESSED: "both-regressed",
 };
+const RUN_DIFF_STATUSES = new Set([
+  DIFF_STATUS.ONLY_A,
+  DIFF_STATUS.ONLY_B,
+  DIFF_STATUS.BOTH,
+  DIFF_STATUS.BOTH_REGRESSED,
+]);
 
 // Amber regression accent — not a 1:1 palette token yet, kept local.
 const DIFF_REGRESSED_COLOR = "#F5A623";
 
 // `_isFailurePoint` is the headline and takes priority over diff status.
-const getDiffOverlay = (diffStatus, isFailurePoint) => {
+// Two-run statuses also return the visit chip `2× · 1×` from
+// `_visits = {a, b}`; every other status returns `visits: null`.
+export const getDiffOverlay = (diffStatus, isFailurePoint, data = {}) => {
+  if (RUN_DIFF_STATUSES.has(diffStatus)) {
+    const v = data?._visits;
+    const visits =
+      v && (Number.isFinite(v.a) || Number.isFinite(v.b))
+        ? `${v.a ?? 0}× · ${v.b ?? 0}×`
+        : null;
+    if (isFailurePoint)
+      return { ringColor: errorPalette.main, badge: "✕", label: "Failed", visits }; // prettier-ignore
+    const runColor = data?._diffColor ?? "#64748b";
+    switch (diffStatus) {
+      case DIFF_STATUS.ONLY_A:
+        return { ringColor: runColor, badge: "A", label: null, visits };
+      case DIFF_STATUS.ONLY_B:
+        return { ringColor: runColor, badge: "B", label: null, visits };
+      case DIFF_STATUS.BOTH_REGRESSED:
+        return { ringColor: DIFF_REGRESSED_COLOR, badge: "Δ", label: null, visits }; // prettier-ignore
+      default:
+        return { ringColor: null, badge: null, label: null, visits };
+    }
+  }
   if (isFailurePoint) {
     return { ringColor: errorPalette.main, badge: "✕", label: "Failed" };
   }
@@ -75,30 +115,42 @@ const getDiffOverlay = (diffStatus, isFailurePoint) => {
 // Node type → color + icon
 // ---------------------------------------------------------------------------
 const TYPE_COLORS = {
-  agent: { text: "#7c3aed", icon: "mdi:robot-outline", label: "Agent" },
-  llm: { text: "#2563eb", icon: "mdi:brain", label: "LLM" },
-  generation: { text: "#2563eb", icon: "mdi:brain", label: "Generation" },
-  tool: { text: "#16a34a", icon: "mdi:wrench-outline", label: "Tool" },
-  retriever: { text: "#0d9488", icon: "mdi:magnify", label: "Retriever" },
-  chain: { text: "#c026d3", icon: "mdi:link-variant", label: "Chain" },
-  embedding: { text: "#ea580c", icon: "mdi:vector-square", label: "Embedding" },
+  agent: { text: "#7857FC", icon: "solar:bot-linear", label: "Agent" },
+  llm: { text: "#2563eb", icon: "solar:brain-linear", label: "LLM" },
+  generation: {
+    text: "#2563eb",
+    icon: "solar:brain-linear",
+    label: "Generation",
+  },
+  tool: { text: "#16a34a", icon: "solar:toolbox-linear", label: "Tool" },
+  retriever: {
+    text: "#0d9488",
+    icon: "solar:magnifier-linear",
+    label: "Retriever",
+  },
+  chain: { text: "#c026d3", icon: "solar:link-linear", label: "Chain" },
+  embedding: {
+    text: "#ea580c",
+    icon: "solar:graph-linear",
+    label: "Embedding",
+  },
   guardrail: {
     text: "#dc2626",
-    icon: "mdi:shield-check-outline",
+    icon: "solar:shield-check-linear",
     label: "Guardrail",
   },
   aggregate: {
     text: "#71717a",
-    icon: "mdi:dots-horizontal-circle-outline",
+    icon: "solar:menu-dots-linear",
     label: "Aggregate",
   },
   unknown: {
     text: "#6b7280",
-    icon: "mdi:help-circle-outline",
+    icon: "solar:question-circle-linear",
     label: "Unknown",
   },
-  start: { text: "#16a34a", icon: "mdi:play-circle-outline", label: "Start" },
-  end: { text: "#dc2626", icon: "mdi:stop-circle-outline", label: "Stop" },
+  start: { text: "#16a34a", icon: "solar:play-circle-linear", label: "Start" },
+  end: { text: "#dc2626", icon: "solar:stop-circle-linear", label: "Stop" },
 };
 
 // Derive bg (alpha 0.08) and border (alpha 0.24) from the text color at runtime
@@ -151,13 +203,37 @@ const AgentNode = ({ data }) => {
   // over diff status (a failed node is the headline, not a diff cue).
   const diffStatus = data._diffStatus;
   const isFailurePoint = !!data._isFailurePoint;
-  const isGhost = diffStatus === DIFF_STATUS.PASS_ONLY_GHOST;
+  // The baseline-only side of a two-run overlay is a ghost too.
+  const isGhost =
+    diffStatus === DIFF_STATUS.PASS_ONLY_GHOST ||
+    diffStatus === DIFF_STATUS.ONLY_A;
 
   const {
-    ringColor: diffRingColor,
+    ringColor: overlayRingColor,
     badge: diffBadge,
     label: diffBadgeLabel,
-  } = getDiffOverlay(diffStatus, isFailurePoint);
+    visits: visitChip,
+  } = getDiffOverlay(diffStatus, isFailurePoint, data);
+  // Additive, inert when absent: `_heat` 0–1 tints the ring red
+  // by failure share (Paths), `_loops` ≥ 2 shows `↻ 2×`, `_selected` rings
+  // the selected node.
+  const heat = Number.isFinite(data._heat) && data._heat > 0 ? data._heat : 0;
+  // IT-R5 G4 P1 (additive, inert when absent): `_status` rings a step
+  // green (ok) or red (error) when no diff or heat colour applies.
+  const statusRing =
+    data._status === "error"
+      ? errorPalette.main
+      : data._status === "ok"
+        ? success.main
+        : null;
+  const diffRingColor =
+    overlayRingColor ??
+    (heat
+      ? alpha(errorPalette.main, 0.25 + 0.75 * Math.min(1, heat))
+      : statusRing);
+  const loops =
+    Number.isFinite(data._loops) && data._loops > 1 ? data._loops : 0;
+  const isSelectedNode = data._selected === true;
 
   // Tooltip: name, duration/tokens side-by-side, cost, eval bars, annotations
   const evals = data.evals || [];
@@ -203,7 +279,7 @@ const AgentNode = ({ data }) => {
         <Box>
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "rgba(255,255,255,0.5)",
               fontWeight: 500,
             }}
@@ -217,7 +293,7 @@ const AgentNode = ({ data }) => {
         <Box>
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "rgba(255,255,255,0.5)",
               fontWeight: 500,
             }}
@@ -227,17 +303,19 @@ const AgentNode = ({ data }) => {
           <Typography sx={{ fontSize: 12, color: "#fff", fontWeight: 600 }}>
             {data.total_tokens > 0
               ? `${data.total_tokens.toLocaleString()} tok`
-              : "—"}
+              : data._wrap
+                ? "not reported"
+                : "—"}
           </Typography>
         </Box>
       </Box>
 
       {/* Cost */}
-      {(data.total_cost > 0 || data.avg_cost > 0) && (
+      {(data.cost_coverage || data.total_cost > 0 || data.avg_cost > 0) && (
         <Box sx={{ px: 1.25, pt: 0.25 }}>
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "rgba(255,255,255,0.5)",
               fontWeight: 500,
             }}
@@ -245,7 +323,14 @@ const AgentNode = ({ data }) => {
             Estimated LLM cost
           </Typography>
           <Typography sx={{ fontSize: 12, color: "#fff", fontWeight: 600 }}>
-            ${(data.total_cost || data.avg_cost || 0).toFixed(4)}
+            {isIncompleteCost(data.cost_coverage)
+              ? monetaryCostLabel(
+                  data.total_cost ?? data.avg_cost,
+                  data.cost_coverage,
+                )
+              : formatExactMoney(data.total_cost ?? data.avg_cost, {
+                  minimumFractionDigits: 4,
+                })}
           </Typography>
         </Box>
       )}
@@ -255,7 +340,7 @@ const AgentNode = ({ data }) => {
         <Box sx={{ px: 1.25, pt: 0.25 }}>
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "rgba(255,255,255,0.5)",
               fontWeight: 500,
             }}
@@ -273,7 +358,7 @@ const AgentNode = ({ data }) => {
         <Box sx={{ px: 1.25, pt: 0.25 }}>
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "rgba(255,255,255,0.5)",
               fontWeight: 500,
             }}
@@ -299,7 +384,7 @@ const AgentNode = ({ data }) => {
         >
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "rgba(255,255,255,0.5)",
               fontWeight: 500,
               mb: 0.5,
@@ -318,11 +403,11 @@ const AgentNode = ({ data }) => {
                     mb: 0.15,
                   }}
                 >
-                  <Typography sx={{ fontSize: 10, color: "#fff" }}>
+                  <Typography sx={{ fontSize: 12, color: "#fff" }}>
                     {ev.name}
                   </Typography>
                   <Typography
-                    sx={{ fontSize: 10, color: "#fff", fontWeight: 600 }}
+                    sx={{ fontSize: 12, color: "#fff", fontWeight: 600 }}
                   >
                     {Math.round(ev.score)}%
                   </Typography>
@@ -367,7 +452,7 @@ const AgentNode = ({ data }) => {
         >
           <Typography
             sx={{
-              fontSize: 10,
+              fontSize: 12,
               color: "rgba(255,255,255,0.5)",
               fontWeight: 500,
               mb: 0.25,
@@ -384,19 +469,19 @@ const AgentNode = ({ data }) => {
                 py: 0.15,
               }}
             >
-              <Typography sx={{ fontSize: 10, color: "#fff" }}>
+              <Typography sx={{ fontSize: 12, color: "#fff" }}>
                 {ann.label_name ||
                   ann.annotation_label_name ||
                   `Annotation ${i + 1}`}
               </Typography>
-              <Typography sx={{ fontSize: 10, color: "#fff", fontWeight: 600 }}>
+              <Typography sx={{ fontSize: 12, color: "#fff", fontWeight: 600 }}>
                 {ann.score != null ? `${ann.score}` : ann.value || "—"}
               </Typography>
             </Box>
           ))}
           {annotations.length > 3 && (
             <Typography
-              sx={{ fontSize: 9, color: "rgba(255,255,255,0.4)", mt: 0.25 }}
+              sx={{ fontSize: 12, color: "rgba(255,255,255,0.4)", mt: 0.25 }}
             >
               +{annotations.length - 3} more
             </Typography>
@@ -432,6 +517,9 @@ const AgentNode = ({ data }) => {
         size="small"
         placement="top"
         title={tooltipContent}
+        // IT-R2 (additive, `_wrap` only): the card closes as the pointer
+        // moves off the node (never sticks over the toolbar).
+        {...(data._wrap ? { disableInteractive: true } : {})}
       >
         <Box
           sx={{
@@ -455,36 +543,35 @@ const AgentNode = ({ data }) => {
             bgcolor: isSentinel
               ? "transparent"
               : isFailurePoint
-                ? (theme) =>
-                    alpha(
-                      "#DB2F2D",
-                      theme.palette.mode === "dark" ? 0.12 : 0.06,
-                    )
+                ? "status.danger.bg"
                 : "background.paper",
             boxShadow: (theme) => {
-              const base = isSentinel
-                ? "none"
-                : `0 1px 3px ${alpha(theme.palette.common.black, 0.06)}`;
-              if (!diffRingColor) return base;
+              // DS uses a flat surface; selection and diff halos are state cues.
+              if (isSelectedNode) {
+                const selection = `0 0 0 3px ${theme.palette.primary.main}`;
+                if (!diffRingColor) return selection;
+                const haloAlpha = isFailurePoint ? 0.35 : 0.22;
+                const haloRadius = isFailurePoint ? 4 : 3;
+                return `${selection}, 0 0 0 ${haloRadius}px ${alpha(diffRingColor, haloAlpha)}`;
+              }
+              if (!diffRingColor) return "none";
               // Outer halo so the diff status reads at a glance even when
               // the graph is zoomed out. Failure points get a stronger halo.
               const haloAlpha = isFailurePoint ? 0.35 : 0.22;
               const haloRadius = isFailurePoint ? 4 : 3;
               const halo = `0 0 0 ${haloRadius}px ${alpha(diffRingColor, haloAlpha)}`;
-              return base === "none" ? halo : `${halo}, ${base}`;
+              return halo;
             },
             minWidth: isSentinel ? 44 : 80,
             justifyContent: isSentinel ? "center" : "flex-start",
             cursor: isSentinel ? "default" : "pointer",
             // Ghosts read as semi-transparent without losing the badge.
             opacity: isGhost ? 0.6 : isDimmed ? 0.3 : 1,
-            transition: "all 0.15s ease",
+            transition: "all 150ms ease",
             "&:hover": isSentinel
               ? {}
               : {
-                  boxShadow: (theme) =>
-                    `0 0 0 2px ${diffRingColor ?? color.border}, 0 2px 8px ${alpha(theme.palette.common.black, 0.1)}`,
-                  transform: "scale(1.03)",
+                  boxShadow: `0 0 0 2px ${diffRingColor ?? color.border}`,
                   opacity: 1,
                 },
           }}
@@ -497,26 +584,31 @@ const AgentNode = ({ data }) => {
             <Box
               sx={{
                 position: "absolute",
-                top: -8,
-                right: -6,
+                // IT-R2 (additive, `_wrap` only = prototype readable graphs):
+                // the badge sits beside the node, never over its label.
+                ...(data._wrap
+                  ? {
+                      top: "50%",
+                      left: "calc(100% + 6px)",
+                      transform: "translateY(-50%)",
+                    }
+                  : { top: -8, right: -6 }),
                 minWidth: 16,
                 height: 16,
                 px: diffBadgeLabel ? 0.65 : 0.5,
                 gap: diffBadgeLabel ? 0.3 : 0,
-                borderRadius: "9px",
+                borderRadius: "8px",
                 bgcolor: diffRingColor,
                 color: (theme) => theme.palette.common.white,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: 9.5,
-                fontWeight: 700,
+                fontSize: 12,
+                fontWeight: 600,
                 lineHeight: 1,
                 fontFamily: "ui-monospace, SFMono-Regular, monospace",
                 letterSpacing: "0.02em",
-                textTransform: "uppercase",
-                boxShadow: (theme) =>
-                  `0 1px 4px ${alpha(theme.palette.common.black, 0.25)}`,
+                textTransform: "none",
                 pointerEvents: "none",
                 whiteSpace: "nowrap",
               }}
@@ -531,25 +623,106 @@ const AgentNode = ({ data }) => {
             color={color.text}
           />
           <Box sx={{ overflow: "hidden" }}>
+            {/* IT-R1 (additive, inert unless `_wrap`): up to 2 lines of
+                about 24 characters; the full name is in the tooltip. */}
             <Typography
-              noWrap
+              noWrap={!data._wrap}
               sx={{
                 fontWeight: 600,
                 fontSize: isSentinel ? 10 : 12,
                 color: color.text,
                 lineHeight: 1.2,
-                maxWidth: 100,
+                maxWidth: data._wrap && !isSentinel ? WRAP_LABEL_W : 100,
+                ...(data._wrap && !isSentinel
+                  ? {
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                      wordBreak: "break-word",
+                    }
+                  : {}),
               }}
             >
-              {data.name}
+              {data._wrap && !isSentinel
+                ? String(data.name).replace(/_/g, "_\u200b")
+                : data.name}
             </Typography>
-            {/* Show span count directly on the node for non-sentinel */}
-            {!isSentinel && data.span_count > 0 && (
+            {!isSentinel && !data._subtitle && data._model ? (
+              // IT-R5 G4 P1 (additive): the step's model as a small chip.
               <Typography
-                sx={{ fontSize: 9, color: "text.disabled", lineHeight: 1 }}
+                noWrap
+                data-testid="graph-node-model"
+                sx={{
+                  display: "inline-block",
+                  fontSize: 10,
+                  lineHeight: 1.3,
+                  px: 0.5,
+                  mt: 0.25,
+                  borderRadius: "4px",
+                  bgcolor: "action.hover",
+                  color: "text.secondary",
+                  maxWidth: data._wrap ? WRAP_LABEL_W : 100,
+                }}
               >
-                {data.span_count.toLocaleString()} spans
+                {data._model}
               </Typography>
+            ) : null}
+            {!isSentinel && data._subtitle ? (
+              <Typography
+                noWrap
+                sx={{
+                  fontSize: 10,
+                  color: "text.secondary",
+                  lineHeight: 1.2,
+                  maxWidth: data._wrap ? WRAP_LABEL_W : 100,
+                }}
+              >
+                {data._subtitle}
+              </Typography>
+            ) : null}
+            {/* Show span count directly on the node for non-sentinel */}
+            {!isSentinel && data._meta ? (
+              // IT-R5 G4 P1 (additive): `×7 · 2.6 s · 1,081 tok`.
+              <Typography
+                data-testid="graph-node-meta"
+                sx={{
+                  fontSize: 10.5,
+                  color: "text.secondary",
+                  lineHeight: 1.25,
+                  fontVariantNumeric: "tabular-nums",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {data._meta}
+              </Typography>
+            ) : null}
+            {!isSentinel && visitChip ? (
+              <Typography
+                data-visit-chip={visitChip}
+                sx={{
+                  fontSize: 12,
+                  color: "text.secondary",
+                  lineHeight: 1,
+                  fontVariantNumeric: "tabular-nums",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {visitChip}
+                {loops ? ` · ↻ ${loops}×` : ""}
+              </Typography>
+            ) : (
+              !isSentinel &&
+              !data._meta &&
+              data.span_count > 0 && (
+                <Typography
+                  sx={{ fontSize: 9, color: "text.disabled", lineHeight: 1 }}
+                >
+                  {data.span_count.toLocaleString()}{" "}
+                  {data.span_count === 1 ? "span" : "spans"}
+                  {loops ? ` · ↻ ${loops}×` : ""}
+                </Typography>
+              )
             )}
           </Box>
         </Box>
@@ -626,6 +799,13 @@ const rankAtEarliestLevel = (g) => {
   });
 };
 
+// IT-R1 (additive): wrapped labels need a wider, taller node box.
+const WRAP_LABEL_W = 172;
+const nodeBox = (node) =>
+  node.data?._wrap
+    ? { w: 212, h: node.data?._meta ? 76 : 62 }
+    : { w: 140, h: 44 };
+
 const layoutGraph = (nodes, edges, direction = "LR") => {
   const ranksep = direction === "LR" ? 80 : 50;
   const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
@@ -641,9 +821,10 @@ const layoutGraph = (nodes, edges, direction = "LR") => {
   nodes.forEach((node) => {
     if (stopIds.has(node.id)) return;
     const isSentinel = node.data?.type === "start";
+    const box = nodeBox(node);
     g.setNode(node.id, {
-      width: isSentinel ? SENTINEL_WIDTH : 140,
-      height: isSentinel ? SENTINEL_HEIGHT : 44,
+      width: isSentinel ? SENTINEL_WIDTH : box.w,
+      height: isSentinel ? SENTINEL_HEIGHT : box.h,
     });
     laidOutIds.push(node.id);
   });
@@ -657,7 +838,11 @@ const layoutGraph = (nodes, edges, direction = "LR") => {
 
   return nodes.map((node) => {
     const pos = stopIds.has(node.id) ? stop : g.node(node.id);
-    return { ...node, position: { x: pos.x - 70, y: pos.y - 22 } };
+    const box = nodeBox(node);
+    return {
+      ...node,
+      position: { x: pos.x - box.w / 2, y: pos.y - box.h / 2 },
+    };
   });
 };
 
@@ -741,7 +926,12 @@ const assertCanonicalGraph = (graphData) => {
   });
 };
 
-export const buildFlowData = (graphData, direction = "LR", theme = null) => {
+export const buildFlowData = (
+  graphData,
+  direction = "LR",
+  theme = null,
+  { wrapLabels = false } = {},
+) => {
   assertCanonicalGraph(graphData);
   if (!graphData.nodes.length) return { nodes: [], edges: [] };
 
@@ -768,6 +958,7 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
     data: {
       ...node,
       _direction: direction,
+      ...(wrapLabels ? { _wrap: true } : {}),
     },
     position: { x: 0, y: 0 },
     connectable: false,
@@ -812,15 +1003,58 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
         },
         label: "SKIPPED PATH",
         labelStyle: {
-          fontSize: 9,
+          fontSize: 12,
           fill: "#fff",
-          fontWeight: 700,
-          letterSpacing: "0.04em",
+          fontWeight: 600,
+          letterSpacing: 0,
         },
         labelBgStyle: { fill: skippedColor, fillOpacity: 0.95 },
         labelBgPadding: [5, 3],
         labelBgBorderRadius: 4,
         zIndex: 5,
+      };
+    }
+
+    // Additive, inert when absent: two-run overlay edges take
+    // the run colour (`_diffColor`; A-only paths dashed, like ghosts), and
+    // `_label` replaces the `×n` label (Paths: `18 · all fail`).
+    if (RUN_DIFF_STATUSES.has(edge._diffStatus) || edge._label) {
+      const runColor =
+        edge._diffStatus === "both" || !edge._diffColor
+          ? strokeColor
+          : edge._diffColor;
+      const markerColor =
+        edge._diffStatus === "both" || !edge._diffColor
+          ? edgeColor
+          : edge._diffColor;
+      const label =
+        edge._label ?? (count > 1 && edge._diffStatus ? `×${count}` : null);
+      return {
+        id: `e-${idx}`,
+        source: edge.source,
+        target: edge.target,
+        type: "default",
+        animated: false,
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: markerColor,
+          width: 9,
+          height: 9,
+        },
+        style: {
+          stroke: runColor,
+          strokeWidth: Math.max(1.2, Math.round(thickness * 10) / 10),
+          ...(edge._diffStatus === "only-a"
+            ? { strokeDasharray: "6 4", opacity: 0.6 }
+            : {}),
+        },
+        ...(label && {
+          label,
+          labelStyle: { fontSize: 9, fill: edgeColor, fontWeight: 600 },
+          labelBgStyle: { fill: labelBgColor, fillOpacity: 0.95 },
+          labelBgPadding: [3, 2],
+          labelBgBorderRadius: 3,
+        }),
       };
     }
 
@@ -841,9 +1075,11 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
         strokeWidth: Math.round(thickness * 10) / 10,
       },
       // Show transition count on edges with > 1 transition
-      ...(count > 1 && {
-        label: `×${count}`,
-        labelStyle: { fontSize: 9, fill: edgeColor, fontWeight: 500 },
+      ...((count > 1 || isIncompleteCost(edge.cost_coverage)) && {
+        label: isIncompleteCost(edge.cost_coverage)
+          ? `×${count} · ${monetaryCostLabel(null, edge.cost_coverage)}`
+          : `×${count}`,
+        labelStyle: { fontSize: 12, fill: edgeColor, fontWeight: 500 },
         labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
         labelBgPadding: [3, 2],
       }),
@@ -855,9 +1091,10 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
 };
 
 // ---------------------------------------------------------------------------
-// Zoom controls — top-right, appear on hover
+// Zoom controls — top-right, appear on hover or keyboard focus. They stay
+// mounted (hidden while idle) so Tab can reach them.
 // ---------------------------------------------------------------------------
-const ZoomControls = ({ isFullscreen, onToggleFullscreen }) => {
+const ZoomControls = ({ isFullscreen, onToggleFullscreen, revealed }) => {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const btnSx = {
     p: 0.5,
@@ -879,31 +1116,38 @@ const ZoomControls = ({ isFullscreen, onToggleFullscreen }) => {
         border: "1px solid",
         borderColor: "divider",
         borderRadius: "6px",
-        boxShadow: (theme) =>
-          `0 1px 3px ${alpha(theme.palette.common.black, 0.06)}`,
         overflow: "hidden",
+        opacity: revealed ? 1 : 0,
+        pointerEvents: revealed ? "auto" : "none",
+        "&:focus-within": { opacity: 1, pointerEvents: "auto" },
       }}
     >
       <IconButton
         size="small"
+        aria-label="Zoom in"
+        title="Zoom in"
         onClick={() => zoomIn({ duration: 200 })}
         sx={btnSx}
       >
-        <Iconify icon="mdi:plus" width={14} />
+        <Iconify icon="solar:add-linear" width={14} />
       </IconButton>
       <IconButton
         size="small"
+        aria-label="Zoom out"
+        title="Zoom out"
         onClick={() => zoomOut({ duration: 200 })}
         sx={btnSx}
       >
-        <Iconify icon="mdi:minus" width={14} />
+        <Iconify icon="solar:minus-linear" width={14} />
       </IconButton>
       <IconButton
         size="small"
+        aria-label="Fit to view"
+        title="Fit to view"
         onClick={() => fitView({ duration: 300, padding: 0.3 })}
         sx={btnSx}
       >
-        <Iconify icon="mdi:crosshairs-gps" width={14} />
+        <Iconify icon="solar:target-linear" width={14} />
       </IconButton>
       <IconButton
         size="small"
@@ -912,7 +1156,11 @@ const ZoomControls = ({ isFullscreen, onToggleFullscreen }) => {
         sx={btnSx}
       >
         <Iconify
-          icon={isFullscreen ? "mdi:fullscreen-exit" : "mdi:fullscreen"}
+          icon={
+            isFullscreen
+              ? "solar:quit-full-screen-linear"
+              : "solar:full-screen-linear"
+          }
           width={14}
         />
       </IconButton>
@@ -923,11 +1171,95 @@ const ZoomControls = ({ isFullscreen, onToggleFullscreen }) => {
 ZoomControls.propTypes = {
   isFullscreen: PropTypes.bool,
   onToggleFullscreen: PropTypes.func,
+  revealed: PropTypes.bool,
 };
 
 // ---------------------------------------------------------------------------
 // AgentGraph component
 // ---------------------------------------------------------------------------
+// A long graph fitted into a laptop-height box shrinks its labels below
+// reading size. With `readableMinZoom` the graph keeps that zoom, starts at
+// its top (Start) and pans on scroll.
+const READABLE_PAD = 0.2;
+// React Flow's zoom floor: its first fit and Fit to view stop here.
+const FIT_FLOOR_ZOOM = 0.3;
+// The zoom a top-to-bottom graph opens at when its caller sets none and
+// React Flow's plain fit would stop at FIT_FLOOR_ZOOM. Such a graph is cut
+// at the pane edges and its 12 px labels draw under 4 px. At this zoom they
+// draw at 11 px (as in DiffGraph), with Start at the top. Every graph that
+// fits at or above the floor keeps React Flow's view.
+const DEFAULT_READABLE_ZOOM = 0.92;
+// `onlyBelow`: take over only when React Flow's plain fit is below this
+// zoom. Without it, below `minZoom` (the graph does not fit at that zoom).
+const ReadableViewport = ({ minZoom, fitWidth = false, onlyBelow }) => {
+  const initialized = useNodesInitialized();
+  const nodeCount = useStore((s) => s.nodes.length);
+  const domNode = useStore((s) => s.domNode);
+  const { getNodes, getNodesBounds, setViewport } = useReactFlow();
+  useEffect(() => {
+    if (!initialized || !domNode) return;
+    const b = getNodesBounds(getNodes());
+    const W = domNode.clientWidth;
+    const H = domNode.clientHeight;
+    if (!b?.width || !b?.height || !W || !H) return;
+    // IT-R5 G4 P1 (additive, `fitWidth` only): fit the bounding-box WIDTH,
+    // never below the reading zoom; a tall graph starts at its top and pans.
+    if (fitWidth) {
+      const z = Math.max(minZoom, Math.min(W / (b.width + 48), 1));
+      const tall = b.height * z + 32 > H;
+      const tooWide = b.width * z + 32 > W;
+      const first =
+        getNodes().find((n) => n.data?.type === "start") ?? getNodes()[0];
+      const fw = first?.width ?? first?.measured?.width ?? 0;
+      const cx = tooWide
+        ? (first?.position?.x ?? b.x) + fw / 2
+        : b.x + b.width / 2;
+      setViewport({
+        x: W / 2 - cx * z,
+        y: tall ? 16 - b.y * z : H / 2 - (b.y + b.height / 2) * z,
+        zoom: z,
+      });
+      return;
+    }
+    // The zoom React Flow's plain fit lands on (same padding and cap, no
+    // floor), so a graph it fits keeps exactly that view.
+    const fit = getViewportForBounds(b, W, H, 0, 1.3, READABLE_PAD).zoom;
+    if (fit >= (onlyBelow ?? minZoom)) return;
+    // Too big to fit at a reading size: keep the zoom, start at the top and
+    // centre the first node (Start) when the graph is wider than the pane,
+    // so no node is cut at the left edge first (IT-R1).
+    const first =
+      getNodes().find((n) => n.data?.type === "start") ?? getNodes()[0];
+    const fw = first?.width ?? first?.measured?.width ?? 0;
+    const cx =
+      b.width * minZoom + 32 <= W
+        ? b.x + b.width / 2
+        : (first?.position?.x ?? b.x) + fw / 2;
+    setViewport({
+      x: W / 2 - cx * minZoom,
+      y: 16 - b.y * minZoom,
+      zoom: minZoom,
+    });
+  }, [
+    initialized,
+    domNode,
+    nodeCount,
+    minZoom,
+    fitWidth,
+    onlyBelow,
+    getNodes,
+    getNodesBounds,
+    setViewport,
+  ]);
+  return null;
+};
+
+ReadableViewport.propTypes = {
+  minZoom: PropTypes.number.isRequired,
+  fitWidth: PropTypes.bool,
+  onlyBelow: PropTypes.number,
+};
+
 const AgentGraphInner = ({
   data,
   isLoading,
@@ -937,15 +1269,27 @@ const AgentGraphInner = ({
   onNodeClick,
   isFullscreen = false,
   onToggleFullscreen,
+  readableMinZoom: readableMinZoomProp,
+  wrapLabels = false,
+  fitAll = false,
+  fitWidth = false,
+  expandLabel,
 }) => {
   const theme = useTheme();
+  // IT-R1 (additive): `fitAll` = show the whole graph, even below the
+  // reading minimum (the user pressed Fit).
+  const readableMinZoom = fitAll ? undefined : readableMinZoomProp;
+  // A top-to-bottom graph whose caller sets no zoom opens readable only
+  // when React Flow's plain fit would stop at its floor (a long trace).
+  const readableByDefault =
+    readableMinZoomProp == null && !fitAll && direction === "TB";
   const [isHovering, setIsHovering] = useState(false);
   const { nodes: layoutNodes, edges: layoutEdges } = useMemo(
     () =>
       isLoading || isError || !data
         ? { nodes: [], edges: [] }
-        : buildFlowData(data, direction, theme),
-    [data, direction, isError, isLoading, theme],
+        : buildFlowData(data, direction, theme, { wrapLabels }),
+    [data, direction, isError, isLoading, theme, wrapLabels],
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutNodes);
@@ -1059,7 +1403,7 @@ const AgentGraphInner = ({
             transform: "translateX(-50%)",
             bgcolor: "background.paper",
             px: 1,
-            borderRadius: 0.5,
+            borderRadius: "4px",
             whiteSpace: "nowrap",
           }}
         >
@@ -1085,17 +1429,64 @@ const AgentGraphInner = ({
           }
         }}
         fitView
-        fitViewOptions={{ padding: 0.2, maxZoom: 1.3 }}
-        minZoom={0.3}
+        fitViewOptions={{
+          // IT-R2 (additive): a fitted graph (`fitAll`) uses a thin margin,
+          // so the labels stay at reading size while everything fits.
+          padding: fitAll ? 0.06 : READABLE_PAD,
+          maxZoom: 1.3,
+          ...(readableMinZoom && !isFullscreen
+            ? { minZoom: readableMinZoom }
+            : {}),
+        }}
+        panOnScroll={Boolean(readableMinZoom) && !isFullscreen}
+        minZoom={FIT_FLOOR_ZOOM}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
       >
-        {(isHovering || isFullscreen) && (
-          <ZoomControls
-            isFullscreen={isFullscreen}
-            onToggleFullscreen={onToggleFullscreen}
+        {readableMinZoom && !isFullscreen ? (
+          <ReadableViewport minZoom={readableMinZoom} fitWidth={fitWidth} />
+        ) : null}
+        {readableByDefault && !isFullscreen ? (
+          <ReadableViewport
+            minZoom={DEFAULT_READABLE_ZOOM}
+            onlyBelow={FIT_FLOOR_ZOOM}
           />
-        )}
+        ) : null}
+        {/* IT-R1 (additive, inert when absent): an always-visible Expand. */}
+        {expandLabel && !isFullscreen && !isHovering ? (
+          <Box
+            component="button"
+            type="button"
+            onClick={onToggleFullscreen}
+            data-testid="agent-graph-expand"
+            sx={{
+              position: "absolute",
+              top: 8,
+              right: 8,
+              zIndex: 10,
+              display: "flex",
+              alignItems: "center",
+              gap: 0.5,
+              px: 1,
+              height: 26,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "6px",
+              bgcolor: "background.paper",
+              color: "text.primary",
+              typography: "s3",
+              cursor: "pointer",
+            }}
+          >
+            <Iconify icon="mdi:arrow-expand" width={14} />
+            {expandLabel}
+          </Box>
+        ) : null}
+        <ZoomControls
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={onToggleFullscreen}
+          revealed={isHovering || isFullscreen}
+        />
       </ReactFlow>
     </Box>
   );
@@ -1110,6 +1501,11 @@ AgentGraphInner.propTypes = {
   onNodeClick: PropTypes.func,
   isFullscreen: PropTypes.bool,
   onToggleFullscreen: PropTypes.func,
+  readableMinZoom: PropTypes.number,
+  wrapLabels: PropTypes.bool,
+  fitAll: PropTypes.bool,
+  fitWidth: PropTypes.bool,
+  expandLabel: PropTypes.string,
 };
 
 const AgentGraph = (props) => (
@@ -1135,6 +1531,11 @@ AgentGraph.propTypes = {
   pollingPaused: PropTypes.bool,
   direction: PropTypes.oneOf(["LR", "TB"]),
   onNodeClick: PropTypes.func,
+  readableMinZoom: PropTypes.number,
+  wrapLabels: PropTypes.bool,
+  fitAll: PropTypes.bool,
+  fitWidth: PropTypes.bool,
+  expandLabel: PropTypes.string,
 };
 
 export default AgentGraph;

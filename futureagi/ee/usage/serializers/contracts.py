@@ -631,9 +631,26 @@ class StripeWebhookResponseSerializer(serializers.Serializer):
 
 
 class UsagePeriodQuerySerializer(StrictInputSerializer):
+    """Usage overview is organization-wide, not workspace-filterable."""
+
     period = serializers.RegexField(regex=r"^\d{4}-\d{2}$", required=False)
     period_end = serializers.RegexField(regex=r"^\d{4}-\d{2}$", required=False)
-    workspace_id = serializers.UUIDField(required=False)
+
+    def allows_unknown_field(self, field_name):
+        # Let the serializer explain this retired parameter instead of the
+        # shared request validator overwriting its error with "Unknown field."
+        return field_name == "workspace_id"
+
+    def to_internal_value(self, data):
+        if hasattr(data, "keys") and "workspace_id" in data:
+            raise serializers.ValidationError(
+                {
+                    "workspace_id": [
+                        "Usage overview is organization-wide; workspace_id is not supported."
+                    ]
+                }
+            )
+        return super().to_internal_value(data)
 
 
 class UsageDimensionPeriodQuerySerializer(StrictInputSerializer):

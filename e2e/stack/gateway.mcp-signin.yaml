@@ -1,0 +1,63 @@
+# Gateway profile mcp-signin (E2E_GATEWAY_PROFILE=mcp-signin, Standalone only; e2e/lib/profile.ts).
+# Exactly e2e/stack/gateway.e2e.yaml deep-merged with MCP_SIGNIN_DELTA: everything mcp is, and the gateway an
+# OAuth resource server for MCP clients of the console's own authorization server (Django). The managed-mock inspector
+# refuses this file if it is anything else, and an offline case in harness/walk-harness.spec.ts
+# fails as soon as it drifts: when gateway.e2e.yaml changes, rewrite this file as that merge
+# (lib/profile.ts profileConfig). What the profile needs from the head it runs on is in
+# e2e/stack/gateway-profiles.json; bin/e2e refuses it on a head that lacks it. The comments in
+# gateway.e2e.yaml apply here unchanged.
+server:
+  port: 8080
+  host: 0.0.0.0
+  read_timeout: 5s
+  write_timeout: 300s
+  idle_timeout: 120s
+  shutdown_timeout: 30s
+  max_request_body_size: 10485760
+  default_request_timeout: 60s
+providers:
+  openai:
+    base_url: http://mock-llm:8080
+    api_key: e2e-mock
+    api_format: openai
+    default_timeout: 60s
+    max_concurrent: 100
+    conn_pool_size: 100
+    models:
+      - gpt-4o
+      - gpt-4o-mini
+      - gpt-4-turbo
+      - gpt-3.5-turbo
+      - o1
+      - o1-mini
+      - turing_flash
+  fagi-managed:
+    base_url: http://mock-llm:8080
+    api_key: e2e-mock
+    api_format: openai
+    type: openrouter
+    managed: true
+    auto_discover: false
+    default_timeout: 60s
+    max_concurrent: 100
+    conn_pool_size: 100
+managed:
+  markup_percent: 5
+  require_credits: true
+  grant_only_credits: true
+  require_redis: false
+  catalog_refresh: 0s
+logging:
+  level: info
+guardrails:
+  enabled: true
+mcp:
+  enabled: true
+  state_keys:
+    - e2e-only-mcp-state-key-not-a-secret-0000
+  public_url: http://localhost:8090
+  oauth:
+    enabled: true
+    issuer: http://localhost:8100/agentcc/mcp-oauth
+connectors:
+  catalog_dir: /opt/e2e/mcp/catalog

@@ -1,22 +1,27 @@
 import React, { useState, useCallback, useMemo } from "react";
-import {
-  Box,
-  CircularProgress,
-  Divider,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Divider, Stack, Typography } from "@mui/material";
 import { useParams } from "react-router-dom";
 import { useGetExecutions } from "src/api/agent-playground/agent-playground";
 import ExecutionsList from "./ExecutionsList";
 import ExecutionDetailView from "./ExecutionDetailView";
+import ContentSkeleton from "src/components/content-skeleton";
+import ErrorState from "src/components/error-state";
 
 export default function Executions() {
   const { agentId } = useParams();
   const [selectedExecutionId, setSelectedExecutionId] = useState(null);
 
-  const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage } =
-    useGetExecutions(agentId);
+  const {
+    data,
+    isLoading,
+    isError,
+    isPaused,
+    isFetching,
+    refetch,
+    isFetchingNextPage,
+    fetchNextPage,
+    hasNextPage,
+  } = useGetExecutions(agentId);
 
   const executions = useMemo(
     () =>
@@ -45,8 +50,23 @@ export default function Executions() {
           height: "100%",
         }}
       >
-        <CircularProgress size={28} />
+        <ContentSkeleton variant="rows" />
       </Box>
+    );
+  }
+
+  // A first load that failed, or is waiting for a connection, is not
+  // "No executions yet": runs may well exist. Executions already loaded stay
+  // on screen if a later page fails.
+  if (!data && (isError || isPaused)) {
+    return (
+      <ErrorState
+        role="alert"
+        title="Couldn't load executions"
+        detail="Try again. If it keeps failing, check your connection."
+        onRetry={() => refetch()}
+        retrying={isFetching}
+      />
     );
   }
 

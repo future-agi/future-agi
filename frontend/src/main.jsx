@@ -4,14 +4,16 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
 import "./utils/apexchartsCompat";
+import { importWithRecovery } from "./utils/chunkRecovery";
+import { configureLocalMonaco } from "./utils/localMonaco";
 
-// Self-hosted Inter font — loads from bundle, no external request to Google Fonts
-import "@fontsource/inter/400.css";
-import "@fontsource/inter/500.css";
-import "@fontsource/inter/600.css";
-import "@fontsource/inter/700.css";
+configureLocalMonaco();
+
+// Self-hosted WOFF2 faces, including the editor's IBM Plex Sans.
+import "./assets/fonts/fonts.css";
 
 import App from "./app";
+import "./launch/installLaunchGuard"; // L6: launch builds refuse DSX-only paths
 import { bootstrapSamlSession } from "./auth/saml-bootstrap";
 import { SplashScreen } from "./components/loading-screen";
 import {
@@ -20,11 +22,26 @@ import {
   MasterDetailModule,
   MenuModule,
   RichSelectModule,
+  RowGroupingModule,
   ServerSideRowModelApiModule,
   ServerSideRowModelModule,
   StatusBarModule,
 } from "ag-grid-enterprise";
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
+import {
+  AllCommunityModule,
+  ModuleRegistry,
+  provideGlobalGridOptions,
+} from "ag-grid-community";
+
+// Grid themes must use our bundled faces, even when they describe a Google font.
+// Set the pager locale here too: a later global setter would replace this guard.
+provideGlobalGridOptions(
+  {
+    loadThemeGoogleFonts: false,
+    localeText: { pageSizeSelectorLabel: "Rows per page:" },
+  },
+  "deep",
+);
 
 ModuleRegistry.registerModules([
   AllCommunityModule,
@@ -36,16 +53,24 @@ ModuleRegistry.registerModules([
   MenuModule,
   ClipboardModule,
   CellSelectionModule,
+  // Experiments tab groups runs by experiment (PRODUCT-SPEC C16/C21).
+  RowGroupingModule,
 ]);
+
 import { LicenseManager } from "ag-grid-enterprise";
 import {
+  AG_GRID_LICENSE_KEY,
   CURRENT_ENVIRONMENT,
   GOOGLE_SITE_KEY,
   HOST_API,
   SENTRY_DSN,
 } from "./config-global";
-import { worker } from "./_mock/api/browser";
 import * as Sentry from "@sentry/react";
+import { guardSentryTransport } from "./sections/omega/embed/telemetry/sentry-replay-transport";
+import {
+  redactEmbedSecrets,
+  scrubEmbedSecrets,
+} from "./sections/omega/embed/telemetry/guard";
 import logger from "./utils/logger";
 import { GoogleReCaptchaProvider } from "react-google-recaptcha-v3";
 import { initPostHog } from "./utils/PostHog";
@@ -53,6 +78,13 @@ import { initGoogleAds } from "./utils/googleAds";
 import { initReddit } from "./utils/redditAds";
 import { initTwitter } from "./utils/twitterAds";
 import { applyTranslationDomGuard } from "./utils/translationDomGuard";
+import {
+  SENTRY_REPLAY_BLOCK_SELECTORS,
+  sentryBeforeAddRecordingEvent,
+  sentryBeforeBreadcrumb,
+  sentryScrubEvent,
+  sentryShouldTraceRequest,
+} from "./sections/omega/embed/telemetry/sdk-guards";
 
 applyTranslationDomGuard();
 
@@ -109,6 +141,8 @@ const SENTRY_IGNORE_ERRORS = [
 
 Sentry.init({
   dsn: SENTRY_DSN,
+  transport: (options) =>
+    guardSentryTransport(Sentry.makeFetchTransport(options)),
   // Do not attach IP/user PII automatically; user context is set explicitly
   // (and scrubbed) by the logger where it is actually needed.
   sendDefaultPii: false,
@@ -116,17 +150,34 @@ Sentry.init({
   release: import.meta.env.VITE_APP_VERSION || undefined,
   integrations: [
     Sentry.browserTracingIntegration({
+      // 9.28.1 emits INP as standalone spans, outside beforeSendTransaction.
+      // Disable that producer; the span hook and transport remain defenses.
+      enableInp: false,
+      beforeStartSpan: (options) => ({
+        ...options,
+        name: redactEmbedSecrets(options.name),
+      }),
       // Don't instrument third-party marketing/analytics beacons (Google Ads,
       // GTM, GA, Reddit/Twitter pixels) — their repeated conversion pings get
       // flagged as N+1 API-call perf issues even though they aren't app fetches.
+      // Nor requests to a server on the user's computer (a local Studio).
       shouldCreateSpanForRequest: (url) =>
         !/(?:googleadservices|googletagmanager|google-analytics|doubleclick|googlesyndication|redditstatic|reddit\.com|ads-twitter|t\.co|analytics\.twitter)\.com/i.test(
           url,
-        ),
+        ) && sentryShouldTraceRequest(url),
     }),
     // Mask text and media in session replays so we never stream customer
-    // content (prompts, PII, uploads) to a third party.
-    Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true }),
+    // content (prompts, PII, uploads) to a third party. Omega frames are
+    // blocked, and nothing is recorded on the pages that hold them.
+    Sentry.replayIntegration({
+      // Meta events bypass beforeAddRecordingEvent in Sentry 9.28.1. Keep the
+      // envelope readable for the fail-closed transport scrubber above.
+      useCompression: false,
+      maskAllText: true,
+      blockAllMedia: true,
+      block: [...SENTRY_REPLAY_BLOCK_SELECTORS],
+      beforeAddRecordingEvent: sentryBeforeAddRecordingEvent,
+    }),
   ],
   // 100% tracing in production is expensive and noisy; sample at 10% there and
   // keep full fidelity in lower environments. Override via VITE_SENTRY_TRACES_SAMPLE_RATE.
@@ -162,8 +213,12 @@ Sentry.init({
       ),
     );
     if (fromSessionRecorder) return null;
-    return event;
+    return sentryScrubEvent(event);
   },
+  // No connect fragment or local-server URL in any breadcrumb or transaction.
+  beforeBreadcrumb: sentryBeforeBreadcrumb,
+  beforeSendTransaction: sentryScrubEvent,
+  beforeSendSpan: scrubEmbedSecrets,
 });
 
 // Initialize PostHog (autocapture, session replay, web vitals)
@@ -178,15 +233,20 @@ initReddit();
 // Initialize Twitter (X) pixel (no-op if env vars are unset)
 initTwitter();
 
+// Mock requests require an explicit development opt-in. Static environment
+// checks keep the mock server and its dependencies out of built bundles.
 if (
-  CURRENT_ENVIRONMENT === "local" &&
-  import.meta.env.VITE_ENABLE_MSW !== "false"
+  import.meta.env.DEV &&
+  import.meta.env.VITE_ENVIRONMENT === "local" &&
+  import.meta.env.VITE_ENABLE_MSW === "true"
 ) {
   logger.debug("STARTING MOCK SERVER");
-  worker.start({ onUnhandledRequest: "bypass" });
+  importWithRecovery(() => import("./_mock/api/browser"))
+    .then(({ worker }) => worker.start({ onUnhandledRequest: "bypass" }))
+    .catch((error) => logger.error("Mock server failed to start:", error));
 }
 
-LicenseManager.setLicenseKey(import.meta.env.VITE_AG_GRID_LICENSE_KEY);
+LicenseManager.setLicenseKey(AG_GRID_LICENSE_KEY);
 
 // Register service worker in production
 if (CURRENT_ENVIRONMENT !== "local" && "serviceWorker" in navigator) {
@@ -245,16 +305,21 @@ if (CURRENT_ENVIRONMENT !== "local" && "serviceWorker" in navigator) {
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 
+// SAML sign-in hands the session over in the URL; consume it before the first
+// render (a no-op without ?auth=saml&sso_token=...).
 bootstrapSamlSession();
 
-root.render(
-  <HelmetProvider>
-    <BrowserRouter>
-      <GoogleReCaptchaProvider reCaptchaKey={GOOGLE_SITE_KEY}>
-        <Suspense fallback={<SplashScreen />}>
-          <App />
-        </Suspense>
-      </GoogleReCaptchaProvider>
-    </BrowserRouter>
-  </HelmetProvider>,
-);
+const renderApp = () =>
+  root.render(
+    <HelmetProvider>
+      <BrowserRouter>
+        <GoogleReCaptchaProvider reCaptchaKey={GOOGLE_SITE_KEY}>
+          <Suspense fallback={<SplashScreen />}>
+            <App />
+          </Suspense>
+        </GoogleReCaptchaProvider>
+      </BrowserRouter>
+    </HelmetProvider>,
+  );
+
+renderApp();

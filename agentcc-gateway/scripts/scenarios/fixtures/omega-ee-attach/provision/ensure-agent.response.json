@@ -1,0 +1,20 @@
+{
+  "http": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "body": {
+    "status": true,
+    "result": {
+      "vs_id": "vs_01K7CN5EEAGENTM0DE00000001",
+      "url": "https://gateway.example.com/mcp/v/vs_01K7CN5EEAGENTM0DE00000001",
+      "mode": "agent",
+      "workspace": "3f6c1e2a-8b4d-4c6e-9a1f-2b7d5e8c0a14",
+      "connection_id": "int_4f2a9c1e7b3d",
+      "created": true,
+      "agent_key_expires_at": "2027-01-19T23:00:00Z"
+    }
+  }
+}

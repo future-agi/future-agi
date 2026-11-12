@@ -2,8 +2,8 @@ eval_id: 31
 name: api_call
 description: Makes an API call and evaluates the response
 eval_tags:
-- Code
-- Output Validation
+  - Code
+  - Output Validation
 visible_ui: false
 permissions:
   allow_edit: false
@@ -12,7 +12,7 @@ output_type_normalized: pass_fail
 pass_threshold: 0.5
 config:
   required_keys:
-  - response
+    - response
   output: Pass/Fail
   eval_type_id: CustomCodeEval
   config:
@@ -31,15 +31,30 @@ config:
     payload: The payload to be sent with the API call
     headers: The headers to be sent with the API call
   code: |
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+
+    class _HttpOnlyRedirects(urllib.request.HTTPRedirectHandler):
+        """Follow a redirect only to another http or https URL."""
+
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            if urllib.parse.urlsplit(newurl).scheme.lower() not in ("http", "https"):
+                raise urllib.error.HTTPError(newurl, code, "Redirect to a URL that is not http or https", headers, fp)
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
     def evaluate(input, output, expected, context, **kwargs):
         import json
-        import urllib.request
         response = kwargs.get("response", output or "")
         url = kwargs.get("url", "")
         payload = kwargs.get("payload", {})
         headers = kwargs.get("headers", {})
         if not url:
             return {"score": 0.0, "reason": "No URL provided for API call"}
+        if urllib.parse.urlsplit(str(url)).scheme.lower() not in ("http", "https"):
+            return {"score": 0.0, "reason": "Only http and https URLs are supported."}
         try:
             if isinstance(payload, str):
                 payload = json.loads(payload)
@@ -53,7 +68,7 @@ config:
             req.add_header("Content-Type", "application/json")
             for key, value in (headers or {}).items():
                 req.add_header(key, value)
-            resp = urllib.request.urlopen(req, timeout=30)
+            resp = urllib.request.build_opener(_HttpOnlyRedirects).open(req, timeout=30)
             resp_body = resp.read().decode("utf-8")
             try:
                 result = json.loads(resp_body)

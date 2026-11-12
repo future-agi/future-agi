@@ -102,11 +102,19 @@ describe("EvalGroundTruth existing-dataset import", () => {
     mocks.upload.mockResolvedValue({ id: "ground-truth-1" });
   });
 
-  it("loads one 100-row page per click and uploads only after exact exhaustion", async () => {
+  it("loads every 100-row page from one Import click and uploads only after exact exhaustion", async () => {
+    let finishUpload;
+    mocks.upload.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishUpload = resolve;
+        }),
+    );
+    const onClose = vi.fn();
     render(
       <UploadDrawer
         open
-        onClose={vi.fn()}
+        onClose={onClose}
         templateId="template-1"
         evalVariables={[]}
       />,
@@ -115,9 +123,12 @@ describe("EvalGroundTruth existing-dataset import", () => {
     fireEvent.click(screen.getByText("Choose from existing dataset"));
     fireEvent.click(await screen.findByText("Reference data"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Load rows" }));
-    await screen.findByText("100 of 101 rows loaded");
-    expect(mocks.upload).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
+    expect(mocks.getDatasetPage).toHaveBeenCalledTimes(2);
+    expect(mocks.upload.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mocks.getDatasetPage.mock.invocationCallOrder[1],
+    );
     expect(mocks.getDatasetPage).toHaveBeenNthCalledWith(
       1,
       expect.stringContaining("/get-dataset-table/"),
@@ -132,7 +143,6 @@ describe("EvalGroundTruth existing-dataset import", () => {
       }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     await screen.findByText("101 of 101 rows loaded");
     expect(screen.getByText("Complete")).toBeInTheDocument();
     expect(mocks.getDatasetPage).toHaveBeenNthCalledWith(
@@ -148,8 +158,6 @@ describe("EvalGroundTruth existing-dataset import", () => {
       }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Import" }));
-    await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
     expect(mocks.upload).toHaveBeenCalledWith(
       expect.objectContaining({
         columns: ["answer"],
@@ -160,6 +168,9 @@ describe("EvalGroundTruth existing-dataset import", () => {
       }),
     );
     expect(mocks.upload.mock.calls[0][0].data).toHaveLength(101);
+
+    finishUpload({ id: "ground-truth-1" });
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 
   it("keeps the loaded prefix when the signed continuation is rejected", async () => {
@@ -196,16 +207,16 @@ describe("EvalGroundTruth existing-dataset import", () => {
 
     fireEvent.click(screen.getByText("Choose from existing dataset"));
     fireEvent.click(await screen.findByText("Reference data"));
-    fireEvent.click(screen.getByRole("button", { name: "Load rows" }));
-    await screen.findByText("100 of 101 rows loaded");
-
-    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
     await screen.findByText("The dataset changed. Restart the import.");
 
     expect(screen.getByText("100 of 101 rows loaded")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Load more" }),
+      screen.getByRole("button", { name: "Retry from row 101" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Restart row loading" }),
+    ).toBeEnabled();
     expect(mocks.upload).not.toHaveBeenCalled();
     expect(mocks.getDatasetPage).toHaveBeenNthCalledWith(
       2,

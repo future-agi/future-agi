@@ -1,0 +1,19 @@
+schema: "connector-manifest/v1#app"
+id: postman
+version: 1.0.0
+name: Postman
+description: "API collections, requests, environments and workspaces."
+vendor:
+  name: Postman
+  domains: [postman.com]
+eeCategory: developer
+group: other
+categories: [developer, api-platform]
+tags: [apis, collections, workspaces]
+docsUrl: https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/overview
+defaultProvider: mcp
+lifecycle: { status: active }
+sources:
+  - fact: vendor.domains
+    url: https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server
+    fetchedAt: 2026-11-11

@@ -1,0 +1,25 @@
+{
+  "extends": "./jsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "types": ["vite/client", "vitest/globals", "node"]
+  },
+  "include": [
+    "src/**/*",
+    "scripts/**/*.mjs",
+    "vite.config.js",
+    "vitest.config.js"
+  ],
+  "exclude": ["node_modules", "dist", "build", "coverage"]
+}

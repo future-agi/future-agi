@@ -1,4 +1,6 @@
+import { formatExactMoney } from "src/sections/common/format/money";
 import React, { useEffect } from "react";
+import PageHeader from "src/components/page-header";
 import { Helmet } from "react-helmet-async";
 import Typography from "@mui/material/Typography";
 import {
@@ -31,7 +33,7 @@ const BillingPage = () => {
   const [openBillingInfoModal, setOpenBillingInfoModal] = useState(false);
   const [openAddFundsModal, setOpenAddFundsModal] = useState(false);
   const [openEditSettingsModal, setOpenEditSettingsModal] = useState(false);
-  const [walletBalance, setWalletBalance] = useState(0);
+  const [walletBalance, setWalletBalance] = useState(null);
   const [last4digits, setLast4digits] = useState("");
   const [invoicesData, setInvoicesData] = useState([]);
   const [refreshBillingPage, setRefreshBillingPage] = useState(false);
@@ -53,7 +55,7 @@ const BillingPage = () => {
     useQuery({
       queryKey: ["wallet-balance"],
       queryFn: () => axios.get(endpoints.stripe.getWalletBalance),
-      select: (data) => Number(data.data.wallet_balance).toFixed(2),
+      select: (data) => data.data.wallet_balance,
       enabled: true,
     });
 
@@ -202,7 +204,7 @@ const BillingPage = () => {
 
   // Update state when query data changes
   useEffect(() => {
-    if (walletBalanceData) {
+    if (walletBalanceData !== undefined) {
       setWalletBalance(walletBalanceData);
     }
   }, [walletBalanceData]);
@@ -262,27 +264,11 @@ const BillingPage = () => {
       <Box
         sx={{ display: "flex", flexDirection: "column", gap: theme.spacing(2) }}
       >
-        <Box>
-          <Typography
-            sx={{
-              typography: "m2",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.primary",
-            }}
-          >
-            Billing Details
-          </Typography>
-          <Typography
-            sx={{
-              typography: "s1",
-              fontWeight: "fontWeightRegular",
-              color: "text.primary",
-              marginTop: (theme) => theme.spacing(0.5),
-            }}
-          >
-            Manage your billing details
-          </Typography>
-        </Box>
+        <PageHeader
+          title="Billing details"
+          description="Manage your billing details"
+          sx={{ mb: 0 }}
+        />
         <Box
           sx={{
             borderRadius: theme.spacing(1),
@@ -350,7 +336,7 @@ const BillingPage = () => {
                     sx={{ margin: "0 auto" }}
                   />
                 ) : (
-                  `$${walletBalance}`
+                  formatExactMoney(walletBalance)
                 )}
               </Typography>
             </Box>
@@ -472,21 +458,15 @@ const BillingPage = () => {
                           startIcon={
                             last4digits ? (
                               <Iconify
-                                icon="grommet-icons:update"
+                                width={20}
+                                icon="solar:refresh-linear"
                                 color="text.primary"
-                                sx={{
-                                  width: "20px",
-                                  height: "20px",
-                                }}
                               />
                             ) : (
                               <Iconify
-                                icon="line-md:plus"
+                                width={20}
+                                icon="solar:add-linear"
                                 color="primary.contrastText"
-                                sx={{
-                                  width: "20px",
-                                  height: "20px",
-                                }}
                               />
                             )
                           }
@@ -524,12 +504,9 @@ const BillingPage = () => {
                       }}
                       startIcon={
                         <Iconify
-                          icon="line-md:plus"
+                          width={20}
+                          icon="solar:add-linear"
                           color="primary.contrastText"
-                          sx={{
-                            width: "20px",
-                            height: "20px",
-                          }}
                         />
                       }
                       onClick={() => {
@@ -573,8 +550,8 @@ const BillingPage = () => {
                   !hasAutoReloadSettings && (
                     <>
                       <Iconify
-                        icon="bx:error"
-                        color="red.500"
+                        icon="solar:danger-circle-linear"
+                        color="status.danger.fg"
                         sx={{
                           width: "20px",
                           height: "20px",
@@ -623,15 +600,10 @@ const BillingPage = () => {
                     )}
                   </Box>
                 )}
-                <Typography
-                  typography="s1"
-                  fontWeight="fontWeightRegular"
-                  color="primary.main"
-                  sx={{
-                    textDecoration: "underline",
-                    cursor: "pointer",
-                    marginLeft: theme.spacing(1),
-                  }}
+                <Button
+                  variant="text"
+                  size="small"
+                  sx={{ marginLeft: theme.spacing(1) }}
                   onClick={() => {
                     trackEvent(Events.editSettingsClicked);
                     setOpenEditSettingsModal(true);
@@ -640,7 +612,7 @@ const BillingPage = () => {
                   {hasAutoReloadSettings
                     ? "Edit Settings"
                     : "Configure Settings"}
-                </Typography>
+                </Button>
               </Box>
             </Box>
           </Box>
@@ -812,18 +784,12 @@ const BillingPage = () => {
             color="primary"
             startIcon={
               billingDetails?.name ? (
-                <Iconify
-                  icon="fluent:edit-12-regular"
-                  color="primary.contrastText"
-                />
+                <Iconify icon="solar:pen-linear" color="primary.contrastText" />
               ) : (
                 <Iconify
-                  icon="line-md:plus"
+                  width={20}
+                  icon="solar:add-linear"
                   color="primary.contrastText"
-                  sx={{
-                    width: "20px",
-                    height: "20px",
-                  }}
                 />
               )
             }

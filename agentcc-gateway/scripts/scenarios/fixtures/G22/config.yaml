@@ -1,0 +1,72 @@
+# Scenario gateway config (sc/32_g22_sources.sh): config/base.yaml with a
+# second managed source, mock-direct, a direct provider priced from a price
+# card (catalog_source: price_card, upstream_fee_bps: 0) and served by the
+# mock's /v1/chat/completions. The script writes the card, as of the day it
+# runs, and replaces @@G22_CARD@@ with its path before scn_up renders this.
+# OpenRouter's catalog refreshes only at boot (catalog_refresh 1h), and the
+# endpoint crawler is off.
+#
+# scn_up replaces each @@NAME@@ placeholder: GATEWAY_PORT, GATEWAY_URL,
+# MOCK_URL, ADMIN_TOKEN, SCN_DIR, SCN_ROOT, LANE. It then appends a `redis:`
+# block when SCN_REDIS is set and an `otel:` block when SCN_OTEL_EXPORTER is
+# set, so a template must not define those two top-level keys itself.
+# Placeholders go inside quoted strings, so the template stays valid YAML;
+# the listen port comes from AGENTCC_PORT, which scn_up sets.
+# The gateway expands $VAR references in its config file, so keep `$` out.
+#
+# Every key and token below is a fake value for the local mock upstream.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  # Org keys are person-owned (733): under a control plane config.yaml holds
+  # only deployment identities (key_type internal, no org_id, no user_id).
+  # scn_up registers acme-app (SCN_KEY of org-acme, user SCN_USER) with the
+  # mock's control plane, which lists it on the key sync (lib.sh, Org keys).
+providers:
+  # FutureAGI-credentialed and managed through OpenRouter (fee 550 bps).
+  openrouter:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-managed-upstream"
+    api_format: "openai"
+    type: "openrouter"
+    managed: true
+    auto_discover: false
+    catalog_source: "openrouter"
+    upstream_fee_bps: 550
+    resale_terms_ref: ""
+  # FutureAGI-credentialed and managed directly: a price card, no fee.
+  mock-direct:
+    base_url: "@@MOCK_URL@@"
+    api_key: "scn-test-direct-upstream"
+    api_format: "openai"
+    managed: true
+    auto_discover: false
+    catalog_source: "price_card"
+    price_card_file: "@@G22_CARD@@"
+    upstream_fee_bps: 0
+    resale_terms_ref: ""
+managed:
+  markup_percent: 5
+  require_credits: true
+  catalog_refresh: 1h
+cost_tracking:
+  enabled: true
+logging:
+  level: "info"
+  request_logging:
+    enabled: true
+# The mock stands in for Django: request logs reach its /__logs.
+# Its control plane lists the person-owned keys scn_up registers and does
+# not answer the org sync, so configs pushed with scn_org_config stay; the
+# gateway syncs keys on startup (scn_up waits for the first list).
+control_plane:
+  url: "@@MOCK_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  sync_on_startup: true
+  sync_interval: 60s
+catalog:
+  endpoints_refresh: 0s

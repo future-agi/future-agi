@@ -60,6 +60,9 @@ export const AlertConfigValidationSchema = z
         })
         .optional(),
     ),
+    // Set by getDefaultAlertConfigValues for an alert saved without a warning:
+    // it keeps no warning unless the person adds one.
+    warning_optional: z.boolean().optional(),
     notification: z
       .object({
         method: z.enum(["email", "slack"], {
@@ -115,6 +118,7 @@ export const AlertConfigValidationSchema = z
       threshold_type,
       metric_type,
       metric,
+      warning_optional,
     } = data;
 
     // `metric` is conditionally required, and the condition is inverted:
@@ -146,7 +150,7 @@ export const AlertConfigValidationSchema = z
         });
       }
 
-      if (warning_threshold_value === undefined) {
+      if (warning_threshold_value === undefined && !warning_optional) {
         ctx.addIssue({
           path: ["warning_threshold_value"],
           code: "custom",
@@ -286,7 +290,7 @@ const numberOr = (value, fallback) => {
 // else once the field's scale changes), so callers should re-derive these
 // on every metric_type/threshold_type change rather than leaving a stale
 // value in place.
-export function getThresholdValueDefaults(metricType, thresholdType) {
+function getScaleThresholdDefaults(metricType, thresholdType) {
   if (metricType === "evaluation_metrics" && thresholdType === "static") {
     return { critical: 0.4, warning: 0.3 };
   }
@@ -300,6 +304,23 @@ export function getThresholdValueDefaults(metricType, thresholdType) {
     critical: ALERT_CONFIG_DEFAULTS.critical_threshold_value,
     warning: ALERT_CONFIG_DEFAULTS.warning_threshold_value,
   };
+}
+
+// The pair is ordered for the alert's direction: Above wants critical over
+// warning, Below wants critical under warning. Handing a Below alert the
+// Above pair fails the schema's own check, and the form can't be saved.
+export function getThresholdValueDefaults(
+  metricType,
+  thresholdType,
+  thresholdOperator,
+) {
+  const { critical, warning } = getScaleThresholdDefaults(
+    metricType,
+    thresholdType,
+  );
+  return thresholdOperator === "less_than"
+    ? { critical: warning, warning: critical }
+    : { critical, warning };
 }
 
 export function getDefaultAlertConfigValues(existingConfig = {}) {
@@ -318,12 +339,27 @@ export function getDefaultAlertConfigValues(existingConfig = {}) {
   const thresholdType =
     readAlertField(existingConfig, "thresholdType", "threshold_type") ||
     ALERT_CONFIG_DEFAULTS.threshold_type;
+  const thresholdOperator =
+    readAlertField(existingConfig, "thresholdOperator", "threshold_operator") ||
+    ALERT_CONFIG_DEFAULTS.threshold_operator;
   // metricType often arrives pre-selected here (e.g. from the "Select Alert
   // Type" step, before AlertSettingsForm even mounts), so the threshold
   // fields must start on the right scale from the first render — the
   // onChange-time re-derivation in AlertSettingsForm never fires for a
   // value that was never "changed" from the user's perspective.
-  const scaleDefaults = getThresholdValueDefaults(metricType, thresholdType);
+  const scaleDefaults = getThresholdValueDefaults(
+    metricType,
+    thresholdType,
+    thresholdOperator,
+  );
+  const savedWarning = readAlertField(
+    existingConfig,
+    "warningThresholdValue",
+    "warning_threshold_value",
+  );
+  const savedWithoutWarning =
+    existingConfig?.id != null &&
+    (savedWarning === null || savedWarning === "");
 
   return {
     name: existingConfig?.name || "",
@@ -343,12 +379,7 @@ export function getDefaultAlertConfigValues(existingConfig = {}) {
       ),
       ALERT_CONFIG_DEFAULTS.auto_threshold_time_window,
     ),
-    threshold_operator:
-      readAlertField(
-        existingConfig,
-        "thresholdOperator",
-        "threshold_operator",
-      ) || ALERT_CONFIG_DEFAULTS.threshold_operator,
+    threshold_operator: thresholdOperator,
     threshold_metric_value:
       readAlertField(
         existingConfig,
@@ -363,14 +394,12 @@ export function getDefaultAlertConfigValues(existingConfig = {}) {
       ),
       scaleDefaults.critical,
     ),
-    warning_threshold_value: numberOr(
-      readAlertField(
-        existingConfig,
-        "warningThresholdValue",
-        "warning_threshold_value",
-      ),
-      scaleDefaults.warning,
-    ),
+    // A saved alert with no warning opens with the warning empty, so saving
+    // it never adds a warning nobody set; a new alert gets the default.
+    warning_threshold_value: savedWithoutWarning
+      ? ""
+      : numberOr(savedWarning, scaleDefaults.warning),
+    warning_optional: savedWithoutWarning,
     notification: {
       method: slackWebhookUrl ? "slack" : "email",
       emails: notificationEmails || [],

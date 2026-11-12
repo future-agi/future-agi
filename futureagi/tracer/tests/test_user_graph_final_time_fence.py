@@ -234,12 +234,9 @@ def test_native_users_actual_paths(engine, path, minute):
                 "output_tokens": total,
                 "num_traces": len(expected_traces),
                 "num_sessions": 0,
-                "avg_trace_latency": round(
-                    mean(
-                        [r["latency_ms"] for r in gold if r["latency_ms"] is not None]
-                    ),
-                    2,
-                ),
+                # No latency filter: the trace-grain reduction is skipped
+                # (test_user_graph_trace_latency pins its filtered value).
+                "avg_trace_latency": 0,
                 "num_llm_calls": 1,
                 "num_active_days": 1,
                 "num_traces_with_errors": 0,

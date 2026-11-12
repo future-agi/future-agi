@@ -8,14 +8,22 @@ import axios, { endpoints } from "src/utils/axios";
 
 const SESSION_KEY = "agentcc-sessions";
 
-export function useSessions(params = {}) {
+// One page of sessions. The list API pages by 10 unless asked, so the page
+// asks for SESSIONS_PAGE_SIZE at a time and keeps the total it reports.
+export const SESSIONS_PAGE_SIZE = 100;
+
+export function useSessions({ status, search, page = 1 } = {}) {
+  const params = { limit: SESSIONS_PAGE_SIZE, page };
+  if (status) params.status = status;
+  if (search) params.search = search;
   return useQuery({
     queryKey: [SESSION_KEY, params],
     queryFn: async () => {
       const { data } = await axios.get(endpoints.gateway.sessions.list, {
         params,
       });
-      return data.results || data.result || [];
+      const results = data.results || data.result || [];
+      return { results, count: data.count ?? results.length };
     },
     staleTime: 30000,
     placeholderData: keepPreviousData,

@@ -50,12 +50,58 @@ class CellOutputSink(BaseOutputSink):
             raise ValueError(f"CellOutputSink missing required config keys: {missing}")
 
     def store(self, context: OutputSinkContext) -> None:
-        # Import here to avoid circular imports at module load time
+        from django.core.exceptions import ValidationError
+        from django.db import router, transaction
+
+        from agent_playground.models.node import Node
+        from agent_playground.services.engine.output_sinks.scope import (
+            SinkScopeError,
+            resolve_cell_destination,
+        )
         from model_hub.models.develop_dataset import Cell
 
-        dataset_id = context.config["dataset_id"]
-        column_id = context.config["column_id"]
-        row_id = context.config["row_id"]
+        using = router.db_for_write(Cell)
+        with transaction.atomic(using=using):
+            # The tenant comes from the persisted node, never from sink JSON or
+            # caller-supplied metadata. This covers success AND failure sinks.
+            try:
+                node = (
+                    Node.no_workspace_objects.using(using)
+                    .select_related("graph_version__graph")
+                    .select_for_update(of=("self", "graph_version__graph"))
+                    .get(
+                        pk=context.node_id,
+                        graph_version__deleted=False,
+                        graph_version__graph__deleted=False,
+                    )
+                )
+            except (Node.DoesNotExist, ValidationError, ValueError) as exc:
+                raise SinkScopeError(
+                    "Cell output requires a live graph scope."
+                ) from exc
+            graph = node.graph_version.graph
+            ids = resolve_cell_destination(
+                context.config,
+                graph.organization_id,
+                graph.workspace_id,
+                using=using,
+                lock=True,
+            )
+            cells = Cell.all_objects.using(using).filter(
+                dataset__organization_id=graph.organization_id,
+                dataset__workspace_id=graph.workspace_id,
+                dataset__deleted=False,
+                column__dataset_id=ids["dataset_id"],
+                column__deleted=False,
+                row__dataset_id=ids["dataset_id"],
+                row__deleted=False,
+            )
+            self._store_authorized(context, cells, ids, graph, using)
+
+    def _store_authorized(self, context, cells, ids, graph, using):
+        dataset_id = ids["dataset_id"]
+        column_id = ids["column_id"]
+        row_id = ids["row_id"]
         output_key = context.config.get("output_key")
 
         # Guard: don't overwrite cleanup state if experiment was cancelled
@@ -64,9 +110,26 @@ class CellOutputSink(BaseOutputSink):
         if experiment_id:
             import uuid as _uuid
 
-            from model_hub.services.experiment_utils import is_experiment_cancelled
+            from agent_playground.services.engine.output_sinks.scope import (
+                SinkScopeError,
+            )
+            from model_hub.models.choices import StatusType
+            from model_hub.models.experiments import ExperimentsTable
 
-            if is_experiment_cancelled(_uuid.UUID(str(experiment_id))):
+            experiment_status = (
+                ExperimentsTable.no_workspace_objects.using(using)
+                .filter(
+                    pk=_uuid.UUID(str(experiment_id)),
+                    dataset__organization_id=graph.organization_id,
+                    dataset__workspace_id=graph.workspace_id,
+                    dataset__deleted=False,
+                )
+                .values_list("status", flat=True)
+                .first()
+            )
+            if experiment_status is None:
+                raise SinkScopeError("Experiment is outside the graph scope.")
+            if experiment_status == StatusType.CANCELLED.value:
                 logger.info(
                     "cell_output_sink_skipped_cancelled",
                     dataset_id=dataset_id,
@@ -99,7 +162,7 @@ class CellOutputSink(BaseOutputSink):
             value = error_msg
             value_infos = {"reason": error_msg}
 
-        Cell.objects.update_or_create(
+        cells.update_or_create(
             column_id=column_id,
             row_id=row_id,
             dataset_id=dataset_id,

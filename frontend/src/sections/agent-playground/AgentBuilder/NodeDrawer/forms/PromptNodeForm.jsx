@@ -1,4 +1,4 @@
-import React, { startTransition } from "react";
+import React, { startTransition, useMemo } from "react";
 import PropTypes from "prop-types";
 import { Alert, Box, Divider } from "@mui/material";
 import LoadingButton from "@mui/lab/LoadingButton";
@@ -11,9 +11,13 @@ import OutputToolsRow from "src/sections/agent-playground/components/OutputTools
 import ModelParametersPopover from "src/sections/agent-playground/components/ModelParametersPopover";
 import PromptMessageRow from "../../../components/PromptMessageRow";
 import VariableAccessInfo from "../../../components/VariableAccessInfo";
+import UnsetVariablesNote from "../../../components/UnsetVariablesNote";
 import { enqueueSnackbar } from "notistack";
 import { usePromptNodeForm } from "./usePromptNodeForm";
-import { mapPatchResponseToStoreData } from "./promptNodeFormUtils";
+import {
+  extractVariablesFromContent,
+  mapPatchResponseToStoreData,
+} from "./promptNodeFormUtils";
 import {
   useAgentPlaygroundStore,
   useAgentPlaygroundStoreShallow,
@@ -69,6 +73,20 @@ export default function PromptNodeForm({ nodeId }) {
     validateVariable,
     isLoading: isLoadingVariables,
   } = useConnectedNodeVariables(nodeId);
+
+  // Variables with no value source yet (the validator returns null). Names
+  // come from the same extraction the backend uses to create the node's
+  // inputs, over all messages at once.
+  const messages = useWatch({ name: "messages" });
+  const unsetVariables = useMemo(() => {
+    if (typeof validateVariable !== "function") return [];
+    const content = (messages || []).flatMap((message) =>
+      Array.isArray(message?.content) ? message.content : [],
+    );
+    return extractVariablesFromContent(content, templateFormat).filter(
+      (name) => validateVariable(name) === null,
+    );
+  }, [messages, templateFormat, validateVariable]);
 
   // Check if prompt versions are still loading (React Query deduplicates with PromptNameRow)
   const promptTemplateId = useWatch({ name: "prompt_template_id" });
@@ -156,6 +174,8 @@ export default function PromptNodeForm({ nodeId }) {
           jinjaMode={templateFormat === "jinja"}
         />
       </Box>
+
+      <UnsetVariablesNote names={unsetVariables} />
 
       {/* Save Button - always at bottom */}
       <Box
@@ -290,11 +310,10 @@ export default function PromptNodeForm({ nodeId }) {
             queryClient.invalidateQueries({
               queryKey: ["agent-playground", "node-detail"],
             });
+            // The drawer closes on save, so say that the prompt was saved.
+            enqueueSnackbar("Prompt saved", { variant: "success" });
             clearSelectedNode();
           })}
-          sx={{
-            fontWeight: "fontWeightMedium",
-          }}
         >
           Save prompt
         </LoadingButton>

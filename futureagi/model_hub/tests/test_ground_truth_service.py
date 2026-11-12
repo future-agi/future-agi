@@ -16,6 +16,15 @@ from model_hub.services.ground_truth_service import (
 )
 
 
+@pytest.fixture(autouse=True)
+def mock_ground_truth_queryset():
+    """These model-stand-in tests must not reach the real ORM for invalidation."""
+    with patch(
+        "model_hub.services.ground_truth_service.EvalGroundTruth.objects.filter"
+    ) as queryset_filter:
+        yield queryset_filter
+
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Stand-in for the Django models so we don't need a DB fixture.
@@ -309,6 +318,10 @@ def test_embed_dataset_progress_callback_persists_row_count_via_update():
         captured["progress_callback"] = kwargs.get("progress_callback")
 
     class _Queryset:
+        def exclude(self, **values):
+            update_calls.append(("exclude", values))
+            return self
+
         def update(self, **values):
             update_calls.append(values)
 
@@ -333,9 +346,18 @@ def test_embed_dataset_progress_callback_persists_row_count_via_update():
 
     filter_payloads = [c for c in update_calls if isinstance(c, tuple) and c[0] == "filter"]
     update_payloads = [c for c in update_calls if isinstance(c, dict)]
-    assert len(filter_payloads) == 3
-    assert all(c[1]["id"] == "gt-fake" for c in filter_payloads)
+    assert len(filter_payloads) == 4
+    assert filter_payloads[0][1] == {
+        "eval_template_id": "tpl-fake",
+        "organization_id": "org-fake",
+        "workspace_id": "ws-fake",
+        "deleted": False,
+        "embedding_status": EvalGroundTruth.EmbeddingStatus.COMPLETED,
+    }
+    assert ("exclude", {"id": "gt-fake"}) in update_calls
+    assert all(c[1]["id"] == "gt-fake" for c in filter_payloads[1:])
     assert update_payloads == [
+        {"embedding_status": EvalGroundTruth.EmbeddingStatus.PENDING},
         {"embedded_row_count": 1},
         {"embedded_row_count": 2},
         {"embedded_row_count": 3},

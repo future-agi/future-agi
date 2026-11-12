@@ -1,0 +1,41 @@
+{
+  "about": "Admin tokens and whether the admin-token policy refuses them. Read by agentcc-gateway/internal/config/admin_token_test.go and futureagi/agentcc/tests/test_admin_token_parity.py, so the gateway and Django give the same verdict. Every value here is published, so none may ever be a real token.",
+  "refused": [
+    "",
+    "   ",
+    "agentcc-admin-secret",
+    "  AGENTCC-ADMIN-SECRET  ",
+    "local-dev-only-admin-token-replace-me",
+    "local-dev-only-shared-secret-replace-me",
+    "your-secret-admin-token",
+    "test-admin-secret",
+    "fi-internal-dev-key-change-in-prod",
+    "agentcc-admin-secret000000000000",
+    "agentcc-admin-secret-agentcc-admin-secret",
+    "prod-test-admin-secret-7f3a9c2e1b4d6f8a0c2e",
+    "Local-Dev-Only-Admin-Token-Replace-Me-2026-10-16",
+    "CHANGEME-set-by-bin-install-000000000000",
+    "please-replace-me-with-a-real-admin-token-0001",
+    "your-token-here-0123456789abcdef0123456789",
+    "admin",
+    "Admin",
+    "admin-token",
+    "admin-secret",
+    "secret",
+    "password",
+    "token",
+    "test",
+    "changeme",
+    "default",
+    "q7Vd9kLm2Xp4Rt8Zw1Ny6Bc3Hf5Js0G",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "abababababababababababababababababababababababababababababababab"
+  ],
+  "accepted": [
+    "9f2c4e7a1b8d3f6e0a5c2b9d4e7f1a3c6b8d0e2f4a6c8e1b3d5f7a9c2e4b6d8f",
+    "Zx9Qw2Er7Ty4Ui1Op8As5Df3Gh6Jk0LzXcVbNm2Qw4Er6Ty8",
+    "q7Vd9kLm2Xp4Rt8Zw1Ny6Bc3Hf5Js0Gx",
+    "a-long-passphrase-for-your-org-that-nobody-guesses-81f3",
+    "the-admin-token-for-staging-is-this-9c1e5b7a3f2d8e6c"
+  ]
+}

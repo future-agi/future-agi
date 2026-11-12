@@ -32,19 +32,10 @@ const StyledIconButton = styled(IconButton)({
   right: "12px",
 });
 
-const StyledCancelButton = styled(Button)(({ theme }) => ({
-  border: `1px solid ${theme?.palette?.black?.[300] ?? "text.disabled"}`,
-  fontSize: "14px",
-  fontWeight: 500,
-  lineHeight: "24px",
-  padding: "6px 24px",
-  minWidth: "90px", // Changed from fixed width to minWidth
-}));
-
 const StyleDialog = styled(Dialog)({
   "& .MuiDialog-paper": {
     padding: "16px",
-    maxWidth: "470px",
+    maxWidth: "560px",
   },
 });
 
@@ -96,10 +87,15 @@ const CustomDialog = ({
       aria-labelledby="custom-dialog-title"
     >
       <StyledBox>
+        {/* Decoration beside the title: not a control, hidden from assistive technology. */}
         {preTitleIcon && (
-          <IconButton size="small" disableRipple>
+          <Box
+            component="span"
+            aria-hidden="true"
+            sx={{ display: "inline-flex", alignItems: "center", flexShrink: 0 }}
+          >
             <Iconify icon={preTitleIcon} sx={{ color: "text.primary" }} />
-          </IconButton>
+          </Box>
         )}
         <DialogTitle id="custom-dialog-title">
           <Typography
@@ -113,29 +109,30 @@ const CustomDialog = ({
         </DialogTitle>
       </StyledBox>
 
-      <StyledIconButton onClick={onClose} disabled={loading}>
-        <Iconify icon="mingcute:close-line" color="text.primary" />
+      <StyledIconButton aria-label="Close" onClick={onClose} disabled={loading}>
+        <Iconify icon="solar:close-linear" color="text.primary" />
       </StyledIconButton>
 
       {children}
 
       <DialogActions sx={{ padding: 0, margin: "32px 0 0" }}>
         <Box sx={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}>
-          <StyledCancelButton
+          <Button
+            color="inherit"
             size="small"
             onClick={onClose}
             variant="outlined"
             disabled={loading}
           >
             Cancel
-          </StyledCancelButton>
+          </Button>
           <LoadingButton
             disabled={!isData || loading}
             loading={loading}
             size="small"
             variant="contained"
             color={color}
-            sx={{ px: 3, minWidth: "max-content" }}
+            sx={{ minWidth: "max-content" }}
             onClick={handleActionClick}
             startIcon={actionStartIcon ? actionStartIcon : undefined}
           >
