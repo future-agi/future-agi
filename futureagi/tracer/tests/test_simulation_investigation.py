@@ -897,12 +897,19 @@ def test_debug_evidence_carries_the_simulated_callers_situation_and_persona(
     )
     call.call_metadata = {"harness_scenario_key": "pin-booking"}
     call.save(update_fields=["call_metadata"])
+    persona = {
+        "name": "Dana Reyes",
+        "personality": "impatient",
+        "communication_style": "direct",
+        "multilingual": True,
+        "metadata": {"first_language": "Spanish", "member_id": "M-1042"},
+    }
     authored = _hosted_run(
         organization,
         workspace,
         execution,
         instruction="You want a late-cancellation fee removed.",
-        persona={"personality": "impatient", "communication_style": "direct"},
+        persona=persona,
     )
     auth_client.post(f"/simulate/test-executions/{execution.id}/debug-analysis/")
     claim = claim_due_investigations(
@@ -916,21 +923,16 @@ def test_debug_evidence_carries_the_simulated_callers_situation_and_persona(
 
     call_record = served()
     assert call_record["situation"] == "You want a late-cancellation fee removed."
-    assert call_record["persona"] == {
-        "personality": "impatient",
-        "communication_style": "direct",
-    }
+    # The whole authored persona, including what the amend whitelist leaves out: the
+    # caller's name, whether it switches language, and its languages and identifiers.
+    assert call_record["persona"] == persona
 
-    # Older suites hold the persona as text; any other shape is left out, so the
-    # worker never refuses the page over it.
-    for persona, expected in (
-        ("A busy office manager.", "A busy office manager."),
-        (["impatient"], None),
-        ("  ", None),
-    ):
-        authored.persona = persona
+    # Any shape but a persona object is left out, so the worker never refuses the
+    # page over it.
+    for malformed in ("A busy office manager.", ["impatient"], {}):
+        authored.persona = malformed
         authored.save(update_fields=["persona"])
-        assert served()["persona"] == expected
+        assert served()["persona"] is None
 
     # A call with no authored scenario says it has none.
     call.call_metadata = {}

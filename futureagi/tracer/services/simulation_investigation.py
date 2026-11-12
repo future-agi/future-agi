@@ -353,14 +353,15 @@ def _situation(scenario) -> str | None:
     return instruction if instruction.strip() else None
 
 
-def _persona(scenario) -> dict | str | None:
-    """Who the simulated caller is: traits on newer suites, text on older ones."""
+def _persona(scenario) -> dict | None:
+    """Who the simulated caller is, as authored.
+
+    The whole persona, not ``HostedHarnessProvider._PERSONA_FIELDS``: those are the
+    six traits an amend may change, and they leave out the caller's name, whether
+    it switches language, and the languages and identifiers under ``metadata``.
+    """
     persona = scenario.persona if scenario is not None else None
-    if isinstance(persona, dict) and persona:
-        return persona
-    if isinstance(persona, str) and persona.strip():
-        return persona
-    return None
+    return persona if isinstance(persona, dict) and persona else None
 
 
 # A recorded tool call as the worker accepts it; long values are cut so one
