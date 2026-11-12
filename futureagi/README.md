@@ -218,7 +218,7 @@ detect-secrets scan > .secrets.baseline
 git commit --no-verify
 
 # Skip specific hook
-SKIP=ruff git commit -m "Message"
+SKIP=ruff-check,ruff-format git commit -m "Message"
 ```
 
 ## Installed Hooks

@@ -144,6 +144,9 @@ LINT_PATHS = (
     "scripts/test_check_python_lint_delta.py",
     "scripts/lint-staged-python.sh",
     ".github/workflows/python-lint.yml",
+    # RuffPinTests checks these two match the CI ruff pin.
+    "futureagi/Makefile",
+    "futureagi/.pre-commit-config.yaml",
 )
 
 
