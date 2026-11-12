@@ -17,6 +17,7 @@ from django.db import transaction
 from django.db.models import Case, CharField, Value, When
 from django.utils import timezone
 
+from tfc.routers import primary_required
 from tracer.models.eval_task import EvalTask, RowType, RunType
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
 from tracer.selectors.eval_tasks.row_resolver import (
@@ -48,6 +49,7 @@ class ReconcileResult:
     dropped: int = 0
 
 
+@primary_required
 def reconcile(task: EvalTask) -> ReconcileResult:
     """Make the task's live entries match its desired config + row set.
 
@@ -57,6 +59,14 @@ def reconcile(task: EvalTask) -> ReconcileResult:
     *pending* entries while keeping out-of-scope *completed* results (paid
     data). For continuous tasks, advances the forward cursor so the next pass
     scans only the new tail.
+
+    The whole pass reads from the primary. The task's eval set (``task.evals``)
+    is written by the create / edit request a moment before the workflow runs
+    this, and a replica that has not applied it yet returns no evals (the task
+    finishes with no results) or the pre-edit set (the removed eval runs, the
+    added one never does). Pinning the pass as one block, rather than each
+    read, also keeps the revision taken before the lock and the one taken
+    under it on the same database, so they can only differ on a real edit.
     """
     if isinstance(task, EvalTask):
         # Callers may retain the model instance across passes while the previous

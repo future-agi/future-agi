@@ -627,3 +627,279 @@ def test_d13_full_proof_requeues_entry_completed_after_freeze(
         EvalEntryStatus.PENDING,
         resolved_config_hash(config),
     )
+
+
+# -- E01: the eval set and configs the worker reads ---------------------------
+#
+# A task's eval set (the ``task.evals`` links) and its configs are written by
+# the create / edit request a moment before the workflow's first activity
+# reads them, so every test here writes them after the freeze.
+
+
+@pytest.mark.parametrize(
+    "configs_after_freeze", [False, True], ids=["saved-configs", "new-configs"]
+)
+def test_e01_reconcile_activity_materializes_task_created_after_freeze(
+    lagging_replica,  # noqa: F811
+    monkeypatch,
+    project,
+    trace,
+    template,
+    configs_after_freeze,
+):
+    """A historical task is reconciled once, right after the request that
+    created it. A replica that has not applied the task's eval links returns
+    no evals: nothing is materialized, nothing is claimed, and the drain marks
+    the task completed with no results and no error."""
+
+    from tfc.temporal.eval_tasks.activities import (
+        _claim_batch_sync,
+        _finalize_task_sync,
+        _reconcile_sync,
+    )
+
+    def new_configs():
+        return [
+            make_config(project=project, template=template, name=f"e01-{name}")
+            for name in ("a", "b")
+        ]
+
+    span = _span(project, trace)
+    configs = [] if configs_after_freeze else new_configs()
+    lagging_replica.freeze()
+    if configs_after_freeze:
+        configs = new_configs()
+    task = _task(project, configs, run_type=RunType.HISTORICAL)
+    _stub_span_reader(monkeypatch, [span])
+    _stub_proof(monkeypatch, ResolvedRowSet((str(span.id),), (str(span.id),), True))
+
+    result = _reconcile_sync(str(task.id))
+
+    assert result["created"] == 2
+    assert routers._force_primary_depth.get() == 0
+    assert sorted(
+        (e.observation_span_id, e.custom_eval_config_id) for e in _primary_entries(task)
+    ) == sorted((span.id, config.id) for config in configs)
+    assert len(_claim_batch_sync(str(task.id), 10)["entry_ids"]) == 2
+    assert _finalize_task_sync(str(task.id))["finalized"] is False
+    assert (
+        EvalTask.objects.using("default").get(id=task.id).status
+        == EvalTaskStatus.RUNNING
+    )
+
+
+def test_e01_reconcile_after_edit_runs_the_new_eval_set(
+    lagging_replica,  # noqa: F811
+    monkeypatch,
+    project,
+    trace,
+    template,
+):
+    """Edit & rerun swaps eval A for eval B just before the worker reconciles.
+    From a replica still holding A, the pass keeps A's pending entry (the eval
+    the user removed runs and is billed) and never creates B's."""
+
+    config_a = make_config(project=project, template=template, name="e01-a")
+    config_b = make_config(project=project, template=template, name="e01-b")
+    span = _span(project, trace)
+    task = _task(project, [config_a], run_type=RunType.HISTORICAL)
+    entry_a = _entry(
+        task,
+        span,
+        config_a,
+        status=EvalEntryStatus.PENDING,
+        config_hash=resolved_config_hash(config_a),
+    )
+    lagging_replica.freeze()
+    task.evals.set([config_b])
+    _stub_span_reader(monkeypatch, [span])
+    _stub_proof(monkeypatch, ResolvedRowSet((str(span.id),), (str(span.id),), True))
+
+    result = reconcile(task)
+
+    assert (result.created, result.dropped) == (1, 1)
+    assert routers._force_primary_depth.get() == 0
+    assert [
+        (e.observation_span_id, e.custom_eval_config_id) for e in _primary_entries(task)
+    ] == [(span.id, config_b.id)]
+    assert EvalLogger.all_objects.using("default").get(id=entry_a.id).deleted is True
+
+
+def test_e01_workflow_labels_count_evals_linked_after_freeze(
+    lagging_replica,  # noqa: F811
+    project,
+    template,
+):
+    from tfc.temporal.eval_tasks.activities import _get_workflow_labels_sync
+
+    configs = [
+        make_config(project=project, template=template, name=f"e01-{name}")
+        for name in ("a", "b")
+    ]
+    lagging_replica.freeze()
+    task = _task(project, configs, run_type=RunType.HISTORICAL)
+
+    labels = _get_workflow_labels_sync(str(task.id))
+
+    assert labels["config_summary"].endswith("evals=2")
+
+
+def test_e01_instant_sizing_reads_configs_linked_after_freeze(
+    lagging_replica,  # noqa: F811
+    project,
+    template,
+):
+    """Instant eval creates the question's config and task in one request and
+    starts the workflow when it commits. Read from a replica that has not
+    applied them, the task has no evals and the run is sized as a regular
+    task, a few rows at a time, while a person waits for the answers."""
+
+    from tfc.temporal.eval_tasks.client import (
+        INSTANT_BATCH_SIZE,
+        INSTANT_HEARTBEAT_S,
+        INSTANT_MAX_CONCURRENT,
+        _instant_sizing,
+    )
+
+    lagging_replica.freeze()
+    config = CustomEvalConfig.objects.create(
+        name="e01-instant",
+        project=project,
+        eval_template=template,
+        config={"instant_eval": True},
+        mapping={},
+        filters={},
+    )
+    task = _task(project, [config], run_type=RunType.HISTORICAL, spans_limit=500)
+
+    assert _instant_sizing(task) == {
+        "batch_size": INSTANT_BATCH_SIZE,
+        "max_concurrent": INSTANT_MAX_CONCURRENT,
+        "heartbeat_s": INSTANT_HEARTBEAT_S,
+    }
+
+
+def test_e01_run_entry_runs_config_created_after_freeze(
+    lagging_replica,  # noqa: F811
+    project,
+    observation_span,
+    eval_template,
+    eval_task,
+    stub_run_eval,
+    stub_cost_log,
+):
+    """An entry whose config was created moments ago (an Instant eval
+    question, a new eval added to a task) must run, not fail as missing."""
+
+    from tracer.services.eval_tasks.run_entry import run_entry
+
+    lagging_replica.freeze()
+    config = CustomEvalConfig.objects.create(
+        name="e01-new",
+        project=project,
+        eval_template=eval_template,
+        config={"threshold": 0.8},
+        mapping={"input": "input", "output": "output"},
+        filters={},
+    )
+    # In bulk, as materialize_pending writes entries: a single-row save runs
+    # EvalLogger.full_clean, whose config lookup is not what this test is about.
+    (entry,) = EvalLogger.objects.bulk_create(
+        [
+            EvalLogger(
+                target_type=EvalTargetType.SPAN,
+                observation_span=observation_span,
+                trace=observation_span.trace,
+                custom_eval_config=config,
+                eval_task_id=str(eval_task.id),
+                status=EvalEntryStatus.RUNNING,
+            )
+        ]
+    )
+
+    assert run_entry(entry) == EvalEntryStatus.COMPLETED
+
+    stored = EvalLogger.objects.using("default").get(id=entry.id)
+    assert (stored.status, stored.config_hash) == (
+        EvalEntryStatus.COMPLETED,
+        resolved_config_hash(config),
+    )
+    assert [request.runtime_config for request in stub_run_eval.requests] == [
+        {"threshold": 0.8}
+    ]
+
+
+def test_e01_run_entry_runs_and_stamps_config_edited_after_freeze(
+    lagging_replica,  # noqa: F811
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    stub_run_eval,
+    stub_cost_log,
+):
+    """The user edits a config and reruns. The run must evaluate the edited
+    config and stamp its hash. The old config stamped with the old hash is
+    re-run later on a continuous task; the old config stamped with the new
+    hash would never be."""
+
+    from tracer.services.eval_tasks.run_entry import run_entry
+
+    entry = _entry(
+        eval_task,
+        observation_span,
+        custom_eval_config,
+        status=EvalEntryStatus.RUNNING,
+    )
+    lagging_replica.freeze()
+    CustomEvalConfig.objects.using("default").filter(id=custom_eval_config.id).update(
+        config={"threshold": 0.3}
+    )
+    edited = CustomEvalConfig.objects.using("default").get(id=custom_eval_config.id)
+
+    assert run_entry(entry) == EvalEntryStatus.COMPLETED
+
+    stored = EvalLogger.objects.using("default").get(id=entry.id)
+    assert stored.config_hash == resolved_config_hash(edited)
+    assert [request.runtime_config for request in stub_run_eval.requests] == [
+        {"threshold": 0.3}
+    ]
+
+
+@pytest.mark.parametrize("activity", ["_fail_entry_sync", "_requeue_lost_entry_sync"])
+def test_e01_lost_run_stamps_hash_of_config_edited_after_freeze(
+    lagging_replica,  # noqa: F811
+    project,
+    trace,
+    template,
+    activity,
+):
+    """An entry errored after its run was lost carries the hash of the config
+    run_entry read, the primary's, as without a replica."""
+
+    from tfc.temporal.eval_tasks import activities
+
+    config = make_config(project=project, template=template, name="e01-lost")
+    span = _span(project, trace)
+    task = _task(project, [config], run_type=RunType.HISTORICAL)
+    entry = _entry(
+        task,
+        span,
+        config,
+        status=EvalEntryStatus.RUNNING,
+        attempts=1,
+        config_hash=resolved_config_hash(config),
+    )
+    lagging_replica.freeze()
+    CustomEvalConfig.objects.using("default").filter(id=config.id).update(
+        mapping={"input": "edited"}
+    )
+    edited = CustomEvalConfig.objects.using("default").get(id=config.id)
+
+    result = getattr(activities, activity)(str(entry.id))
+
+    assert result["status"] == str(EvalEntryStatus.ERRORED)
+    stored = EvalLogger.objects.using("default").get(id=entry.id)
+    assert (stored.status, stored.config_hash) == (
+        EvalEntryStatus.ERRORED,
+        resolved_config_hash(edited),
+    )

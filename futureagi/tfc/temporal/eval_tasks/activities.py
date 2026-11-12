@@ -235,7 +235,11 @@ def _fail_entry_sync(entry_id: str) -> dict:
         )
         if entry is None:
             return {"entry_id": str(entry_id), "status": "noop"}
-        config = CustomEvalConfig.objects.get(id=entry.custom_eval_config_id)
+        # Primary, as run_entry reads it: stamp the hash of the config the
+        # failed run used, not an older one a lagging replica still holds.
+        config = CustomEvalConfig.objects.using("default").get(
+            id=entry.custom_eval_config_id
+        )
         landed = mark_terminal(
             entry,
             EvalEntryStatus.ERRORED,
@@ -287,7 +291,10 @@ def _requeue_lost_entry_sync(entry_id: str) -> dict:
                     "entry_id": str(entry_id),
                     "status": str(EvalEntryStatus.PENDING),
                 }
-            config = CustomEvalConfig.objects.get(id=entry.custom_eval_config_id)
+            # Primary, as run_entry reads it, for the hash stamped below.
+            config = CustomEvalConfig.objects.using("default").get(
+                id=entry.custom_eval_config_id
+            )
             mark_terminal(
                 entry,
                 EvalEntryStatus.ERRORED,
@@ -400,7 +407,9 @@ def _get_workflow_labels_sync(task_id: str) -> dict:
         )
         project = task.project
         org = getattr(project, "organization", None)
-        eval_count = task.evals.count()
+        # Primary: the workflow reads its labels as it starts, right after the
+        # request that set the task's evals.
+        eval_count = task.evals.using("default").count()
         config_summary = (
             f"row_type={task.row_type}, sampling={task.sampling_rate}, "
             f"limit={task.spans_limit}, evals={eval_count}"

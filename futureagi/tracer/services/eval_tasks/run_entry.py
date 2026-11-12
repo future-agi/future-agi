@@ -87,8 +87,13 @@ def run_entry(entry: EvalLogger) -> str:
         return RECLAIMED
     fresh.updated_at = run_epoch
 
-    config = CustomEvalConfig.objects.select_related("project").get(
-        id=fresh.custom_eval_config_id
+    # Primary: the config may have been created or edited just before this
+    # run. The eval cores re-read it by id from the primary too, so the eval
+    # runs the config whose hash is stamped below.
+    config = (
+        CustomEvalConfig.objects.using("default")
+        .select_related("project")
+        .get(id=fresh.custom_eval_config_id)
     )
     # Infrastructure reads happen before the terminalizing evaluator boundary:
     # a transient PG failure loading task ownership must be retried by Temporal,
@@ -148,6 +153,10 @@ def run_entry(entry: EvalLogger) -> str:
         # another claim's result.
         return RECLAIMED
     if status == EvalEntryStatus.COMPLETED:
+        # The clustering gate reads the entry's config: hand it the one loaded
+        # above from the primary, not a lazy load from a replica that may not
+        # have a config created moments ago.
+        fresh.custom_eval_config = config
         _reseed_eval_clustering(fresh, config.project_id)
     return status
 

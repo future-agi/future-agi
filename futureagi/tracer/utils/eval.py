@@ -1199,7 +1199,9 @@ def _execute_composite_on_span(
                 ),
                 project_id=project_id,
             )
-        custom_eval_config = CustomEvalConfig.objects.get(
+        # Primary: the config may have been created or edited a moment ago,
+        # and an eval-task run stamps the primary config's hash.
+        custom_eval_config = CustomEvalConfig.objects.using("default").get(
             id=custom_eval_config_id, deleted=False
         )
     except EvalTelemetryReadError:
@@ -1590,7 +1592,9 @@ def _execute_evaluation(
                 project_id=project_id,
             )
 
-        custom_eval_config = CustomEvalConfig.objects.get(
+        # Primary: the config may have been created or edited a moment ago,
+        # and an eval-task run stamps the primary config's hash.
+        custom_eval_config = CustomEvalConfig.objects.using("default").get(
             id=custom_eval_config_id, deleted=False
         )
     except EvalTelemetryReadError:
