@@ -59,7 +59,8 @@ describe("ChatInput", () => {
         "File upload failed because the server storage endpoint is not configured correctly. Contact your administrator.";
       vi.mocked(uploadFile).mockRejectedValueOnce({
         status: false,
-        statusCode: 400,
+        statusCode: 503,
+        type: "service_unavailable",
         code: "storage_configuration_error",
         detail,
       });

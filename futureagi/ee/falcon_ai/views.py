@@ -44,6 +44,23 @@ _gm = GeneralMethods()
 logger = structlog.get_logger(__name__)
 
 
+def _storage_configuration_error(setting, error):
+    """A server-side storage misconfiguration, not a problem with the upload.
+
+    Settings may contain credentials: log only the setting's name and the
+    parser's fixed reason, never the configured value or a traceback.
+    """
+    logger.error(
+        "falcon_upload_storage_configuration_error", setting=setting, reason=str(error)
+    )
+    return _gm.custom_error_response(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        "File upload failed because the server storage endpoint is not "
+        "configured correctly. Contact your administrator.",
+        code="storage_configuration_error",
+    )
+
+
 class StreamStatusView(APIView):
     """Check if there is an active or recent agent stream for a conversation."""
 
@@ -353,6 +370,7 @@ class FileUploadView(APIView):
             201: FileUploadResponseSerializer,
             400: FalconErrorResponseSerializer,
             403: FalconErrorResponseSerializer,
+            503: FalconErrorResponseSerializer,
         },
     )
     def post(self, request):
@@ -436,23 +454,21 @@ class FileUploadView(APIView):
 
         # Keep Falcon's legacy endpoint/credential overrides, but share the
         # storage client's parser so bare host:port is not mistaken for a scheme.
+        # An empty MINIO_ENDPOINT falls through to S3_ENDPOINT_URL.
+        endpoint_setting = (
+            "MINIO_ENDPOINT" if os.getenv("MINIO_ENDPOINT") else "S3_ENDPOINT_URL"
+        )
         try:
             minio_endpoint, scheme_hint = _parse_endpoint(
-                os.getenv("MINIO_ENDPOINT")
-                or os.getenv("S3_ENDPOINT_URL", "minio:9000")
+                os.getenv(endpoint_setting, "minio:9000")
             )
-            # Validate the public endpoint too, before writing any object or row.
+        except ValueError as error:
+            return _storage_configuration_error(endpoint_setting, error)
+        # Validate the public endpoint too, before writing any object or row.
+        try:
             _parse_endpoint(MINIO_URL)
-        except ValueError:
-            # Configuration may contain credentials. Log neither the value nor
-            # a traceback, and distinguish this from invalid user-supplied files.
-            logger.error("falcon_upload_storage_configuration_error")
-            return _gm.custom_error_response(
-                status.HTTP_400_BAD_REQUEST,
-                "File upload failed because the server storage endpoint is not "
-                "configured correctly. Contact your administrator.",
-                code="storage_configuration_error",
-            )
+        except ValueError as error:
+            return _storage_configuration_error("MINIO_URL", error)
         secure = (
             scheme_hint if scheme_hint is not None else "amazonaws" in minio_endpoint
         )

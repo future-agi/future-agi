@@ -326,12 +326,15 @@ class TestFileUploadView:
     ):
         monkeypatch.setenv("MINIO_ENDPOINT", "")
         monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
+        failing_setting = setting
         if setting == "MINIO_URL":
             monkeypatch.setattr("tfc.settings.settings.MINIO_URL", endpoint)
         else:
             monkeypatch.setenv(setting, endpoint)
             if setting == "MINIO_ENDPOINT" and not endpoint:
+                # An empty MINIO_ENDPOINT falls through to S3_ENDPOINT_URL.
                 monkeypatch.setenv("S3_ENDPOINT_URL", "")
+                failing_setting = "S3_ENDPOINT_URL"
         client_factory = Mock()
         monkeypatch.setattr("minio.Minio", client_factory)
         upload = SimpleUploadedFile(
@@ -341,8 +344,10 @@ class TestFileUploadView:
         with capture_logs() as logs:
             resp = auth_client.post(self.URL, {"file": upload}, format="multipart")
 
-        assert resp.status_code == 400
+        # A server-side misconfiguration, not a client validation error.
+        assert resp.status_code == 503
         assert resp.data["status"] is False
+        assert resp.data["type"] == "service_unavailable"
         assert resp.data["code"] == "storage_configuration_error"
         assert resp.data["detail"] == (
             "File upload failed because the server storage endpoint is not configured "
@@ -356,6 +361,11 @@ class TestFileUploadView:
         ]
         assert len(errors) == 1
         assert errors[0]["log_level"] == "error"
+        # Name the setting an administrator has to fix, never its value.
+        assert errors[0]["setting"] == failing_setting
+        assert errors[0]["reason"] == (
+            "Storage endpoint must be a host[:port] or an HTTP(S) URL"
+        )
         assert "secret" not in str(errors)
         assert "secret" not in str(resp.data)
         assert not errors[0].get("exc_info")
