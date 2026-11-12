@@ -694,6 +694,19 @@ def record_draft(
     )
 
 
+def edit_side(
+    environment: HostedHarnessJob, piece: str
+) -> tuple[dict[str, bytes], str]:
+    """One piece's files the next edit builds on (its open draft, else its saved default), with the archive key they
+    were read from ("" when there is none)."""
+    head = HostedHarnessJob.no_workspace_objects.select_related(
+        "environment_version", "suite_version"
+    ).get(id=environment.id)
+    version = fresh_draft(head, piece) or getattr(head, f"{piece}_version")
+    key = str(getattr(version, "archive_object_key", "") or "")
+    return _piece_files(head, piece, version), key
+
+
 def edit_sides(environment: HostedHarnessJob) -> dict[str, dict[str, bytes]]:
     """The files the next edit builds on, per piece: its open draft, else its saved default."""
     head = HostedHarnessJob.no_workspace_objects.select_related(
