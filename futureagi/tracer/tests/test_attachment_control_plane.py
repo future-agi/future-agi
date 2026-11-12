@@ -804,11 +804,16 @@ def test_standalone_recording_facts_follow_the_full_read_gate(setup, user, monke
         organization=SimpleNamespace(id=scope.organization_id),
         workspace=SimpleNamespace(id=scope.workspace_id),
     )
-    result = {
-        "project_id": str(scope.project_id),
-        "observation_span": [{"id": row.span_id, "trace_id": str(row.trace_id)}],
-    }
-    enrich_voice_detail(request=request, result=result, reader=reader)
+
+    def voice_detail():
+        result = {
+            "project_id": str(scope.project_id),
+            "observation_span": [{"id": row.span_id, "trace_id": str(row.trace_id)}],
+        }
+        enrich_voice_detail(request=request, result=result, reader=reader)
+        return result
+
+    result = voice_detail()
     projection = result["recording_attachment"]
     assert projection["state"] == "ready"
     assert projection["manifest"]["segments"][0]["occurrence_id"] == str(row.client_id)
@@ -819,9 +824,7 @@ def test_standalone_recording_facts_follow_the_full_read_gate(setup, user, monke
         revoked_at=timezone.now()
     )
     assert reader.standalone_recording(object(), target, str(row.client_id)) is None
-    result.pop("recording_attachment")
-    enrich_voice_detail(request=request, result=result, reader=reader)
-    assert "recording_attachment" not in result  # the batch read denies too
+    assert "recording_attachment" not in voice_detail()  # the batch denies too
 
 
 def test_binder_reads_spans_by_trace_within_a_start_window(setup, monkeypatch):
