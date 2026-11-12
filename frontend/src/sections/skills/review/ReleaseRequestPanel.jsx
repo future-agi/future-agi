@@ -125,23 +125,37 @@ function PacketActions({
   onDecide,
   onExecute,
   onRefresh,
+  onRenew,
+  staleCode,
   receipt,
   currentEvidence,
   currentTarget,
   review,
   state,
+  reviewedIdentity,
+  onReviewedChange,
 }) {
   const operation = useReviewedOperation();
   const now = useReviewClock();
-  const [recipientId, setRecipientId] = useState("");
+  // J4: one eligible reviewer is preselected; the author still sees the name
+  // and can change it before sending.
+  const [recipientId, setRecipientId] = useState(
+    recipients.length === 1 ? recipients[0].id : "",
+  );
   const [comment, setComment] = useState("");
-  const [acknowledged, setAcknowledged] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const packet = preview.packet;
   const fingerprint = preview.fingerprint;
-  // Acknowledgment is for this exact server packet, never just its content hash.
-  const [ackIdentity, setAckIdentity] = useState(null);
-  const reviewed = acknowledged && ackIdentity === fingerprint;
+  // Acknowledgment is for this exact server packet revision, never just its
+  // content hash. A controller may keep it across the pending -> approved
+  // remount so the same reviewer is not asked to re-attest an unchanged
+  // revision; any renewal changes the revision and clears it.
+  const [localIdentity, setLocalIdentity] = useState(null);
+  const ackKey = `${request?.revision ?? 0}:${fingerprint}`;
+  const ackValue =
+    reviewedIdentity !== undefined ? reviewedIdentity : localIdentity;
+  const setAckValue = onReviewedChange || setLocalIdentity;
+  const reviewed = ackValue === ackKey;
   const reasons = packet.evidence.flatMap((ref) => {
     const live = currentEvidence?.find(
       (item) => evidenceKey(item) === evidenceKey(ref),
@@ -211,11 +225,34 @@ function PacketActions({
           inspecting the changes.
         </Alert>
       )}
-      {onRefresh && (
-        <Button variant="outlined" disabled={locked} onClick={onRefresh}>
-          Inspect a new review
-        </Button>
+      {staleCode && !closed && (
+        <Alert severity="warning">
+          The server reports this packet stale ({staleCode}). Previous
+          approvals cannot release it.
+        </Alert>
       )}
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+        {onRefresh && (
+          <Button variant="outlined" disabled={locked} onClick={onRefresh}>
+            Inspect a new review
+          </Button>
+        )}
+        {/* J4: an assigned reviewer renews explicitly after a race; the next
+            revision starts pending and needs a new decision. */}
+        {onRenew &&
+          request &&
+          permissions.canDecide &&
+          !closed &&
+          (!current || operation.error) && (
+            <Button
+              variant="outlined"
+              disabled={operation.busy || operation.uncertain}
+              onClick={onRenew}
+            >
+              Renew review
+            </Button>
+          )}
+      </Stack>
       {!closed && (
         <Section title={request ? "Review decision" : "Request review"}>
           <Stack spacing={1.5}>
@@ -262,10 +299,7 @@ function PacketActions({
                 <Checkbox
                   checked={reviewed}
                   disabled={!current || locked}
-                  onChange={(_, value) => {
-                    setAcknowledged(value);
-                    setAckIdentity(fingerprint);
-                  }}
+                  onChange={(_, value) => setAckValue(value ? ackKey : null)}
                 />
               }
               label="I reviewed this exact candidate, target, evidence and release consequence."
@@ -365,8 +399,10 @@ function PacketActions({
             variant="contained"
             disabled={!canExecute || !reviewed || locked}
             onClick={async () => {
-              const result = await operation.run(onExecute, actionInput);
-              if (result) setConfirm(false);
+              await operation.run(onExecute, actionInput);
+              // Close on every outcome: a refusal or unknown result is shown
+              // beside the decision, where renewal or retry is offered.
+              setConfirm(false);
             }}
           >
             Move {packet.transition.label}
@@ -385,11 +421,15 @@ PacketActions.propTypes = {
   onDecide: PropTypes.func,
   onExecute: PropTypes.func,
   onRefresh: PropTypes.func,
+  onRenew: PropTypes.func,
+  staleCode: PropTypes.string,
   receipt: PropTypes.object,
   currentEvidence: PropTypes.array,
   currentTarget: PropTypes.object,
   review: PropTypes.object,
   state: PropTypes.string.isRequired,
+  reviewedIdentity: PropTypes.string,
+  onReviewedChange: PropTypes.func,
 };
 
 export default function ReleaseRequestPanel({
@@ -413,7 +453,10 @@ export default function ReleaseRequestPanel({
     );
   return (
     <PacketActions
-      key={`${scopeKey}:${request?.id ?? preview.packet.candidateVersionId}:${request?.status ?? "new"}`}
+      // Revision is part of the identity: a renewed-and-approved packet keeps
+      // the same status, but a refusal shown for the previous revision must
+      // not carry over to it.
+      key={`${scopeKey}:${request?.id ?? preview.packet.candidateVersionId}:${request?.revision ?? 0}:${request?.status ?? "new"}`}
       {...props}
       {...{ state, preview, request, recipients, permissions }}
     />

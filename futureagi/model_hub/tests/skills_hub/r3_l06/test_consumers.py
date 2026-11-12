@@ -331,7 +331,8 @@ def test_retirement_and_binding_cas(principal, context, binding):
     fields = {
         key: value
         for key, value in binding.items()
-        if key not in {"id", "context_id", "revision", "retired_at"}
+        if key
+        not in {"id", "context_id", "revision", "retired_at", "configuration_digest"}
     }
     changed = update_binding(
         principal=principal,

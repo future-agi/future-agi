@@ -31,6 +31,8 @@ function DraftPublication({
   canPublish,
   onAcknowledgeHead,
   onPublish,
+  onPublishAndRequest,
+  oneStepOperation,
   onRefresh,
 }) {
   const [warningFingerprint, setWarningFingerprint] = useState(null);
@@ -58,8 +60,14 @@ function DraftPublication({
   const reviewed =
     ackFingerprint === draftReview.reviewFingerprint ||
     (carriedHere && carried.reviewed);
+  const oneStep = oneStepOperation || operation;
   const locked =
-    operation.busy || operation.uncertain || Boolean(operation.result);
+    operation.busy ||
+    operation.uncertain ||
+    Boolean(operation.result) ||
+    oneStep.busy ||
+    oneStep.uncertain ||
+    Boolean(oneStep.result);
   const fullDiff =
     draftReview.complete === true &&
     draftReview.changes.every(
@@ -231,6 +239,7 @@ function DraftPublication({
             after publication.
           </Typography>
           <OperationFeedback operation={operation} />
+          {oneStep !== operation && <OperationFeedback operation={oneStep} />}
           {operation.result && (
             <Alert severity="info">
               Operation recorded. Reload the acknowledged draft or immutable
@@ -285,6 +294,32 @@ function DraftPublication({
                 Acknowledge reviewed head
               </Button>
             )}
+            {/* J4 one-step path: the same reviewed identity acknowledges the
+                head when needed, publishes the immutable candidate and opens
+                the release-review request with it carried forward. Production
+                is not moved; sharing and submission stay explicit. */}
+            {onPublishAndRequest && (
+              <Button
+                variant={draftReview.headAcknowledged ? "outlined" : "contained"}
+                disabled={
+                  !ready ||
+                  (draftReview.baseVersion !==
+                    draftReview.expectedHeadVersion &&
+                    !draftReview.headChanges)
+                }
+                onClick={() =>
+                  oneStep.run(onPublishAndRequest, {
+                    ...fields,
+                    headAcknowledged: draftReview.headAcknowledged === true,
+                    baseVersion: draftReview.baseVersion,
+                    note,
+                    acknowledgeWarnings: warnings,
+                  })
+                }
+              >
+                Publish and request review
+              </Button>
+            )}
             {onRefresh && (
               <Button
                 variant="outlined"
@@ -307,6 +342,8 @@ DraftPublication.propTypes = {
   canPublish: PropTypes.bool,
   onAcknowledgeHead: PropTypes.func,
   onPublish: PropTypes.func,
+  onPublishAndRequest: PropTypes.func,
+  oneStepOperation: PropTypes.object,
   onRefresh: PropTypes.func,
 };
 

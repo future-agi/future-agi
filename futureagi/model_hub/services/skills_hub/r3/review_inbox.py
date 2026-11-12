@@ -10,7 +10,10 @@ from django.db.models.functions import Greatest
 
 from model_hub.models.skills_hub_r3 import HubSkillReleaseRecipient
 from model_hub.services.skills_hub.errors import SkillsHubError
-from model_hub.services.skills_hub.r3.release_requests import get_release_request
+from model_hub.services.skills_hub.r3.release_requests import (
+    _request_packet,
+    get_release_request,
+)
 from model_hub.services.skills_hub.v11.principals import (
     require_private_principal,
     require_scope_access,
@@ -59,6 +62,7 @@ def list_review_inbox(
     # Stream bounded batches, not all packet bodies. Current evidence access must be
     # checked before count/pagination; filtering only the returned page leaks totals.
     for recipient in rows.iterator(chunk_size=100):
+        renewal_required = False
         try:
             request, packet = get_release_request(
                 principal=principal, request_id=recipient.request_id
@@ -71,7 +75,20 @@ def list_review_inbox(
                 "evidence_mismatch",
             }:
                 raise
-            continue
+            if exc.code != "evidence_expired":
+                continue
+            # J4: retention expiry is not a visibility loss. The assigned
+            # reviewer keeps the metadata-only row so they can explicitly renew;
+            # no expired evidence body is returned.
+            try:
+                request, packet = _request_packet(
+                    principal=principal, request_id=recipient.request_id
+                )
+            except SkillsHubError as inner:
+                if inner.code != "resource_not_found":
+                    raise
+                continue
+            renewal_required = request.status != "released"
         unseen = recipient.last_seen_revision < request.revision
         unread += int(unseen)
         if status is not None and request.status != status:
@@ -90,6 +107,7 @@ def list_review_inbox(
                     "fingerprint": packet.fingerprint,
                     "candidate_version_id": str(packet.candidate_id),
                     "updated_at": request.updated_at,
+                    "renewal_required": renewal_required,
                 }
             )
         count += 1
@@ -107,7 +125,8 @@ def list_review_inbox(
 def mark_review_seen(
     *, principal: SkillPrincipal, request_id: UUID, revision: int
 ) -> None:
-    request, _ = get_release_request(principal=principal, request_id=request_id)
+    # Seen state is metadata; it stays writable after attached evidence expires.
+    request, _ = _request_packet(principal=principal, request_id=request_id)
     if type(revision) is not int or revision < 1 or revision > request.revision:
         raise SkillsHubError(
             "review_conflict",

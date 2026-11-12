@@ -185,11 +185,20 @@ def binding_output(binding: HubSkillContextBinding) -> dict:
         "context_id": str(binding.context_id),
         "revision": binding.revision,
         "retired_at": binding.retired_at,
+        "configuration": binding.configuration or None,
+        "configuration_digest": binding.configuration_digest,
     }
 
 
 def _validate_binding(request: dict) -> dict:
-    _shape(request, BINDING_FIELDS)
+    # J4: the optional pinned configuration is domain-validated and its digest
+    # is server-derived. A declaration is not proof of runtime qualification.
+    if not isinstance(request, dict):
+        _invalid("Supply exactly the documented fields.")
+    _shape(
+        {key: value for key, value in request.items() if key != "configuration"},
+        BINDING_FIELDS,
+    )
     for field, bound in [("name", 120), ("profile", 64), ("profile_version", 64)]:
         _text(request[field], bound)
     selector = request["selector"]
@@ -228,7 +237,24 @@ def _validate_binding(request: dict) -> dict:
             _invalid("Runtime targets use manual or new-thread updates.")
     else:
         _invalid("Unsupported target kind.")
-    return _json(request)
+    values = _json(request)
+    if "configuration" in values:
+        configuration = values["configuration"]
+        if configuration is None:
+            values.update(configuration={}, configuration_digest="")
+        else:
+            from simulate.services.skills_context_adapter import (
+                validate_native_configuration,
+            )
+
+            if values["kind"] != "runtime":
+                _invalid("Only runtime targets accept a native configuration.")
+            configuration = validate_native_configuration(configuration)
+            values.update(
+                configuration=configuration,
+                configuration_digest=canonical_digest(configuration),
+            )
+    return values
 
 
 def _bindings(principal: ContextPrincipal) -> QuerySet[HubSkillContextBinding]:
@@ -331,6 +357,10 @@ def update_binding(
     require_scope_access(principal=principal, write=True)
     binding = _binding(principal=principal, binding_id=binding_id)
     values = _validate_binding(request) if request is not None else None
+    if values is not None and values["kind"] != "runtime":
+        # Clear on a kind change, not during create validation: adding defaults
+        # there would break replay digests for pre-configuration clients.
+        values.update(configuration={}, configuration_digest="")
     with transaction.atomic():
         get_resource(
             principal=principal,

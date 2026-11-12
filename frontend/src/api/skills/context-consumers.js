@@ -15,12 +15,17 @@ export const contextBindingInput = (value) => ({
   name: value.name, kind: value.kind, selector: contextSelectorInput(value.selector), update_mode: value.updateMode,
   profile: value.profile, profile_version: value.profileVersion, repository: repositoryInput(value.repository),
   expected_report_interval_seconds: value.expectedReportIntervalSeconds,
+  // Optional: omission preserves the reviewed identity; null explicitly clears
+  // it. The server derives the digest; never send a client-asserted digest.
+  ...(Object.hasOwn(value, 'configuration') ? { configuration: value.configuration } : {}),
 });
 export const mapContextBinding = (value) => ({
   id: value.id, contextId: value.context_id, revision: value.revision, retiredAt: value.retired_at,
   name: value.name, kind: value.kind, selector: mapContextSelector(value.selector), updateMode: value.update_mode,
   profile: value.profile, profileVersion: value.profile_version, repository: mapRepository(value.repository),
   expectedReportIntervalSeconds: value.expected_report_interval_seconds,
+  ...(Object.hasOwn(value, 'configuration') ? { configuration: value.configuration } : {}),
+  ...(Object.hasOwn(value, 'configuration_digest') ? { configurationDigest: value.configuration_digest } : {}),
 });
 export const contextSessionInput = (value) => ({
   client_session_key: value.clientSessionKey, incarnation_id: value.incarnationId, resume_session_id: value.resumeSessionId,

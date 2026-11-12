@@ -238,6 +238,8 @@ function installRequest(kind, { current = true, canMove = true, authorId = 'anot
   });
   axios.post.mockImplementation(async (url, body) => {
     if (url.endsWith('/release-requests/preview/')) return envelope({ packet, fingerprint: current ? digest : 'changed' });
+    // J4: the reviewer's server-side inspection of the exact packet (no evidence attached here).
+    if (url.endsWith('/release-requests/inspection/')) return envelope({ fingerprint: body.expected_fingerprint, capabilities: { before_digest: 'before', after_digest: digest, changes: [] }, summaries: [], target_configuration: null });
     if (url.endsWith('/release/review/')) return envelope({ candidate: { kind: 'version', version: 4, digest }, release_state: { ...releaseState, labels: [{ name: 'production', version: 3, can_move: canMove }] }, changes: { from: 3, files: [{ path: 'AGENTS.md', status: 'modified', from_sha256: 'before', to_sha256: 'after' }], total_pages: 1 }, head_changes: { from: 4, files: [], total_pages: 1 }, checks: { items: [] }, impact: { following: 2, pinned: 1, unobserved: 0, more_available: false }, review_fingerprint: digest, head_review: null });
     if (url.endsWith('/decisions/')) { expect(body.expected_fingerprint).toBe(digest); request.status = 'approved'; request.revision = 2; return envelope(request); }
     if (url.endsWith('/execute/')) { expect(body.revision).toBe(2); request.status = 'released'; request.revision = 3; return envelope({ request_id: requestId, decision_id: 'decision', revision: 3, executed_by: 'author', currentness_at_action: { fingerprint: digest }, post_move_state: { label: 'production', version: 4, release_revision: 2, event_id: 'event' } }); }

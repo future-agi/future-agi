@@ -44,6 +44,8 @@ services:
       - ./e2e/stack/backend/urls_e2e.py:/app/backend/tfc/urls_e2e.py:ro
       - ./e2e/stack/backend/e2e_clean_signup.py:/app/backend/accounts/views/e2e_clean_signup.py:ro
       - ./e2e/stack/backend/e2e_feed_issue.py:/app/backend/tracer/views/e2e_feed_issue.py:ro
+      # J4: test-image-only retention clock seam.
+      - ./e2e/stack/backend/e2e_j4_evidence_clock.py:/app/backend/model_hub/views/e2e_j4_evidence_clock.py:ro
     extra_hosts:
       - "agentcc-gateway:127.0.0.1"
     # A crash should fail the run loudly instead of restarting quietly.

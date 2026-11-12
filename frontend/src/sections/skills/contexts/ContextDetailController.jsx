@@ -5,7 +5,7 @@ import { useSkillV11Scope } from 'src/api/skills/testing';
 import { useContextDetail, useContextDraft } from 'src/api/skills/context-authoring';
 import { useContextBindings } from 'src/api/skills/context-consumers';
 import ContextLabelRequestPanel from './ContextLabelRequestPanel';
-import { useContextVersions, useContextInspection, useContextInspectionFile, useContextConsumers } from 'src/api/skills/context-production';
+import { contextReviewReady, useContextVersions, useContextInspection, useContextInspectionFile, useContextConsumers } from 'src/api/skills/context-production';
 import { paths } from 'src/routes/paths';
 import ContextDetailView from './ContextDetailView';
 import ContextConsumersView from './ContextConsumersView';
@@ -15,6 +15,7 @@ import ContextMigrationExport from './ContextMigrationExport';
 import ContextTestsPanel from './ContextTestsPanel';
 import { contextSkillChoices } from './context-skill-choices';
 import { productionBaseline } from './production-baseline';
+import ContextTargetRegistration from './ContextTargetRegistration';
 
 // Intent: authors inspect one exact context before choosing a draft origin.
 // Hierarchy: immutable identity first, delivery observations separate from use.
@@ -64,14 +65,14 @@ function Detail() {
     {!query.data?.context.latestVersion && query.data && !query.data.ownDraft && <Button variant="contained" onClick={() => navigate(paths.dashboard.skills.contextEdit(contextId))}>Start unpublished draft</Button>}
     <ContextDetailView initialTab={params.get('tab')} scopeKey={scopeKey} query={scoped(query)} versionQuery={scoped(version)} fileQuery={scoped(file)} selectedPath={path} onSelectPath={selectPath}
       versions={allChoices} onSelectVersion={(value) => { selectPath('AGENTS.md'); setParams((current) => { const next = new URLSearchParams(current); next.set('version', String(value)); return next; }); }}
-      onEditViewed={edit} onPreserveDraft={edit} onResumeDraft={() => navigate(paths.dashboard.skills.contextEdit(contextId))} state={params.get('state')}
+      onEditViewed={edit} onPreserveDraft={edit} onResumeDraft={() => navigate(paths.dashboard.skills.contextEdit(contextId))} onReviewDraft={contextReviewReady() ? () => navigate(paths.dashboard.skills.contextReview(contextId)) : undefined} state={params.get('state')}
       sections={{
         tests: <ContextTestsPanel contextId={contextId} version={selectedVersion} versions={allChoices} skills={contextSkillChoices(version.data?.descriptor)} productionVersion={productionVersion} seed={testSeed}
           canWrite={!query.isError && query.data?.releaseState.permissions.canPublish === true} state={params.get('state')} draft={testingDraft ? draft.data : undefined}
           source={{ testingDraft, draftAvailable: Boolean(query.data?.ownDraft), releaseAvailable: Boolean(selectedVersion), isLoading: testingDraft && draft.isLoading, isError: testingDraft && draft.isError, onRetry: draft.refetch,
             onSelect: (useDraft) => setParams((current) => { const next = new URLSearchParams(current); if (useDraft) next.set('draft', '1'); else next.delete('draft'); return next; }) }} />,
         versions: <Stack spacing={2}><ContextLabelRequestPanel contextId={contextId} version={selectedVersion} /><Alert severity="info">Choose an exact release above. Editing does not move production.</Alert><Stack direction="row" spacing={1}><Button disabled={versionPage <= 1} onClick={() => setVersionPage((page) => page - 1)}>Previous releases</Button><Button disabled={!versions.data || versionPage >= versions.data.totalPages} onClick={() => setVersionPage((page) => page + 1)}>Older releases</Button></Stack></Stack>,
-        consumers: <ContextConsumersView scopeKey={scopeKey} state={consumers.isLoading ? 'loading' : consumers.isError ? 'error' : consumers.data ? 'ready' : 'unavailable'} data={consumers.data} windowDays={windowDays} onWindowChange={(days) => { setWindowDays(days); setConsumerPage(1); }} onPageChange={setConsumerPage} onRetry={consumers.refetch} versionNumbers={Object.fromEntries(allChoices.map((row) => [row.id, row.number]))} />,
+        consumers: <Stack spacing={1.5}><ContextTargetRegistration contextId={contextId} canRegister={!query.isError && query.data?.releaseState.permissions.canPublish === true} /><ContextConsumersView scopeKey={scopeKey} state={consumers.isLoading ? 'loading' : consumers.isError ? 'error' : consumers.data ? 'ready' : 'unavailable'} data={consumers.data} windowDays={windowDays} onWindowChange={(days) => { setWindowDays(days); setConsumerPage(1); }} onPageChange={setConsumerPage} onRetry={consumers.refetch} versionNumbers={Object.fromEntries(allChoices.map((row) => [row.id, row.number]))} /></Stack>,
         use: <Stack spacing={2}>
           <ContextUsePanel scopeKey={scopeKey} state={deliveryState} snapshot={version.data?.snapshot} origin={window.location.origin} organizationId={access.scope.organizationId} workspaceId={access.scope.workspaceId} onRetry={version.refetch} />
           {query.data?.context && version.data?.descriptor?.links?.length > 0 && <ContextMigrationExport contextName={query.data.context.name} links={version.data.descriptor.links} />}

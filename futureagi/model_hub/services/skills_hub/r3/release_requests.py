@@ -803,3 +803,241 @@ def execute_release_request(
             "post_move_state": after,
         },
     )
+
+
+# --- J4: explicit reviewer renewal after a precondition race -----------------
+# A race (target configuration, annotation, evidence expiry, release policy)
+# makes an approved packet stale. The assigned reviewer may explicitly inspect
+# what changed and create the next immutable packet revision for the SAME
+# author-chosen candidate, transition label, target binding and evidence
+# selection. Nothing is refreshed silently: the renewal is a separate attributed
+# operation, the new revision starts pending, and only a new decision on it can
+# authorize execution. Evidence that is no longer available is removed and
+# reported, never substituted.
+
+_UNAVAILABLE_EVIDENCE = {"evidence_expired", "resource_not_found"}
+
+
+def _renewal_actor(principal: SkillPrincipal, request: HubSkillReleaseRequest) -> None:
+    if (
+        request.author_id == principal.user_id
+        or not request.hub_skill_recipients.filter(
+            recipient_id=principal.user_id
+        ).exists()
+    ):
+        raise _error(
+            "permission_denied",
+            "Only an assigned independent reviewer can renew this review.",
+            403,
+        )
+    if request.status == "released":
+        raise _error("review_conflict", "This request was already executed.")
+
+
+def _renewed_packet(
+    principal: SkillPrincipal,
+    request: HubSkillReleaseRequest,
+    previous: dict,
+    *,
+    lock: bool,
+) -> tuple[dict, list[dict], list[dict]]:
+    skill = _skill(
+        principal,
+        request.skill_id,
+        previous["subject_kind"],
+        lock=lock,
+        candidate_id=UUID(previous["candidate_version_id"]),
+    )
+    old = previous["transition"]
+    label = old["label"]
+    transition = {
+        "label": label,
+        "version": old["version"],
+        "expected_version": skill.labels.filter(name=label)
+        .values_list("version__number", flat=True)
+        .first(),
+        "expected_release_revision": skill.release_revision,
+        "expected_security_revision": skill.security_revision,
+        "expected_impact_fingerprint": release_impact(
+            principal=principal, skill=skill, label=label
+        ),
+    }
+    target = None
+    if previous["target"] is not None:
+        row = HubSkillContextBinding.objects.filter(
+            **_scope(principal),
+            context=skill,
+            pk=previous["target"]["binding_id"],
+            retired_at__isnull=True,
+        ).first()
+        if row is None:
+            raise _error(
+                "target_retired",
+                "The reviewed target was retired. The author must choose a new target.",
+            )
+        target = {
+            "binding_id": str(row.pk),
+            "environment_id": None,
+            "revision": row.revision,
+            "configuration_digest": row.configuration_digest,
+        }
+    selections, removed = [], []
+    for ref in previous["evidence"]:
+        try:
+            current = evidence_reference(
+                principal=principal,
+                source=ref["source"],
+                source_id=ref["source_id"],
+                shared=True,
+                lock=lock,
+            )
+        except SkillsHubError as exc:
+            if exc.code not in _UNAVAILABLE_EVIDENCE:
+                raise
+            removed.append(
+                {
+                    "source": ref["source"],
+                    "source_id": ref["source_id"],
+                    "reason": exc.code,
+                }
+            )
+            continue
+        selections.append(
+            {
+                "source": ref["source"],
+                "source_id": ref["source_id"],
+                "annotation_revision": current["annotation_revision"],
+            }
+        )
+    packet = _build_packet(
+        principal=principal,
+        skill=skill,
+        candidate_id=UUID(previous["candidate_version_id"]),
+        transition=transition,
+        target=target,
+        evidence=selections,
+        external_pipeline=previous["external_pipeline"],
+        lock=lock,
+    )
+    changes = [
+        {"item": f"transition.{key}", "before": old[key], "after": transition[key]}
+        for key in sorted(transition)
+        if old[key] != transition[key]
+    ]
+    if previous["target"] != packet["target"]:
+        changes.append(
+            {"item": "target", "before": previous["target"], "after": packet["target"]}
+        )
+    before = {(r["source"], r["source_id"]): r for r in previous["evidence"]}
+    for ref in packet["evidence"]:
+        old_ref = before[(ref["source"], ref["source_id"])]
+        for key in ("annotation_revision", "status", "payload_expires_at"):
+            if old_ref[key] != ref[key]:
+                changes.append(
+                    {
+                        "item": f"evidence.{ref['source']}.{ref['source_id']}.{key}",
+                        "before": old_ref[key],
+                        "after": ref[key],
+                    }
+                )
+    for row in removed:
+        changes.append(
+            {
+                "item": f"evidence.{row['source']}.{row['source_id']}",
+                "before": "attached",
+                "after": row["reason"],
+            }
+        )
+    return packet, changes, removed
+
+
+def release_renewal_preview(*, principal: SkillPrincipal, request_id: UUID) -> dict:
+    _authorize(principal, write=True)
+    request, packet = _request_packet(principal=principal, request_id=request_id)
+    _renewal_actor(principal, request)
+    renewed, changes, removed = _renewed_packet(
+        principal, request, packet.packet, lock=False
+    )
+    fingerprint = _review_digest(renewed)
+    if fingerprint == packet.fingerprint:
+        raise _error("review_current", "This packet is still current.")
+    return {
+        "request_id": str(request.pk),
+        "revision": request.revision,
+        "status": request.status,
+        "subject_id": str(request.skill_id),
+        "previous_fingerprint": packet.fingerprint,
+        "packet": renewed,
+        "fingerprint": fingerprint,
+        "changes": changes,
+        "removed_evidence": removed,
+    }
+
+
+@transaction.atomic
+def renew_release_request(
+    *,
+    principal: SkillPrincipal,
+    request_id: UUID,
+    revision: int,
+    expected_fingerprint: str,
+    idempotency_key: UUID,
+) -> dict:
+    _authorize(principal, write=True)
+    assert principal.user_id is not None
+    _workspace_lock(principal)
+    lookup, digest, old = _operation(
+        principal,
+        "release_renewal",
+        idempotency_key,
+        [request_id, revision, expected_fingerprint],
+    )
+    if old:
+        _request_packet(principal=principal, request_id=request_id)
+        return dict(old.response)
+    request, packet = _request_packet(principal=principal, request_id=request_id)
+    request = HubSkillReleaseRequest.objects.select_for_update().get(pk=request.pk)
+    _renewal_actor(principal, request)
+    if request.revision != revision:
+        raise _error("review_conflict", "The release request changed.")
+    packet = request.hub_skill_packets.get(revision=request.revision)
+    renewed, changes, removed = _renewed_packet(
+        principal, request, packet.packet, lock=True
+    )
+    fingerprint = _review_digest(renewed)
+    if fingerprint == packet.fingerprint:
+        raise _error("review_current", "This packet is still current.")
+    if fingerprint != expected_fingerprint:
+        raise _error(
+            "review_stale", "Preconditions changed again. Inspect the new renewal."
+        )
+    request.revision += 1
+    request.status = "pending"
+    request.save(update_fields=["revision", "status", "updated_at"])
+    HubSkillReleasePacket.objects.create(
+        **_scope(principal),
+        request=request,
+        revision=request.revision,
+        fingerprint=fingerprint,
+        candidate_id=renewed["candidate_version_id"],
+        packet=renewed,
+    )
+    # The renewing reviewer has inspected this exact revision; other assigned
+    # reviewers still see it as unread.
+    request.hub_skill_recipients.filter(recipient_id=principal.user_id).update(
+        last_seen_revision=request.revision
+    )
+    return _receipt(
+        lookup,
+        digest,
+        request.pk,
+        {
+            "id": str(request.pk),
+            "revision": request.revision,
+            "status": request.status,
+            "renewed_by": str(principal.user_id),
+            "from_revision": revision,
+            "changes": changes,
+            "removed_evidence": removed,
+        },
+    )
