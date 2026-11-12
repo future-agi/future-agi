@@ -505,13 +505,15 @@ def test_connect_only_non_provider_authoring_gets_no_key(connector):
     resolve.assert_not_called()
 
 
-# agent-learning-kit inspects a connect-only target only for these connectors
-# (`PROVIDER_MANAGED_CONNECTORS` in `fi/alk/harness/authoring_entrypoint.py`); a connector it
-# inspects without a key here stalls authoring. Change both together.
+# A hand-kept copy of agent-learning-kit's `PROVIDER_MANAGED_CONNECTORS`
+# (`fi/alk/harness/authoring_entrypoint.py`); a connector ALK inspects without a key here
+# stalls authoring. Change both together.
 _ALK_PROVIDER_MANAGED_CONNECTORS = {"vapi", "retell", "retell_chat"}
 
 
-def test_every_connector_alk_inspects_gets_a_key_and_no_other_does():
+def test_inspection_keys_match_the_copied_alk_connector_list():
+    """Checks the key table against the copy above only. Both sets live in this repo, so a
+    connector ALK adds is not caught here."""
     from simulate.services.hosted_harness_gateway import _INSPECTION_KEYS
 
     assert set(_INSPECTION_KEYS) == _ALK_PROVIDER_MANAGED_CONNECTORS
