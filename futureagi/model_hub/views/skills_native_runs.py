@@ -15,6 +15,7 @@ from model_hub.services.skills_hub.v11.principals import require_private_princip
 from model_hub.views.skills_context_foundation import IDEMPOTENCY, contract, header_uuid
 from model_hub.views.skills_hub import SkillsView
 from simulate.authentication import HarnessAttemptAuthentication
+from simulate.models.hosted_harness import HostedHarnessAttempt
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
@@ -202,7 +203,20 @@ class NativeGuestView(APIView):
         return super().handle_exception(exc)
 
     def reply(self, request, value: dict) -> Response:
-        return GeneralMethods(request).success_response(value, status=200)
+        response: Response = GeneralMethods(request).success_response(value, status=200)
+        return response
+
+
+def _attempt(request: Request) -> HostedHarnessAttempt:
+    """The hosted attempt HarnessAttemptAuthentication fenced this request to."""
+    attempt = request.auth
+    if not isinstance(attempt, HostedHarnessAttempt):
+        raise HostedHarnessError(
+            "authentication_required",
+            "a harness attempt bearer is required",
+            status_code=401,
+        )
+    return attempt
 
 
 def _guest_refusal(code: str, message: str, status: int):
@@ -230,7 +244,9 @@ class NativeGuestHealthView(NativeGuestView):
     def post(self, request: Request, attempt_id: UUID) -> Response:
         return self.reply(
             request,
-            native_runs.record_guest_health(attempt=request.auth, health=request.data),
+            native_runs.record_guest_health(
+                attempt=_attempt(request), health=request.data
+            ),
         )
 
 
@@ -245,7 +261,9 @@ class NativeGuestObservationView(NativeGuestView):
     def post(self, request: Request, attempt_id: UUID) -> Response:
         return self.reply(
             request,
-            native_runs.ingest_observation(attempt=request.auth, body=request.data),
+            native_runs.ingest_observation(
+                attempt=_attempt(request), body=request.data
+            ),
         )
 
 
@@ -258,5 +276,5 @@ class NativeGuestFailureView(NativeGuestView):
         reason = request.data.get("reason") if isinstance(request.data, dict) else None
         return self.reply(
             request,
-            native_runs.report_guest_failure(attempt=request.auth, reason=reason),
+            native_runs.report_guest_failure(attempt=_attempt(request), reason=reason),
         )

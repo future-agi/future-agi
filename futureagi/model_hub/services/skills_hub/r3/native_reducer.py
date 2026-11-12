@@ -37,7 +37,7 @@ def _invalid(message: str) -> NoReturn:
 
 
 def planned_matrix(
-    *, case_ids: list[str], baselines: list[str], repetitions: int
+    *, case_ids: list[str], baselines: list[str], repetitions: object
 ) -> list[dict]:
     if (
         not isinstance(case_ids, list)

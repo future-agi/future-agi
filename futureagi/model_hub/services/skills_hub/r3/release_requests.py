@@ -561,16 +561,15 @@ def _supersede_stale_requests(
     and another author's request are untouched. Closing grants and moves
     nothing: the status only records why the request cannot proceed.
     """
-    for other in (
-        HubSkillReleaseRequest.objects.select_for_update()
-        .filter(
-            **_scope(principal),
-            skill=skill,
-            author_id=principal.user_id,
-            status__in=("pending", "approved"),
-        )
-        .exclude(pk=keep_id)
-    ):
+    others = HubSkillReleaseRequest.objects.select_for_update().filter(
+        **_scope(principal),
+        skill=skill,
+        author_id=principal.user_id,
+        status__in=("pending", "approved"),
+    )
+    if keep_id is not None:
+        others = others.exclude(pk=keep_id)
+    for other in others:
         packet = other.hub_skill_packets.filter(revision=other.revision).first()
         if (
             packet is None
@@ -1006,12 +1005,12 @@ def _renewed_packet(
                         "after": ref[key],
                     }
                 )
-    for row in removed:
+    for dropped in removed:
         changes.append(
             {
-                "item": f"evidence.{row['source']}.{row['source_id']}",
+                "item": f"evidence.{dropped['source']}.{dropped['source_id']}",
                 "before": "attached",
-                "after": row["reason"],
+                "after": dropped["reason"],
             }
         )
     return packet, changes, removed
