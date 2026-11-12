@@ -65,6 +65,7 @@ def _cloud_invoice_loop(monkeypatch, do_work):
     """
     module = pytest.importorskip("ee.cloud.billing.invoice_generation")
     from ee.cloud.billing.billing_engine import BillingEngine
+
     from ee.usage.models.usage import Invoice, OrganizationSubscription, PlanChoices
 
     subscriptions = Mock()
