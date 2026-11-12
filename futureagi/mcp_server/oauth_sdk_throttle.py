@@ -22,10 +22,10 @@ parser, the one the SDK handlers call, and two kinds of body are refused with
 
 - a body that Starlette would not parse as
   ``application/x-www-form-urlencoded``, the format RFC 6749 (sections 4.1.3
-  and 6) and RFC 7009 (section 2.1) specify for these requests. Without this, a ``multipart/form-data``
-  body would reach the SDK's secret check under a client the throttle never
-  saw.
-- a body with more than one ``client_id``. RFC 6749 section 3.1 forbids
+  and 6) and RFC 7009 (section 2.1) specify for these requests. Without this,
+  a ``multipart/form-data`` body would reach the SDK's secret check under a
+  client the throttle never saw.
+- a body with more than one ``client_id``. RFC 6749 sections 3.1 and 3.2 forbid
   repeating a parameter, and the SDK authenticates the last one, so a decoy
   could otherwise take the throttle's attention.
 """
@@ -85,8 +85,11 @@ class _ThrottleRequest:
         headers = Headers(scope=scope)
         client = scope.get("client") or ("", 0)
         self.META = {"REMOTE_ADDR": client[0] or ""}
-        if "x-forwarded-for" in headers:
-            self.META["HTTP_X_FORWARDED_FOR"] = headers["x-forwarded-for"]
+        # Join repeated lines as Django's ASGIRequest does, so a proxy that
+        # adds its own line is read the same way as on the Django endpoint.
+        forwarded_for = headers.getlist("x-forwarded-for")
+        if forwarded_for:
+            self.META["HTTP_X_FORWARDED_FOR"] = ",".join(forwarded_for)
         self.data: dict[str, str] = data or {}
 
 
