@@ -11,10 +11,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from django.db.models import Case, TextField, When
+from django.db.models.functions import Left, Length
+
 from model_hub.models.choices import DataTypeChoices
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from simulate.pydantic_schemas.evidence_import import DatasetColumns
 from simulate.utils.transcript_parse import (
+    MAX_TRANSCRIPT_CHARS,
     ParsedTranscript,
     TranscriptError,
     parse_transcript,
@@ -91,11 +95,25 @@ def dataset_evidence(
             "id", flat=True
         )
     )
-    values: dict[tuple[str, str], str] = {
-        (str(row_id), str(column_id)): value or ""
-        for row_id, column_id, value in Cell.no_workspace_objects.filter(
+    # Each cell's length, and only as much of it as is ever read: the
+    # conversation up to a transcript's limit, every other cell up to a turn.
+    values: dict[tuple[str, str], tuple[str, int]] = {
+        (str(row_id), str(column_id)): (head or "", size or 0)
+        for row_id, column_id, head, size in Cell.no_workspace_objects.filter(
             row_id__in=rows, column_id__in=list(live)
-        ).values_list("row_id", "column_id", "value")
+        )
+        .annotate(
+            size=Length("value"),
+            head=Case(
+                When(
+                    column_id=columns.conversation,
+                    then=Left("value", MAX_TRANSCRIPT_CHARS),
+                ),
+                default=Left("value", TURN_CHARS),
+                output_field=TextField(),
+            ),
+        )
+        .values_list("row_id", "column_id", "head", "size")
     }
     conversation = str(columns.conversation)
     labels = [live[str(one)] for one in columns.labels if str(one) in live]
@@ -104,10 +122,17 @@ def dataset_evidence(
     for row_id in map(str, rows):
         evidence = _conversation(
             row_id,
-            values.get((row_id, conversation), "") if conversation in live else None,
+            values.get((row_id, conversation), ("", 0))
+            if conversation in live
+            else None,
         )
+        picked = [
+            (column, values[(row_id, str(column.id))])
+            for column in labels
+            if values.get((row_id, str(column.id)), ("", 0))[0]
+        ]
         outcome = (
-            values.get((row_id, expected), "")
+            values.get((row_id, expected), ("", 0))
             if expected is not None and expected in live
             else None
         )
@@ -117,23 +142,23 @@ def dataset_evidence(
                 Label(
                     name=column.name,
                     kind=column.data_type,
-                    value=value,
+                    value=head,
                     notes="",
                     target="row",
                 )
-                for column in labels
-                if (value := values.get((row_id, str(column.id)), ""))
+                for column, (head, _) in picked
             ),
-            expected=None if outcome is None else outcome[:TURN_CHARS],
-            expected_truncated=outcome is not None and len(outcome) > TURN_CHARS,
+            labels_truncated=any(size > TURN_CHARS for _, (_, size) in picked),
+            expected=None if outcome is None else outcome[0],
+            expected_truncated=outcome is not None and outcome[1] > TURN_CHARS,
         )
     return found
 
 
-def _conversation(row_id: str, text: str | None) -> SourceEvidence:
-    """A row's conversation cell read as a transcript; unreadable when it is
-    neither JSON messages nor "User:" / "Agent:" text, and empty when its
-    column is gone."""
+def _conversation(row_id: str, cell: tuple[str, int] | None) -> SourceEvidence:
+    """A row's conversation cell (its text and length) read as a transcript;
+    unreadable when it is neither JSON messages nor "User:" / "Agent:" text or
+    is longer than a transcript may be, and empty when its column is gone."""
     empty = SourceEvidence(
         source_id=row_id,
         trace_ids=(),
@@ -147,8 +172,11 @@ def _conversation(row_id: str, text: str | None) -> SourceEvidence:
         tool_calls_truncated=False,
         labels=(),
     )
-    if text is None or not text.strip():
+    if cell is None or not cell[0].strip():
         return empty
+    text, size = cell
+    if size > MAX_TRANSCRIPT_CHARS:
+        return replace(empty, transcript_unreadable=True)
     form = "json" if text.lstrip()[:1] in ("[", "{") else "text"
     try:
         return text_evidence(row_id, parse_transcript(text, form))

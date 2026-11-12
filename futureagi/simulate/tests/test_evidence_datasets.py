@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from unittest.mock import patch
 
 import pytest
 from django.db import IntegrityError, transaction
@@ -29,6 +30,8 @@ from simulate.selectors.evidence_import import (
     ROW_UNAVAILABLE,
     evidence_document,
 )
+from simulate.utils.transcript_parse import MAX_TRANSCRIPT_CHARS
+from tracer.selectors.observe_evidence import TURN_CHARS
 
 from .test_evidence_import_api import ENVIRONMENTS
 from .test_evidence_import_api import client as client
@@ -381,6 +384,52 @@ class TestCuts:
             assert case["expected_outcome"]["reason"] == CUT_TO_FIT
 
 
+class TestBounded:
+    """A view reads at most what it can use of each cell."""
+
+    def test_a_conversation_longer_than_a_transcript_is_unreadable_unparsed(
+        self, client, environment, dataset, rows, columns
+    ):
+        Cell.objects.filter(row=rows[0], column=columns["chat"]).update(
+            value="User: " + "x" * MAX_TRANSCRIPT_CHARS
+        )
+
+        with patch(
+            "simulate.selectors.dataset_evidence.parse_transcript",
+            side_effect=AssertionError("an oversized cell was parsed"),
+        ):
+            made = _create(client, environment, dataset, rows[:1], columns).json()
+
+        [case] = made["cases"]
+        assert (case["status"], case["transcript"]["status"]) == (
+            "pending",
+            "unreadable",
+        )
+
+    def test_long_label_and_expected_cells_are_cut_to_a_turn(
+        self, client, environment, dataset, rows, columns
+    ):
+        long = "y" * (TURN_CHARS * 3)
+        for name in ("intent", "expected"):
+            Cell.objects.filter(row=rows[0], column=columns[name]).update(value=long)
+
+        made = _create(
+            client,
+            environment,
+            dataset,
+            rows[:1],
+            columns,
+            mapping=_mapping(columns, labels=[str(columns["intent"].id)]),
+        ).json()
+
+        [case] = made["cases"]
+        [label] = case["labels"]["labels"]
+        assert label["value"] == "y" * TURN_CHARS
+        assert case["labels"]["status"] == "truncated"
+        assert case["expected_outcome"]["text"] == "y" * TURN_CHARS
+        assert case["expected_outcome"]["status"] == "truncated"
+
+
 class TestRefused:
     def test_a_dataset_of_another_organization_is_not_found(
         self, client, environment, dataset, rows, columns
@@ -568,7 +617,7 @@ class TestStored:
         assert f"rows a person picked from dataset {dataset.id}" in text
         assert says in text
         assert "Observe project" not in text
-        assert f"(dataset {rows[0].id})" in text
+        assert f"(dataset row {rows[0].id})" in text
         assert "[turn 1] user: Refund my order, I'm <EMAIL_ADDRESS>" in text
         assert "[label 1] intent on the row: refund" in text
         assert "-- expected outcome: present" in text

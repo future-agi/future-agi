@@ -30,6 +30,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.models.harness_versioning import HashKind
+from simulate.selectors.evidence_import import source_noun
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.versions import suite_documents
 from simulate.services.hosted_harness import HostedHarnessError
@@ -115,7 +116,7 @@ def turn_message(
     asks = SHOWN if production else SHOWN_NOT_PRODUCTION
     listed = "\n".join(
         f"- case {case.id}: write it under scenario_key {scenario_key_for(case)} "
-        f"(the {source_kind} {case.source_id} in the evidence)"
+        f"(the {source_noun(source_kind)} {case.source_id} in the evidence)"
         + (
             f"; the person asks: {asks[shows[str(case.id)]]}"
             if shows.get(str(case.id)) in asks

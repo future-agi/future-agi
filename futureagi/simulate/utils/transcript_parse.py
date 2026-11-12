@@ -17,6 +17,10 @@ Format = Literal["json", "text", "csv"]
 Role = Literal["user", "agent"]
 
 FORMATS: tuple[Format, ...] = ("json", "text", "csv")
+# The longest text read as one transcript, pasted, uploaded or a dataset cell.
+# Only what fits the import's size budget is kept, so this bounds the work of
+# reading it, not what is stored.
+MAX_TRANSCRIPT_CHARS = 500_000
 
 _USER = frozenset({"user", "human", "customer", "caller", "client"})
 _AGENT = frozenset({"agent", "assistant", "ai", "bot", "model"})

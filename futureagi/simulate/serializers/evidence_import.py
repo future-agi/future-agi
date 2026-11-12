@@ -7,14 +7,11 @@ from rest_framework import serializers
 from simulate.models import EvidenceImport, EvidenceImportCase
 from simulate.selectors.dataset_evidence import MAX_LABEL_COLUMNS
 from simulate.selectors.evidence_import import MAX_SOURCES
-from simulate.utils.transcript_parse import FORMATS
+from simulate.utils.transcript_parse import FORMATS, MAX_TRANSCRIPT_CHARS
 from tfc.utils.serializer_fields import JsonValueField
 
 # unreadable: recorded, but could not be read; missing: not recorded.
 PART_STATUSES = ("present", "partial", "truncated", "missing", "unreadable")
-# One pasted or uploaded transcript. Only what fits the import's size budget is
-# kept, so this bounds the work of reading it, not what is stored.
-MAX_TRANSCRIPT_CHARS = 500_000
 TRANSCRIPT_NAME_CHARS = 120
 
 

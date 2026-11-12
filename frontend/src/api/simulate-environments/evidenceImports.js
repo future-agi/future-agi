@@ -11,6 +11,8 @@ import { refreshDrafts, refreshFollowers } from "./versions";
 
 // The backend takes 1 to 20 sources per import.
 export const MAX_EVIDENCE_SOURCES = 20;
+// The label columns one dataset import reads.
+export const MAX_LABEL_COLUMNS = 10;
 // The longest transcript the backend reads, in characters.
 export const MAX_TRANSCRIPT_CHARS = 500_000;
 export const TRANSCRIPT_NAME_CHARS = 120;

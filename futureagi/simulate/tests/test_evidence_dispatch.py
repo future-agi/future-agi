@@ -705,6 +705,7 @@ def test_a_dataset_import_is_drafted_from_its_expected_outcome(
 
     content = _command(conversation).content
     assert opening in content
+    assert f"(the dataset row {rows[0].id} in the evidence)" in content
     assert evidence_drafts.EXPECTED_OUTCOME_RULE in content
     assert "the policy wins" in content
     assert ("regression" in content) is production

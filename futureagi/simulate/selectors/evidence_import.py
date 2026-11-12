@@ -120,6 +120,13 @@ def is_dataset(evidence_import: EvidenceImport) -> bool:
     return evidence_import.source_kind == EvidenceImport.SourceKind.DATASET
 
 
+def source_noun(source_kind: str) -> str:
+    """What one source of ``source_kind`` is called to the builder."""
+    if source_kind == EvidenceImport.SourceKind.DATASET:
+        return "dataset row"
+    return source_kind
+
+
 def is_declared(evidence_import: EvidenceImport) -> bool:
     """Whether the person said where the evidence comes from: transcripts and
     dataset rows. An Observe import's provenance is its project's."""
@@ -910,7 +917,8 @@ def _document_case(
     evidence_import: EvidenceImport, case: EvidenceImportCase, source: SourceEvidence
 ) -> str:
     if source.started_at is None or source.ended_at is None:
-        return f"== case {case.id} ({evidence_import.source_kind} {case.source_id})"
+        noun = source_noun(evidence_import.source_kind)
+        return f"== case {case.id} ({noun} {case.source_id})"
     return (
         f"== case {case.id} ({evidence_import.source_kind} {case.source_id}, "
         f"traces {', '.join(source.trace_ids)}, "

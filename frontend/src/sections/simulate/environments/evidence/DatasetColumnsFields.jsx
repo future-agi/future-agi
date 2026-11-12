@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { useMemo } from "react";
 import { Alert, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
+import { MAX_LABEL_COLUMNS } from "src/api/simulate-environments/evidenceImports";
 import { EVIDENCE_COPY } from "./evidence.constants";
 
 // Columns whose cells are media, not text: never a conversation, a label or an
@@ -67,7 +68,14 @@ export default function DatasetColumnsFields({ datasetId, value, onChange }) {
         inputProps={{ "data-testid": "evidence-label-columns" }}
       >
         {others(value.conversation, value.expected).map((one) => (
-          <MenuItem key={one.id} value={one.id}>
+          <MenuItem
+            key={one.id}
+            value={one.id}
+            disabled={
+              value.labels.length >= MAX_LABEL_COLUMNS &&
+              !value.labels.includes(one.id)
+            }
+          >
             {one.name}
           </MenuItem>
         ))}
