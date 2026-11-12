@@ -352,10 +352,14 @@ export function AuthProvider({ children }) {
           },
         },
       );
-      queryClient.clear();
     } catch (error) {
       logger.error("Logout Error:", error);
       throw error; // Ensure errors are caught by caller
+    } finally {
+      // Also when the logout request fails (expired token, network error):
+      // the tab is signed out either way, and the next account signed in on
+      // it must not get the previous account's cached responses.
+      queryClient.clear();
     }
   }, [queryClient]);
 
