@@ -37,6 +37,7 @@ from django.utils.dateparse import parse_datetime
 
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
 from simulate.services.harness_evals import regrade_mapping
+from simulate.services.kept_harness_entry import pending_placeholder
 
 # The one predicate for "this call already holds a sealed verdict for this
 # config" (``simulate/utils/verdicts.py::has_stored_verdict``).
@@ -545,7 +546,10 @@ def queue_eval_for_finished_calls(
             # lands, the way the native rerun views mark theirs.
             metadata["eval_started"] = True
             metadata[EVAL_COMPLETED_KEY] = False
-            call_execution.eval_outputs = {**outputs, config_id: {"status": "pending"}}
+            call_execution.eval_outputs = {
+                **outputs,
+                config_id: pending_placeholder(outputs.get(config_id)),
+            }
             call_execution.call_metadata = metadata
             # `bulk_update` does not run `auto_now`'s pre-save logic, so
             # `updated_at` is set by hand here, the same `now` every stamped
