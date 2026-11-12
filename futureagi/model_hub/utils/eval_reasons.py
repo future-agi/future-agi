@@ -57,13 +57,25 @@ def get_eval_reasons(
     uem_to_eval_name_map = {}
     user_eval_metric_ids = []
 
+    eval_columns = list(eval_columns)
+    eval_name_by_column_id = {str(column.id): column.name for column in eval_columns}
+
     # Process reason columns
     for column in reason_columns:
-        eval_name = column.name.split("-reason")[0]
         # Extract user_eval_metric_id from source_id (format: "prefix-sourceid-id")
+        paired_column_id = None
         user_eval_metric_id = None
         if column.source_id and "-sourceid-" in str(column.source_id):
-            user_eval_metric_id = str(column.source_id).split("-sourceid-")[1]
+            source_parts = str(column.source_id).split("-sourceid-")
+            paired_column_id = source_parts[0]
+            user_eval_metric_id = source_parts[1]
+
+        # Dataset reason columns name their evaluation column in the source_id
+        # prefix. Pair by that id: splitting the column name breaks evaluation
+        # names that themselves contain "-reason" (e.g. "answer-reasoning").
+        eval_name = eval_name_by_column_id.get(paired_column_id) or (
+            column.name.rsplit("-reason", 1)[0]
+        )
 
         if user_eval_metric_id and user_eval_metric_id not in uem_to_eval_name_map:
             uem_to_eval_name_map[str(user_eval_metric_id)] = eval_name
@@ -166,6 +178,20 @@ def get_explanation_summary(dataset_id: str) -> None:
         cluster_dict_by_eval = {}
 
         for reason_name, reason_data in reasons.items():
+            if "eval_reasons" not in reason_data:
+                # Dataset evaluations only write reasons when configured to
+                # (config.reason_column), and a running evaluation creates its
+                # reason column with the first finished row. With no reason
+                # column there is nothing to summarise and nothing was lost.
+                logger.info(
+                    "explanation_summary_skipped",
+                    reason="no_reason_column",
+                    outcome="handled",
+                    dataset_id=str(dataset_id),
+                    user_eval_metric_id=reason_data.get("user_eval_metric_id"),
+                )
+                continue
+
             reason = reason_data.get("eval_reasons")
             uem = reason_data.get("user_eval_metric_id")
 
