@@ -8,10 +8,11 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from datetime import timezone as dt_timezone
-from typing import TYPE_CHECKING, Any, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import httpx
 import requests

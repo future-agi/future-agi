@@ -366,7 +366,9 @@ def test_direct_vapi_rehost_preserves_preversioned_plaintext_key(provider, monke
 
 @pytest.mark.parametrize("provider", ["vapi"], indirect=True)
 @pytest.mark.parametrize("state", ["absent", "empty", "wrong_provider", "unreadable"])
-def test_versioned_vapi_credential_authority_with_legacy_key(provider, monkeypatch, state):
+def test_versioned_vapi_credential_authority_with_legacy_key(
+    provider, monkeypatch, state
+):
     agent = attach_agent(provider, api_key="obsolete-plaintext")
     version = AgentVersion.objects.create(
         agent_definition=agent,
@@ -383,9 +385,9 @@ def test_versioned_vapi_credential_authority_with_legacy_key(provider, monkeypat
         ProviderCredentials.objects.create(
             agent_version=version,
             provider_type="retell" if state == "wrong_provider" else "vapi",
-            api_key="" if state == "empty" else (
-                "enc::invalid" if state == "unreadable" else "other-provider-key"
-            ),
+            api_key=""
+            if state == "empty"
+            else ("enc::invalid" if state == "unreadable" else "other-provider-key"),
         )
     normalizer = Mock(return_value={})
     monkeypatch.setattr(op, "normalize_vapi_data", normalizer)
