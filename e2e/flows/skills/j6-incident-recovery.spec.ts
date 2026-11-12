@@ -30,6 +30,7 @@ test('SKILLS-E2E-063: recover an incident through the declared eight-fault matri
     backendChecks: [
       'Postgres has exactly one lower-number label event, none for the stale ABA packet, and the approved stale request is superseded',
       'the independent business ledger holds one applied refund and one request per order with no duplicate',
+      'an apply with any digest other than the reviewed plan is refused and sends no business request',
       'the resumed thread keeps its original session identity and the receipt precedes the checkpoint advance',
       'the retired child delivers its exact retained bytes and the quarantined alternative is refused',
       'the expired-credential session is denied by the public access check and the lost-mapping and never-observed consumers stay unknown',
@@ -86,6 +87,8 @@ test('SKILLS-E2E-063: recover an incident through the declared eight-fault matri
     expect((await observed('final-cohort')).verdicts.U.states, 'unobserved consumer').toEqual(fault === 'unknown' ? ['matches_target'] : ['unknown']);
     expect((await observed('denial-oracle')).value.expired_credential_denied, 'expired credential denial').toBe(fault === 'denied' ? false : true);
     expect((await observed('aba-rejection')).status, 'stale ABA execute').toBe(fault === 'aba' ? 200 : 409);
+    const refusal = await observed('apply-refusal');
+    expect(refusal.refused_exit_nonzero && refusal.business_requests_after === refusal.business_requests_before, 'an unreviewed plan digest applies nothing').toBe(fault === 'unreviewed' ? false : true);
     // The fresh packet closed the approved-but-stale request: Postgres shows an approval and the superseded status, and no label event.
     const aba = await observed('aba-rejection');
     const staleRows = await probe.pg<any>('SELECT r.status, (SELECT count(*)::int FROM model_hub_hubskillreleasedecision d JOIN model_hub_hubskillreleasepacket p ON p.id=d.packet_id WHERE p.request_id=r.id AND d.decision=\'approve\') AS approvals FROM model_hub_hubskillreleaserequest r WHERE r.id=$1', [aba.request_id]);

@@ -521,6 +521,12 @@ export async function createDriver({ jobId, runId, registration }) {
           { t1: [t1Plan.checkpoint, t1Plan.session_id], t2: entry.t2.reason, t3: entry.t3.reason, t0: entry.t0.reason, replay_refunds: false });
         await ledger.measure({ dimension: 'A', primitive: 'recovery_decision', actor: 'incident-operator', step: stage.id, phase: stage.phase, target: 'resume-one-reconstruct-two',
           items: plan.entries.map((item) => item.key), exceptionItems: plan.entries.filter((item) => item.action !== 'resume').map((item) => item.key), decision }, async () => {});
+        // A digest other than the reviewed one applies nothing (a control injected like the ABA hops, not operator work).
+        const refused = await guest.execute(recoverEnv, ['python', '-m', 'ctxhub_support.recover', 'apply', '--registry', '/state/requests/recovery-registry.json',
+          '--plan', '/state/out/recovery-plan.json', '--reviewed-plan-sha256', `sha256:${'0'.repeat(64)}`, '--phase', 'threads', '--output', '/state/out/recovery-refused.json']);
+        const afterRefused = await guest.business();
+        requireValue(refused.code !== 0 && /plan_not_reviewed/.test(refused.stderr) && afterRefused.request_count === businessBefore.request_count && !(await guest.exists('/state/out/recovery-refused.json')), 'An unreviewed plan digest must apply nothing');
+        await record('apply-refusal', { refused_exit_nonzero: refused.code !== 0, error: 'plan_not_reviewed', business_requests_before: businessBefore.request_count, business_requests_after: afterRefused.request_count });
         // Apply exactly the reviewed plan: the command refuses any other digest or a thread that moved since the plan.
         await guestCommand(stage, ledger, 'incident-operator', 'apply-thread-recovery', recoverEnv, ['python', '-m', 'ctxhub_support.recover', 'apply', '--registry', '/state/requests/recovery-registry.json',
           '--plan', '/state/out/recovery-plan.json', '--reviewed-plan-sha256', plan.plan_sha256, '--phase', 'threads', '--output', '/state/out/recovery-threads.json'], [0]);
