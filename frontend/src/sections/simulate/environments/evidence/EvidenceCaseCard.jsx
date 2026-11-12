@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import {
   Box,
   Link,
@@ -15,6 +16,7 @@ import {
   PART_LABELS,
   caseShowsDefault,
   cutAtWord,
+  partGroups,
 } from "./evidence.constants";
 
 const PARTS = Object.keys(PART_LABELS);
@@ -37,15 +39,6 @@ const caseTitle = (item, kind) => {
   return text ? cutAtWord(text, TITLE_CHARS) : EVIDENCE_COPY.untitled(kind);
 };
 
-// A part with its reason beside it. Step 2 explains the starting state, so
-// its reason is not repeated on every case.
-const partText = (item, part) => {
-  const reason = part === "starting_state" ? "" : item[part]?.reason;
-  return reason
-    ? `${PART_LABELS[part]} (${reason.replace(/\.$/, "")})`
-    : PART_LABELS[part];
-};
-
 function Label({ children }) {
   return (
     <Box component="span" sx={{ fontWeight: 500, color: "text.primary" }}>
@@ -60,8 +53,7 @@ function PartsLine({ label, item, parts }) {
   if (!parts.length) return null;
   return (
     <Typography sx={BODY}>
-      <Label>{label}</Label>{" "}
-      {parts.map((part) => partText(item, part)).join("; ")}
+      <Label>{label}</Label> {partGroups(item, parts).join("; ")}
     </Typography>
   );
 }
@@ -127,10 +119,11 @@ export default function EvidenceCaseCard({
 }) {
   const turns = item.transcript?.turns ?? [];
   const hidden = Math.max(turns.length - 2, 0);
+  const [allTurns, setAllTurns] = useState(false);
   const parts = partsOf(kind);
   const held = parts.filter((part) => HELD.has(item[part]?.status));
   const missing = parts.filter((part) => !HELD.has(item[part]?.status));
-  const choice = shows ?? caseShowsDefault(item);
+  const choice = shows ?? caseShowsDefault(item, kind);
   // What the builder makes follows the row's expected outcome when it has one.
   const details = HELD.has(item.expected_outcome?.status)
     ? EVIDENCE_COPY.showsDetailExpected
@@ -209,13 +202,26 @@ export default function EvidenceCaseCard({
         <PartsLine label={EVIDENCE_COPY.has} item={item} parts={held} />
         <PartsLine label={EVIDENCE_COPY.missing} item={item} parts={missing} />
       </Stack>
-      {turns.length ? <Turn turn={turns[0]} /> : null}
+      {/* The first and last turns; the ones between open on request. */}
+      {(allTurns ? turns : turns.slice(0, 1)).map((turn, index) => (
+        <Turn key={`${turn.trace_id}-${index}`} turn={turn} />
+      ))}
       {hidden ? (
-        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-          {EVIDENCE_COPY.moreTurns(hidden)}
-        </Typography>
+        <Link
+          component="button"
+          type="button"
+          underline="hover"
+          sx={{ typography: "s3", alignSelf: "flex-start" }}
+          onClick={() => setAllTurns((open) => !open)}
+        >
+          {allTurns
+            ? EVIDENCE_COPY.fewerTurns
+            : EVIDENCE_COPY.moreTurns(hidden)}
+        </Link>
       ) : null}
-      {turns.length > 1 ? <Turn turn={turns[turns.length - 1]} /> : null}
+      {!allTurns && turns.length > 1 ? (
+        <Turn turn={turns[turns.length - 1]} />
+      ) : null}
       {item.expected_outcome?.text ? (
         <Typography
           sx={{ ...BODY, whiteSpace: "pre-wrap", mt: 0.5 }}

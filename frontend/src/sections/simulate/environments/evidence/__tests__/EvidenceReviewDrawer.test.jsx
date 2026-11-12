@@ -152,10 +152,73 @@ describe("EvidenceReviewDrawer", () => {
         "I was charged twice for the same order for the same order for the same order for the same…",
       ),
     ).toBeInTheDocument();
-    expect(within(card).getByText("… 3 more turns")).toBeInTheDocument();
     expect(card).toHaveTextContent("Agent: Hello, how can I help?");
     expect(card).toHaveTextContent("Agent: Refunded.");
     expect(card).not.toHaveTextContent("Let me look.");
+    // The turns between open on request, and close again.
+    await userEvent.click(
+      within(card).getByRole("button", { name: "Show 3 more turns" }),
+    );
+    expect(card).toHaveTextContent("Agent: Let me look.");
+    expect(card).toHaveTextContent("User: Thanks");
+    await userEvent.click(
+      within(card).getByRole("button", { name: "Show fewer turns" }),
+    );
+    expect(card).not.toHaveTextContent("Let me look.");
+  });
+
+  it("says each reason once: parts that share one are joined", async () => {
+    const same = part("missing", "No tool calls were recorded.");
+    evidence = bundle({
+      cases: [
+        item({ tool_calls: same, tool_inputs: same, tool_outputs: same }),
+      ],
+    });
+    renderDrawer();
+    const card = await screen.findByTestId("evidence-case-c1");
+    expect(card).toHaveTextContent(
+      "Missing: Tool calls, Tool inputs and Tool outputs (No tool calls were recorded); Starting state",
+    );
+  });
+
+  it("keeps Draft and Save in the drawer's footer, the next action primary", async () => {
+    renderDrawer();
+    const footer = await screen.findByTestId("evidence-review-footer");
+    expect(
+      within(footer).getByRole("button", { name: "Draft 1 scenario" }),
+    ).toHaveClass("MuiButton-contained");
+    expect(
+      within(footer).getByRole("button", { name: "Save 0 to the suite" }),
+    ).toHaveClass("MuiButton-outlined");
+  });
+
+  it("sets every waiting case at once, and drafts with that choice", async () => {
+    evidence = bundle({ cases: [item(), item({ id: "c2" })] });
+    axios.post.mockResolvedValue({ data: bundle({ drafting: true }) });
+    renderDrawer();
+    await screen.findByTestId("evidence-case-c2");
+    await userEvent.click(
+      screen.getByRole("combobox", { name: /^Set every waiting case to/ }),
+    );
+    await userEvent.click(
+      screen.getByRole("option", {
+        name: "Keep this success as a regression test",
+      }),
+    );
+    for (const id of ["c1", "c2"]) {
+      expect(
+        within(screen.getByTestId(`evidence-case-${id}`)).getByRole("combobox"),
+      ).toHaveTextContent("Keep this success as a regression test");
+    }
+    await userEvent.click(
+      screen.getByRole("button", { name: "Draft 2 scenarios" }),
+    );
+    await waitFor(() =>
+      expect(axios.post).toHaveBeenCalledWith(`${BASE}draft/`, {
+        case_ids: ["c1", "c2"],
+        shows: { c1: "success", c2: "success" },
+      }),
+    );
   });
 
   it("names a case with no recorded conversation by its kind", async () => {
@@ -370,7 +433,23 @@ describe("EvidenceReviewDrawer", () => {
     expect(
       within(card).getByTestId("evidence-expected-outcome"),
     ).toHaveTextContent("Expected outcome: Refuse the second refund.");
-    // What the builder makes follows the expected outcome, not the policy alone.
+    // A row's label columns are context, not an outcome: no choice is made for
+    // the person, and what the builder makes follows the expected outcome.
+    const choice = within(card).getByRole("combobox", {
+      name: /^What should this case's scenario be\?/,
+    });
+    expect(choice).toHaveTextContent(
+      "Not set: the builder judges from the evidence",
+    );
+    expect(
+      within(card).getByText(
+        "Nothing here records how it ended. Keeps: what the row shows. Makes: checks from the expected outcome column.",
+      ),
+    ).toBeInTheDocument();
+    await userEvent.click(choice);
+    await userEvent.click(
+      screen.getByRole("option", { name: "Reproduce the failure as a test" }),
+    );
     expect(
       within(card).getByText(
         /^Keeps: the situation.*Makes: what should have happened, from the expected outcome column\.$/,
@@ -388,11 +467,6 @@ describe("EvidenceReviewDrawer", () => {
       screen.getByText(/^A dataset row doesn't hold the seed records/),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("evidence-transcript")).toBeNull();
-    expect(
-      screen.getByRole("combobox", {
-        name: /^What should this case's scenario be\?/,
-      }),
-    ).toHaveTextContent("Reproduce the failure as a test");
   });
 
   it("says a deleted row's provenance is the dataset's, not Observe's", async () => {

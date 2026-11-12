@@ -45,7 +45,7 @@ export const EVIDENCE_COPY = {
     "This dataset has no text or JSON column to read a conversation from. Audio-only rows are not supported yet.",
   rowsProduction: "These rows come from production",
   rowsProductionHelp:
-    "Leave it off for rows you wrote or ones from testing: their scenarios then never claim a customer did this.",
+    "Ticked, they make regression tests; leave it off for rows you wrote or tested with. It can't change after import.",
   environmentLabel: "Environment",
   noEnvironments: "No environment to import into yet. Create one first.",
   environmentsLoading: "Loading your environments…",
@@ -61,7 +61,7 @@ export const EVIDENCE_COPY = {
   openDataset: "Open a dataset",
   addTranscript: "Add a transcript",
   transcriptTitle: "Add a transcript",
-  transcriptBody: `Paste a transcript or upload files. Emails, phone, card and ID numbers become placeholders; an import keeps ${MAX_IMPORT_KEPT_CHARS.toLocaleString("en-US")} characters.`,
+  transcriptBody: `Paste a transcript or upload files. Emails, phone, card and ID numbers become placeholders; an import keeps ${MAX_IMPORT_KEPT_CHARS.toLocaleString("en-US")} characters, shared by its files.`,
   pasteLabel: "Transcript",
   nameLabel: "Name",
   pastedName: "Pasted transcript",
@@ -75,7 +75,7 @@ export const EVIDENCE_COPY = {
   usePaste: "Paste instead",
   production: "These transcripts come from production",
   productionHelp:
-    "Leave it off for a transcript you wrote or one from testing: its scenarios then never claim a customer did this.",
+    "Ticked, they make regression tests; leave it off for a transcript you wrote or tested with. It can't change after import.",
   transcriptTooLong: (name) =>
     `${name} is longer than ${MAX_TRANSCRIPT_CHARS.toLocaleString("en-US")} characters.`,
   transcriptsTooMany: `Pick at most ${MAX_EVIDENCE_SOURCES} files.`,
@@ -168,6 +168,10 @@ export const EVIDENCE_COPY = {
   draftingBody:
     "Up to 90 minutes; you can close this meanwhile. Editing the environment before it ends blocks the drafted cases.",
   noneWaiting: "No case is waiting to be drafted.",
+  waitingHint: (n) =>
+    `${n} case${n === 1 ? " waits" : "s wait"} to be drafted. Pick what each should be, then draft.`,
+  setAll: "Set every waiting case to",
+  setAllPlaceholder: "Choose one for all",
   noneDrafted: "Draft scenarios first, then add them here.",
   drafted: "Drafted",
   blocked: "Blocked",
@@ -179,7 +183,8 @@ export const EVIDENCE_COPY = {
   scenario: "Scenario",
   has: "Has:",
   missing: "Missing:",
-  moreTurns: (n) => `… ${n} more turn${n === 1 ? "" : "s"}`,
+  moreTurns: (n) => `Show ${n} more turn${n === 1 ? "" : "s"}`,
+  fewerTurns: "Show fewer turns",
   untitled: (kind) =>
     `${kind[0].toUpperCase()}${kind.slice(1)} with no recorded conversation`,
   provenanceUnavailable:
@@ -291,6 +296,29 @@ export const guessFormat = (name, text) => {
   return "text";
 };
 
+// A card's parts, each reason said once: parts that share one are joined
+// ("Tool calls, Tool inputs and Tool outputs (…)"). Step 2 explains the
+// starting state, so its reason is never repeated on a card.
+export const partGroups = (item, parts) => {
+  const groups = new Map();
+  for (const part of parts) {
+    const reason =
+      part === "starting_state"
+        ? ""
+        : (item[part]?.reason ?? "").replace(/\.$/, "");
+    const key = reason || `part:${part}`;
+    if (!groups.has(key)) groups.set(key, { reason, labels: [] });
+    groups.get(key).labels.push(PART_LABELS[part]);
+  }
+  return [...groups.values()].map(({ reason, labels }) => {
+    const names =
+      labels.length > 1
+        ? `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`
+        : labels[0];
+    return reason ? `${names} (${reason})` : names;
+  });
+};
+
 // Text at most `length` long, cut at the last word that fits.
 export const cutAtWord = (text, length) => {
   if (!text || text.length <= length) return text;
@@ -300,7 +328,10 @@ export const cutAtWord = (text, length) => {
 };
 
 // Labels record how a source ended; without them, no choice is made for the person.
-export const caseShowsDefault = (item) =>
+// A dataset row's label columns are context the person picked (an intent, say), not
+// an outcome, so a row never gets a default either.
+export const caseShowsDefault = (item, kind) =>
+  kind !== "dataset" &&
   ["present", "partial", "truncated"].includes(item.labels?.status)
     ? "failure"
     : "";
