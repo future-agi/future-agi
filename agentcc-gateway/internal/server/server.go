@@ -79,6 +79,12 @@ func (s *Server) ProviderType(orgID, providerID string) string {
 	return ""
 }
 
+// CachedTokensInPrompt says whether the provider that served an org's request
+// counts its cached prompt tokens inside prompt_tokens.
+func (s *Server) CachedTokensInPrompt(orgID, providerID string) bool {
+	return providers.CachedTokensInPrompt(s.servingProvider(orgID, providerID))
+}
+
 // servingProvider is the org's own instance of providerID when the org has
 // one, else the config.yaml provider with that ID, else nil.
 func (s *Server) servingProvider(orgID, providerID string) providers.Provider {

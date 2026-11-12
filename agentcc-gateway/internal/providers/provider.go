@@ -55,6 +55,22 @@ func PriceTableName(p Provider) string {
 	return ""
 }
 
+// PromptCacheCounter is implemented by providers whose usage counts the
+// prompt tokens the upstream read from its prompt cache inside prompt_tokens,
+// as prompt_tokens_details.cached_tokens. Only their cached tokens are priced
+// at the cached rate: an upstream that counts them outside the prompt would be
+// under-billed.
+type PromptCacheCounter interface {
+	CachedTokensInPrompt() bool
+}
+
+// CachedTokensInPrompt says whether p's usage counts its cached prompt tokens
+// inside prompt_tokens; false for nil and for a provider that does not say.
+func CachedTokensInPrompt(p Provider) bool {
+	c, ok := p.(PromptCacheCounter)
+	return ok && c.CachedTokensInPrompt()
+}
+
 // EmbeddingProvider is implemented by providers that support embedding generation.
 type EmbeddingProvider interface {
 	CreateEmbedding(ctx context.Context, req *models.EmbeddingRequest) (*models.EmbeddingResponse, error)

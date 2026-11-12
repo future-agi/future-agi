@@ -580,6 +580,7 @@ func main() {
 	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange, redisClient)
 	costPlugin.SetPriceTables(srv.PriceTableName)
 	costPlugin.SetProviderTypes(srv.ProviderType)
+	costPlugin.SetCachedTokensInPrompt(srv.CachedTokensInPrompt)
 
 	// Register onChange callback on tenantStore so that periodic sync (MergeBulk)
 	// evicts the OrgProviderCache for any org whose config changed. Without this,

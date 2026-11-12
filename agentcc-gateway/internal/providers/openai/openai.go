@@ -140,6 +140,10 @@ func (p *Provider) ID() string { return p.id }
 // ConfiguredType is the type the provider's config records, or "".
 func (p *Provider) ConfiguredType() string { return p.configType }
 
+// CachedTokensInPrompt is true on the official API only. Other upstreams of
+// this format do not all count cached tokens inside prompt_tokens.
+func (p *Provider) CachedTokensInPrompt() bool { return p.openAIAPI }
+
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any
 // request this provider serves.
