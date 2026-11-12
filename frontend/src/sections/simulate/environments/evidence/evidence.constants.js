@@ -19,8 +19,7 @@ export const EVIDENCE_COPY = {
   environmentLabel: "Environment",
   noEnvironments: "No environment to import into yet. Create one first.",
   environmentsLoading: "Loading your environments…",
-  environmentsError:
-    "Couldn't load your environments. Close this and try again in a moment.",
+  environmentsError: "Couldn't load your environments.",
   // The action and the button that confirms it share one name.
   create: "Create environment test",
   creating: "Creating…",
