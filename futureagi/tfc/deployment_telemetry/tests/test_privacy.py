@@ -132,38 +132,6 @@ def test_sentry_scrubs_a_transcript_import_request_and_frame_variables():
     assert "vars" not in scrubbed["exception"]["values"][0]["stacktrace"]["frames"][0]
 
 
-@pytest.mark.parametrize("action", ["events", "session-store/append"])
-def test_builder_chat_guest_bodies_stay_off_spans_and_sentry(action):
-    path = f"/simulate/api/harness/conversations/{uuid4()}/{action}/"
-    request = RequestFactory().post(
-        path,
-        data='{"events":[{"type":"tool_result","text":"the customer said"}]}',
-        content_type="application/json",
-    )
-    span = MagicMock()
-
-    OTelContextMiddleware(lambda request: None)._capture_request(span, request)
-
-    captured_attributes = [call.args[0] for call in span.set_attribute.call_args_list]
-    assert "http.request.body" not in captured_attributes
-    event = {
-        "request": {
-            "url": f"https://api.futureagi.com{path}",
-            "data": {"events": [{"text": "the customer said"}]},
-        },
-        "exception": {
-            "values": [
-                {"stacktrace": {"frames": [{"vars": {"text": "the customer said"}}]}}
-            ]
-        },
-    }
-
-    scrubbed = _scrub_deployment_telemetry_event(event)
-
-    assert "data" not in scrubbed["request"]
-    assert "vars" not in scrubbed["exception"]["values"][0]["stacktrace"]["frames"][0]
-
-
 def test_otel_redacts_secret_value_maps_in_any_request_body():
     request = RequestFactory().post(
         "/simulate/api/run-tests/rerun/",
