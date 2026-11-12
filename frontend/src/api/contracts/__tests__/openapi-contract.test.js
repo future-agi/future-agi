@@ -968,4 +968,28 @@ describe("OpenAPI runtime contract", () => {
       ),
     ).toMatchObject({ ok: false });
   });
+
+  it("validates attachment 204 responses against their empty-body contract", () => {
+    const project = "0050b1f4-0b65-4787-bd3f-f4ad4b61e661";
+    const noContent = [
+      { url: "/tracer/v1/attachment-media-sessions", method: "post" },
+      {
+        url: `/tracer/v1/projects/${project}/attachments/occurrences/${project}`,
+        method: "delete",
+      },
+      {
+        url: `/tracer/v1/projects/${project}/attachments/recordings/${project}/manifest`,
+        method: "put",
+      },
+    ];
+    for (const config of noContent) {
+      // Not skipped: the 204 entry is the schema in use, not the default error.
+      const empty = validateContractedResponse({ config, status: 204, data: "" });
+      expect(empty).toMatchObject({ ok: true });
+      expect(empty.skipped).toBeUndefined();
+      expect(
+        validateContractedResponse({ config, status: 204, data: "unexpected" }),
+      ).toMatchObject({ ok: false });
+    }
+  });
 });
