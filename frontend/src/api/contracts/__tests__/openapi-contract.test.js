@@ -984,7 +984,11 @@ describe("OpenAPI runtime contract", () => {
     ];
     for (const config of noContent) {
       // Not skipped: the 204 entry is the schema in use, not the default error.
-      const empty = validateContractedResponse({ config, status: 204, data: "" });
+      const empty = validateContractedResponse({
+        config,
+        status: 204,
+        data: "",
+      });
       expect(empty).toMatchObject({ ok: true });
       expect(empty.skipped).toBeUndefined();
       expect(
