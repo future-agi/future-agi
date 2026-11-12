@@ -2542,3 +2542,28 @@
 - neither the import's stored redaction nor its case's stored transcript holds the minted email, and the stored transcript holds the minted ask
 - the bundle read again holds the minted ask, shows the email as <EMAIL_ADDRESS>, counts at least one replaced value, lists no finding and is not production
 - the review shows the case under its given name, marked "Your transcript", says "1 transcript you added" and that it is not marked production, shows tool calls missing, and that the test is not an exact replay
+
+### SIM-E2E-005 — a person picks dataset rows and their columns and reviews them in an environment as evidence read live from the dataset
+
+**Goal:** A person picks rows in a dataset, says which column is the conversation, the labels and the expected outcome, and reviews them in an environment as evidence read live from the dataset
+
+**Spec:** `flows/simulate/evidence-import-from-dataset.spec.ts:61`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment (lib/environment-seed.ts) and a dataset with text columns chat, intent and expected, and three rows
+2. open the dataset and tick the two rows whose chat holds a minted ask
+3. choose Create environment test, pick the environment, chat as the conversation, intent as a label and expected as the expected outcome, leave production off and import
+4. land on the environment's Scenarios tab with the import's review open
+5. edit one picked row's expected cell through the dataset API and reload the review
+
+**Backend state verified:**
+
+- from the Import click on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201, naming the dataset, the two ticked rows, the three picked columns and production false
+- simulate_evidence_import has one row for the actor org and the seeded environment: source_kind dataset, no project, the seeded dataset, not declared production, with the picked column ids; its two cases are pending, store no transcript and carry a 64-character digest
+- no simulate_evidence_import or simulate_evidence_import_case row holds the minted asks, email or expected text
+- the bundle read again shows the first row as the dataset holds it now, a transcript finding that replaces the minted email with <EMAIL_ADDRESS>, the intent label on the row, the minted expected text as the expected outcome, and is not production
+- after the cell edit the bundle says only the edited row changed since import, and shows its new expected text
+- the review shows two cards marked "Dataset row", each with its expected outcome, "2 rows from a dataset" and that they are not marked production; after the reload only the edited card says the source changed
