@@ -908,6 +908,40 @@ class TestPairs:
         assert refused.value.retryable is True
         assert runs.count() == before
 
+    def test_versions_that_appeared_after_readiness_was_read_refuse_the_run(
+        self, user, workspace, storage, django_capture_on_commit_callbacks
+    ):
+        from simulate.services import hosted_harness
+
+        environment = _environment(user, workspace, storage, "rd-pins-appeared")
+        _certify(environment, storage)
+        runs = HostedHarnessJob.no_workspace_objects.filter(environment=environment)
+        before = runs.count()
+        real = hosted_harness.resolve_run_pins
+        calls = []
+
+        def unpinned_when_readiness_reads(*args, **kwargs):
+            calls.append(1)
+            return None if len(calls) == 1 else real(*args, **kwargs)
+
+        # Readiness read the environment before it pinned versions; under the lock it
+        # pins them, so nothing checked this pairing.
+        with (
+            patch.object(
+                hosted_harness,
+                "resolve_run_pins",
+                side_effect=unpinned_when_readiness_reads,
+            ),
+            pytest.raises(HostedHarnessError) as refused,
+        ):
+            _committed_run(environment, django_capture_on_commit_callbacks)
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "environment_not_ready",
+            409,
+        )
+        assert runs.count() == before
+
 
 def _get(auth_client, environment_id, **params):
     return auth_client.get(f"{BASE}/{environment_id}/capabilities/", params)
@@ -1351,6 +1385,39 @@ class TestReviewFollowUps:
             "routed": [],
             "unobserved": [],
         }
+
+    def test_an_archive_without_the_certification_files_is_not_read_to_its_end(
+        self, storage
+    ):
+        import io
+        import os
+
+        from simulate.services.harness_readiness import evidence
+
+        body = archives.pack_archive(
+            {
+                "generic-harness/agent.json": b"{}",
+                "zz/large.bin": os.urandom(2 * 1024 * 1024),
+            }
+        )
+        read = []
+
+        class Counted(io.BytesIO):
+            def read(self, size=-1):
+                chunk = super().read(size)
+                read.append(len(chunk))
+                return chunk
+
+            def release_conn(self):
+                pass
+
+        # An older archive holds neither file: reading stops at the first member after
+        # where they would sort, not at the archive's end.
+        with patch.object(storage, "get_object", return_value=Counted(body)):
+            files = evidence._certification_files("harness-sealed/stream/old.tar.gz")
+
+        assert files == {"tools": [], "actions": [], "routed": [], "unobserved": []}
+        assert sum(read) < len(body) // 4
 
     def test_a_second_reader_waits_for_the_first_instead_of_downloading(self, storage):
         import hashlib
