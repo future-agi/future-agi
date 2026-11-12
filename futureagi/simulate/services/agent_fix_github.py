@@ -157,8 +157,8 @@ def _evals_note(candidate: AgentFixCandidate) -> str:
     lines = [_EVALS_INCOMPLETE] if review.grading == EvalGrading.INCOMPLETE else []
     if review.warnings:
         lines.append(
-            "**Platform evals this change does worse on.** They do not decide the fix;"
-            " review them before you merge."
+            "**Platform evals this change does worse on.** They do not decide the"
+            " epoch's verdict; review them before you merge."
         )
         lines += [
             f"- {one.name}: {_percent(one.pass_rate)} passed ({one.trials} trials),"
@@ -188,7 +188,7 @@ def _limited_note(candidate: AgentFixCandidate) -> str:
         else f"Only {held} failing cases were"
     )
     return (
-        f"**Limited validation.** {which} held back from the fix to verify it; it takes"
+        f"**Limited validation.** {which} held back from the epoch to verify it; it takes"
         f" {HELD_BACK_VERIFIED_MIN} or more. Check the changed behavior yourself before"
         " you merge."
     )
@@ -417,7 +417,7 @@ def _risks_section(candidate: AgentFixCandidate, verdict: dict) -> str:
             for row in rows
         )
         lines.append(
-            f"- Protected case “{name}” is flaky on the current version, so this fix"
+            f"- Protected case “{name}” is flaky on the current version, so this epoch"
             f" wasn't held to it: {checks}."
         )
     evals = _evals_note(candidate)
@@ -459,7 +459,7 @@ def _evidence_origin(candidate: AgentFixCandidate) -> str:
             else f"- {_plural(cases, 'imported case', 'imported cases')}"
         )
     listed = "\n".join(lines)
-    return f"### Evidence\n\nThis fix started from imported evidence:\n\n{listed}"
+    return f"### Evidence\n\nThis epoch started from imported evidence:\n\n{listed}"
 
 
 def _notes_section(candidate: AgentFixCandidate) -> str:
@@ -481,7 +481,7 @@ def _fix_link(candidate: AgentFixCandidate) -> str:
     # frontend/src/routes/sections/dashboard.jsx: simulate → environments/:envId →
     # improvements/:fixId, the fix run's page.
     return (
-        f"[Open this fix in Epoch on Future AGI]({base}/dashboard/simulate/environments/"
+        f"[Open this epoch on Future AGI]({base}/dashboard/simulate/environments/"
         f"{run.environment_id}/improvements/{run.id})"
     )
 

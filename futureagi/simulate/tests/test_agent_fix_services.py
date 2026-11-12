@@ -2918,6 +2918,7 @@ class TestPullRequestEvals:
             EvalReview(grading=EvalGrading.DONE, warnings=[warning], compared=1),
         )
         assert "**Platform evals this change does worse on.**" in body
+        assert "They do not decide the epoch's verdict" in body
         assert (
             "- Politeness: 25% passed (12 trials), 100% on the current version (12 trials)"
             in body
@@ -3076,7 +3077,7 @@ class TestPullRequestDescription:
         )
         run = candidate.fix_run
         assert (
-            "[Open this fix in Epoch on Future AGI](https://app.example/dashboard/simulate/"
+            "[Open this epoch on Future AGI](https://app.example/dashboard/simulate/"
             f"environments/{run.environment_id}/improvements/{run.id})" in body
         )
         assert len(title) <= 120
@@ -3132,7 +3133,7 @@ class TestPullRequestDescription:
         )
         # How many were held back, and how many it takes.
         assert body.startswith(
-            "**Limited validation.** Only 2 failing cases were held back from the fix to"
+            "**Limited validation.** Only 2 failing cases were held back from the epoch to"
             " verify it; it takes 4 or more."
         )
         assert "Checked by Epoch" in body and "Verified by" not in body
@@ -3151,7 +3152,7 @@ class TestPullRequestDescription:
         assert "Measured automatically" not in body
         # A protected case reads once, by its name, and by its key only without one.
         assert (
-            "- Protected case “case-2” is flaky on the current version, so this fix"
+            "- Protected case “case-2” is flaky on the current version, so this epoch"
             " wasn't held to it: its “refunded” check passed 2 of 3 runs, its “polite”"
             " check passed 1 of 3 runs." in body
         )
@@ -3240,7 +3241,7 @@ class TestPullRequestDescription:
 
         # The import page's words for each kind of source.
         assert (
-            "### Evidence\n\nThis fix started from imported evidence:\n\n"
+            "### Evidence\n\nThis epoch started from imported evidence:\n\n"
             "- 2 sessions from Observe\n"
             "- 3 dataset rows\n"
             "- 1 imported case"
