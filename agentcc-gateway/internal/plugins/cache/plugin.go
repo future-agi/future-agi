@@ -92,6 +92,11 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	namespace := cacheNamespace(rc)
 	key := BuildCacheKey(namespace, rc.Request)
 	rc.Metadata["cache_key"] = key
+	if p.semanticStore != nil {
+		// Fixed now so ProcessResponse stores under it even on force-refresh or
+		// after later plugins rewrite rc.Request.
+		rc.Metadata["cache_semantic_partition"] = semanticPartition(namespace, rc.Request)
+	}
 
 	// Edge cache: check conditional request (If-None-Match → 304).
 	if p.edgeHandler != nil && p.edgeHandler.IsEnabled() {
@@ -137,7 +142,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
-			if result := p.semanticStore.Search(vec, semanticPartition(namespace, rc.Request)); result != nil {
+			if result := p.semanticStore.Search(vec, rc.Metadata["cache_semantic_partition"]); result != nil {
 				rc.Response = result.Response
 				rc.Flags.CacheHit = true
 				rc.Metadata["cache_status"] = "hit_semantic"
@@ -191,7 +196,13 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
-			p.semanticStore.Set(key, vec, semanticPartition(cacheNamespace(rc), rc.Request), rc.Response, ttl)
+			// Store under the partition the lookup used: later plugins (PII
+			// remediation, fallback model rewrites) may have changed rc.Request.
+			partition := rc.Metadata["cache_semantic_partition"]
+			if partition == "" {
+				partition = semanticPartition(cacheNamespace(rc), rc.Request)
+			}
+			p.semanticStore.Set(key, vec, partition, rc.Response, ttl)
 		}
 	}
 
@@ -263,57 +274,50 @@ func cacheNamespace(rc *models.RequestContext) string {
 	return "default"
 }
 
-// semanticPartition scopes semantic cache entries. Only the last user message
-// is compared by similarity, so everything that message is answered in the
-// context of must match exactly: the cache namespace, the model, every other message (system and
-// developer instructions, earlier turns, tool results, anything after it) and
-// the last user message's non-text parts (images, audio, files). Requests that
-// differ in any of these never share an entry, however similar the question.
+// semanticPartition scopes semantic cache entries. Only the last user
+// message's text is compared by similarity, so everything else must match
+// exactly. The partition is the exact-match cache key (namespace, model, every
+// message, and the options that key covers) of the request with that compared
+// text removed: other instructions, earlier turns, further content parts
+// (images, extra text), the speaker name, tools or response_format that differ
+// never share an entry, however similar the question.
 func semanticPartition(namespace string, req *models.ChatCompletionRequest) string {
-	last := -1
-	for i := len(req.Messages) - 1; i >= 0; i-- {
-		if req.Messages[i].Role == "user" {
-			last = i
+	ctx := *req
+	ctx.Messages = append([]models.Message(nil), req.Messages...)
+	for i := len(ctx.Messages) - 1; i >= 0; i-- {
+		if ctx.Messages[i].Role == "user" {
+			ctx.Messages[i].Content = withoutComparedText(ctx.Messages[i].Content)
 			break
 		}
 	}
-	h := fnv.New128a()
-	h.Write([]byte(namespace))
-	h.Write([]byte("|"))
-	for i, msg := range req.Messages {
-		if i == last {
-			h.Write([]byte("|last-user|"))
-			h.Write(nonTextParts(msg.Content))
-			continue
-		}
-		b, _ := json.Marshal(msg)
-		h.Write(b)
-		h.Write([]byte("\n"))
-	}
-	return req.Model + "|ctx=" + hex.EncodeToString(h.Sum(nil))
+	return req.Model + "|ctx=" + BuildCacheKey(namespace, &ctx)
 }
 
-// nonTextParts returns the non-text content parts of a message, serialized,
-// or nil when the content is a plain string or text-only parts.
-func nonTextParts(content json.RawMessage) []byte {
-	var parts []json.RawMessage
-	if err := json.Unmarshal(content, &parts); err != nil {
-		return nil
+// withoutComparedText removes from a user message's content the text that
+// extractLastUserMessage vectorizes, keeping every other part.
+func withoutComparedText(content json.RawMessage) json.RawMessage {
+	var s string
+	if json.Unmarshal(content, &s) == nil {
+		return json.RawMessage(`""`)
 	}
-	var out []json.RawMessage
+	var parts []json.RawMessage
+	if json.Unmarshal(content, &parts) != nil {
+		return json.RawMessage(`null`) // the raw content itself is vectorized
+	}
+	rest := make([]json.RawMessage, 0, len(parts))
+	removed := false
 	for _, part := range parts {
-		var head struct {
+		var tp struct {
 			Type string `json:"type"`
+			Text string `json:"text"`
 		}
-		if json.Unmarshal(part, &head) == nil && head.Type == "text" {
+		if !removed && json.Unmarshal(part, &tp) == nil && tp.Type == "text" && tp.Text != "" {
+			removed = true
 			continue
 		}
-		out = append(out, part)
+		rest = append(rest, part)
 	}
-	if len(out) == 0 {
-		return nil
-	}
-	b, _ := json.Marshal(out)
+	b, _ := json.Marshal(rest)
 	return b
 }
 

@@ -153,3 +153,79 @@ func TestSemanticCacheHonoursNamespace(t *testing.T) {
 		t.Errorf("same namespace paraphrase missed (%s)", st)
 	}
 }
+
+func multiTextMsg(a, b string) models.Message {
+	c, _ := json.Marshal([]map[string]string{{"type": "text", "text": a}, {"type": "text", "text": b}})
+	return models.Message{Role: "user", Content: c}
+}
+
+// Everything but the compared text must match: further text parts, the
+// speaker name, and request options the exact-match key already covers.
+func TestSemanticCacheIsolatesRestOfRequest(t *testing.T) {
+	q := "How do I reverse a string in my favourite programming language?"
+	named := func(n string) models.Message { m := textMsg("user", q); m.Name = n; return m }
+	cases := []struct {
+		name          string
+		first, second *models.ChatCompletionRequest
+	}{
+		{"second text part",
+			&models.ChatCompletionRequest{Model: "gpt-4o", Messages: []models.Message{multiTextMsg("Translate to French:", "Hello")}},
+			&models.ChatCompletionRequest{Model: "gpt-4o", Messages: []models.Message{multiTextMsg("Translate to French:", "Goodbye")}}},
+		{"speaker name",
+			&models.ChatCompletionRequest{Model: "gpt-4o", Messages: []models.Message{named("alice")}},
+			&models.ChatCompletionRequest{Model: "gpt-4o", Messages: []models.Message{named("bob")}}},
+		{"response_format",
+			&models.ChatCompletionRequest{Model: "gpt-4o", Messages: []models.Message{textMsg("user", q)}},
+			&models.ChatCompletionRequest{Model: "gpt-4o", Messages: []models.Message{textMsg("user", q)}, ResponseFormat: &models.ResponseFormat{Type: "json_object"}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if hit, st := storeThenLookupReq(t, c.first, c.second, nil); hit {
+				t.Errorf("served across a different request (%s)", st)
+			}
+		})
+	}
+}
+
+// A later plugin (e.g. PII remediation) may rewrite rc.Request between the
+// lookup and the store. The entry must be stored under the partition the
+// lookup used, not one computed from the rewritten request: here the image
+// is dropped after the lookup, and a text-only request must still miss.
+func TestSemanticCacheStoresUnderLookupPartition(t *testing.T) {
+	withImage := &models.ChatCompletionRequest{Model: "gpt-4o", Messages: []models.Message{imageMsg("What is shown in this picture?", "https://img.example.test/invoice.png")}}
+	textOnly := &models.ChatCompletionRequest{Model: "gpt-4o", Messages: []models.Message{textMsg("user", "What is shown in this picture?")}}
+	rewrite := func(req *models.ChatCompletionRequest) {
+		req.Messages = []models.Message{textMsg("user", "What is shown in this picture?")}
+	}
+	if hit, st := storeThenLookupReq(t, withImage, textOnly, rewrite); hit {
+		t.Errorf("text-only request served the answer about an image (%s)", st)
+	}
+	// Positive control: the same image request still hits its own entry.
+	again := &models.ChatCompletionRequest{Model: "gpt-4o", Messages: []models.Message{imageMsg("what is shown in this picture", "https://img.example.test/invoice.png")}}
+	withImage2 := &models.ChatCompletionRequest{Model: "gpt-4o", Messages: []models.Message{imageMsg("What is shown in this picture?", "https://img.example.test/invoice.png")}}
+	if hit, st := storeThenLookupReq(t, withImage2, again, rewrite); !hit {
+		t.Errorf("same image request missed after a rewrite between lookup and store (%s)", st)
+	}
+}
+
+func storeThenLookupReq(t *testing.T, first, second *models.ChatCompletionRequest, rewriteBeforeStore func(*models.ChatCompletionRequest)) (bool, string) {
+	t.Helper()
+	p, _, _ := newTestSemanticPlugin()
+	rc1 := models.AcquireRequestContext()
+	rc1.Request = first
+	rc1.Model = first.Model
+	p.ProcessRequest(context.Background(), rc1)
+	if rewriteBeforeStore != nil {
+		rewriteBeforeStore(rc1.Request)
+	}
+	rc1.Response = makeResp("first-answer")
+	p.ProcessResponse(context.Background(), rc1)
+	rc1.Release()
+
+	rc2 := models.AcquireRequestContext()
+	defer rc2.Release()
+	rc2.Request = second
+	rc2.Model = second.Model
+	res := p.ProcessRequest(context.Background(), rc2)
+	return res.Action == pipeline.ShortCircuit, rc2.Metadata["cache_status"] + " sim=" + rc2.Metadata["cache_similarity"]
+}
