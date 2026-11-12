@@ -3,6 +3,14 @@ import fileActionIcons from './fileActionIcons';
 
 addCollection(fileActionIcons);
 
+// Keep the shared navigation and identity controls available without an icon
+// CDN (including isolated tests and self-hosted/offline installations).
+addIcon('solar:menu-dots-bold', { width: 24, height: 24, body: '<g fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></g>' });
+addIcon('solar:copy-linear', { width: 24, height: 24, body: '<g fill="none" stroke="currentColor" stroke-width="1.5"><rect x="8" y="8" width="12" height="13" rx="3"/><path stroke-linecap="round" d="M16 8V6a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7a3 3 0 0 0 3 3h1"/></g>' });
+addIcon('solar:info-circle-linear', { width: 24, height: 24, body: '<g fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" d="M12 11v6"/></g><circle cx="12" cy="7" r="1" fill="currentColor"/>' });
+addIcon('solar:wallet-linear', { width: 24, height: 24, body: '<g fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linejoin="round" d="M20 8V6a3 3 0 0 0-3-3H6a4 4 0 0 0-4 4v10a4 4 0 0 0 4 4h12a4 4 0 0 0 4-4v-5a4 4 0 0 0-4-4H6a2 2 0 0 1 0-4"/><path d="M22 12h-5a2 2 0 0 0 0 4h5"/></g><circle cx="17" cy="14" r="1" fill="currentColor"/>' });
+addIcon('solar:archive-linear', { width: 24, height: 24, body: '<g fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="5" rx="2"/><path d="M5 8v10a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3V8"/><path stroke-linecap="round" d="M10 12h4"/></g>' });
+
 // Official Solar linear definitions, bundled locally so skill navigation works
 // on offline/self-hosted installations. The preferred magic-stick icon is not
 // in the application's local registry; use the spec's book-bookmark fallback.

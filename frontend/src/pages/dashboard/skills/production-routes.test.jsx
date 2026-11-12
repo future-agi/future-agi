@@ -156,10 +156,14 @@ it('mounts the real reviewer inbox without an injected Controller', async () => 
   expect(await screen.findByText('No assigned reviews')).toBeVisible();
   expect(axios.get.mock.calls.some(([url]) => url.endsWith('/review-inbox/'))).toBe(true);
 });
-it('keeps rollouts unavailable when the backend switch is off', async () => {
+it('omits unavailable destinations and moves secondary pages into More', async () => {
   mount('/dashboard/skills/contexts');
   await screen.findByRole('button', { name: 'policy-context' });
-  expect(screen.getByRole('tab', { name: 'Repository rollouts (unavailable)' })).toBeDisabled();
+  expect(screen.queryByRole('tab', { name: /Repository rollouts/ })).not.toBeInTheDocument();
+  expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Skills', 'Agent contexts', 'Reviews']);
+  expect(screen.queryByText(/\(unavailable\)/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'More Skills pages' }));
+  expect(await screen.findByRole('menuitem', { name: 'Workspace allowance' })).toBeVisible();
 });
 it('exposes rollouts only after the server capability is enabled', async () => {
   identity.campaigns = true;

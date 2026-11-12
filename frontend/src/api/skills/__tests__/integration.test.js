@@ -66,6 +66,10 @@ it('round-trips the binding contract without inventing native configuration or i
   const mapped = mapContextBinding(wire.BindingOut);
   expect(contextBindingInput(mapped)).toMatchObject({ selector: wire.BindingOut.selector, profile_version: wire.BindingOut.profile_version, repository: wire.BindingOut.repository });
   expect(mapped).not.toHaveProperty('loaded');
-  expect(contextBindingInput(mapped)).not.toHaveProperty('configuration');
+  // BindingOut now includes configuration explicitly. Preserve that value;
+  // only a genuinely legacy response must omit it from the write payload.
+  expect(contextBindingInput(mapped)).toHaveProperty('configuration', wire.BindingOut.configuration);
+  const { configuration: _configuration, configuration_digest: _digest, ...legacyWire } = wire.BindingOut;
+  expect(contextBindingInput(mapContextBinding(legacyWire))).not.toHaveProperty('configuration');
   expect(mapVersionSafety({ revision: 2, quarantined: true, reason: 'review', replacement_version_id: null, affected_context_count: 3 })).toEqual({ revision: 2, quarantined: true, reason: 'review', replacementVersionId: null, affectedContextCount: 3 });
 });

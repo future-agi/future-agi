@@ -7,6 +7,13 @@ import { matchRoutes } from 'react-router-dom';
 import { paths } from 'src/routes/paths';
 
 const roots = ['src/sections/skills', 'src/api/skills', 'src/pages/dashboard/skills'];
+// The R7 shared lane ships a tested public component library before surface
+// lanes adopt it. Only these explicit entrypoints may have test-only consumers;
+// all other production modules retain the no-orphans requirement below.
+const sharedEntrypoints = new Set([
+  ...['IdentityChip', 'VersionIdentityRow', 'ObjectHeader', 'PeoplePicker', 'TechnicalDetails', 'EvidenceSummary', 'OperationFeedback', 'CapabilityNotice'].map((name) => `src/sections/skills/components/${name}.jsx`),
+  ...['review-links', 'origin'].map((name) => `src/sections/skills/utils/${name}.js`),
+]);
 const belongsToFeature = (file) => roots.some((root) => file === root || file.startsWith(`${root}/`));
 const isProduction = (file) => !/\.(test|browser)|smoke|(^|\/)__tests__(\/|$)/.test(file);
 const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -33,6 +40,7 @@ function auditInterfaces() {
   }));
   const issues = [];
   const imported = new Set();
+  const tested = new Set();
   // Entry points outside the feature roots that mount Skills modules: navigation, routes and the
   // trace span pane, where context regression capture starts from the selected span.
   for (const file of [...files, 'src/layouts/dashboard/config-navigation.jsx', 'src/routes/sections/dashboard.jsx', 'src/components/traceDetail/SpanDetailPane.jsx']) {
@@ -51,6 +59,7 @@ function auditInterfaces() {
           } else if (!target) issues.push(`${file}: missing module ${specifier}`);
           else {
             if (isProduction(file)) imported.add(target);
+            else if (/\.test\.[jt]sx?$/.test(file)) tested.add(target);
             const clause = node.importClause;
             const names = [
               ...(clause?.name ? ['default'] : []),
@@ -64,7 +73,7 @@ function auditInterfaces() {
     };
     visit(parse(file));
   }
-  return { issues, orphans: files.filter((file) => isProduction(file) && !imported.has(file)) };
+  return { issues, tested, orphans: files.filter((file) => isProduction(file) && !imported.has(file) && !(sharedEntrypoints.has(file) && tested.has(file))) };
 }
 
 describe('Skills integration boundaries', () => {
@@ -97,7 +106,10 @@ describe('Skills integration boundaries', () => {
   it('resolves every cross-feature import and its named or default export', () => {
     expect(audit.issues).toEqual([]);
   });
-  it('has no orphan production modules left by parallel implementations', () => {
+  it('keeps every shared public entrypoint covered by a unit test', () => {
+    for (const file of sharedEntrypoints) expect(audit.tested.has(file), file).toBe(true);
+  });
+  it('has no orphan production modules outside the tested shared public API', () => {
     expect(audit.orphans).toEqual([]);
   });
 });

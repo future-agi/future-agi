@@ -13,6 +13,19 @@ export const STATUS_ROLES = [
 
 // shape: "hollow" draws an outlined dot (waiting), "live" pulses (in progress).
 export const RUN_STATUS = {
+  pinned: { role: "neutral", label: "Pinned" },
+  stale: { role: "warning", label: "Stale" },
+  approved: { role: "success", label: "Approved" },
+  released: { role: "success", label: "Released" },
+  superseded: { role: "neutral", label: "Superseded" },
+  not_observed: { role: "neutral", label: "Not observed", shape: "hollow" },
+  held: { role: "warning", label: "Held" },
+  excluded: { role: "neutral", label: "Excluded" },
+  update_available: { role: "info", label: "Update available" },
+  up_to_date: { role: "neutral", label: "Up to date" },
+  checking: { role: "info", label: "Checking", shape: "live" },
+  unavailable: { role: "neutral", label: "Unavailable" },
+  private: { role: "neutral", label: "Private" },
   cancelling: { role: "info", label: "Stopping", shape: "live" },
   timed_out: { role: "danger", label: "Timed out" },
   interrupted: { role: "warning", label: "Interrupted" },
