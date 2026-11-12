@@ -457,6 +457,47 @@ def test_runner_constructor_failure_finishes_all_selected_rows(rerun):
     assert rerun.metric.status == StatusType.FAILED.value
 
 
+def test_full_run_counts_an_unstored_result_as_a_failed_row(rerun):
+    """The threaded full-dataset path shares the cell writer with reruns. A
+    result that cannot be stored must fail only its row, once, and the run
+    must still return normally so its task is never retried."""
+    evaluated, lock = [], Lock()
+
+    def evaluate(self, row, mappings):
+        with lock:
+            evaluated.append(row.id)
+        if row.id == rerun.rows[0].id:
+            return UNSTORABLE_RESULT
+        return result_for_row(self, row, mappings)
+
+    runner = EvaluationRunner(
+        user_eval_metric_id=rerun.metric.id,
+        is_only_eval=True,
+        source="dataset_evaluation",
+        source_id=rerun.metric.template.id,
+    )
+    with (
+        patch.object(EvaluationRunner, "_process_eval_result", evaluate),
+        patch(
+            "model_hub.views.eval_runner.get_mixpanel_properties", return_value={}
+        ) as properties,
+        patch("model_hub.views.eval_runner.track_mixpanel_event"),
+    ):
+        runner.run_prompt()
+
+    assert sorted(evaluated) == sorted(row.id for row in rerun.rows)
+    (failed_status, _), *stored = column_state(rerun.column)
+    assert failed_status == CellStatus.ERROR.value
+    assert stored == [
+        (CellStatus.PASS.value, "row-1"),
+        (CellStatus.PASS.value, "row-2"),
+    ]
+    completion = properties.call_args.kwargs
+    assert (completion["count"], completion["failed"]) == (2, 1)
+    # The failure stays with its row: the run itself did not fail.
+    assert status_of(rerun.metric) == StatusType.COMPLETED.value
+
+
 def test_reporting_failure_does_not_request_replay_of_finished_evaluations(rerun):
     evaluated = []
 
