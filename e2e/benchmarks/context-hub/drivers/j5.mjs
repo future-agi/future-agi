@@ -795,35 +795,61 @@ class CampaignJourney {
     }
   }
 
-  async reverseConflictChecks() {
-    // The standalone SDK restore/apply checks run in the operator's own shell,
-    // which needs the latest rollout's planning credential exported: counted.
-    await this.action('configuration_edit', async () => { assert.ok(this.env.FI_CONTEXT_CREDENTIAL, 'planning_credential_missing'); }, { repos: [this.repos[0]] });
+  /**
+   * Fixture fault, not an operator action: a concurrent local edit to repos[0]'s
+   * managed file before the reverse plan. The reverse plan command itself must
+   * surface it as that repository's own exception (no separate operator check).
+   */
+  async injectReverseConflict() {
     const repo = this.repos[0]; const project = this.projects.get(repo.id);
-    const lockPath = join(project, '.futureagi-context.lock.json');
-    const lockBytes = await readFile(lockPath);
-    const lock = JSON.parse(lockBytes);
-    const managed = lock.materialization.files.find((row) => row.ownership === 'managed' && row.destination.endsWith('AGENTS.md'));
+    const lockPath = join(project, LOCK); const lockBytes = await readFile(lockPath);
+    const managed = JSON.parse(lockBytes).materialization.files.find((row) => row.ownership === 'managed' && row.destination.endsWith('AGENTS.md'));
     assert.ok(managed, 'managed_instruction_missing');
     const managedPath = join(project, managed.destination); const original = await readFile(managedPath);
     const dirtyBytes = 'Locally modified managed policy; retain for explicit conflict resolution.\n';
-    // Synthetic concurrent edit, never hidden setup for the measured recovery.
     await writeFile(managedPath, dirtyBytes);
-    const dirtyPath = join(this.scratch, 'dirty-reverse.json');
-    const restoreArgs = ['restore', '--project', project, '--lock', join(this.scratch, `${repo.id}-original-lock.json`), '--allow-preview'];
-    const dirty = await this.sdk([...restoreArgs, '--out', dirtyPath], 5);
-    assert.equal(dirty.error.code, 'local_modifications');
-    await assert.rejects(lstat(dirtyPath), { code: 'ENOENT' });
+    this.conflict = { repo, project, lockPath, lockBytes, managed, managedPath, original, dirtyBytes };
+  }
+
+  /**
+   * One recovery decision on the surfaced conflict: keep a copy of the local
+   * edit, restore the managed bytes, and the product re-plans exactly that
+   * target in the same draft campaign (replanResolved). The oracle first checks
+   * the refusal changed nothing and that only this repository was held.
+   */
+  async resolveReverseConflict() {
+    const { repo, lockPath, lockBytes, managed, managedPath, original, dirtyBytes } = this.conflict;
+    const { review } = this.campaign;
+    const conflicts = review.exceptions.filter((row) => row.kind === 'local_conflict');
+    assert.deepEqual(conflicts.map((row) => row.repository_id), [repo.id], 'local_conflict_not_surfaced');
+    assert.equal(conflicts[0].observed.error, 'local_modifications');
     assert.equal(await readFile(managedPath, 'utf8'), dirtyBytes, 'dirty_local_work_lost');
     assert.deepEqual(await readFile(lockPath), lockBytes, 'dirty_check_mutated_lock');
-    await this.action('recovery_decision', async () => {
+    assert.ok(![...review.patches.values()].some((patch) => patch.repository_id === repo.id), 'conflicted_target_planned');
+    const replanned = await this.action('recovery_decision', async () => {
       // Export the conflicting bytes before the scripted operator chooses the
       // previous managed content. The export survives scratch-tree teardown.
       await this.save('retained-dirty-local-work', { repository_id: repo.id, path: managed.destination, content: dirtyBytes, sha256: hash(dirtyBytes) });
       await writeFile(managedPath, original);
+      return this.rollout.replanResolved({ campaignId: this.campaign.id, review, repositoryIds: [repo.id], request: this.startRequest('reverse', true) });
     }, { repos: [repo] });
-    const stalePath = join(this.scratch, 'stale-reverse.json');
-    await this.sdk([...restoreArgs, '--out', stalePath]);
+    this.campaign.review = replanned.review; this.campaign.packet = replanned.packet;
+    this.ledger.fault('dirty-managed-segment', 'reverse-plan-holds-local-conflict');
+    return { dirty: 'local_modifications', held_until_resolved: true, lock_unchanged: true, local_work_exported: true };
+  }
+
+  /**
+   * A new local edit after review makes the reviewed plan stale: applying it in
+   * the operator's shell is refused before any write. Uses the campaign's own
+   * re-planned restore plan (no separate restore command); the standalone SDK
+   * needs the rollout's planning credential exported in that shell: counted.
+   */
+  async staleReverseCheck() {
+    const { repo, project, lockPath, lockBytes } = this.conflict;
+    await this.action('configuration_edit', async () => { assert.ok(this.env.FI_CONTEXT_CREDENTIAL, 'planning_credential_missing'); }, { repos: [repo] });
+    const binding = this.bindings[this.repos.indexOf(repo)].id;
+    const stalePath = this.campaign.review.patches.get(binding)?.path;
+    assert.ok(stalePath, 'resolved_target_not_replanned');
     const agentsPath = join(project, 'AGENTS.md'); const agents = await readFile(agentsPath);
     const changedAgents = Buffer.concat([agents, Buffer.from('\nNew local work after review; retain for resolution.\n')]);
     await writeFile(agentsPath, changedAgents);
@@ -835,14 +861,17 @@ class CampaignJourney {
       await this.save('retained-stale-local-work', { repository_id: repo.id, path: 'AGENTS.md', content: changedAgents.toString(), sha256: hash(changedAgents) });
       await writeFile(agentsPath, agents);
     }, { repos: [repo] });
-    this.ledger.fault('dirty-managed-segment', 'reverse-refuses-local-conflict');
-    this.reverseConflicts = { dirty: dirty.error.code, stale: stale.error.code, lock_unchanged: true, local_work_exported: true };
-    await this.save('reverse-conflicts', this.reverseConflicts);
+    return 'stale_plan';
   }
 
   async update(reverse) {
     assert.ok(this.rounds.length, 'initial_install_required');
-    if (reverse) { await this.reverseConflictChecks(); this.version = this.first; await this.freeze('reverse', true); }
+    if (reverse) {
+      await this.injectReverseConflict(); this.version = this.first; await this.freeze('reverse', true);
+      const resolved = await this.resolveReverseConflict();
+      this.reverseConflicts = { ...resolved, stale: await this.staleReverseCheck() };
+      await this.save('reverse-conflicts', this.reverseConflicts);
+    }
     // Publishing the reviewed next release also freezes and plans its rollout (one approval, no repository write).
     else await this.adoptStarted('second-update', await this.publishNext('second-update'));
     await this.plans();

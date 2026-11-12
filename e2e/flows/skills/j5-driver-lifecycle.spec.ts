@@ -275,7 +275,7 @@ test(`${id}: registered campaign driver ${configured ? 'reaches the configured p
       [driver.baseMovement.campaign_id]);
     expect(abandoned).toEqual([{ status: 'cancelled', targets: '40' }]);
     storage.push({ cancelled_campaign_id: driver.baseMovement.campaign_id, rows: abandoned });
-    expect(driver.reverseConflicts).toEqual({ dirty: 'local_modifications', stale: 'stale_plan', lock_unchanged: true, local_work_exported: true });
+    expect(driver.reverseConflicts).toEqual({ dirty: 'local_modifications', held_until_resolved: true, stale: 'stale_plan', lock_unchanged: true, local_work_exported: true });
     for (const kind of ['dirty', 'stale']) {
       const retained = JSON.parse(await readFile(join(evidence, `${runId}-retained-${kind}-local-work.json`), 'utf8'));
       expect(createHash('sha256').update(retained.content).digest('hex')).toBe(retained.sha256);

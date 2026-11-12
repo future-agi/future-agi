@@ -315,5 +315,32 @@ export class ContextRollout {
     if (observed.state !== 'pr_open') return { observed, campaign: await this.hub('GET', `${ROOT}campaigns/${campaignId}/`) };
     return { observed, campaign: await this.setStatus({ campaignId, action: 'resume', reason }) };
   }
+
+  /**
+   * Follow-on of the operator's recovery decision on surfaced local conflicts:
+   * re-plan exactly those targets in the same draft campaign and return the
+   * complete review and a new packet over all targets. Only targets the plan
+   * itself reported as local_conflict qualify; every other recorded plan and
+   * decision is kept as reviewed. Nothing is authorized or written to Git.
+   */
+  async replanResolved({ campaignId, review, repositoryIds, request }) {
+    need(Array.isArray(repositoryIds) && repositoryIds.length > 0 && new Set(repositoryIds).size === repositoryIds.length, 'invalid_replan_request');
+    const conflicts = new Set(review.exceptions.filter((row) => row.kind === 'local_conflict').map((row) => row.repository_id));
+    need(repositoryIds.every((id) => conflicts.has(id)), 'not_a_surfaced_local_conflict');
+    const { contextName, selected, exclusions = {}, mode = 'plan', version, client, restoreLocks = {}, outDir } = request;
+    const fresh = await this.batch().planAll({ campaignId, selected, exclusions, mode, name: contextName, version, client, restoreLocks, outDir, only: repositoryIds });
+    const replanned = new Set(fresh.decisions.map((row) => row.binding_id));
+    const groups = new Map(review.groups.map((group) => [group.key, { ...group, members: [...group.members] }]));
+    for (const group of fresh.groups) {
+      const current = groups.get(group.key) ?? { key: group.key, delta: group.delta, members: [] };
+      current.members.push(...group.members); groups.set(group.key, current);
+    }
+    const merged = { ...review, revision: fresh.revision, groups: [...groups.values()],
+      exceptions: [...review.exceptions.filter((row) => !replanned.has(row.binding_id)), ...fresh.exceptions],
+      decisions: [...review.decisions.filter((row) => !replanned.has(row.binding_id)), ...fresh.decisions],
+      patches: new Map([...review.patches, ...fresh.patches]) };
+    need(merged.decisions.length === review.decisions.length, 'incomplete_decisions');
+    return { review: merged, packet: await this.packet({ campaignId, review: merged }) };
+  }
   // ---- END one-step rollout paths ----------------------------------------------
 }

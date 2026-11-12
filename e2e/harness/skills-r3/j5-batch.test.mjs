@@ -188,3 +188,54 @@ test('executeAll stops after base movement and keeps uncertain receipts uncertai
   assert.deepEqual(calls, ['b1', 'b2', 'b3']);
   assert.deepEqual(receipts.map((row) => row.state), ['pr_open', 'unknown', 'unknown', 'not_attempted']);
 });
+
+// Stub SDK whose restore refuses a checkout marked `<project>.dirty` with the given error code.
+async function conflictPython() {
+  const dir = await mkdtemp(join(tmpdir(), 'j5-conflict-'));
+  const path = join(dir, 'python');
+  await writeFile(path, `#!/usr/bin/env node
+const { existsSync, readFileSync } = require('node:fs');
+const args = process.argv.slice(2);
+if (args[1] === '-m') {
+  const project = args[args.indexOf('--project') + 1];
+  if (args[3] === 'restore' && existsSync(project + '.dirty')) { console.log(JSON.stringify({ error: { code: readFileSync(project + '.dirty', 'utf8') } })); process.exit(5); }
+  console.log('{}'); process.exit(0);
+}
+const repo = args[3];
+console.log(JSON.stringify({ plan: { desired_version_id: '${desired}', plan_digest: 'sha256:' + repo.padStart(64, '0'), local_review_required: true },
+  contents: {}, review_group: { key: 'sha256:reverse', delta: {} }, review_exception: null }));
+`);
+  await chmod(path, 0o755);
+  return { dir, path };
+}
+
+test('a locally edited managed checkout becomes its own reviewed exception; the rest of the reverse plan proceeds', async () => {
+  const targets = [target(1), target(2), target(3)];
+  const { hub, executor, recorded } = fakes(targets);
+  const python = await conflictPython();
+  const selected = targets.map((row, i) => ({ repository_id: row.repository.repository_id, repository: `synthetic/repo-${i + 1}`, project: join(python.dir, `p${i}`) }));
+  const restoreLocks = Object.fromEntries(selected.map((row) => [row.repository_id, join(python.dir, `${row.repository_id}-lock.json`)]));
+  await writeFile(selected[0].project + '.dirty', 'local_modifications');
+  const batch = new CampaignBatch({ hub, executor, python: python.path });
+  const request = { campaignId, selected, mode: 'restore', restoreLocks, name: 'n', version: 1, client: 'codex', outDir: python.dir };
+  const review = await batch.planAll(request);
+  assert.deepEqual(review.exceptions.map((row) => [row.repository_id, row.kind, row.observed.plan_written]), [['1001', 'local_conflict', false]]);
+  assert.deepEqual(review.decisions.find((row) => row.binding_id === targets[0].binding_id), { binding_id: targets[0].binding_id, plan_digest: null,
+    decision: 'exclude', reason: review.exceptions[0].reason });
+  assert.deepEqual(review.groups.map((group) => group.members.map((row) => row.repository_id)), [['1002', '1003']]);
+  assert.equal(recorded.length, 2, 'no plan is recorded for the conflicted checkout');
+  assert.ok(!review.patches.has(targets[0].binding_id));
+  // Any other SDK refusal still stops the campaign plan: only a local edit is an exception.
+  await writeFile(selected[0].project + '.dirty', 'invalid_lock');
+  await assert.rejects(batch.planAll(request), /sdk_unexpected_exit/);
+  // After the operator resolved it, exactly that target is re-planned; nothing else is re-recorded.
+  await writeFile(selected[0].project + '.dirty', '');
+  const { rm } = await import('node:fs/promises'); await rm(selected[0].project + '.dirty');
+  const before = recorded.length;
+  const fresh = await batch.planAll({ ...request, only: ['1001'] });
+  assert.equal(recorded.length, before + 1);
+  assert.deepEqual(fresh.decisions.map((row) => [row.binding_id, row.decision]), [[targets[0].binding_id, 'include']]);
+  assert.deepEqual(fresh.groups.map((group) => group.members.map((row) => row.repository_id)), [['1001']]);
+  await assert.rejects(batch.planAll({ ...request, only: ['9999'] }), /plan_subset_not_fixed_targets/);
+  await assert.rejects(batch.planAll({ ...request, only: [] }), /invalid_plan_subset/);
+});

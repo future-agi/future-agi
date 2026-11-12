@@ -93,8 +93,10 @@ export class CampaignBatch {
    * SDK exporter proved unchanged share one review group. Pins, unavailable
    * repositories, operator exclusions and unprovable plans stay exceptions.
    */
-  async planAll({ campaignId, selected, exclusions = {}, mode = 'plan', name, version, client, restoreLocks = {}, outDir }) {
+  async planAll({ campaignId, selected, exclusions = {}, mode = 'plan', name, version, client, restoreLocks = {}, outDir, only = null }) {
     requireValue(['plan', 'restore'].includes(mode) && outDir, 'invalid_plan_request');
+    // `only`: re-plan exactly these fixed targets (after a resolved local conflict); the rest keep their recorded plans.
+    requireValue(only === null || (Array.isArray(only) && only.length > 0 && new Set(only).size === only.length), 'invalid_plan_subset');
     const byId = new Map(selected.map((row) => [row.repository_id, row]));
     requireValue(byId.size === selected.length, 'duplicate_selection');
     const campaign = await this.hub('GET', `${ROOT}campaigns/${campaignId}/`);
@@ -103,7 +105,9 @@ export class CampaignBatch {
     const targets = await this.targets(campaignId);
     requireValue(targets.length === campaign.target_count, 'incomplete_target_set');
     const groups = new Map(); const exceptions = []; const decisions = []; const patches = new Map();
-    for (const target of targets) {
+    const wanted = only === null ? targets : targets.filter((row) => only.includes(row.repository.repository_id));
+    requireValue(only === null || wanted.length === only.length, 'plan_subset_not_fixed_targets');
+    for (const target of wanted) {
       this.signal?.throwIfAborted();
       const repositoryId = target.repository.repository_id;
       const row = byId.get(repositoryId);
@@ -142,13 +146,23 @@ export class CampaignBatch {
         exclude('unavailable', 'Repository unavailable to the configured Git authorization; retained as an explicit exception.', { git_status: 404 });
         continue;
       }
-      const path = join(outDir, `${mode}-${campaignId}-${repositoryId}.json`);
+      const path = join(outDir, `${mode}-${campaignId}-${repositoryId}${only === null ? '' : `-replan-${revision}`}.json`);
+      let planned;
       if (mode === 'restore') {
         requireValue(restoreLocks[repositoryId], 'restore_lock_required');
-        await this.sdk(['restore', '--project', row.project, '--lock', restoreLocks[repositoryId], '--allow-preview', '--out', path]);
+        planned = await this.sdk(['restore', '--project', row.project, '--lock', restoreLocks[repositoryId], '--allow-preview', '--out', path], [0, 5]);
       } else {
-        await this.sdk(['plan', '--name', name, '--version', String(version), '--client', client, '--project', row.project,
-          '--adopt-local', '--allow-preview', '--out', path]);
+        planned = await this.sdk(['plan', '--name', name, '--version', String(version), '--client', client, '--project', row.project,
+          '--adopt-local', '--allow-preview', '--out', path], [0, 5]);
+      }
+      if (planned.code !== 0) {
+        // A checkout whose managed content was edited locally is refused by the
+        // SDK before any plan exists. It becomes its own reviewed exception (the
+        // rest of the campaign is still planned); nothing is written or merged.
+        requireValue(planned.value?.error?.code === 'local_modifications', 'sdk_unexpected_exit');
+        exclude('local_conflict', 'Managed content was edited locally; resolve it (keep a copy of the local edit) before this repository is planned.',
+          { error: 'local_modifications', plan_written: false });
+        continue;
       }
       const inspected = (await this.sdk(['inspect', '--plan', path, '--diff'])).value;
       const { stdout } = await run(this.python, ['-I', exporter, path, repositoryId, base, String(target.binding_revision), String(revision)],
@@ -172,7 +186,7 @@ export class CampaignBatch {
           reason: exported.review_exception ?? 'unproven_delta', observed: { plan_digest: exported.plan.plan_digest } });
       }
     }
-    requireValue(decisions.length === targets.length, 'incomplete_decisions');
+    requireValue(decisions.length === wanted.length, 'incomplete_decisions');
     return { campaign_id: campaignId, revision, target_count: targets.length,
       groups: [...groups.values()], exceptions, decisions, patches };
   }

@@ -242,8 +242,36 @@ test('reconcile-and-resume resumes only on an exact reconciled PR and otherwise 
 
 test('one-step CLI commands refuse wrong arity before any hub, Git or SDK call', async () => {
   const { main } = await import('../../../bin/context-campaign.mjs');
-  for (const args of [['adopt-review'], ['merge-install'], ['reconcile-resume', campaignId, 'x'], ['release-publish', 'a', 'b', 'c', 'd']]) {
+  for (const args of [['adopt-review'], ['merge-install'], ['reconcile-resume', campaignId, 'x'], ['release-publish', 'a', 'b', 'c', 'd'], ['replan-resolved', 'a', 'b']]) {
     await assert.rejects(main(args, {}), /invalid_arguments/);
   }
   await assert.rejects(main(['adopt-review', '/nonexistent.json'], {}), /inventory_input_required/);
+});
+
+test('replan-resolved re-plans only surfaced local conflicts and returns one complete packet', async () => {
+  const world = state(); world.targets[3].plan_digest = null;
+  const { hub } = fakeHub(world);
+  const rollout = new ContextRollout({ hub, executor: {} });
+  const prior = { ...review(), patches: new Map([[binding(1), { p: 1 }], [binding(2), { p: 2 }]]) };
+  prior.exceptions[1] = { binding_id: binding(4), repository_id: '1004', kind: 'local_conflict', reason: 'edited', observed: {} };
+  prior.decisions[3] = { binding_id: binding(4), plan_digest: null, decision: 'exclude', reason: 'edited' };
+  const request = { contextName: 'n', selected: [], mode: 'restore', version: 1, client: 'codex', restoreLocks: {}, outDir: '/tmp' };
+  let calls = 0;
+  rollout.batch = () => ({ planAll: async (args) => {
+    calls += 1; assert.deepEqual(args.only, ['1004']); assert.equal(args.mode, 'restore');
+    world.targets[3].plan_digest = 'sha256:p4'; world.campaign.revision += 1;
+    return { revision: world.campaign.revision, groups: [{ key: 'sha256:same', members: [{ binding_id: binding(4), repository_id: '1004', plan_digest: 'sha256:p4' }] }],
+      exceptions: [], decisions: [{ binding_id: binding(4), plan_digest: 'sha256:p4', decision: 'include', reason: 'r' }], patches: new Map([[binding(4), { p: 4 }]]) };
+  } });
+  // Refused before any planning: not a conflict the plan surfaced.
+  await assert.rejects(rollout.replanResolved({ campaignId, review: prior, repositoryIds: ['1003'], request }), /not_a_surfaced_local_conflict/);
+  assert.equal(calls, 0);
+  const { review: merged, packet } = await rollout.replanResolved({ campaignId, review: prior, repositoryIds: ['1004'], request });
+  assert.equal(calls, 1);
+  assert.deepEqual(merged.groups[0].members.map((row) => row.repository_id), ['1001', '1002', '1004']);
+  assert.deepEqual(merged.exceptions.map((row) => [row.repository_id, row.kind]), [['1003', 'pinned_selector']]);
+  assert.equal(merged.decisions.length, 4); assert.equal(merged.patches.size, 3);
+  assert.equal(packet.revision, world.campaign.revision);
+  assert.deepEqual(packet.units.map((unit) => [unit.kind, unit.repository_ids]), [['group', ['1001', '1002', '1004']], ['held', ['1003']]]);
+  assert.equal(packet.decisions.find((row) => row.binding_id === binding(4)).plan_digest, 'sha256:p4');
 });

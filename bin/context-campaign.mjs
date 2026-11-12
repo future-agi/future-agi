@@ -52,6 +52,8 @@ export async function main(args, env = process.env) {
     console.log('       node bin/context-campaign.mjs authorize-reviewed PACKET.json ACKNOWLEDGED.json TARGETS.json   one approval, then open each authorized PR');
     console.log('       node bin/context-campaign.mjs merge-install UNIT.json       one merge decision: merge, install merged, load-check installed (pinned host)');
     console.log('       node bin/context-campaign.mjs reconcile-resume CAMPAIGN_ID TARGET.json REASON   pause, reconcile the unknown write, resume only if exact');
+    console.log('       node bin/context-campaign.mjs replan-resolved STARTED.json REQUEST.json REPOSITORY_IDS.json   after resolving surfaced local_conflict');
+    console.log('                                                                  exceptions, re-plan exactly those targets and print the complete new packet');
     console.log('       node bin/context-campaign.mjs status CAMPAIGN_ID pause|resume|cancel REASON');
     console.log('       node bin/context-campaign.mjs install TARGETS.json        after merge-reviewed: record merges, apply and verify each lock (no delivery claim)');
     console.log('       node bin/context-campaign.mjs load-check TARGETS.json     pinned native host per checkout (CONTEXT_NATIVE_HOST, CONTEXT_NATIVE_HOST_SHA256)');
@@ -131,6 +133,14 @@ export async function main(args, env = process.env) {
     const result = await (await rollout()).reconcileAndResume({ campaignId: args[1], target: await json(args[2]), reason: args[3] });
     console.log(JSON.stringify(result));
     return result.observed.state === 'pr_open' ? 0 : 6;
+  }
+  if (args[0] === 'replan-resolved' && args.length === 4) {
+    // After the operator resolved the local conflicts a start/replace printed: re-plan exactly those targets; prints the new complete packet.
+    const prior = await json(args[1]);
+    const review = { ...prior.review, patches: new Map(Object.entries(prior.review?.patches ?? {})) };
+    const result = await (await rollout()).replanResolved({ campaignId: prior.campaign_id, review, request: await json(args[2]), repositoryIds: await json(args[3]) });
+    console.log(JSON.stringify({ campaign_id: prior.campaign_id, review: { ...result.review, patches: Object.fromEntries(result.review.patches) }, packet: result.packet }));
+    return result.packet.individual.length ? 6 : 0;
   }
   // ---- END one-step rollout commands ----
   if (args[0] === 'context-create' && args.length === 2) return print(await (await rollout()).createContext(await json(args[1])));
