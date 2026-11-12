@@ -11,6 +11,18 @@ that keep the issue stream clean and safe:
 
 from __future__ import annotations
 
+import json
+import logging
+import secrets
+from dataclasses import dataclass
+
+import pytest
+import sentry_sdk
+from sentry_sdk.integrations.logging import LoggingIntegration
+from sentry_sdk.scope import ScopeType, use_isolation_scope, use_scope
+from sentry_sdk.utils import iter_event_frames
+from temporalio.worker import ExecuteActivityInput
+
 from tfc.logging.sentry import (
     _REDACTED,
     _event_scrubber,
@@ -19,7 +31,17 @@ from tfc.logging.sentry import (
     _scrub,
     _scrub_deployment_telemetry_event,
     _scrub_event,
+    _scrub_strings,
 )
+from tfc.temporal.common.sentry_interceptor import SentryActivityInboundInterceptor
+
+
+@pytest.fixture(autouse=True)
+def _log_at_info(caplog):
+    # The log-based tests need INFO and ERROR records from logger "x", whatever
+    # level an earlier test left behind.
+    caplog.set_level(logging.INFO, logger="x")
+
 
 before_send = _get_before_send()
 
@@ -221,3 +243,373 @@ def test_transaction_scrubber_keeps_mapping_breadcrumb_contract():
     assert out["breadcrumbs"]["values"][0]["data"] == {
         "url": "https://example.test/telemetry/heartbeat/"
     }
+
+
+# Breadcrumbs
+
+
+def _crumb(secret):
+    return {
+        "message": "Activity started: do_work",
+        "category": "temporal.activity",
+        "data": {"customer_api_key": secret, "room_name": "room-1"},
+    }
+
+
+@pytest.mark.parametrize("shape", ["values", "list"])
+def test_scrub_event_redacts_sensitive_keys_in_breadcrumb_data(shape):
+    crumbs = [_crumb("leak"), "unexpected-shape", {"message": "no data"}]
+    event = {"breadcrumbs": {"values": crumbs} if shape == "values" else crumbs}
+
+    _scrub_event(event)
+
+    out = event["breadcrumbs"]["values"] if shape == "values" else event["breadcrumbs"]
+    assert out[0]["data"] == {"customer_api_key": _REDACTED, "room_name": "room-1"}
+    assert out[0]["message"] == "Activity started: do_work"
+    assert out[0]["category"] == "temporal.activity"
+    assert out[1] == "unexpected-shape"
+    assert out[2] == {"message": "no data"}
+
+
+def test_scrub_event_redacts_a_breadcrumb_message_that_names_a_secret():
+    event = {"breadcrumbs": [{"message": "using customer_api_key=abc", "data": {}}]}
+    _scrub_event(event)
+    assert event["breadcrumbs"][0]["message"] == _REDACTED
+
+
+def test_scrub_strings_redacts_strings_that_name_a_sensitive_key():
+    scrubbed = _scrub_strings(
+        {
+            "repr": "Input(metadata={'customer_livekit_api_secret': 'x'})",
+            "url": "https://h/?token=abc",
+            "room_name": "r",
+            "count": 3,
+            "nested": ["fine", "secret='y'"],
+        }
+    )
+    assert scrubbed == {
+        "repr": _REDACTED,
+        "url": _REDACTED,
+        "room_name": "r",
+        "count": 3,
+        "nested": ["fine", _REDACTED],
+    }
+    # `_scrub` stays key-only: free text such as a request body is kept.
+    assert _scrub({"note": "my token is here"}) == {"note": "my token is here"}
+
+
+def test_scrub_strings_matches_names_in_any_case_and_with_dashes():
+    assert _scrub_strings(["Customer_API_Key=x", "headers={'xi-api-key': 'k'}"]) == [
+        _REDACTED,
+        _REDACTED,
+    ]
+
+
+def test_scrub_strings_drops_what_is_nested_too_deep_to_check():
+    deep = {"note": "fine"}
+    for _ in range(8):
+        deep = {"inner": deep}
+    scrubbed = _scrub_strings(deep)
+    for _ in range(7):
+        scrubbed = scrubbed["inner"]
+    assert scrubbed == _REDACTED
+
+
+def test_scrub_event_redacts_log_call_arguments():
+    event = {
+        "logentry": {
+            "message": "bad input %s",
+            "params": ["Input(customer_api_key='k')", "room r"],
+        }
+    }
+    _scrub_event(event)
+    assert event["logentry"] == {
+        "message": "bad input %s",
+        "params": [_REDACTED, "room r"],
+    }
+
+
+def test_scrub_event_rebuilds_the_formatted_log_line_from_scrubbed_arguments():
+    event = {
+        "logentry": {
+            "message": "bad input %s in %s",
+            "params": ["Input(customer_api_key='k')", "room r"],
+            "formatted": "bad input Input(customer_api_key='k') in room r",
+        }
+    }
+    _scrub_event(event)
+    assert event["logentry"]["formatted"] == f"bad input {_REDACTED} in room r"
+
+
+def test_scrub_event_rebuilds_a_formatted_line_with_named_arguments():
+    event = {
+        "logentry": {
+            "message": "calling %(url)s with %(api_key)s",
+            "params": {"url": "https://example.test", "api_key": "sk-123"},
+            "formatted": "calling https://example.test with sk-123",
+        }
+    }
+    _scrub_event(event)
+    assert event["logentry"]["formatted"] == (
+        f"calling https://example.test with {_REDACTED}"
+    )
+
+
+def test_scrub_event_keeps_a_log_line_with_no_arguments():
+    event = {
+        "logentry": {"message": "progress 100%", "params": [], "formatted": "progress 100%"}
+    }
+    _scrub_event(event)
+    assert event["logentry"]["formatted"] == "progress 100%"
+
+
+def test_scrub_event_falls_back_to_the_template_when_a_line_does_not_format():
+    event = {
+        "logentry": {
+            "message": "took %d ms",
+            "params": ["Input(api_key='k')"],
+            "formatted": "took Input(api_key='k') ms",
+        }
+    }
+    _scrub_event(event)
+    assert event["logentry"]["formatted"] == "took %d ms"
+
+
+def test_scrub_event_keeps_a_line_whose_arguments_are_harmless():
+    event = {
+        "logentry": {
+            "message": "took %d ms",
+            "params": ["12"],
+            "formatted": "took 12 ms",
+        }
+    }
+    _scrub_event(event)
+    assert event["logentry"]["formatted"] == "took 12 ms"
+
+
+def test_a_rebuilt_log_line_keeps_the_size_cap():
+    event = {
+        "logentry": {
+            "message": "%s %s",
+            "params": ["Input(api_key='k')", "x" * 20_000],
+            "formatted": "irrelevant",
+        }
+    }
+    _scrub_event(event)
+    assert len(event["logentry"]["formatted"]) == 16_384
+
+
+def test_scrub_event_drops_a_logged_text_that_names_a_key():
+    line = "bad input Input(customer_api_key='k')"
+    event = {"logentry": {"message": line, "params": [], "formatted": line}}
+    _scrub_event(event)
+    assert event["logentry"] == {
+        "message": _REDACTED,
+        "params": [],
+        "formatted": _REDACTED,
+    }
+
+
+def test_scrub_event_keeps_a_template_that_names_a_key():
+    event = {
+        "logentry": {
+            "message": "calling with api_key=%s",
+            "params": ["sk-1"],
+            "formatted": "calling with api_key=sk-1",
+        }
+    }
+    _scrub_event(event)
+    assert event["logentry"]["message"] == "calling with api_key=%s"
+    assert event["logentry"]["formatted"] == _REDACTED
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "API Key: abc",
+        "access-key=abc",
+        "access key abc",
+        "Private-Key abc",
+        "-----BEGIN PRIVATE KEY-----",
+    ],
+)
+def test_spaced_and_hyphenated_key_names_are_recognised(text):
+    assert _scrub_strings(text) == _REDACTED
+
+
+# Through the Temporal interceptor and a client set up like init_sentry
+
+
+@dataclass
+class _CallInput:
+    customer_api_key: str
+    metadata: dict
+    url: str
+    system_prompt: str
+    room_name: str
+
+
+@dataclass
+class _Usage:
+    prompt_tokens: int
+
+
+def _new_secret_values():
+    return {name: secrets.token_hex(16) for name in ("metadata", "url", "flat")}
+
+
+def _call_input(secret_values):
+    return _CallInput(
+        customer_api_key=secret_values["flat"],
+        metadata={"customer_livekit_api_secret": secret_values["metadata"]},
+        url=f"https://h/?token={secret_values['url']}",
+        system_prompt="p" * 25_000,
+        room_name="r",
+    )
+
+
+class _RaisingNext:
+    async def execute_activity(self, input):
+        raise RuntimeError("activity failed")
+
+
+class _LoggingInputNext:
+    """Logs the activity's input as a log argument, the way a handler might."""
+
+    async def execute_activity(self, input):
+        logging.getLogger("x").error("bad input %s", input.args[0])
+
+
+class _FStringLoggingNext:
+    """Logs the activity's input already formatted, with no arguments."""
+
+    async def execute_activity(self, input):
+        logging.getLogger("x").error(f"bad input {input.args[0]}")
+
+
+class _JsonLoggingNext:
+    """Logs the input inside a JSON line, as the Temporal workers' structlog does."""
+
+    async def execute_activity(self, input):
+        logging.getLogger("x").error(
+            json.dumps({"event": "failed", "call_input": repr(input.args[0])})
+        )
+
+
+class _LoggingNext:
+    """Logs an error without exc_info, which sends an event with `threads`."""
+
+    async def execute_activity(self, input):
+        room_name = "r"
+        attempts = 3
+        # Deliberate: a repr that mentions a sensitive substring is wiped
+        # whole, so this harmless token count is lost with the secrets.
+        usage_info = _Usage(prompt_tokens=10)
+        logging.getLogger("x").info("calling with customer_api_key=%s", "k")
+        logging.getLogger("x").error("failed")
+        return room_name, attempts, usage_info
+
+
+async def _run_activity(next_interceptor, secret_values, before=None):
+    """Run the interceptor under a client configured the way init_sentry is."""
+    sent = []
+
+    async def do_work(arg):
+        return None
+
+    client = sentry_sdk.Client(
+        dsn="http://public@localhost.invalid/1",
+        transport=sent.append,
+        integrations=[
+            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
+        ],
+        default_integrations=False,
+        before_send=_get_before_send(),
+        event_scrubber=_event_scrubber(),
+        send_default_pii=True,
+        attach_stacktrace=True,
+        max_breadcrumbs=100,
+        include_source_context=True,
+        include_local_variables=True,
+        max_value_length=16_384,
+    )
+    interceptor = SentryActivityInboundInterceptor(next_interceptor)
+    activity_input = ExecuteActivityInput(
+        fn=do_work, args=[_call_input(secret_values)], executor=None, headers={}
+    )
+    # Own isolation scope, so breadcrumbs from other tests are not carried in.
+    isolation = sentry_sdk.Scope(client=client, ty=ScopeType.ISOLATION)
+    with use_isolation_scope(isolation), use_scope(sentry_sdk.Scope(client=client)):
+        if before:
+            before()
+        try:
+            await interceptor.execute_activity(activity_input)
+        except RuntimeError:
+            pass
+    client.flush()
+    assert sent
+    return sent
+
+
+def _assert_no_secret(sent, secret_values):
+    payload = json.dumps(sent, default=str)
+    for value in secret_values.values():
+        assert value not in payload
+
+
+async def test_a_raising_activity_leaks_no_input_secret():
+    secret_values = _new_secret_values()
+    sent = await _run_activity(_RaisingNext(), secret_values)
+    _assert_no_secret(sent, secret_values)
+    assert "do_work" in json.dumps(sent)
+
+
+async def test_a_logged_error_event_leaks_no_input_secret():
+    secret_values = _new_secret_values()
+    sent = await _run_activity(_LoggingNext(), secret_values)
+    assert "threads" in sent[0]
+    _assert_no_secret(sent, secret_values)
+
+
+async def test_a_logged_input_leaks_no_secret_in_the_formatted_line():
+    secret_values = _new_secret_values()
+    sent = await _run_activity(_LoggingInputNext(), secret_values)
+    _assert_no_secret(sent, secret_values)
+    assert sent[0]["logentry"]["message"] == "bad input %s"
+
+
+@pytest.mark.parametrize("next_interceptor", [_FStringLoggingNext, _JsonLoggingNext])
+async def test_a_preformatted_log_line_leaks_no_secret(next_interceptor):
+    secret_values = _new_secret_values()
+    sent = await _run_activity(next_interceptor(), secret_values)
+    _assert_no_secret(sent, secret_values)
+
+
+async def test_secrets_are_scrubbed_when_the_activity_breadcrumb_is_not_first():
+    secret_values = _new_secret_values()
+
+    def before():
+        for i in range(3):
+            sentry_sdk.add_breadcrumb(message=f"earlier {i}", data={"step": i})
+
+    sent = await _run_activity(_RaisingNext(), secret_values, before=before)
+    _assert_no_secret(sent, secret_values)
+    messages = [c["message"] for c in sent[0]["breadcrumbs"]["values"]]
+    assert messages[:3] == ["earlier 0", "earlier 1", "earlier 2"]
+    assert messages[3].startswith("Activity started")
+
+
+async def test_a_log_breadcrumb_naming_a_secret_is_replaced():
+    sent = await _run_activity(_LoggingNext(), _new_secret_values())
+    crumbs = sent[0]["breadcrumbs"]["values"]
+    [logged] = [c for c in crumbs if c.get("category") == "x"]
+    assert logged["message"] == _REDACTED
+
+
+async def test_harmless_frame_locals_are_kept_and_token_count_reprs_are_wiped():
+    sent = await _run_activity(_LoggingNext(), _new_secret_values())
+    local_vars = [f["vars"] for f in iter_event_frames(sent[0]) if f.get("vars")]
+    [frame_vars] = [v for v in local_vars if "usage_info" in v]
+    assert frame_vars["room_name"] == "'r'"
+    assert frame_vars["attempts"] == "3"
+    assert frame_vars["usage_info"] == _REDACTED

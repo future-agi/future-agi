@@ -101,9 +101,15 @@ SENSITIVE_KEY_SUBSTRINGS = (
     "token",
     "api_key",
     "apikey",
+    "api-key",
+    "api key",
     "x-api-key",
     "access_key",
+    "access-key",
+    "access key",
     "private_key",
+    "private-key",
+    "private key",
     "csrf",
     # Form fields (SAMLResponse, RelayState) and the ACS view's locals for them.
     "samlresponse",
@@ -145,6 +151,12 @@ def _is_sensitive_key(key: Any) -> bool:
 _SAML_VALUE_MARKERS = ("<saml:", "<samlp:", "SAMLResponse=", "fai_saml_b_")
 
 
+def _mentions_sensitive_key(text: str) -> bool:
+    """True if the text names a sensitive key anywhere, in any format."""
+    lowered = text.lower()
+    return any(s in lowered for s in SENSITIVE_KEY_SUBSTRINGS)
+
+
 def _scrub(value: Any, depth: int = 0) -> Any:
     """Recursively redact values under sensitive keys (defensive, bounded)."""
     if depth > 6:
@@ -161,6 +173,44 @@ def _scrub(value: Any, depth: int = 0) -> Any:
     if isinstance(value, (list, tuple)):
         return [_scrub(v, depth + 1) for v in value]
     return value
+
+
+def _scrub_strings(value: Any, depth: int = 0) -> Any:
+    """Like `_scrub`, but also redacts any string that names a sensitive key.
+
+    Stack-frame locals and breadcrumb data hold reprs, such as a dataclass or
+    a dict printed as text, where the key is part of the string and not a dict
+    key. A string that mentions one is redacted whole, so a harmless value that
+    shares the name (a `prompt_tokens` count) is lost too.
+    """
+    if depth > 6:
+        # Too deep to check: drop it rather than send it unread.
+        return _REDACTED
+    if isinstance(value, str):
+        if any(marker in value for marker in _SAML_VALUE_MARKERS):
+            return _REDACTED
+        return _REDACTED if _mentions_sensitive_key(value) else value
+    if isinstance(value, dict):
+        return {
+            k: (_REDACTED if _is_sensitive_key(k) else _scrub_strings(v, depth + 1))
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_scrub_strings(v, depth + 1) for v in value]
+    return value
+
+
+_MAX_FORMATTED = 16_384  # init_sentry's max_value_length, which ran before this
+
+
+def _formatted(message: Any, params: Any) -> str:
+    """A log line formatted from its scrubbed arguments; the template itself when
+    they don't format."""
+    try:
+        line = str(message) % (tuple(params) if isinstance(params, list) else params)
+    except Exception:  # noqa: BLE001 - any shape that doesn't format
+        line = str(message)
+    return line[:_MAX_FORMATTED]
 
 
 def _scrub_event(event: dict) -> None:
@@ -185,26 +235,60 @@ def _scrub_event(event: dict) -> None:
             request["query_string"] = _REDACTED
 
     if isinstance(event.get("extra"), dict):
-        event["extra"] = _scrub(event["extra"])
+        event["extra"] = _scrub_strings(event["extra"])
     contexts = event.get("contexts")
     if isinstance(contexts, dict):
-        event["contexts"] = _scrub(contexts)
+        event["contexts"] = _scrub_strings(contexts)
+    # A log call's arguments, such as an activity input passed to `%s`, and the
+    # message formatted from them, which is rebuilt from the scrubbed arguments.
+    logentry = event.get("logentry")
+    if isinstance(logentry, dict):
+        params = logentry.get("params")
+        if params is not None:
+            logentry["params"] = _scrub_strings(params)
+            # Rebuilt only when an argument was scrubbed: the line as logged is
+            # kept otherwise.
+            if logentry["params"] != params and logentry.get("formatted") is not None:
+                logentry["formatted"] = _formatted(
+                    logentry.get("message"), logentry["params"]
+                )
+        formatted = logentry.get("formatted")
+        if isinstance(formatted, str) and _mentions_sensitive_key(formatted):
+            logentry["formatted"] = _REDACTED
+        # With no arguments the message is the logged text itself (an f-string,
+        # or a structlog line with its fields as JSON), not a template.
+        message = logentry.get("message")
+        if (
+            not logentry.get("params")
+            and isinstance(message, str)
+            and _mentions_sensitive_key(message)
+        ):
+            logentry["message"] = _REDACTED
 
-    # Sentry captures local variables (include_local_variables=True). An
-    # uncaught error in the ACS candidate-store path leaves the raw assertion
-    # in the view's stack frame; redact those vars the same way as request data
-    # so the assertion body never leaves the process (review finding 1, B7).
-    exception = event.get("exception")
-    if isinstance(exception, dict):
-        for value in exception.get("values") or []:
-            if not isinstance(value, dict):
+    # Breadcrumbs carry whatever the caller logged, such as a Temporal
+    # activity's input. The shape is a list or a dict with a "values" list.
+    breadcrumbs = event.get("breadcrumbs")
+    if isinstance(breadcrumbs, dict):
+        breadcrumbs = breadcrumbs.get("values")
+    if isinstance(breadcrumbs, list):
+        for crumb in breadcrumbs:
+            if not isinstance(crumb, dict):
                 continue
-            stacktrace = value.get("stacktrace")
-            if not isinstance(stacktrace, dict):
-                continue
-            for frame in stacktrace.get("frames") or []:
-                if isinstance(frame, dict) and isinstance(frame.get("vars"), dict):
-                    frame["vars"] = _scrub(frame["vars"])
+            if "data" in crumb:
+                crumb["data"] = _scrub_strings(crumb["data"])
+            message = crumb.get("message")
+            if isinstance(message, str) and _mentions_sensitive_key(message):
+                crumb["message"] = _REDACTED
+
+    # Sentry captures local variables (include_local_variables=True), as reprs
+    # of the objects. Redact them in every stack trace the event holds
+    # (exception, threads and a top-level stacktrace). This also covers the
+    # ACS candidate-store path, which leaves the raw assertion in a view frame.
+    from sentry_sdk.utils import iter_event_frames
+
+    for frame in iter_event_frames(event):
+        if isinstance(frame, dict) and isinstance(frame.get("vars"), dict):
+            frame["vars"] = _scrub_strings(frame["vars"])
 
 
 def _event_scrubber() -> Any:
@@ -415,14 +499,6 @@ def init_sentry(
             ignore_logger,
         )
 
-        # Keep a generous-but-bounded string length so stack frames and request
-        # bodies stay readable without bloating every event (the old 10MB cap
-        # multiplied payload size across millions of events).
-        try:
-            sentry_sdk.utils.MAX_STRING_LENGTH = 8192
-        except AttributeError:
-            pass  # Newer SDK versions may not have this
-
         # Suppress pure-infrastructure loggers at the source. This is the
         # single most important noise lever: it stops the OTel exporter's
         # transient "failed to reach collector" ERRORs from becoming issues.
@@ -506,6 +582,8 @@ def init_sentry(
             # large uploads/payloads don't dominate the event volume or leak.
             max_request_body_size="medium",
             max_breadcrumbs=100,
+            # Bounds each captured string, and so the cost of scrubbing it.
+            max_value_length=16_384,
             attach_stacktrace=True,  # Attach stack traces to all messages
             include_source_context=True,  # Include source code context
             include_local_variables=True,  # Capture local variables for debugging

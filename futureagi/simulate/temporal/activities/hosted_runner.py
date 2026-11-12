@@ -492,16 +492,16 @@ def _child_environment(job: dict[str, Any]) -> dict[str, str]:
         env["FI_TEST_EXECUTION_ID"] = str(sink["test_execution_id"])
 
     for ref in (sink.get("secret_refs") or {}).values():
-        value = _resolve_secret(ref)
+        secret_value = _resolve_secret(ref)
         dest = _SINK_ENV_BY_PURPOSE.get(ref.get("purpose"))
-        if dest and value:
-            env[dest] = value
+        if dest and secret_value:
+            env[dest] = secret_value
 
     target = (job.get("spec") or {}).get("target") or {}
     for ref in (target.get("secret_refs") or {}).values():
-        value = _resolve_secret(ref)
-        if value and ref.get("key"):
-            env[str(ref["key"])] = value
+        secret_value = _resolve_secret(ref)
+        if secret_value and ref.get("key"):
+            env[str(ref["key"])] = secret_value
 
     # The DID is allocated after the job is built, so it cannot ride the
     # normal metadata.secret_env path. The SDK's inbound originator reads this
@@ -566,17 +566,18 @@ async def _resolve_voice_secret_env(job: dict[str, Any]) -> dict[str, str]:
                     type="provider_credentials_missing",
                     non_retryable=True,
                 )
+            # Named so error reports redact it: it holds a decrypted credential.
             if manager == "provider_credentials":
-                value = _resolve_provider_credential(ref, cache)
+                secret_value = _resolve_provider_credential(ref, cache)
             elif manager == "setting":
-                value = getattr(
+                secret_value = getattr(
                     settings, ref.get("setting", ""), None
                 ) or os.environ.get(str(ref.get("setting", "")))
             else:  # env passthrough
                 source = str(ref.get("source") or key)
-                value = os.environ.get(source)
-            if value:
-                resolved[str(key)] = str(value)
+                secret_value = os.environ.get(source)
+            if secret_value:
+                resolved[str(key)] = str(secret_value)
         return resolved
 
     return await sync_to_async(_resolve, thread_sensitive=True)()
