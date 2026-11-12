@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import CancelledError
+from temporalio.exceptions import CancelledError, ChildWorkflowError
 
 from simulate.temporal.constants import QUEUE_RUNNER
 from simulate.temporal.types.certification import (
@@ -125,7 +125,7 @@ class ProductionCertificationWorkflow:
                     task.result()
                 except CancelledError:
                     raise
-                except Exception as exc:  # case failure must not stop the campaign
+                except ChildWorkflowError as exc:
                     workflow.logger.error(
                         "certification case %s raised: %s", case_input.case_id, exc
                     )
