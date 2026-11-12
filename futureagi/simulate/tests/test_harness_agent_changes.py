@@ -1846,3 +1846,71 @@ class TestConnectedAgents:
 
         assert outcomes == {str(one.id): "unchanged" for one in environments}
         assert len(_push_versions(agent.id)) == 1
+
+
+class TestConnectedAgentsWithNoEnvironment:
+    @pytest.fixture
+    def agent(self, organization, workspace):
+        return AgentDefinition.objects.create(
+            agent_name="support",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            organization=organization,
+            workspace=workspace,
+        )
+
+    @staticmethod
+    def _production(agent, **source):
+        from simulate.services.harness_agent_versions import create_agent_version
+
+        version = create_agent_version(
+            agent,
+            parent=None,
+            env=None,
+            source={
+                "kind": "github",
+                "repository": "acme/agent",
+                "ref": "main",
+                "commit_sha": HEAD_X,
+                "visibility": "public",
+                **source,
+            },
+            prompt="You help.",
+            agent_payload={"connector": "auto", "config": {}},
+            trigger="connect",
+        )
+        AgentVersion.no_workspace_objects.filter(id=version.id).update(
+            status=AgentVersion.StatusChoices.ACTIVE
+        )
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version=version
+        ).update(preflight_status=HarnessAgentVersionRuntime.PreflightStatus.PASSED)
+        return version
+
+    def test_a_push_versions_a_connected_agent_with_no_environment(self, agent, gh):
+        production = self._production(agent)
+        gh.heads[("acme/agent", "main")] = HEAD_Y
+
+        counts = receive_push("acme/agent", "refs/heads/main", "main")
+
+        assert counts == {"created": 1}
+        [row] = _push_versions(agent.id)
+        assert row.source["commit_sha"] == HEAD_Y
+        assert row.parent.agent_version_id == production.id
+
+    def test_a_private_connected_agent_is_read_through_its_installation(
+        self, agent, gh
+    ):
+        self._production(agent, visibility="private", installation_id="42")
+
+        with patch(
+            "integrations.services.github_app.branch_head", return_value=HEAD_Y
+        ) as head:
+            counts = receive_push("acme/agent", "refs/heads/main", "main")
+
+        assert counts == {"created": 1}
+        assert head.call_args.args == ("42",)
+        assert head.call_args.kwargs["ref"] == "main"
+        assert gh.calls == []
+        [row] = _push_versions(agent.id)
+        assert row.source["commit_sha"] == HEAD_Y

@@ -31,6 +31,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.services.harness_agent_versions import (
+    CONNECTED_OWNER,
     _agent_versions_unavailable,
     _busy,
     _default_lineage,
@@ -98,7 +99,7 @@ _REPOSITORY_ID_KEY = "agent_source_repository_id"
 
 @dataclass(frozen=True)
 class WatchedSource:
-    environment_id: UUID
+    environment_id: UUID | None
     definition_id: UUID
     parent_version_id: UUID
     repository: str
@@ -109,6 +110,7 @@ class WatchedSource:
     # later owner could take.
     repository_id: int | None = None
     connected: bool = False
+    installation_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -134,7 +136,9 @@ def watched_sources(
     *, repository: str | None = None, definition_id: Any = None
 ) -> list[WatchedSource]:
     """Live, pinned, built environments whose effective default agent version is a
-    public GitHub source; optionally only those on ``repository`` (any case)."""
+    public GitHub source, and connected agents on a GitHub source (private ones
+    too, read through their installation) with no such environment; optionally
+    only those on ``repository`` (any case)."""
     jobs = HostedHarnessJob.no_workspace_objects.filter(
         environment__isnull=True,
         deleted=False,
@@ -168,7 +172,7 @@ def watched_sources(
         built = (job.payload or {}).get("source") or {}
         access = (facts.agent_payload or {}).get("source_access") or {}
         visibility = access.get("visibility") or built.get("visibility")
-        if visibility == "private":
+        if visibility == "private" and not connected:
             private += 1
             continue
         name = str(source.get("repository") or "")
@@ -206,11 +210,109 @@ def watched_sources(
                 organization_id=job.organization_id,
                 repository_id=access.get("repository_id") or recorded.get("id"),
                 connected=connected,
+                installation_id=_private_installation(visibility, access, built),
             )
         )
     if private:
         logger.info("harness_agent_watch_private_skipped count=%d", private)
+    watched = {one.definition_id for one in found if one.connected}
+    found.extend(
+        one
+        for one in _connected_agents(repository=repository, definition_id=definition_id)
+        if one.definition_id not in watched
+    )
     return found
+
+
+def _private_installation(
+    visibility: Any, access: Mapping[str, Any], built: Mapping[str, Any]
+) -> str | None:
+    if visibility != "private":
+        return None
+    return str(access.get("installation_id") or built.get("installation_id") or "")
+
+
+def _connected_agents(
+    *, repository: str | None, definition_id: Any
+) -> list[WatchedSource]:
+    """Connected agents whose production version is a GitHub source, one each."""
+    rows = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_payload__definition_owner=CONNECTED_OWNER,
+        source_kind=SourceKind.GITHUB,
+        agent_version__status=AgentVersion.StatusChoices.ACTIVE,
+        agent_version__deleted=False,
+        agent_definition__deleted=False,
+    ).defer("credential_blob", "diff")
+    if definition_id is not None:
+        rows = rows.filter(agent_definition_id=definition_id)
+    if repository is not None:
+        rows = rows.filter(source__repository__iexact=repository)
+    found: dict[Any, WatchedSource] = {}
+    for row in rows.order_by("agent_definition_id", "-created_at"):
+        if row.agent_definition_id in found:
+            continue
+        source = row.source or {}
+        access = (row.agent_payload or {}).get("source_access") or {}
+        name = str(source.get("repository") or "")
+        stored_ref = str(source.get("ref") or "")
+        ref = short_ref(stored_ref)
+        if (
+            not safe_repository(name)
+            or _PINNED_REF.fullmatch(stored_ref)
+            or (ref is not None and not safe_ref(ref))
+        ):
+            continue
+        found[row.agent_definition_id] = WatchedSource(
+            environment_id=None,
+            definition_id=row.agent_definition_id,
+            parent_version_id=row.agent_version_id,
+            repository=name,
+            ref=ref,
+            commit_sha=source.get("commit_sha"),
+            organization_id=row.organization_id,
+            repository_id=access.get("repository_id"),
+            connected=True,
+            installation_id=_private_installation(access.get("visibility"), access, {}),
+        )
+    return list(found.values())
+
+
+def _outcome_key(watched: WatchedSource) -> str:
+    return str(watched.environment_id or watched.definition_id)
+
+
+def read_head(watched: WatchedSource, *, purpose: str, reserve: int = 0) -> HeadResult:
+    """The head of a watched source: a private one through its installation, any
+    other from GitHub's public API."""
+    if watched.installation_id is None:
+        return github_head(
+            watched.repository,
+            watched.ref,
+            purpose=purpose,
+            reserve=reserve,
+            repository_id=watched.repository_id,
+        )
+    if not watched.installation_id:
+        return HeadResult("error")
+    from integrations.services.github_app import GitHubAppError, branch_head
+
+    try:
+        sha = branch_head(
+            watched.installation_id,
+            repository=watched.repository,
+            repository_id=watched.repository_id,
+            ref=watched.ref,
+        )
+    except GitHubAppError:
+        logger.warning(
+            "harness_agent_private_head_unreadable definition=%s",
+            watched.definition_id,
+            exc_info=True,
+        )
+        return HeadResult("error")
+    if sha is None:
+        return HeadResult("not_found")
+    return HeadResult("ok", sha) if _SHA.fullmatch(sha) else HeadResult("error")
 
 
 def _pair(watched: WatchedSource) -> tuple[str, str | None]:
@@ -581,7 +683,8 @@ def observe_repository_head(
     purpose: str = "poll",
 ) -> dict[str, str]:
     """Make the next agent version for each environment watching this definition's
-    GitHub source whose head it has not observed; returns {environment_id: outcome}.
+    GitHub source whose head it has not observed; returns {environment_id: outcome},
+    keyed by the definition id for a connected agent watched with no environment.
 
     With ``heads`` only the (repository, ref) pairs it holds are looked at; without,
     each pair's head is read once.
@@ -601,21 +704,14 @@ def observe_repository_head(
         if head is None:
             if only_given:
                 continue
-            head = heads[pair] = github_head(
-                watched.repository,
-                watched.ref,
-                purpose=purpose,
-                repository_id=watched.repository_id,
-            )
+            head = heads[pair] = read_head(watched, purpose=purpose)
         if head.status not in ("ok", "not_modified") or not head.sha:
-            outcomes[str(watched.environment_id)] = "head_unavailable"
+            outcomes[_outcome_key(watched)] = "head_unavailable"
             if head.status in ("rate_limited", "budget"):
                 break
             continue
         if watched.connected and watched.definition_id in connected_outcomes:
-            outcomes[str(watched.environment_id)] = connected_outcomes[
-                watched.definition_id
-            ]
+            outcomes[_outcome_key(watched)] = connected_outcomes[watched.definition_id]
             continue
         try:
             if watched.connected:
@@ -633,7 +729,7 @@ def observe_repository_head(
             outcome, version = "error", None
         if watched.connected:
             connected_outcomes[watched.definition_id] = outcome
-        outcomes[str(watched.environment_id)] = outcome
+        outcomes[_outcome_key(watched)] = outcome
         logger.info(
             "harness_agent_head_observed definition=%s environment=%s outcome=%s"
             " head=%s purpose=%s version=%s",
@@ -691,13 +787,7 @@ def poll_repository_heads(*, budget: int | None = None) -> dict[str, int]:
     counts: Counter[str] = Counter()
     for pair in order[:limit]:
         sources = groups[pair]
-        head = github_head(
-            sources[0].repository,
-            pair[1],
-            purpose="poll",
-            reserve=_POLL_RESERVE,
-            repository_id=sources[0].repository_id,
-        )
+        head = read_head(sources[0], purpose="poll", reserve=_POLL_RESERVE)
         if head.status in ("rate_limited", "budget"):
             counts[head.status] += 1
             break
@@ -754,12 +844,7 @@ def receive_push(
             cache.delete(
                 _head_key(watched.repository, watched.ref, watched.repository_id)
             )
-            heads[pair] = github_head(
-                watched.repository,
-                watched.ref,
-                purpose="webhook",
-                repository_id=watched.repository_id,
-            )
+            heads[pair] = read_head(watched, purpose="webhook")
             if heads[pair].status in ("rate_limited", "budget"):
                 _poll_first(pair)
     counts: Counter[str] = Counter()
