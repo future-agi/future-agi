@@ -150,10 +150,73 @@ describe("EvidenceReviewDrawer", () => {
         "I was charged twice for the same order for the same order for the same order for the same…",
       ),
     ).toBeInTheDocument();
-    expect(within(card).getByText("… 3 more turns")).toBeInTheDocument();
     expect(card).toHaveTextContent("Agent: Hello, how can I help?");
     expect(card).toHaveTextContent("Agent: Refunded.");
     expect(card).not.toHaveTextContent("Let me look.");
+    // The turns between open on request, and close again.
+    await userEvent.click(
+      within(card).getByRole("button", { name: "Show 3 more turns" }),
+    );
+    expect(card).toHaveTextContent("Agent: Let me look.");
+    expect(card).toHaveTextContent("User: Thanks");
+    await userEvent.click(
+      within(card).getByRole("button", { name: "Show fewer turns" }),
+    );
+    expect(card).not.toHaveTextContent("Let me look.");
+  });
+
+  it("says each reason once: parts that share one are joined", async () => {
+    const same = part("missing", "No tool calls were recorded.");
+    evidence = bundle({
+      cases: [
+        item({ tool_calls: same, tool_inputs: same, tool_outputs: same }),
+      ],
+    });
+    renderDrawer();
+    const card = await screen.findByTestId("evidence-case-c1");
+    expect(card).toHaveTextContent(
+      "Missing: Tool calls, Tool inputs and Tool outputs (No tool calls were recorded); Starting state",
+    );
+  });
+
+  it("keeps Draft and Save in the drawer's footer, the next action primary", async () => {
+    renderDrawer();
+    const footer = await screen.findByTestId("evidence-review-footer");
+    expect(
+      within(footer).getByRole("button", { name: "Draft 1 scenario" }),
+    ).toHaveClass("MuiButton-contained");
+    expect(
+      within(footer).getByRole("button", { name: "Save 0 to the suite" }),
+    ).toHaveClass("MuiButton-outlined");
+  });
+
+  it("sets every waiting case at once, and drafts with that choice", async () => {
+    evidence = bundle({ cases: [item(), item({ id: "c2" })] });
+    axios.post.mockResolvedValue({ data: bundle({ drafting: true }) });
+    renderDrawer();
+    await screen.findByTestId("evidence-case-c2");
+    await userEvent.click(
+      screen.getByRole("combobox", { name: /^Set every waiting case to/ }),
+    );
+    await userEvent.click(
+      screen.getByRole("option", {
+        name: "Keep this success as a regression test",
+      }),
+    );
+    for (const id of ["c1", "c2"]) {
+      expect(
+        within(screen.getByTestId(`evidence-case-${id}`)).getByRole("combobox"),
+      ).toHaveTextContent("Keep this success as a regression test");
+    }
+    await userEvent.click(
+      screen.getByRole("button", { name: "Draft 2 scenarios" }),
+    );
+    await waitFor(() =>
+      expect(axios.post).toHaveBeenCalledWith(`${BASE}draft/`, {
+        case_ids: ["c1", "c2"],
+        shows: { c1: "success", c2: "success" },
+      }),
+    );
   });
 
   it("names a case with no recorded conversation by its kind", async () => {

@@ -29,6 +29,7 @@ export default function ImportEvidenceButton() {
         action={
           <Button
             variant="contained"
+            color="primary"
             onClick={() => navigate(paths.dashboard.observe)}
           >
             {EVIDENCE_COPY.openObserve}

@@ -1,6 +1,14 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
-import { Alert, Box, Button, Divider, Stack, Typography } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  MenuItem,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 import LoadingButton from "@mui/lab/LoadingButton";
 import { useSnackbar } from "notistack";
 import ContentSkeleton from "src/components/content-skeleton";
@@ -60,6 +68,16 @@ export default function EvidenceReviewDrawer({
   const drafted = cases.filter(isEvidenceCaseDrafted);
   const beside = Boolean(drafts?.any);
   const kind = data?.source_kind ?? "session";
+  const choices = data?.simulated
+    ? EVIDENCE_COPY.showsOptionsSimulated
+    : EVIDENCE_COPY.showsOptions;
+  // One primary button per view: drafting comes first, then saving.
+  const draftNext = Boolean(waiting.length && !data?.drafting);
+  const setEvery = (value) =>
+    setShows((current) => ({
+      ...current,
+      ...Object.fromEntries(waiting.map((one) => [one.id, value])),
+    }));
 
   // A case left unset sends no choice: the builder judges from the evidence.
   const onDraft = () =>
@@ -136,6 +154,29 @@ export default function EvidenceReviewDrawer({
                   {EVIDENCE_COPY.simulatedNotice(kind)}
                 </Alert>
               ) : null}
+              {waiting.length > 1 && !data.drafting ? (
+                // An import holds up to 20 cases: one choice can set them all.
+                <TextField
+                  select
+                  size="small"
+                  label={EVIDENCE_COPY.setAll}
+                  value=""
+                  onChange={(event) => setEvery(event.target.value)}
+                  SelectProps={{
+                    displayEmpty: true,
+                    renderValue: () => EVIDENCE_COPY.setAllPlaceholder,
+                  }}
+                  InputLabelProps={{ shrink: true }}
+                  inputProps={{ "data-testid": "evidence-set-all" }}
+                >
+                  <MenuItem value="">{EVIDENCE_COPY.showsUnset}</MenuItem>
+                  {Object.entries(choices).map(([value, label]) => (
+                    <MenuItem key={value} value={value}>
+                      {label}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              ) : null}
               {cases.map((one) => (
                 <EvidenceCaseCard
                   key={one.id}
@@ -170,15 +211,9 @@ export default function EvidenceReviewDrawer({
                   {EVIDENCE_COPY.draftingBody}
                 </Alert>
               ) : waiting.length ? (
-                <Box>
-                  <LoadingButton
-                    variant="contained"
-                    loading={draft.isPending}
-                    onClick={onDraft}
-                  >
-                    {EVIDENCE_COPY.draft(waiting.length)}
-                  </LoadingButton>
-                </Box>
+                <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+                  {EVIDENCE_COPY.waitingHint(waiting.length)}
+                </Typography>
               ) : (
                 <Typography sx={{ typography: "s1", color: "text.secondary" }}>
                   {EVIDENCE_COPY.noneWaiting}
@@ -208,20 +243,6 @@ export default function EvidenceReviewDrawer({
                     : EVIDENCE_COPY.besideNotice}
                 </Alert>
               ) : null}
-              <Divider />
-              <Box>
-                <LoadingButton
-                  variant="contained"
-                  color="primary"
-                  disabled={!drafted.length || data.drafting}
-                  loading={add.isPending}
-                  onClick={onAdd}
-                >
-                  {beside
-                    ? EVIDENCE_COPY.addBeside(drafted.length)
-                    : EVIDENCE_COPY.addClean(drafted.length)}
-                </LoadingButton>
-              </Box>
               {!drafted.length && !data.drafting ? (
                 <Typography sx={{ typography: "s1", color: "text.secondary" }}>
                   {EVIDENCE_COPY.noneDrafted}
@@ -234,6 +255,49 @@ export default function EvidenceReviewDrawer({
           </>
         ) : null}
       </Box>
+      {data ? (
+        // The design system's drawer footer: the actions stay in view however
+        // many cases the import holds.
+        <Stack
+          direction="row"
+          justifyContent="flex-end"
+          spacing={1}
+          data-testid="evidence-review-footer"
+          sx={{
+            position: "sticky",
+            bottom: 0,
+            mt: "auto",
+            px: 2,
+            py: 1.5,
+            borderTop: 1,
+            borderColor: "divider",
+            bgcolor: "background.paper",
+            zIndex: 1,
+          }}
+        >
+          {draftNext ? (
+            <LoadingButton
+              variant="contained"
+              color="primary"
+              loading={draft.isPending}
+              onClick={onDraft}
+            >
+              {EVIDENCE_COPY.draft(waiting.length)}
+            </LoadingButton>
+          ) : null}
+          <LoadingButton
+            variant={draftNext ? "outlined" : "contained"}
+            color="primary"
+            disabled={!drafted.length || data.drafting}
+            loading={add.isPending}
+            onClick={onAdd}
+          >
+            {beside
+              ? EVIDENCE_COPY.addBeside(drafted.length)
+              : EVIDENCE_COPY.addClean(drafted.length)}
+          </LoadingButton>
+        </Stack>
+      ) : null}
     </SideDrawer>
   );
 }

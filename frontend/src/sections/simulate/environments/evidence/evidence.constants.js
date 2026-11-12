@@ -79,6 +79,10 @@ export const EVIDENCE_COPY = {
   draftingBody:
     "Up to 90 minutes; you can close this meanwhile. Editing the environment before it ends blocks the drafted cases.",
   noneWaiting: "No case is waiting to be drafted.",
+  waitingHint: (n) =>
+    `${n} case${n === 1 ? " waits" : "s wait"} to be drafted. Pick what each should be, then draft.`,
+  setAll: "Set every waiting case to",
+  setAllPlaceholder: "Choose one for all",
   noneDrafted: "Draft scenarios first, then add them here.",
   drafted: "Drafted",
   blocked: "Blocked",
@@ -89,7 +93,8 @@ export const EVIDENCE_COPY = {
   scenario: "Scenario",
   has: "Has:",
   missing: "Missing:",
-  moreTurns: (n) => `… ${n} more turn${n === 1 ? "" : "s"}`,
+  moreTurns: (n) => `Show ${n} more turn${n === 1 ? "" : "s"}`,
+  fewerTurns: "Show fewer turns",
   untitled: (kind) =>
     `${kind[0].toUpperCase()}${kind.slice(1)} with no recorded conversation`,
   provenanceUnavailable:
@@ -140,6 +145,29 @@ export const CASE_ROLE = {
   added: "success",
   blocked: "danger",
   unavailable: "neutral",
+};
+
+// A card's parts, each reason said once: parts that share one are joined
+// ("Tool calls, Tool inputs and Tool outputs (…)"). Step 2 explains the
+// starting state, so its reason is never repeated on a card.
+export const partGroups = (item, parts) => {
+  const groups = new Map();
+  for (const part of parts) {
+    const reason =
+      part === "starting_state"
+        ? ""
+        : (item[part]?.reason ?? "").replace(/\.$/, "");
+    const key = reason || `part:${part}`;
+    if (!groups.has(key)) groups.set(key, { reason, labels: [] });
+    groups.get(key).labels.push(PART_LABELS[part]);
+  }
+  return [...groups.values()].map(({ reason, labels }) => {
+    const names =
+      labels.length > 1
+        ? `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`
+        : labels[0];
+    return reason ? `${names} (${reason})` : names;
+  });
 };
 
 // Text at most `length` long, cut at the last word that fits.
