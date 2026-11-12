@@ -147,6 +147,7 @@ export const EVIDENCE_COPY = {
   added: "Added to the suite",
   unavailable: "Unavailable",
   pending: "Waiting",
+  discarded: "Discarded",
   newCheck: "New check added by this import",
   scenarioKey: "Scenario",
   provenanceUnavailable:
@@ -181,6 +182,34 @@ export const EVIDENCE_COPY = {
       "Chat is still working on this environment; add when it finishes.",
   },
   genericError: "Something went wrong. Try again in a moment.",
+  // The environment's imports a person can still finish (the Scenarios tab).
+  draftImports: "Draft imports",
+  importSource: (item) => {
+    const n = item.case_count;
+    const plural = n === 1 ? "" : "s";
+    const gone = item.source_available ? "" : " (source deleted)";
+    if (item.source_kind === "transcript") return `${n} transcript${plural}`;
+    if (item.source_kind === "dataset")
+      return `${n} row${plural} from ${item.source_name}${gone}`;
+    return `${n} ${item.source_kind}${plural} from ${item.source_name}${gone}`;
+  },
+  importStatus: {
+    waiting: "waiting to be drafted",
+    drafting: "drafting",
+    drafted: "drafted, not added",
+    partly_added: "partly added",
+  },
+  saved: (when) => `saved ${when}`,
+  resume: "Resume",
+  discard: "Discard",
+  discardBusy: "Drafting is running; discard it once drafting ends.",
+  discardTitle: "Discard this import?",
+  discardBody: (item) => {
+    const left = item.case_count - item.added_count;
+    return item.added_count
+      ? `Its ${left} case${left === 1 ? "" : "s"} not added are discarded. The ${item.added_count} already added stay in the suite.`
+      : "Its cases are removed, and nothing joins the suite. A transcript's stored text is deleted with it.";
+  },
 };
 
 export const PART_LABELS = {
@@ -209,6 +238,7 @@ export const CASE_ROLE = {
   added: "success",
   blocked: "danger",
   unavailable: "neutral",
+  discarded: "neutral",
 };
 
 // A transcript's format from its file's extension, else from how it starts (a

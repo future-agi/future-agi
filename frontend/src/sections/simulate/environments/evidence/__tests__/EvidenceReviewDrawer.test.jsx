@@ -491,6 +491,48 @@ describe("EvidenceReviewDrawer", () => {
     ).toBeInTheDocument();
   });
 
+  describe("opens a resumed import at the step it reached", () => {
+    const scrolled = vi.fn();
+    beforeEach(() => {
+      scrolled.mockReset();
+      Element.prototype.scrollIntoView = function scrollIntoView() {
+        scrolled(this.textContent);
+      };
+    });
+
+    it.each([
+      [
+        "drafted cases wait to be added",
+        { cases: [item({ status: "drafted" })] },
+        /^4\. Add to the suite/,
+      ],
+      [
+        "drafting shows its progress",
+        { drafting: true },
+        /^3\. Drafted scenarios/,
+      ],
+      [
+        "some added, the rest to draft",
+        { cases: [item({ status: "added" }), item({ id: "c2" })] },
+        /^3\. Drafted scenarios/,
+      ],
+    ])("%s", async (_name, overrides, step) => {
+      evidence = bundle(overrides);
+      renderDrawer();
+      await screen.findByTestId("evidence-case-c1");
+
+      await waitFor(() => expect(scrolled).toHaveBeenCalledTimes(1));
+      expect(scrolled.mock.calls[0][0]).toMatch(step);
+    });
+
+    it("a waiting import starts at the top", async () => {
+      renderDrawer();
+      await screen.findByTestId("evidence-case-c1");
+
+      expect(scrolled).not.toHaveBeenCalled();
+    });
+  });
+
   it("says when the import is gone", async () => {
     axios.get.mockImplementation((url) =>
       url === BASE ? Promise.reject({ statusCode: 404 }) : answer(url),

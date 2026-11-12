@@ -20,6 +20,7 @@ import ScenarioEditor from "./ScenarioEditor";
 import ScenarioDrawer from "./ScenarioDrawer";
 import EvidenceReviewDrawer from "../../evidence/EvidenceReviewDrawer";
 import ImportEvidenceButton from "../../evidence/ImportEvidenceButton";
+import DraftImports from "../../evidence/DraftImports";
 import { IMPORT_PARAM } from "../../evidence/evidence.constants";
 import PropTypes from "prop-types";
 import {
@@ -611,6 +612,9 @@ export default function ScenariosStep({
                 overflow: "hidden",
               }}
             >
+              {!locked && env?.id ? (
+                <DraftImports envId={env.id} onResume={openImport} />
+              ) : null}
               <PagedScenarioViews
                 pageData={pageData}
                 selection={sel}

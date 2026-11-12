@@ -47,6 +47,13 @@ export const evidenceImportKey = (envId, importId) => [
   envId,
   importId,
 ];
+// The environment's imports a person can still finish.
+export const evidenceImportsKey = (envId) => [
+  "harness-evidence-imports",
+  envId,
+];
+const refreshImports = (queryClient, envId) =>
+  queryClient.invalidateQueries({ queryKey: evidenceImportsKey(envId) });
 
 // An Observe import names its project and ids. A dataset import names its
 // dataset, row ids and columns ({conversation, labels, expected}); a transcript
@@ -79,6 +86,14 @@ export const createEvidenceImport = async (envId, body) =>
 
 export const getEvidenceImport = async (envId, importId) =>
   (await axios.get(importPath(envId, importId))).data;
+
+export const listEvidenceImports = async (envId) =>
+  (await axios.get(importsPath(envId))).data;
+
+// Nothing of it added: the import goes, and a transcript's stored text with
+// it. Some of it added: only the cases not added go.
+export const discardEvidenceImport = async (envId, importId) =>
+  (await axios.delete(importPath(envId, importId))).data;
 
 export const draftEvidenceCases = async (envId, importId, { caseIds, shows }) =>
   (await axios.post(draftPath(envId, importId), { case_ids: caseIds, shows }))
@@ -135,6 +150,7 @@ export function useCreateEvidenceImport() {
     mutationFn: ({ envId, ...body }) => createEvidenceImport(envId, body),
     onSuccess: (data, { envId }) => {
       queryClient.setQueryData(evidenceImportKey(envId, data.id), data);
+      refreshImports(queryClient, envId);
     },
   });
 }
@@ -146,6 +162,7 @@ export function useDraftEvidenceCases(envId, importId) {
     mutationFn: (body) => draftEvidenceCases(envId, importId, body),
     onSuccess: (data) => {
       queryClient.setQueryData(evidenceImportKey(envId, importId), data);
+      refreshImports(queryClient, envId);
     },
   });
 }
@@ -177,11 +194,36 @@ export function useAddEvidenceCases(envId, importId) {
       );
       refreshDrafts(queryClient, envId);
       refreshFollowers(queryClient, envId);
+      refreshImports(queryClient, envId);
     },
     onError: (error) => {
       const status = error?.statusCode ?? error?.response?.status;
       if (status >= 400 && status < 500) pending.current = null;
       if (error?.error === "draft_changed") refreshDrafts(queryClient, envId);
+    },
+  });
+}
+
+// Read from what each import stores, so it is cheap to ask again.
+export function useEvidenceImports(envId) {
+  return useQuery({
+    queryKey: evidenceImportsKey(envId),
+    queryFn: () => listEvidenceImports(envId),
+    enabled: Boolean(envId),
+    meta: { errorHandled: true },
+  });
+}
+
+export function useDiscardEvidenceImport(envId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (importId) => discardEvidenceImport(envId, importId),
+    onSuccess: (_data, importId) => {
+      queryClient.removeQueries({
+        queryKey: evidenceImportKey(envId, importId),
+      });
+      refreshImports(queryClient, envId);
     },
   });
 }

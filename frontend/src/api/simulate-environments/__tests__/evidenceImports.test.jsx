@@ -4,7 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("src/utils/axios", () => ({
-  default: { get: vi.fn(), post: vi.fn() },
+  default: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
 }));
 // Add keys are counted so a test can tell a reused key from a fresh one.
 let keyCount = 0;
@@ -19,9 +19,11 @@ vi.mock("src/api/harness/harness", async (importOriginal) => ({
 const { default: axios } = await import("src/utils/axios");
 const {
   evidenceImportKey,
+  evidenceImportsKey,
   expectedDraftsOf,
   useAddEvidenceCases,
   useCreateEvidenceImport,
+  useDiscardEvidenceImport,
   useDraftEvidenceCases,
   useEvidenceImport,
 } = await import("../evidenceImports");
@@ -399,5 +401,56 @@ describe("evidence review bundles match the published contract", () => {
       });
       expect(check(full({ cases: [reviewed({ labels })] })).ok).toBe(true);
     }
+  });
+});
+
+describe("the environment's unfinished imports", () => {
+  const listed = {
+    id: IMPORT,
+    source_kind: "dataset",
+    source_name: "Support evals",
+    source_available: true,
+    case_count: 3,
+    added_count: 1,
+    status: "partly_added",
+    created_at: "2026-11-12T10:00:00Z",
+    can_discard: true,
+  };
+
+  it("matches the published contract, list and discard", () => {
+    const list = validateContractedResponse({
+      status: 200,
+      data: [listed],
+      config: { method: "get", url: BASE },
+    });
+    expect(list.skipped).toBeFalsy();
+    expect(list.ok).toBe(true);
+    const discard = validateContractedRequestConfig({
+      url: `${BASE}${IMPORT}/`,
+      method: "delete",
+    });
+    // A DELETE carries no body, so only the route itself is checked: the
+    // contract must publish it, or no endpoint is found.
+    expect(discard.endpoint?.template).toBe(
+      "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/",
+    );
+    expect(discard.ok).toBe(true);
+  });
+
+  it("discarding one forgets its review and lists again", async () => {
+    axios.delete.mockResolvedValue({ data: undefined });
+    client.setQueryData(evidenceImportKey(ENV, IMPORT), bundle());
+    client.setQueryData(evidenceImportsKey(ENV), [listed]);
+    const { result } = renderHook(() => useDiscardEvidenceImport(ENV), {
+      wrapper,
+    });
+
+    await act(() => result.current.mutateAsync(IMPORT));
+
+    expect(axios.delete).toHaveBeenCalledWith(`${BASE}${IMPORT}/`);
+    expect(client.getQueryData(evidenceImportKey(ENV, IMPORT))).toBeUndefined();
+    expect(client.getQueryState(evidenceImportsKey(ENV)).isInvalidated).toBe(
+      true,
+    );
   });
 });

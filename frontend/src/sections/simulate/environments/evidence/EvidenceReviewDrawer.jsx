@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Box, Button, Divider, Stack, Typography } from "@mui/material";
 import LoadingButton from "@mui/lab/LoadingButton";
 import { useSnackbar } from "notistack";
@@ -15,9 +15,9 @@ import {
 } from "src/api/simulate-environments/evidenceImports";
 import { useDrafts } from "src/api/simulate-environments/versions";
 
-function Section({ title, children }) {
+function Section({ title, children, sectionRef }) {
   return (
-    <Box sx={{ mt: 2.5 }}>
+    <Box sx={{ mt: 2.5 }} ref={sectionRef}>
       <Typography variant="overline" color="text.secondary">
         {title}
       </Typography>
@@ -28,7 +28,21 @@ function Section({ title, children }) {
   );
 }
 
-Section.propTypes = { title: PropTypes.string, children: PropTypes.node };
+Section.propTypes = {
+  title: PropTypes.string,
+  children: PropTypes.node,
+  sectionRef: PropTypes.object,
+};
+
+// Where a person picks up an import: drafting shows its progress, drafted
+// cases wait to be added, and an import with some cases added has the rest to
+// draft. A waiting import starts at the top.
+const reachedStep = (data, cases) => {
+  if (data.drafting) return "draft";
+  if (cases.some(isEvidenceCaseDrafted)) return "add";
+  if (cases.some((one) => one.status === "added")) return "draft";
+  return null;
+};
 
 // The import review: what each case's source holds and lacks and what
 // redaction replaces; the starting state no source records; the builder's
@@ -48,6 +62,10 @@ export default function EvidenceReviewDrawer({
   // Cases this review added beside other unsaved edits: nothing is live until the
   // draft bar's Save, so the notice stays after the add.
   const [addedBeside, setAddedBeside] = useState(0);
+  const draftRef = useRef(null);
+  const addRef = useRef(null);
+  // Scrolled once per import, when its bundle first arrives.
+  const scrolledFor = useRef(null);
 
   const cases = useMemo(() => data?.cases ?? [], [data]);
   const waiting = cases.filter(isEvidenceCaseWaiting);
@@ -56,6 +74,14 @@ export default function EvidenceReviewDrawer({
   const kind = data?.source_kind ?? "session";
   const transcript = kind === "transcript";
   const dataset = kind === "dataset";
+
+  useEffect(() => {
+    if (!data || scrolledFor.current === data.id) return;
+    scrolledFor.current = data.id;
+    const step = reachedStep(data, data.cases ?? []);
+    const target = { draft: draftRef, add: addRef }[step]?.current;
+    target?.scrollIntoView?.({ block: "start" });
+  }, [data]);
 
   const onDraft = () =>
     draft.mutate({
@@ -162,7 +188,7 @@ export default function EvidenceReviewDrawer({
               </Alert>
             </Section>
 
-            <Section title={EVIDENCE_COPY.stepDraft}>
+            <Section title={EVIDENCE_COPY.stepDraft} sectionRef={draftRef}>
               {data.drafting ? (
                 <Alert severity="info" data-testid="evidence-drafting">
                   <strong>{EVIDENCE_COPY.drafting(waiting.length)}</strong>
@@ -189,7 +215,7 @@ export default function EvidenceReviewDrawer({
               ) : null}
             </Section>
 
-            <Section title={EVIDENCE_COPY.stepAdd}>
+            <Section title={EVIDENCE_COPY.stepAdd} sectionRef={addRef}>
               {beside && (drafted.length || addedBeside) ? (
                 <Alert
                   severity="warning"
