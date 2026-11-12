@@ -29,13 +29,16 @@ from accounts.serializers.org_api_key import (
     OrgApiKeySerializer,
     UserSecretKeySerializer,
 )
+from accounts.services.organization_access import (
+    can_switch_key,
+    is_organization_admin,
+)
 from analytics.utils import (
     MixpanelEvents,
     get_mixpanel_properties,
     track_mixpanel_event,
 )
 from model_hub.models.api_key import mask_key
-from tfc.constants.levels import Level
 from tfc.constants.roles import RolePermissions
 from tfc.permissions.rbac import IsNotViewer
 from tfc.utils.api_contracts import validated_request
@@ -79,15 +82,7 @@ KEY_SWITCH_DENIED = (
 
 def _is_organization_admin(request: Request) -> bool:
     organization = getattr(request, "organization", None) or request.user.organization
-    level = request.user.get_membership_level(organization)
-    return level is not None and level >= Level.ADMIN
-
-
-def _can_switch(request: Request, apikey: OrgApiKey, is_admin: bool) -> bool:
-    creator_id = {"user": apikey.user_id, "coding_agent": apikey.minted_by_id}.get(
-        apikey.type
-    )
-    return is_admin or (creator_id is not None and creator_id == request.user.id)
+    return is_organization_admin(request.user, organization)
 
 
 def _switch_denied(request: Request, apikey: OrgApiKey) -> Response:
@@ -249,7 +244,7 @@ class SecretKeyAPIViewSet(ViewSet):
                     "created_at": key.created_at,
                     "enabled": key.enabled,
                     "type": key.type,
-                    "can_switch": _can_switch(request, key, is_admin),
+                    "can_switch": can_switch_key(request.user, key, is_admin),
                 }
                 for key in paginated_keys
             ]
@@ -288,7 +283,9 @@ class SecretKeyAPIViewSet(ViewSet):
                 apikey = _managed_keys(
                     getattr(request, "organization", None) or request.user.organization
                 ).get(id=key_id)
-                if not _can_switch(request, apikey, _is_organization_admin(request)):
+                if not can_switch_key(
+                    request.user, apikey, _is_organization_admin(request)
+                ):
                     return _switch_denied(request, apikey)
                 if apikey.enabled:
                     return self._gm.bad_request(get_error_message("API_KEY_ENABLED"))
@@ -322,7 +319,9 @@ class SecretKeyAPIViewSet(ViewSet):
                 apikey = _managed_keys(
                     getattr(request, "organization", None) or request.user.organization
                 ).get(id=key_id)
-                if not _can_switch(request, apikey, _is_organization_admin(request)):
+                if not can_switch_key(
+                    request.user, apikey, _is_organization_admin(request)
+                ):
                     return _switch_denied(request, apikey)
                 if not apikey.enabled:
                     return self._gm.bad_request(get_error_message("API_KEY_DISABLED"))
