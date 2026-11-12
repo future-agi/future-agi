@@ -42,7 +42,8 @@ _MAX_CERTIFICATION_BYTES = 8 * 1024 * 1024
 # again soon.
 _FILES_TTL_SECONDS = 7 * 24 * 3600
 _UNREADABLE_TTL_SECONDS = 300
-# One reader per archive at a time; the others wait for its result before reading.
+# One reader per archive at a time; the others wait up to 10 s (in the request) for its
+# result, then read the archive themselves.
 _READING_TTL_SECONDS = 60
 _WAIT_STEP_SECONDS = 0.25
 _WAIT_STEPS = 40
