@@ -30,7 +30,12 @@ logger = structlog.get_logger(__name__)
 
 REFRESH_MARGIN_SECONDS = 300  # Refresh 5 min before expiry
 MANAGED_STREAM_TIMEOUT_SECONDS = 300.0
-MAX_RETRY_AFTER_SECONDS = 30.0
+# The longest Retry-After an evaluation waits out before its one retry: a
+# gateway request window (60 s) plus the second its sliding window takes to
+# release the previous window's count. A longer hint (a quota, a provider
+# back-off) fails the evaluation at once: a retry sooner than the hint lands in
+# the window that refused it and spends the recovery on a second refusal.
+MAX_RETRY_AFTER_SECONDS = 61.0
 
 
 @dataclass
@@ -131,8 +136,13 @@ def _activate() -> ServiceToken | None:
         return None
 
 
-def _parse_retry_after(value: str | None) -> float | None:
-    """Accept delta-seconds or an HTTP date without allowing unbounded sleeps."""
+def parse_retry_after(value: str | None) -> float | None:
+    """Seconds named by a Retry-After header (delta-seconds or an HTTP date).
+
+    The value is kept as sent, floored at zero. The retry policy bounds the
+    wait, and must tell a window it can wait out from one it cannot: clamping
+    here made an hour-long hint look like a 30 s one.
+    """
     if not isinstance(value, str) or not value.strip():
         return None
     try:
@@ -144,7 +154,7 @@ def _parse_retry_after(value: str | None) -> float | None:
             return None
     if not math.isfinite(delay):
         return None
-    return max(0.0, min(delay, MAX_RETRY_AFTER_SECONDS))
+    return max(0.0, delay)
 
 
 def _raise_for_managed_status(
@@ -166,7 +176,7 @@ def _raise_for_managed_status(
         raise ManagedServiceError(
             "RATE_LIMITED",
             "Managed AI rate limit exceeded",
-            retry_after=_parse_retry_after(retry_after),
+            retry_after=parse_retry_after(retry_after),
         )
     if status_code >= 500:
         raise ManagedServiceError(

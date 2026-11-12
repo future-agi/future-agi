@@ -7,6 +7,7 @@ the evaluator, agent, retry budget and managed dispatch all run normally.
 import asyncio
 import concurrent.futures
 import json
+import math
 import threading
 import time
 from functools import partial
@@ -136,6 +137,54 @@ def test_retry_after_waits_for_upstream_reset(managed):
     assert request_times == [0, 2]
     assert managed.sleeps == [2]
     assert managed.evaluator.token_usage["total_tokens"] == 8
+
+
+def rate_window(managed, reset):
+    """A gateway request window: refused with an honest Retry-After until it
+    reopens at t=reset, then served. Returns the times requests arrived."""
+    request_times = []
+
+    async def upstream(request):
+        request_times.append(managed.clock)
+        if managed.clock < reset:
+            return httpx.Response(
+                429,
+                headers={"Retry-After": str(math.ceil(reset - managed.clock))},
+                json={"error": {"type": "rate_limit_error"}},
+            )
+        return valid_response()
+
+    managed.upstream(upstream)
+    return request_times
+
+
+# A gateway's request windows are a minute long, and its Redis sliding window
+# admits the next request one second after the boundary, so a refusal early in
+# a window names up to 61 s. Waiting less retries inside the window that
+# refused it and spends the one recovery on a second 429.
+@pytest.mark.parametrize("reset", [31, 45, 60, 61])
+def test_rate_limit_waits_until_the_window_reopens(managed, reset):
+    request_times = rate_window(managed, reset)
+    result = managed.evaluator.run()
+    assert result.eval_results[0]["data"]["result"] == "Pass"
+    assert request_times == [0, reset]
+    assert managed.sleeps == [reset]
+    assert managed.evaluator.token_usage["total_tokens"] == 8
+
+
+# Past one window the wait is a quota or a provider back-off, not a window the
+# run should sit out: it fails at once, unscored, with the recovery unspent.
+@pytest.mark.parametrize("retry_after", [62, 120, 3600])
+def test_rate_limit_longer_than_a_window_fails_fast_unscored(managed, retry_after):
+    request_times = rate_window(managed, retry_after)
+    with pytest.raises(GradingError) as exc:
+        managed.evaluator.run()
+    assert exc.value.code == "rate_limited"
+    assert exc.value.diagnostics["retry_after_seconds"] == retry_after
+    assert request_times == [0]
+    assert managed.sleeps == []
+    assert managed.evaluator.token_usage["total_tokens"] == 0
+    assert MAX_RETRY_AFTER_SECONDS < retry_after
 
 
 @pytest.mark.parametrize("failure", [httpx.RemoteProtocolError, httpx.ReadError])

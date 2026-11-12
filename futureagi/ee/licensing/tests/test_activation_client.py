@@ -268,9 +268,12 @@ class TestManagedStreamDispatch:
         ("2", 2),
         ("0", 0),
         ("-1", 0),
-        ("3600", 30),
+        # Kept as sent: the retry policy, not the parser, decides whether a
+        # wait is one to sit out or one to fail on.
+        ("3600", 3600),
         ("Tue, 14 Nov 2023 22:13:22 GMT", 2),
-        ("Tue, 14 Nov 2023 22:14:20 GMT", 30),
+        ("Tue, 14 Nov 2023 22:14:20 GMT", 60),
+        ("Tue, 14 Nov 2023 23:13:20 GMT", 3600),
         ("Tue, 14 Nov 2023 22:13:00 GMT", 0),
         (None, None),
         ("", None),

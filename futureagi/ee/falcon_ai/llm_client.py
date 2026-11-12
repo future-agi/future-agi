@@ -7,7 +7,11 @@ import random
 import httpx
 import structlog
 
-from ee.licensing.activation_client import ManagedServiceError
+from ee.licensing.activation_client import (
+    MAX_RETRY_AFTER_SECONDS,
+    ManagedServiceError,
+    parse_retry_after,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -20,6 +24,19 @@ RETRYABLE_MANAGED_CODES = {
     "GATEWAY_TIMEOUT",
     "GATEWAY_UNREACHABLE",
 }
+# Chat keeps its retries and its own ceiling on a 429's Retry-After.
+CHAT_MAX_RETRY_AFTER_SECONDS = 30.0
+
+
+def _outlasts_retry(retry_after: float | None) -> bool:
+    """Whether an evaluation must give up on a rate limit instead of waiting.
+
+    An evaluation has one recovery and never spends it before Retry-After: a
+    retry sooner lands in the window that refused it. It waits out at most
+    MAX_RETRY_AFTER_SECONDS (one gateway window); a longer hint fails the run
+    now, with the recovery unspent, rather than after a doomed wait.
+    """
+    return retry_after is not None and retry_after > MAX_RETRY_AFTER_SECONDS
 
 
 def _inline_refs(schema, _defs=None, _depth=0):
@@ -769,6 +786,7 @@ class FalconLLMClient:
                     or e.code not in RETRYABLE_MANAGED_CODES
                     or attempt >= max_retries - 1
                     or yielded_any_chunk
+                    or _outlasts_retry(e.retry_after)
                     or not self.take_retry()
                 ):
                     raise
@@ -787,10 +805,19 @@ class FalconLLMClient:
                 continue
             except httpx.HTTPStatusError as e:
                 status = e.response.status_code
+                evaluation = self.retry_budget is not None
+                retry_after = (
+                    parse_retry_after(e.response.headers.get("Retry-After"))
+                    if status == 429
+                    else None
+                )
                 if (
                     status not in RETRYABLE_STATUS_CODES
                     or attempt >= max_retries - 1
-                    or (self.retry_budget is not None and yielded_any_chunk)
+                    or (
+                        evaluation
+                        and (yielded_any_chunk or _outlasts_retry(retry_after))
+                    )
                     or not self.take_retry()
                 ):
                     raise
@@ -802,12 +829,12 @@ class FalconLLMClient:
 
                 if status == 429:
                     # Honor Retry-After header if present
-                    retry_after = e.response.headers.get("Retry-After")
-                    if retry_after:
-                        try:
-                            delay = max(0.0, min(float(retry_after), 30.0))
-                        except (ValueError, TypeError):
-                            pass  # Fall through to computed delay
+                    if retry_after is not None:
+                        delay = (
+                            retry_after
+                            if evaluation
+                            else min(retry_after, CHAT_MAX_RETRY_AFTER_SECONDS)
+                        )
                     logger.warning(
                         "llm_retry_rate_limit",
                         status=429,

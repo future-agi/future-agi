@@ -2433,7 +2433,10 @@ class AgentEvaluator:
             RETRYABLE_STATUS_CODES,
             EmptyStreamError,
         )
-        from ee.licensing.activation_client import ManagedServiceError
+        from ee.licensing.activation_client import (
+            ManagedServiceError,
+            parse_retry_after,
+        )
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
@@ -2443,6 +2446,13 @@ class AgentEvaluator:
         except EmptyStreamError as exc:
             raise GradingError("empty_output") from exc
         except ManagedServiceError as exc:
+            # A rate limit is not an outage: say so, and when it lifts.
+            if exc.code == "RATE_LIMITED":
+                raise GradingError(
+                    "rate_limited",
+                    managed_error_code=exc.code,
+                    retry_after_seconds=exc.retry_after,
+                ) from exc
             code = (
                 "upstream_unavailable"
                 if exc.code in RETRYABLE_MANAGED_CODES
@@ -2450,6 +2460,13 @@ class AgentEvaluator:
             )
             raise GradingError(code, managed_error_code=exc.code) from exc
         except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429:
+                raise GradingError(
+                    "rate_limited",
+                    retry_after_seconds=parse_retry_after(
+                        exc.response.headers.get("Retry-After")
+                    ),
+                ) from exc
             code = (
                 "upstream_unavailable"
                 if exc.response.status_code in RETRYABLE_STATUS_CODES

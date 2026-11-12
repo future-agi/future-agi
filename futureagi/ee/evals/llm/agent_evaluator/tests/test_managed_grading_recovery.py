@@ -22,6 +22,11 @@ TRUNCATED = '{"result":"Pass","explanation":"Correct but'
 TRANSIENT_FAILURES = [429, 503, "timeout", "connect"]
 
 
+def terminal_code(failure):
+    """A rate limit ends as rate_limited; other transient failures as an outage."""
+    return "rate_limited" if failure == 429 else "upstream_unavailable"
+
+
 def sse_content(content):
     chunk = {
         "choices": [{"delta": {"content": content}, "finish_reason": "stop"}],
@@ -141,7 +146,7 @@ def test_managed_transient_retry_exhaustion_is_ungraded(managed_transport, failu
     assert result is None
     assert len(calls) == 2
     assert str(error) == USER_FACING_EVAL_FAILED
-    assert error.code == "upstream_unavailable"
+    assert error.code == terminal_code(failure)
     assert isinstance(error.__cause__, ManagedServiceError)
     terminal = [event for event in logs if event.get("log_level") == "error"]
     assert len(terminal) == 1
@@ -184,7 +189,7 @@ def test_managed_structured_recovery_does_not_get_a_transport_retry(
     assert not calls[1].get("tools")
     assert calls[1]["response_format"] == calls[0]["response_format"]
     assert result is None
-    assert error.code == "upstream_unavailable"
+    assert error.code == terminal_code(failure)
     assert evaluator.token_usage["total_tokens"] == 8
     sleep.assert_not_awaited()
 
