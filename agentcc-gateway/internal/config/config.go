@@ -1086,8 +1086,10 @@ func Load(path string) (*Config, error) {
 
 	// Presets must supply required fields before validation, not just at registry creation.
 	for name, provider := range cfg.Providers {
+		before := provider
 		ApplyProviderPreset(&provider)
 		cfg.Providers[name] = provider
+		logPresetDefaults(name, before, provider)
 	}
 
 	// The control plane checks the gateway's calls against the same shared

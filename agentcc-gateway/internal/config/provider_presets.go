@@ -1,5 +1,7 @@
 package config
 
+import "log/slog"
+
 // ProviderPreset contains known defaults for a provider type.
 type ProviderPreset struct {
 	BaseURL   string
@@ -46,4 +48,22 @@ func ApplyProviderPreset(cfg *ProviderConfig) {
 		prefix := preset.PathPrefix
 		cfg.APIPathPrefix = &prefix
 	}
+}
+
+// logPresetDefaults reports which required fields a preset filled in, so a
+// blank base_url (for example an unset ${VAR}) that now falls back to the
+// vendor's public endpoint is visible at startup. It never logs credentials.
+func logPresetDefaults(name string, before, after ProviderConfig) {
+	var filled []string
+	if before.BaseURL == "" && after.BaseURL != "" {
+		filled = append(filled, "base_url")
+	}
+	if before.APIFormat == "" && after.APIFormat != "" {
+		filled = append(filled, "api_format")
+	}
+	if len(filled) == 0 {
+		return
+	}
+	slog.Info("config: provider preset filled defaults",
+		"provider", name, "preset", after.Type, "fields", filled)
 }
