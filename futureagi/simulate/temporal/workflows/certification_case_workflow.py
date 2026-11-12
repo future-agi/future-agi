@@ -34,16 +34,9 @@ class CertificationCaseWorkflow:
     def cancel(self) -> None:
         self.cancel_requested = True
 
-    @workflow.run
-    async def run(self, input: CertificationCaseInput) -> str:
-        await workflow.execute_activity(
-            "certification_submit_case",
-            input,
-            task_queue=QUEUE_RUNNER,
-            start_to_close_timeout=timedelta(minutes=5),
-            retry_policy=_ACTIVITY_RETRY,
-            result_type=CertificationSubmitOutput,
-        )
+    async def _wait_for_terminal(
+        self, input: CertificationCaseInput
+    ) -> tuple[CertificationPollOutput | None, bool]:
         deadline = workflow.now() + timedelta(seconds=input.max_duration_seconds)
         cancel_signaled = False
         while True:
@@ -58,11 +51,12 @@ class CertificationCaseWorkflow:
                 )
                 cancel_signaled = True
             if deadline_exceeded:
+                outcome = "canceled" if self.cancel_requested else "failed"
                 await workflow.execute_activity(
                     "certification_record_case_result",
                     CertificationResultInput(
                         case_id=input.case_id,
-                        outcome="failed",
+                        outcome=outcome,
                         failure_class="environment",
                         failure_detail={"reason": "case_deadline_exceeded"},
                     ),
@@ -70,7 +64,7 @@ class CertificationCaseWorkflow:
                     start_to_close_timeout=timedelta(minutes=2),
                     retry_policy=_ACTIVITY_RETRY,
                 )
-                return "failed"
+                return None, cancel_signaled
             poll = await workflow.execute_activity(
                 "certification_poll_case",
                 input,
@@ -80,8 +74,35 @@ class CertificationCaseWorkflow:
                 result_type=CertificationPollOutput,
             )
             if poll.done:
-                break
+                return poll, cancel_signaled
             await workflow.sleep(timedelta(seconds=_CASE_POLL_SECONDS))
+
+    @workflow.run
+    async def run(self, input: CertificationCaseInput) -> str:
+        await workflow.execute_activity(
+            "certification_submit_case",
+            input,
+            task_queue=QUEUE_RUNNER,
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=_ACTIVITY_RETRY,
+            result_type=CertificationSubmitOutput,
+        )
+        environment_poll, cancel_signaled = await self._wait_for_terminal(input)
+        if environment_poll is None:
+            return "canceled" if self.cancel_requested else "failed"
+
+        if environment_poll.job_state == "completed" and not cancel_signaled:
+            await workflow.execute_activity(
+                "certification_submit_run",
+                input,
+                task_queue=QUEUE_RUNNER,
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=_ACTIVITY_RETRY,
+                result_type=CertificationSubmitOutput,
+            )
+            run_poll, cancel_signaled = await self._wait_for_terminal(input)
+            if run_poll is None:
+                return "canceled" if self.cancel_requested else "failed"
 
         expected_terminal = "canceled" if cancel_signaled else "completed"
         reconcile = await workflow.execute_activity(

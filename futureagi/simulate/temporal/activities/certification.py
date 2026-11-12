@@ -110,6 +110,12 @@ async def certification_submit_case(
         ).get(id=input.case_id)
         campaign = case.campaign
         if case.hosted_harness_job_id is not None:
+            update_fields = ["state", "updated_at"]
+            case.state = CertificationCase.State.RUNNING
+            if case.started_at is None:
+                case.started_at = timezone.now()
+                update_fields.append("started_at")
+            case.save(update_fields=update_fields)
             return CertificationSubmitOutput(
                 hosted_harness_job_id=str(case.hosted_harness_job_id)
             )
@@ -141,6 +147,116 @@ async def certification_submit_case(
     return await _run_db(_submit)
 
 
+@activity.defn(name="certification_submit_run")
+async def certification_submit_run(
+    input: CertificationCaseInput,
+) -> CertificationSubmitOutput:
+    """Freeze the authored scenarios into one idempotent selected child run."""
+    from django.conf import settings
+    from django.db import transaction
+
+    from simulate.models import CertificationCase, HostedHarnessScenario, TestExecution
+    from simulate.services.hosted_harness import (
+        HostedHarnessError,
+        create_selected_harness_run,
+    )
+    from simulate.temporal.client import start_hosted_harness_gateway_workflow
+
+    def _submit() -> CertificationSubmitOutput:
+        with transaction.atomic():
+            case = (
+                CertificationCase.no_workspace_objects.select_for_update(of=("self",))
+                .select_related("hosted_harness_job", "run_job")
+                .get(id=input.case_id)
+            )
+            environment = case.hosted_harness_job
+            if environment is None:
+                raise HostedHarnessError(
+                    "environment_missing",
+                    "certification case has no authored environment",
+                    status_code=409,
+                )
+            run = case.run_job
+            if run is None:
+                scenario_keys = list(
+                    HostedHarnessScenario.no_workspace_objects.filter(job=environment)
+                    .order_by("created_at", "id")
+                    .values_list("scenario_key", flat=True)
+                )
+                expected = int(
+                    (case.spec or {}).get("scenario_count")
+                    or len((case.spec or {}).get("interactions") or [])
+                )
+                reuse_environment = bool((case.spec or {}).get("reuse_environment"))
+                count_matches = (
+                    len(scenario_keys) >= expected
+                    if reuse_environment
+                    else len(scenario_keys) == expected
+                )
+                if not count_matches:
+                    raise HostedHarnessError(
+                        "scenario_count_mismatch",
+                        f"authored {len(scenario_keys)} scenarios; expected {expected}",
+                        status_code=409,
+                    )
+                scenario_keys = scenario_keys[:expected]
+                run, _created = create_selected_harness_run(
+                    environment,
+                    scenario_keys=scenario_keys,
+                    trials=1,
+                    idempotency_key=f"{case.idempotency_key}:run",
+                )
+                case.run_job = run
+                case.save(update_fields=["run_job", "updated_at"])
+
+        base_url = str(getattr(settings, "HARNESS_PUBLIC_BASE_URL", "") or "").rstrip(
+            "/"
+        )
+        retry_cfg = run.payload["retry"]
+        try:
+            start_hosted_harness_gateway_workflow(
+                str(run.id),
+                base_url,
+                retry_cfg["max_infrastructure_attempts"],
+                retry_cfg["initial_backoff_seconds"],
+                retry_cfg["max_backoff_seconds"],
+            )
+        except Exception:
+            if activity.info().attempt >= 3:
+                from django.utils import timezone
+
+                from simulate.models import HostedHarnessJob
+
+                failure = {
+                    "domain": "infrastructure",
+                    "stage": "queued",
+                    "code": "scheduler_unavailable",
+                    "message": "Certification child run could not be scheduled",
+                }
+                now = timezone.now()
+                with transaction.atomic():
+                    marked_failed = HostedHarnessJob.no_workspace_objects.filter(
+                        id=run.id, state=HostedHarnessJob.State.QUEUED
+                    ).update(
+                        state=HostedHarnessJob.State.FAILED,
+                        current_stage="failed",
+                        terminal_at=now,
+                        failure=failure,
+                    )
+                    if marked_failed and run.test_execution_id:
+                        TestExecution.no_workspace_objects.filter(
+                            id=run.test_execution_id
+                        ).update(
+                            status=TestExecution.ExecutionStatus.FAILED,
+                            completed_at=now,
+                            error_reason=failure["message"],
+                        )
+            raise
+        return CertificationSubmitOutput(hosted_harness_job_id=str(run.id))
+
+    return await _run_db(_submit)
+
+
 @activity.defn(name="certification_poll_case")
 async def certification_poll_case(
     input: CertificationCaseInput,
@@ -150,7 +266,7 @@ async def certification_poll_case(
 
     def _poll() -> CertificationPollOutput:
         case = CertificationCase.no_workspace_objects.get(id=input.case_id)
-        job = case.hosted_harness_job
+        job = case.run_job or case.hosted_harness_job
         if job is None:
             return CertificationPollOutput(done=False, job_state="missing")
         job.refresh_from_db(fields=["state"])
@@ -174,7 +290,7 @@ async def certification_reconcile_case(
 
     def _reconcile() -> CertificationReconcileOutput:
         case = CertificationCase.no_workspace_objects.select_related(
-            "campaign", "hosted_harness_job"
+            "campaign", "hosted_harness_job", "run_job"
         ).get(id=input.case_id)
         result = reconcile_case(case, expected_terminal=input.expected_terminal)
         case.reconciliation = result
@@ -340,13 +456,14 @@ async def certification_cancel_case(input: CertificationCaseInput) -> None:
 
     def _cancel() -> None:
         case = CertificationCase.no_workspace_objects.get(id=input.case_id)
-        if case.hosted_harness_job_id is None:
+        job_id = case.run_job_id or case.hosted_harness_job_id
+        if job_id is None:
             return
         from simulate.temporal.client import (
             cancel_hosted_harness_gateway_workflow,
         )
 
-        cancel_hosted_harness_gateway_workflow(str(case.hosted_harness_job_id))
+        cancel_hosted_harness_gateway_workflow(str(job_id))
 
     await _run_db(_cancel)
 
@@ -419,6 +536,30 @@ async def certification_finalize_campaign(
             state = CertificationCampaign.State.COMPLETED
         campaign.state = state
         campaign.finished_at = timezone.now()
+        job_ids = set()
+        for case in cases:
+            if case.hosted_harness_job_id and not (case.spec or {}).get(
+                "reuse_environment"
+            ):
+                job_ids.add(case.hosted_harness_job_id)
+            if case.run_job_id:
+                job_ids.add(case.run_job_id)
+        spend_total = 0.0
+        unpriced_turns = 0
+        from simulate.models import HostedHarnessJob
+
+        for payload in HostedHarnessJob.no_workspace_objects.filter(
+            id__in=job_ids
+        ).values_list("payload", flat=True):
+            spend = ((payload or {}).get("metadata") or {}).get("harness_spend") or {}
+            spend_total += float(spend.get("total_usd") or 0.0)
+            unpriced_turns += int(spend.get("unpriced_turns") or 0)
+        tier = (campaign.normalized_suite.get("defaults") or {}).get(
+            "certification_tier", "full"
+        )
+        expected_durations = (campaign.normalized_suite.get("defaults") or {}).get(
+            "expected_duration_seconds", {}
+        )
         campaign.result = {
             "cases_total": campaign.cases_total,
             "cases_completed": counts[CertificationCase.State.COMPLETED],
@@ -433,6 +574,15 @@ async def certification_finalize_campaign(
                 .distinct()
             ),
             "report_url": f"/simulate/api/certification-campaigns/{campaign.id}/",
+            "tier": tier,
+            "expected_duration_seconds": expected_durations.get(tier),
+            "duration_seconds": (
+                int((campaign.finished_at - campaign.started_at).total_seconds())
+                if campaign.started_at
+                else None
+            ),
+            "cost_usd": round(spend_total, 6),
+            "unpriced_turns": unpriced_turns,
         }
         campaign.cases_completed = counts[CertificationCase.State.COMPLETED]
         campaign.cases_failed = counts[CertificationCase.State.FAILED]

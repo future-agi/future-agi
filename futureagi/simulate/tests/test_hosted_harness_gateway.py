@@ -1192,9 +1192,9 @@ def test_dispatch_and_certify_jobs_pass_alk_secret_check_with_chat_state():
 def test_gateway_clones_exact_commit_without_archiving_git_credentials(
     organization, monkeypatch
 ):
-    job, _ = create_hosted_job(
-        organization, _payload(), idempotency_key="source-gateway"
-    )
+    payload = _payload()
+    payload["source"]["path"] = "agents/selected"
+    job, _ = create_hosted_job(organization, payload, idempotency_key="source-gateway")
     observed_commands = []
     observed_token = []
 
@@ -1216,7 +1216,10 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
             path = Path(checkout)
             path.mkdir(parents=True)
             (path / ".git").mkdir()
-            (path / "agent.py").write_text("print('agent')", encoding="utf-8")
+            (path / "outside.py").write_text("print('outside')", encoding="utf-8")
+            selected = path / "agents" / "selected"
+            selected.mkdir(parents=True)
+            (selected / "agent.py").write_text("print('agent')", encoding="utf-8")
         if "rev-parse" in command:
             return SimpleNamespace(returncode=0, stdout="a" * 40 + "\n", stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -1239,6 +1242,7 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
         names = set(tar.getnames())
     assert "source/agent.py" in names
+    assert "source/outside.py" not in names
     assert all(".git" not in name for name in names)
 
 

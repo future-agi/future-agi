@@ -1046,9 +1046,21 @@ class HostedSourceAcquirer:
                     status_code=409,
                 )
             shutil.rmtree(checkout / ".git", ignore_errors=True)
+            selected = checkout
+            if source.get("path"):
+                selected = (checkout / str(source["path"])).resolve()
+                if (
+                    not selected.is_relative_to(checkout.resolve())
+                    or not selected.is_dir()
+                ):
+                    raise HostedHarnessError(
+                        "github_source_path_invalid",
+                        "source path is not a directory in the resolved commit",
+                        status_code=422,
+                    )
             archive = io.BytesIO()
             with tarfile.open(fileobj=archive, mode="w:gz") as tar:
-                tar.add(checkout, arcname="source", recursive=True)
+                tar.add(selected, arcname="source", recursive=True)
             max_bytes = getattr(
                 settings, "ALK_HOSTED_SOURCE_MAX_BYTES", 256 * 1024 * 1024
             )

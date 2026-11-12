@@ -638,6 +638,17 @@ def _validate_case(raw: Any, index: int, where: str, repo_root: Path | None) -> 
         _validate_interaction(item, i, f"{w}.interactions", enabled, repo_root)
         for i, item in enumerate(raw_interactions)
     ]
+    scenario_count = raw.get("scenario_count", len(interactions))
+    if (
+        type(scenario_count) is not int
+        or scenario_count < len(interactions)
+        or scenario_count > 200
+    ):
+        _fail(
+            "invalid_schema",
+            w,
+            "scenario_count must be between the interaction count and 200",
+        )
     seen_i = set()
     for item in interactions:
         if item["interaction"] in seen_i:
@@ -704,6 +715,7 @@ def _validate_case(raw: Any, index: int, where: str, repo_root: Path | None) -> 
         },
         **({"run_test_id": run_test_id} if run_test_id else {}),
         "interactions": interactions,
+        "scenario_count": scenario_count,
     }
     if authorization is not None:
         out["authorization"] = authorization
@@ -742,13 +754,38 @@ def validate_manifest(doc: Mapping[str, Any], *, repo_root: Path | None = None) 
         )
     for field in ("interaction_count", "max_duration_seconds"):
         if field in defaults and (
-            not isinstance(defaults[field], int) or defaults[field] < 1
+            type(defaults[field]) is not int or defaults[field] < 1
         ):
             _fail(
                 "invalid_schema",
                 f"{where}.defaults",
                 f"{field} must be a positive integer",
             )
+    compatibility_count = defaults.get("compatibility_case_count")
+    if compatibility_count is not None and (
+        type(compatibility_count) is not int
+        or compatibility_count < 0
+        or compatibility_count > 20
+    ):
+        _fail(
+            "invalid_schema",
+            f"{where}.defaults",
+            "compatibility_case_count must be an integer from 0 to 20",
+        )
+    expected_durations = defaults.get("expected_duration_seconds")
+    if expected_durations is not None and (
+        not isinstance(expected_durations, Mapping)
+        or not expected_durations
+        or any(
+            tier not in {"quick", "full"} or type(seconds) is not int or seconds < 1
+            for tier, seconds in expected_durations.items()
+        )
+    ):
+        _fail(
+            "invalid_schema",
+            f"{where}.defaults",
+            "expected_duration_seconds must map tiers to positive integers",
+        )
     _assert_no_secret_material(defaults, f"{where}.defaults")
 
     cases = doc.get("cases")
@@ -802,6 +839,7 @@ def expand_enabled_cases(
                 "run_test_id": case.get("run_test_id")
                 or normalized_suite["defaults"].get("run_test_id"),
                 "authorization": case["authorization"],
+                "scenario_count": case.get("scenario_count", len(case["interactions"])),
                 "interactions": [
                     {
                         "scenario_key": f"{case['case_key']}__interaction_{i['interaction']:02d}",
@@ -834,10 +872,16 @@ def require_admission_ready(
     pending reasons; they must never be silently certified.
     """
 
-    enabled = sum(1 for c in normalized_suite["cases"] if c["enabled"])
-    if enabled != len(normalized_suite["cases"]):
+    cases = normalized_suite["cases"]
+    if not cases:
+        raise CertificationManifestError(
+            "suite_not_admission_ready",
+            f"suite {normalized_suite['suite_key']!r} has no cases for the selected tier",
+        )
+    enabled = sum(1 for c in cases if c["enabled"])
+    if enabled != len(cases):
         pending: dict[str, list[str]] = {}
-        for c in normalized_suite["cases"]:
+        for c in cases:
             for p in c.get("pending", []):
                 pending.setdefault(p, []).append(c["case_key"])
         reasons = "; ".join(
@@ -846,11 +890,11 @@ def require_admission_ready(
         raise CertificationManifestError(
             "suite_not_admission_ready",
             f"suite {normalized_suite['suite_key']!r} has {enabled}/"
-            f"{len(normalized_suite['cases'])} enabled cases; "
+            f"{len(cases)} enabled cases; "
             f"pending reasons — {reasons}",
         )
     now = (now or datetime.now(UTC)).astimezone(UTC)
-    for case in normalized_suite["cases"]:
+    for case in cases:
         authorization = case["authorization"]
         _parse_timestamp(
             authorization["approved_at"],

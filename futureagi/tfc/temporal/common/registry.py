@@ -803,6 +803,7 @@ def _ensure_activities_registered() -> None:
             certification_reconcile_case,
             certification_record_case_result,
             certification_submit_case,
+            certification_submit_run,
         )
         from simulate.temporal.activities.hosted_harness_gateway import (
             cancel_hosted_harness_attempt,
@@ -829,6 +830,7 @@ def _ensure_activities_registered() -> None:
                 cancel_hosted_harness_attempt,
                 certification_load_cases,
                 certification_submit_case,
+                certification_submit_run,
                 certification_poll_case,
                 certification_reconcile_case,
                 certification_record_case_result,

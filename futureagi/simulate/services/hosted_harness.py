@@ -1571,6 +1571,7 @@ def rerun_calls_in_run(
             retry_cfg["max_infrastructure_attempts"],
             retry_cfg["initial_backoff_seconds"],
             retry_cfg["max_backoff_seconds"],
+            allow_completed_restart=True,
         )
     except Exception as exc:
         with transaction.atomic():

@@ -10,14 +10,13 @@
 # (config_ref + config_sha256), declared secret_ref_set, and an
 # authorization block with automated_production_calls: approved.
 #
-# Note: the plan names this a 25-agent campaign; the matrix lists 26 rows.
-# All 26 are recorded here so the count discrepancy is explicit rather than
-# silently dropped — confirm the intended 25th entry when materializing.
-
 version: 1
 suite_key: production_agents_v1
 defaults:
   interaction_count: 2
+  compatibility_case_count: 3
+  expected_duration_seconds:
+    quick: 1800
   max_duration_seconds: 1800
   artifacts:
     level: full
@@ -274,6 +273,29 @@ cases:
     pending: [source_unrecorded, authorization_unverified]
     agent:
       name: Google ADK Multi-Agent
+    target: { kind: local_test }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: front_desk__load_20
+    enabled: false
+    pending: [source_commit_unverified, authorization_unverified]
+    scenario_count: 20
+    agent:
+      name: Front Desk 20-scenario load
+      source: { repository: https://github.com/livekit/agents }
+    target: { kind: hosted_service }
+    interactions:
+      - { interaction: 1 }
+      - { interaction: 2 }
+
+  - case_key: ava_portfolio__load_50
+    enabled: false
+    pending: [source_unrecorded, authorization_unverified]
+    scenario_count: 50
+    agent:
+      name: Ava Portfolio 50-scenario load
     target: { kind: local_test }
     interactions:
       - { interaction: 1 }

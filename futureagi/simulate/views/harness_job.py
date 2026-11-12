@@ -370,4 +370,9 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def health(self, request):
-        return Response(get_harness_provider().health())
+        from simulate.services.hosted_sandbox.factory import sandbox_runtime_reference
+
+        health = get_harness_provider().health()
+        snapshot_name, snapshot_digest = sandbox_runtime_reference()
+        health["snapshot"] = {"name": snapshot_name, "digest": snapshot_digest}
+        return Response(health)

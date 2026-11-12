@@ -99,10 +99,24 @@ def test_production_suite_validates_and_is_all_placeholders():
     normalized = validate_manifest(doc)
     summary = pending_summary(normalized)
     assert summary["enabled"] == []
-    assert len(summary["disabled"]) == 23
+    assert len(summary["disabled"]) == 25
     for case in normalized["cases"]:
         assert case["enabled"] is False
-        assert case["pending"], f"{case['case_key']} missing pending reasons"
+        assert case.get("pending"), (
+            f"{case['case_key']} missing pending or exclusion reason"
+        )
+
+    by_key = {case["case_key"]: case for case in normalized["cases"]}
+    assert by_key["front_desk__load_20"]["scenario_count"] == 20
+    assert by_key["ava_portfolio__load_50"]["scenario_count"] == 50
+    assert [
+        case["case_key"] for case in normalized["cases"] if "quick" in case["tiers"]
+    ] == [
+        "ride_booking__primary",
+        "front_desk__primary",
+        "packaged_python_chat__primary",
+        "unpackaged_python_chat__primary",
+    ]
 
 
 def test_quick_tier_materializes_an_outbound_voice_case():
@@ -318,6 +332,35 @@ def test_rejects_single_interaction():
     case = _enabled_case()
     case["interactions"] = case["interactions"][:1]
     _err(lambda: validate_manifest(_doc([case])), "invalid_schema")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("enabled", "false"),
+        ("tiers", [{}]),
+        ("scenario_count", True),
+    ),
+)
+def test_rejects_malformed_case_policy_fields(field, value):
+    case = _enabled_case()
+    case[field] = value
+    _err(lambda: validate_manifest(_doc([case])), "invalid_schema")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("compatibility_case_count", "3"),
+        ("compatibility_case_count", -1),
+        ("expected_duration_seconds", {"quick": True}),
+        ("expected_duration_seconds", {"unknown": 60}),
+    ),
+)
+def test_rejects_malformed_operating_defaults(field, value):
+    doc = _doc([_enabled_case()])
+    doc["defaults"][field] = value
+    _err(lambda: validate_manifest(doc), "invalid_schema")
 
 
 def test_rejects_bad_scenario_ref():

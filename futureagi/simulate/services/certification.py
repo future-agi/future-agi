@@ -18,6 +18,8 @@ Rules carried over from the certification plan:
 
 from __future__ import annotations
 
+import copy
+
 import structlog
 from django.db import IntegrityError, transaction
 from django.utils import timezone
@@ -147,6 +149,7 @@ def create_campaign(
     deployment_id: str,
     deployment_identity: dict,
     suite_key: str,
+    tier: str = "full",
     requested_by: str = "",
 ):
     """Idempotent campaign admission. Returns (campaign, created)."""
@@ -154,6 +157,13 @@ def create_campaign(
     from simulate.temporal.client import start_certification_workflow
 
     normalized = validated_suite(suite_key)
+    normalized = {
+        **normalized,
+        "defaults": {**normalized["defaults"], "certification_tier": tier},
+        "cases": [
+            case for case in normalized["cases"] if tier in case.get("tiers", ["full"])
+        ],
+    }
     try:
         require_admission_ready(normalized)
     except CertificationManifestError as exc:
@@ -161,7 +171,64 @@ def create_campaign(
 
     digest = suite_digest(normalized)
     idem_key = campaign_idempotency_key(deployment_id, digest)
-    case_specs = expand_enabled_cases(normalized)
+    case_specs = expand_enabled_cases(normalized, tier=tier)
+    current_specs = {spec["case_key"]: spec for spec in case_specs}
+    prior_links = {}
+    compatibility_count = (
+        int(normalized["defaults"].get("compatibility_case_count", 0))
+        if tier == "full"
+        else 0
+    )
+    if compatibility_count:
+        previous_candidates = (
+            CertificationCampaign.no_workspace_objects.filter(
+                organization=organization,
+                suite_key=suite_key,
+                state__in=(
+                    CertificationCampaign.State.COMPLETED,
+                    CertificationCampaign.State.COMPLETED_WITH_FAILURES,
+                ),
+            )
+            .exclude(deployment_id=deployment_id)
+            .order_by("-finished_at", "-created_at")
+        )
+        previous = next(
+            (
+                candidate
+                for candidate in previous_candidates
+                if (candidate.normalized_suite.get("defaults") or {}).get(
+                    "certification_tier", "full"
+                )
+                == tier
+            ),
+            None,
+        )
+        if previous is not None:
+            prior_cases = (
+                CertificationCase.no_workspace_objects.filter(
+                    campaign=previous,
+                    state=CertificationCase.State.COMPLETED,
+                    hosted_harness_job__state="completed",
+                )
+                .select_related("hosted_harness_job")
+                .order_by("sequence")
+            )
+            for prior in prior_cases:
+                if prior.spec.get("reuse_environment"):
+                    continue
+                current = current_specs.get(prior.case_key)
+                if current is None or current["target"] != prior.spec.get("target"):
+                    continue
+                spec = copy.deepcopy(current)
+                spec["case_key"] = f"{prior.case_key}__previous_environment"
+                spec["interactions"] = spec["interactions"][:1]
+                spec["scenario_count"] = 1
+                spec["reuse_environment"] = True
+                spec["source_campaign_id"] = str(previous.id)
+                case_specs.append(spec)
+                prior_links[spec["case_key"]] = prior.hosted_harness_job
+                if len(prior_links) == compatibility_count:
+                    break
     for spec in case_specs:
         _materialized_agent(spec)
 
@@ -212,6 +279,7 @@ def create_campaign(
                             deployment_id, digest, spec["case_key"]
                         ),
                         spec=spec,
+                        hosted_harness_job=prior_links.get(spec["case_key"]),
                     )
                 enqueue_notification(
                     campaign,
@@ -342,7 +410,7 @@ def build_case_job_payload(case, campaign) -> dict:
         "schema_version": "futureagi.harness-job.v1",
         "source": src,
         "agent": _materialized_agent(spec),
-        "scenario_count": len(interactions),
+        "scenario_count": spec.get("scenario_count", len(interactions)),
         "seed": interactions[0].get("seed"),
         "runtime": {
             "isolation": "dedicated_vm",
@@ -380,7 +448,7 @@ def build_case_job_payload(case, campaign) -> dict:
                 "suite_digest": campaign.suite_digest,
                 "deployment_id": campaign.deployment_id,
                 "run_test_id": spec["run_test_id"],
-                "authorization": spec["authorization"],
+                "production_call_authorization": spec["authorization"],
                 "interactions": interactions,
             }
         },
@@ -410,14 +478,16 @@ def reconcile_case(case, *, expected_terminal: str = "completed") -> dict:
         HostedHarnessArtifact,
         HostedHarnessCleanupReceipt,
         HostedHarnessEvent,
+        HostedHarnessExecution,
         HostedHarnessManifest,
         HostedHarnessReceipt,
         HostedHarnessScenario,
     )
 
-    job = case.hosted_harness_job
+    job = case.run_job or case.hosted_harness_job
     spec = case.spec
     interactions = spec.get("interactions") or []
+    expected_executions = int(spec.get("scenario_count") or len(interactions))
     voice = spec.get("run_test_id") in _VOICE_RUN_TESTS
 
     checks: dict[str, dict] = {}
@@ -511,18 +581,45 @@ def reconcile_case(case, *, expected_terminal: str = "completed") -> dict:
     }
 
     if expected_terminal == "completed":
-        for interaction in interactions:
-            scenario_key = interaction["scenario_key"]
+        execution_manifest = ((job.payload or {}).get("metadata") or {}).get(
+            "execution_manifest"
+        ) or []
+        _record(
+            "execution_manifest",
+            not case.run_job_id or len(execution_manifest) == expected_executions,
+            f"entries={len(execution_manifest)} expected={expected_executions}",
+        )
+        evidence_targets = execution_manifest or [
+            {"scenario_key": item["scenario_key"]} for item in interactions
+        ]
+        for index, target in enumerate(evidence_targets):
+            interaction = interactions[index] if index < len(interactions) else {}
+            scenario_key = target["scenario_key"]
+            execution_key = target.get("execution_key")
             prefix = f"scenario:{scenario_key}"
-            scenario = HostedHarnessScenario.no_workspace_objects.filter(
-                job=job, scenario_key=scenario_key
-            ).first()
+            if execution_key:
+                execution = (
+                    HostedHarnessExecution.no_workspace_objects.filter(
+                        job=job,
+                        execution_key=execution_key,
+                        source_scenario__scenario_key=scenario_key,
+                    )
+                    .select_related("source_scenario", "call_execution")
+                    .first()
+                )
+                scenario = execution.source_scenario if execution else None
+            else:
+                scenario = HostedHarnessScenario.no_workspace_objects.filter(
+                    job=job, scenario_key=scenario_key
+                ).first()
+                execution = (
+                    scenario.executions.filter(job=job)
+                    .select_related("call_execution")
+                    .first()
+                    if scenario is not None
+                    else None
+                )
             _record(f"{prefix}:registration", scenario is not None)
-            execution = (
-                scenario.executions.select_related("call_execution").first()
-                if scenario is not None
-                else None
-            )
             _record(
                 f"{prefix}:execution",
                 execution is not None and execution.call_execution_id is not None,
@@ -638,7 +735,7 @@ def classify_job_failure(job) -> str:
 def _failed_receipt_sub_goals(case) -> list[dict]:
     from simulate.models import HostedHarnessReceipt
 
-    job = case.hosted_harness_job
+    job = case.run_job or case.hosted_harness_job
     if job is None:
         return []
     attempt = job.attempts.filter(attempt_number=job.current_attempt_number).first()
