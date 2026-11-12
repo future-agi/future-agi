@@ -471,12 +471,22 @@ export interface AccountsStringResultResponseApi {
   result: string;
 }
 
+export type CreateSecretKeyApiType =
+  (typeof CreateSecretKeyApiType)[keyof typeof CreateSecretKeyApiType];
+
+export const CreateSecretKeyApiType = {
+  user: "user",
+  coding_agent: "coding_agent",
+} as const;
+
 export interface CreateSecretKeyApi {
   /**
    * @minLength 1
    * @maxLength 100
    */
   key_name: string;
+  type?: CreateSecretKeyApiType;
+  simulation_environment_id?: string;
 }
 
 export interface SecretKeyCreateResultApi {
@@ -2643,6 +2653,8 @@ export interface GatewaySummaryResultApi {
   base_url: string;
   /** @minLength 1 */
   status: string;
+  /** Completion time of this request's live health probe, including unreachable results. */
+  last_health_check: string;
   provider_count?: number;
   model_count?: number;
 }
@@ -2824,6 +2836,8 @@ export type GatewayHealthResultApiHealth = { [key: string]: unknown };
 export interface GatewayHealthResultApi {
   /** @minLength 1 */
   status: string;
+  /** Completion time of this request's live health probe. */
+  last_health_check: string;
   health?: GatewayHealthResultApiHealth;
   providers: GatewayConfiguredProvidersApi;
   provider_count: number;
@@ -2833,6 +2847,58 @@ export interface GatewayHealthResultApi {
 export interface GatewayHealthResponseApi {
   status: boolean;
   result: GatewayHealthResultApi;
+}
+
+export type GatewayHealthErrorResponseApiType =
+  (typeof GatewayHealthErrorResponseApiType)[keyof typeof GatewayHealthErrorResponseApiType];
+
+export const GatewayHealthErrorResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type GatewayHealthErrorResponseApiDetails = { [key: string]: string[] };
+
+export type GatewayHealthErrorResultApiStatus =
+  (typeof GatewayHealthErrorResultApiStatus)[keyof typeof GatewayHealthErrorResultApiStatus];
+
+export const GatewayHealthErrorResultApiStatus = {
+  unreachable: "unreachable",
+} as const;
+
+export type GatewayHealthErrorResultApi =
+  | string
+  | {
+      status: GatewayHealthErrorResultApiStatus;
+      error: string;
+      /** Completion time of this request's failed live health probe. */
+      last_health_check: string;
+    };
+
+/**
+ * Failed probes return a result object with status (unreachable), error, and last_health_check (ISO 8601 completion time). Request validation and other errors return a string result without a probe timestamp.
+ */
+export interface GatewayHealthErrorResponseApi {
+  status?: boolean;
+  type?: GatewayHealthErrorResponseApiType;
+  code?: string;
+  detail?: string;
+  result: GatewayHealthErrorResultApi;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: GatewayHealthErrorResponseApiDetails;
 }
 
 export type GatewayMCPStatusResultApiServersItem = { [key: string]: unknown };
@@ -8579,15 +8645,90 @@ export interface LiteLLMModelVoicesResponseApi {
   result: LiteLLMModelVoicesResultApi;
 }
 
-export type ModelHubPaginatedResponseApiResultsItem = {
-  [key: string]: unknown;
-};
+export interface DecisionConnectionApi {
+  /** @minLength 1 */
+  model_name: string;
+  /** @minLength 1 */
+  provider: string;
+  /** @minLength 1 */
+  label: string;
+  is_available: boolean;
+}
 
-export interface ModelHubPaginatedResponseApi {
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiBestFor = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiUseCase = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiCutoff = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiRateLimits = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiLatency = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ModelListEntryApiPricing = JsonValueApi;
+
+export interface ModelListEntryApi {
+  /** @minLength 1 */
+  model_name: string;
+  /** @minLength 1 */
+  label?: string;
+  /** @minLength 1 */
+  author?: string;
+  /** @minLength 1 */
+  version?: string;
+  question_types?: string[];
+  /** @minimum 1 */
+  min_choices?: number;
+  /** @minimum 1 */
+  max_choices?: number;
+  /** @minimum 1 */
+  max_state_bytes?: number;
+  notice?: string;
+  /** @minLength 1 */
+  unavailable_reason?: string | null;
+  connections?: DecisionConnectionApi[];
+  /** @minLength 1 */
+  type: string;
+  providers?: string;
+  is_available?: boolean;
+  logo_url?: string | null;
+  /** Any valid JSON value. */
+  best_for?: ModelListEntryApiBestFor;
+  /** Any valid JSON value. */
+  use_case?: ModelListEntryApiUseCase;
+  /** Any valid JSON value. */
+  cutoff?: ModelListEntryApiCutoff;
+  /** Any valid JSON value. */
+  rate_limits?: ModelListEntryApiRateLimits;
+  /** Any valid JSON value. */
+  latency?: ModelListEntryApiLatency;
+  /** Any valid JSON value. */
+  pricing?: ModelListEntryApiPricing;
+}
+
+export interface ModelListResponseApi {
   count: number;
-  next?: string;
-  previous?: string;
-  results: ModelHubPaginatedResponseApiResultsItem[];
+  next?: string | null;
+  previous?: string | null;
+  results: ModelListEntryApi[];
 }
 
 export type CellErrorLocalizerResultApiErrorAnalysis = {
@@ -8817,6 +8958,17 @@ export interface CustomMetricTestResponseApi {
   /** @minLength 1 */
   status: string;
   prompts?: CustomMetricTestResponseApiPrompts;
+}
+
+export type ModelHubPaginatedResponseApiResultsItem = {
+  [key: string]: unknown;
+};
+
+export interface ModelHubPaginatedResponseApi {
+  count: number;
+  next?: string;
+  previous?: string;
+  results: ModelHubPaginatedResponseApiResultsItem[];
 }
 
 export interface CustomAIModelApi {
@@ -9970,45 +10122,45 @@ export interface PromptConfigApi {
    * @minimum 0
    * @maximum 2
    */
-  temperature?: number;
+  temperature?: number | null;
   /**
    * Penalty for word repetition. Value between -2 and 2.
    * @minimum -2
    * @maximum 2
    */
-  frequency_penalty?: number;
+  frequency_penalty?: number | null;
   /**
    * Penalty for new word usage. Value between -2 and 2.
    * @minimum -2
    * @maximum 2
    */
-  presence_penalty?: number;
+  presence_penalty?: number | null;
   /**
    * Maximum number of tokens to generate. Null = use provider default.
    * @minimum 1
    * @maximum 65536
    */
-  max_tokens?: number;
+  max_tokens?: number | null;
   /**
    * Controls diversity via nucleus sampling. Value between 0 and 1.
    * @minimum 0
    * @maximum 1
    */
-  top_p?: number;
+  top_p?: number | null;
   /** String or JSON object. */
-  response_format?: PromptConfigApiResponseFormat;
+  response_format?: PromptConfigApiResponseFormat | null;
   /** Tool selection mode: 'auto' or 'required'. */
-  tool_choice?: PromptConfigApiToolChoice;
+  tool_choice?: PromptConfigApiToolChoice | null;
   /** List of tools with tool properties if available. */
-  tools?: PromptConfigApiToolsItem[];
+  tools?: PromptConfigApiToolsItem[] | null;
   /** Output format type. */
-  output_format?: PromptConfigApiOutputFormat;
+  output_format?: PromptConfigApiOutputFormat | null;
   /**
    * Number of concurrent operations allowed. Maximum 10.
    * @minimum 1
    * @maximum 10
    */
-  concurrency?: number;
+  concurrency?: number | null;
 }
 
 export interface AddRunPromptApi {
@@ -15554,7 +15706,7 @@ export type TestEvalTemplateApiInputDataTypes = { [key: string]: unknown };
 /**
  * Any valid JSON value.
  */
-export type TestEvalTemplateApiVariableKeys = { [key: string]: unknown };
+export type TestEvalTemplateApiVariableKeys = JsonValueApi;
 
 export type TestEvalTemplateApiMapping = { [key: string]: unknown };
 
@@ -18103,7 +18255,7 @@ export interface AgentFixLaunchApi {
    * @minimum 1
    * @maximum 1440
    */
-  max_minutes: number;
+  max_minutes?: number;
 }
 
 export interface AgentFixLaunchSourceRunApi {
@@ -20104,6 +20256,78 @@ export interface HarnessEnvironmentRunEvaluationsQueuedApi {
   call_execution_count: number;
 }
 
+export interface HarnessVerifyCreateApi {
+  /** The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts. */
+  agent_version_id: string;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials?: number;
+}
+
+export type HarnessVerifyCreateResponseApiState =
+  (typeof HarnessVerifyCreateResponseApiState)[keyof typeof HarnessVerifyCreateResponseApiState];
+
+export const HarnessVerifyCreateResponseApiState = {
+  received: "received",
+  queued: "queued",
+  admitted: "admitted",
+  provisioning: "provisioning",
+  running: "running",
+  finalizing: "finalizing",
+  cleaning_up: "cleaning_up",
+  retry_wait: "retry_wait",
+  completed: "completed",
+  failed: "failed",
+  canceled: "canceled",
+} as const;
+
+export interface HarnessVerifyCreateResponseApi {
+  verify_id: string;
+  state: HarnessVerifyCreateResponseApiState;
+}
+
+export type HarnessVerifyResultApiState =
+  (typeof HarnessVerifyResultApiState)[keyof typeof HarnessVerifyResultApiState];
+
+export const HarnessVerifyResultApiState = {
+  received: "received",
+  queued: "queued",
+  admitted: "admitted",
+  provisioning: "provisioning",
+  running: "running",
+  finalizing: "finalizing",
+  cleaning_up: "cleaning_up",
+  retry_wait: "retry_wait",
+  completed: "completed",
+  failed: "failed",
+  canceled: "canceled",
+} as const;
+
+export interface HarnessVerifyResultApi {
+  state: HarnessVerifyResultApiState;
+  /** @minimum 0 */
+  passed: number;
+  /** @minimum 0 */
+  failed: number;
+  /** @minimum 0 */
+  total: number;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials: number;
+  /**
+   * 95% range of the trial pass rate, [low, high]; null until it ends.
+   * @minItems 2
+   * @maxItems 2
+   */
+  held_back_pass_rate: number[];
+  /** Too few cases were held back to call a version verified. */
+  limited_validation: boolean;
+}
+
 export interface HarnessAgentConfigChangeApi {
   /**
    * @minLength 1
@@ -20131,6 +20355,8 @@ export interface HarnessAgentVersionCreateApi {
    */
   prompt?: string;
   agent_payload?: HarnessAgentPayloadChangeApi;
+  /** False only checks the new version: once it passes, a run can pick it and a move makes it the default. Omitted, it is true, except for a coding agent key, whose push is never the default. */
+  make_default?: boolean;
 }
 
 export interface HarnessAgentCredentialsResponseApi {
@@ -25764,6 +25990,19 @@ export const RunCallApiCsatStatus = {
   skipped: "skipped",
 } as const;
 
+export type RunCallApiFailureDomain =
+  (typeof RunCallApiFailureDomain)[keyof typeof RunCallApiFailureDomain];
+
+export const RunCallApiFailureDomain = {
+  agent: "agent",
+  simulator: "simulator",
+  environment: "environment",
+  connectivity: "connectivity",
+  infrastructure: "infrastructure",
+  grading: "grading",
+  platform_sync: "platform_sync",
+} as const;
+
 export interface RunCallApi {
   id: string;
   /** @minLength 1 */
@@ -25812,6 +26051,9 @@ export interface RunCallApi {
   csat_status: RunCallApiCsatStatus;
   /** @minLength 1 */
   csat_reason: string;
+  failure_domain: RunCallApiFailureDomain;
+  /** @minLength 1 */
+  failure_code: string;
 }
 
 export type GroupAggregatesApiEvaluations = { [key: string]: unknown };
@@ -31062,6 +31304,7 @@ export const ObservationSpanApiObservationType = {
   guardrail: "guardrail",
   evaluator: "evaluator",
   conversation: "conversation",
+  internal: "internal",
 } as const;
 
 export type ObservationSpanApiInput = { [key: string]: unknown };
@@ -31318,7 +31561,7 @@ export const CostCoverageApiStatus = {
   unknown: "unknown",
 } as const;
 
-export interface CostCoverageApi {
+export type CostCoverageApi = {
   status: CostCoverageApiStatus;
   /**
    * Sum in USD of known observed contributions, never an average.
@@ -31335,7 +31578,7 @@ export interface CostCoverageApi {
    * @minimum 0
    */
   unknown_fact_count: number;
-}
+};
 
 /**
  * Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.
@@ -32436,6 +32679,96 @@ export interface GenerateScenarioApi {
   generate_graph?: boolean;
 }
 
+export type SQLSavedApiVisibility =
+  (typeof SQLSavedApiVisibility)[keyof typeof SQLSavedApiVisibility];
+
+export const SQLSavedApiVisibility = {
+  private: "private",
+  project: "project",
+} as const;
+
+export type SQLSavedApiChart = { [key: string]: unknown };
+
+export interface SQLSavedApi {
+  readonly id?: string;
+  readonly project_id?: string;
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly sql?: string;
+  readonly visibility?: SQLSavedApiVisibility;
+  readonly chart?: SQLSavedApiChart;
+  readonly window_hours?: number;
+  readonly created_at?: string;
+  readonly created_by_id?: string;
+}
+
+export interface SQLSavedListApi {
+  items: SQLSavedApi[];
+  has_more: boolean;
+}
+
+export type SQLSaveApiVisibility =
+  (typeof SQLSaveApiVisibility)[keyof typeof SQLSaveApiVisibility];
+
+export const SQLSaveApiVisibility = {
+  private: "private",
+  project: "project",
+} as const;
+
+export type SQLChartApiType =
+  (typeof SQLChartApiType)[keyof typeof SQLChartApiType];
+
+export const SQLChartApiType = {
+  table: "table",
+  bar: "bar",
+} as const;
+
+export interface SQLChartApi {
+  type?: SQLChartApiType;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  x?: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  y?: string;
+}
+
+export interface SQLSaveApi {
+  project_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 160
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 32768
+   */
+  sql: string;
+  visibility?: SQLSaveApiVisibility;
+  chart?: SQLChartApi;
+  /**
+   * @minimum 1
+   * @maximum 744
+   */
+  window_hours?: number;
+}
+
+export interface SQLWidgetApi {
+  project_id: string;
+  dashboard_id: string;
+}
+
+export interface SQLWidgetResponseApi {
+  id: string;
+  dashboard_id: string;
+}
+
 export interface SavedViewDefaultTabApi {
   /** @minLength 1 */
   key: string;
@@ -32946,7 +33279,7 @@ export const CaptureCoverageApiScope = {
   observed_requests: "observed_requests",
 } as const;
 
-export interface CaptureCoverageApi {
+export type CaptureCoverageApi = {
   scope: CaptureCoverageApiScope;
   source_summary_present: boolean;
   /**
@@ -32956,7 +33289,7 @@ export interface CaptureCoverageApi {
   request_count: number;
   /** Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness. */
   coverage_unknown: boolean;
-}
+};
 
 export type TraceDetailResultApiTrace = { [key: string]: unknown };
 
@@ -32976,6 +33309,155 @@ export interface TraceDetailResultApi {
 export interface TraceDetailResponseApi {
   status?: boolean;
   result: TraceDetailResultApi;
+}
+
+export type SQLExecutionApiState =
+  (typeof SQLExecutionApiState)[keyof typeof SQLExecutionApiState];
+
+export const SQLExecutionApiState = {
+  queued: "queued",
+  running: "running",
+  succeeded: "succeeded",
+  failed: "failed",
+  cancelled: "cancelled",
+} as const;
+
+export interface SQLColumnApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  type: string;
+}
+
+export type SQLResultApiRowsItemItem = JsonValueApi;
+
+export interface SQLResultApi {
+  columns?: SQLColumnApi[];
+  rows?: SQLResultApiRowsItemItem[][];
+  truncated?: boolean;
+  row_count?: number;
+  result_bytes?: number;
+  elapsed_ms?: number;
+  offset?: number;
+  next_offset?: number | null;
+  has_more?: boolean;
+  page_row_count?: number;
+  previewed?: boolean;
+  retrieval_note?: string;
+}
+
+export interface SQLExecutionApi {
+  id: string;
+  project_id: string;
+  /** @minLength 1 */
+  sql: string;
+  state: SQLExecutionApiState;
+  created_at: string;
+  expires_at: string;
+  finished_at: string | null;
+  reused?: boolean;
+  error: string;
+  result: SQLResultApi;
+  expired: boolean;
+}
+
+export interface SQLHistoryApi {
+  items: SQLExecutionApi[];
+  has_more: boolean;
+}
+
+export interface SQLDatasetApi {
+  available: boolean;
+  unavailable_reason: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  columns: SQLColumnApi[];
+}
+
+export interface SQLExampleApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  sql: string;
+  datasets: string[];
+}
+
+export interface SQLCatalogApi {
+  /** @minLength 1 */
+  identity_semantics: string;
+  version: number;
+  datasets: SQLDatasetApi[];
+  examples: SQLExampleApi[];
+  max_rows: number;
+  max_window_days: number;
+  can_save: boolean;
+}
+
+export interface SQLQueryInputApi {
+  project_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 32768
+   */
+  sql: string;
+  start: string;
+  end: string;
+}
+
+export type SQLEstimateApiStatus =
+  (typeof SQLEstimateApiStatus)[keyof typeof SQLEstimateApiStatus];
+
+export const SQLEstimateApiStatus = {
+  ok: "ok",
+  unavailable: "unavailable",
+} as const;
+
+export interface SQLEstimateSourceApi {
+  /** @minLength 1 */
+  dataset: string;
+  estimated: boolean;
+  parts: number | null;
+  marks: number | null;
+  max_rows: number | null;
+  reason: string;
+}
+
+export interface SQLEstimateApi {
+  status: SQLEstimateApiStatus;
+  reason: string;
+  sources: SQLEstimateSourceApi[];
+  max_rows_to_read: number;
+  exceeds_scan_bound: boolean | null;
+  elapsed_ms: number;
+}
+
+export interface SQLRunSavedApi {
+  project_id: string;
+  saved_query_id: string;
+  start?: string;
+  end?: string;
+}
+
+export interface SQLRunApi {
+  project_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 32768
+   */
+  sql: string;
+  start: string;
+  end: string;
+  reuse?: boolean;
+}
+
+export interface SQLProjectApi {
+  project_id: string;
 }
 
 export type TraceAnnotationValueResponseApiAnnotationValue = {
@@ -35637,6 +36119,9 @@ export interface AutoReloadSettingsRequestApi {
   autoreload_enabled: boolean;
   autoreload_walletamount: string;
   autoreload_walletthreshold: string;
+  autoreload_maxcharge?: string;
+  autoreload_consent?: boolean;
+  autoreload_charge_now?: boolean;
 }
 
 export type AutoReloadUpdateResponseApiStatus =
@@ -36576,24 +37061,6 @@ export type AgentPlaygroundGraphsExecutionsListParams = {
    * Number of results to return per page.
    */
   limit?: number;
-};
-
-export type AgentPlaygroundGraphsVersionsReadParams = {
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
-};
-
-export type AgentPlaygroundGraphsVersionsRead200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: GraphListApi[];
 };
 
 export type AgentPlaygroundGraphsVersionsReadParams = {
@@ -37616,6 +38083,13 @@ export type ModelHubApiKeysListParams = {
   limit?: number;
 };
 
+export type ModelHubApiModelsListListParams = {
+  name?: string;
+  search?: string;
+  model_type?: string;
+  exclude_providers?: string[];
+};
+
 export type ModelHubDatasetOptimizationListParams = {
   dataset_id?: string;
   column_id?: string;
@@ -37908,24 +38382,6 @@ export type ModelHubExperimentsReadParams = {
   search?: string;
 };
 
-export type ModelHubExperimentsReadParams = {
-  /**
-   * @minimum 1
-   * @maximum 100
-   */
-  page_size?: number;
-  /**
-   * @minimum 0
-   */
-  current_page_index?: number;
-  column_config_only?: boolean;
-  get_diff?: boolean;
-  /**
-   * @maxLength 512
-   */
-  search?: string;
-};
-
 export type ModelHubFeedbackListParams = {
   /**
    * A page number within the paginated result set.
@@ -38030,21 +38486,6 @@ export type ModelHubGetEvalMetricsListParams = {
 };
 
 export type ModelHubKbListParams = {
-  /**
-   * A search term.
-   */
-  search?: string;
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
-};
-
-export type ModelHubKbSupportedEmbeddingModelsParams = {
   /**
    * A search term.
    */
@@ -38203,7 +38644,7 @@ export type ModelHubOrganizationsUsersList200 = {
 export type ModelHubPerformanceTagDistributionCreate200Result = {
   good?: string[][];
   bad?: string[][];
-  [key: string]: string[][];
+  [key: string]: string[][] | undefined;
 };
 
 export type ModelHubPerformanceTagDistributionCreate200 = {
@@ -40774,6 +41215,23 @@ export type TracerProjectProjectSdkCode200 = {
   results: ProjectApi[];
 };
 
+export type TracerSavedSqlQueryListParams = {
+  project_id: string;
+  /**
+   * @minimum 0
+   * @maximum 10000
+   */
+  offset?: number;
+};
+
+export type TracerSavedSqlQueryReadParams = {
+  project_id: string;
+};
+
+export type TracerSavedSqlQueryDeleteParams = {
+  project_id: string;
+};
+
 export type TracerSavedViewsListParams = {
   /**
    * A page number within the paginated result set.
@@ -40809,6 +41267,47 @@ export type TracerSharedSidebarListParams = {
    */
   trace_id?: string;
 };
+
+export type TracerSqlQueryListParams = {
+  project_id: string;
+  /**
+   * @minimum 0
+   * @maximum 10000
+   */
+  offset?: number;
+};
+
+export type TracerSqlQueryCatalogParams = {
+  project_id: string;
+};
+
+export type TracerSqlQueryReadParams = {
+  project_id: string;
+  /**
+   * @minimum 0
+   * @maximum 10000
+   */
+  offset?: number;
+  /**
+   * Optional bounded result page; omitted REST requests retain the full snapshot. MCP defaults to 100. Wide rows are explicitly previewed; download for full cells.
+   * @minimum 1
+   * @maximum 1000
+   */
+  limit?: number;
+};
+
+export type TracerSqlQueryDownloadParams = {
+  project_id: string;
+  file_format: TracerSqlQueryDownloadFileFormat;
+};
+
+export type TracerSqlQueryDownloadFileFormat =
+  (typeof TracerSqlQueryDownloadFileFormat)[keyof typeof TracerSqlQueryDownloadFileFormat];
+
+export const TracerSqlQueryDownloadFileFormat = {
+  csv: "csv",
+  parquet: "parquet",
+} as const;
 
 export type TracerTraceAnnotationGetAnnotationValuesParams = {
   /**

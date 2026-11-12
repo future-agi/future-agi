@@ -290,11 +290,16 @@ if has_ee("ee.cloud.control_plane") and is_cloud_env():
 # Site ID for django.contrib.sites
 SITE_ID = 1
 
+STARTUP_SCHEMA_GUARD_ENABLED = os.getenv(
+    "STARTUP_SCHEMA_GUARD_ENABLED", "false"
+).strip().lower() in ("true", "1", "yes")
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",  #
     "tfc.middleware.cors_origin.OriginCheckMiddleware",
+    "tfc.middleware.schema_readiness.SchemaReadinessMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -1109,7 +1114,8 @@ AGENT_FIX_ENGINE_COMMAND = os.getenv(
 # for each check run side by side). Two claims can race past a cap by a few fixes.
 AGENT_FIX_MAX_RUNNING = int(os.getenv("AGENT_FIX_MAX_RUNNING", "10"))
 AGENT_FIX_MAX_RUNNING_PER_ORG = int(os.getenv("AGENT_FIX_MAX_RUNNING_PER_ORG", "3"))
-# How long a fix may wait for room before it fails, free to retry.
+# How long a fix may wait for room before it fails, free to retry; a fix whose time limit
+# plus AGENT_FIX_TOKEN_GRACE_SECONDS is longer waits that long instead.
 AGENT_FIX_MAX_QUEUED_SECONDS = int(os.getenv("AGENT_FIX_MAX_QUEUED_SECONDS", "3600"))
 # Sandboxes one fix may use in all; an engine that dies is started again after a pause.
 AGENT_FIX_MAX_SANDBOX_ATTEMPTS = int(os.getenv("AGENT_FIX_MAX_SANDBOX_ATTEMPTS", "3"))
@@ -1646,6 +1652,17 @@ del _runtime_numeric_settings
 # CH-direct stacks set it to `tracer_eval_logger_v2`). See
 # tracer/services/clickhouse/v2/schema/011_eval_logger_v2.sql + docs/CH25_MIGRATION.md.
 CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
+
+# Operational SQL workbench budgets, not edition/pricing entitlements.
+from .sql_workbench import (  # noqa: E402,F401
+    SQL_WORKBENCH_AUDIT_RETENTION_DAYS,
+    SQL_WORKBENCH_ESTIMATES_PER_MINUTE,
+    SQL_WORKBENCH_MAX_ACTOR_QUERIES_24H,
+    SQL_WORKBENCH_MAX_ACTOR_RESULT_BYTES_24H,
+    SQL_WORKBENCH_MAX_ORG_QUERIES_24H,
+    SQL_WORKBENCH_MAX_ORG_RESULT_BYTES_24H,
+    SQL_WORKBENCH_RESULT_CACHE_SECONDS,
+)
 
 # Where the eval runner reads span data from.
 #   "postgres"   — current behavior; reads from tracer_observation_span (Django ORM)
