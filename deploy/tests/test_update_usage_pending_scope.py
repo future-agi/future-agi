@@ -51,6 +51,7 @@ LATEST = (
     ('simulate','0102_agent_fix_engine_notes'),
     ('simulate','0103_harness_job_verify_of'),
     ('simulate','0104_agent_fix_variations'),
+    ('simulate','0105_harness_job_fix_eval_cost'),
 ) + SQL_ADDITIONS
 FLOOR_ONLY = (
     ('simulate','0099_harness_versioning'),('simulate','0100_agent_fix'),
@@ -60,7 +61,7 @@ FLOOR_ONLY = (
 )
 
 
-BASELINES = ((REVISIONS[1], LATEST, 30), (REVISIONS[0], LATEST + FLOOR_ONLY, 35))
+BASELINES = ((REVISIONS[1], LATEST, 31), (REVISIONS[0], LATEST + FLOOR_ONLY, 36))
 
 
 def added_migration_identities(revision):
