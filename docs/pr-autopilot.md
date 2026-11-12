@@ -688,8 +688,8 @@ would have started a push run:
   when the merge changes a file their push filters name, for example any
   backend Python test;
 - `e2e-harness-selftest.yml` (E2E Harness Self-tests) when the merge changes
-  an e2e flow spec (`e2e/**` in its push filter). It reached `dev` on 10 Nov
-  2026 (f634c456);
+  an e2e flow spec (`e2e/**` in its push filter). It reached `dev` on 12 Nov
+  2026 (#3935);
 - for frontend paths only, `frontend-develop.yml` and `frontend-dev-cdn.yaml`;
 - the CDN dispatch respects `DEV_CDN_AUTO_DEPLOY=false`, and always passes
   `branch: dev`, `repair_spa_routes: false`. This is necessary because that

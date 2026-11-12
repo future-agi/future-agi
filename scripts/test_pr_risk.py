@@ -2624,6 +2624,26 @@ class ControllerTests(unittest.TestCase):
             risk.merge(self.api, POLICY, settings(), context, self.api.approver)
         self.assertFalse(self.not_withdrawn_notes())
 
+    def test_an_approval_without_an_id_is_handed_to_a_person_when_the_head_moved(self):
+        # Without the review's ID nothing can be dismissed safely, so a person is asked.
+        for moved in (True, False):
+            with self.subTest(moved=moved):
+                self.api = FakeGitHub()
+                context = self.passing_review()
+                post = self.api.approver.request
+
+                def no_id(method, route, data=None, **kwargs):
+                    result = post(method, route, data, **kwargs)
+                    return {key: value for key, value in result.items() if key != "id"}
+
+                self.api.approver.request = no_id
+                self.api.after_approval = (lambda api: api.pr["head"].update(sha=OTHER)) if moved \
+                    else (lambda api: api.pr.update(mergeable_state="blocked"))
+                with self.assertRaises(risk.PolicyError):
+                    risk.merge(self.api, POLICY, settings(), context, self.api.approver)
+                self.assertFalse(self.api.approver.dismissals())
+                self.assertEqual(len(self.not_withdrawn_notes()), 1 if moved else 0)
+
     def test_a_branch_pushed_back_to_a_withdrawn_head_waits_as_a_hold(self):
         # Chosen on purpose: the withdrawal leaves a dismissed App approval of
         # the reviewed head, so pushing that head back does not buy a retry.
