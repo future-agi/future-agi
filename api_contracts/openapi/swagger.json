@@ -76961,7 +76961,12 @@
                 ],
                 "responses": {
                     "204": {
-                        "description": "Media cookie set"
+                        "description": "Media cookie set",
+                        "schema": {
+                            "type": "string",
+                            "maxLength": 0,
+                            "x-nullable": true
+                        }
                     },
                     "400": {
                         "description": "F01 Error",
@@ -77566,7 +77571,12 @@
                 ],
                 "responses": {
                     "204": {
-                        "description": "Deleted"
+                        "description": "Deleted",
+                        "schema": {
+                            "type": "string",
+                            "maxLength": 0,
+                            "x-nullable": true
+                        }
                     },
                     "400": {
                         "description": "F01 Error",
@@ -77740,7 +77750,12 @@
                 ],
                 "responses": {
                     "204": {
-                        "description": "Accepted"
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "string",
+                            "maxLength": 0,
+                            "x-nullable": true
+                        }
                     },
                     "400": {
                         "description": "F01 Error",

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1139,
+  endpointCount: 1153,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -43664,6 +43664,102 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/v1/attachment-media-sessions": {
+      post: {
+        operationId: "exchangeAttachmentMediaSession",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentEmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          204: {
+            type: "string",
+            maxLength: 0,
+            "x-nullable": true,
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/attachment-media/{occurrence_id}/{grant_id}": {
+      get: {
+        operationId: "getAttachmentMedia",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/attachment-sessions": {
+      post: {
+        operationId: "bootstrapAttachmentSession",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentBootstrapRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AttachmentBootstrapResponse",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/v1/health": {
       get: {
         operationId: "tracer_v1_health_list",
@@ -43677,6 +43773,571 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           500: {
             $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/imports": {
+      post: {
+        operationId: "importAttachment",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentImportRequest",
+        },
+        queryParameters: {},
+        responses: {
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/imports/{job_id}/status": {
+      get: {
+        operationId: "getAttachmentImportStatus",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AttachmentImportStatusResponse",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/occurrences": {
+      get: {
+        operationId: "listAttachmentOccurrences",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          trace_id: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+          span_id: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          cursor: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AttachmentOccurrencePage",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "linkAttachmentOccurrence",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentLinkRequest",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/AttachmentOccurrence",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/occurrences/{occurrence_id}":
+      {
+        delete: {
+          operationId: "deleteAttachmentOccurrence",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            trace_id: {
+              required: true,
+              schema: {
+                type: "string",
+              },
+            },
+            span_id: {
+              required: true,
+              schema: {
+                type: "string",
+              },
+            },
+          },
+          responses: {
+            204: {
+              type: "string",
+              maxLength: 0,
+              "x-nullable": true,
+            },
+            400: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            401: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            403: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            404: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            409: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            413: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            429: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/tracer/v1/projects/{project_id}/attachments/recordings/{recording_id}/manifest":
+      {
+        get: {
+          operationId: "readRecordingManifest",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            trace_id: {
+              required: true,
+              schema: {
+                type: "string",
+              },
+            },
+            span_id: {
+              required: true,
+              schema: {
+                type: "string",
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/AttachmentRecordingManifest",
+            },
+            400: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            401: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            403: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            404: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            409: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            413: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            429: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+        put: {
+          operationId: "updateRecordingManifest",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/AttachmentRecordingManifest",
+          },
+          queryParameters: {},
+          responses: {
+            204: {
+              type: "string",
+              maxLength: 0,
+              "x-nullable": true,
+            },
+            400: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            401: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            403: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            404: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            409: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            413: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            429: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/tracer/v1/projects/{project_id}/attachments/resolve": {
+      post: {
+        operationId: "resolveAttachmentOccurrences",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentResolveRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AttachmentResolveResponse",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/uploads": {
+      post: {
+        operationId: "initializeAttachmentUpload",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentUploadRequest",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/AttachmentUploadResponse",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/abort": {
+      post: {
+        operationId: "abortAttachmentUpload",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentCompleteRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AttachmentStatusResponse",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/complete":
+      {
+        post: {
+          operationId: "completeAttachmentUpload",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/AttachmentCompleteRequest",
+          },
+          queryParameters: {},
+          responses: {
+            202: {
+              $ref: "#/definitions/AttachmentStatusResponse",
+            },
+            400: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            401: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            403: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            404: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            409: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            413: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            429: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/content":
+      {
+        put: {
+          operationId: "streamAttachmentContent",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: {
+            type: "string",
+            format: "binary",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/AttachmentStatusResponse",
+            },
+            400: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            401: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            403: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            404: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            409: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            413: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            429: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/status": {
+      get: {
+        operationId: "attachmentUploadStatus",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AttachmentStatusResponse",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -55140,6 +55801,751 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["add", "set", "remove"],
           default: "add",
+        },
+      },
+    },
+    AttachmentBootstrapRequest: {
+      required: [
+        "schema_versions",
+        "project_name",
+        "project_type",
+        "capture_session_id",
+        "correlation_nonce",
+      ],
+      type: "object",
+      properties: {
+        schema_versions: {
+          type: "array",
+          items: {
+            type: "integer",
+            maximum: 65535,
+            minimum: 1,
+          },
+          maxItems: 8,
+          minItems: 1,
+        },
+        project_name: {
+          title: "Project name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        project_type: {
+          title: "Project type",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        workspace_id: {
+          title: "Workspace id",
+          type: "string",
+          format: "uuid",
+        },
+        capture_session_id: {
+          title: "Capture session id",
+          type: "string",
+          format: "uuid",
+        },
+        correlation_nonce: {
+          title: "Correlation nonce",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AttachmentBootstrapResponse: {
+      required: [
+        "schema_version",
+        "scope",
+        "capture_session_id",
+        "policy",
+        "limits",
+        "expires_at",
+        "transfer_modes",
+      ],
+      type: "object",
+      properties: {
+        schema_version: {
+          title: "Schema version",
+          type: "integer",
+        },
+        scope: {
+          $ref: "#/definitions/AttachmentScope",
+        },
+        capture_session_id: {
+          title: "Capture session id",
+          type: "string",
+          format: "uuid",
+        },
+        policy: {
+          $ref: "#/definitions/AttachmentPolicy",
+        },
+        limits: {
+          $ref: "#/definitions/AttachmentLimits",
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+        },
+        transfer_modes: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    AttachmentCompleteRequest: {
+      required: ["policy_version", "deletion_generation"],
+      type: "object",
+      properties: {
+        policy_version: {
+          title: "Policy version",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        deletion_generation: {
+          title: "Deletion generation",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    AttachmentEmptyRequest: {
+      type: "object",
+      properties: {},
+    },
+    AttachmentError: {
+      required: ["code", "request_id"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          enum: [
+            "queued",
+            "disabled",
+            "bootstrap_pending",
+            "policy_denied",
+            "credential_scope_unsupported",
+            "source_unavailable",
+            "unsampled",
+            "too_large",
+            "queue_full",
+            "unsupported_version",
+            "endpoint_unconfigured",
+            "scope_unresolved",
+            "correlation_unavailable",
+            "redaction_unavailable",
+            "recording_disabled",
+            "binding_pending",
+            "not_found",
+            "conflict",
+            "throttled",
+            "validation_failed",
+            "expired",
+            "deleted",
+            "incomplete",
+            "ready",
+          ],
+        },
+        request_id: {
+          title: "Request id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AttachmentImportRequest: {
+      required: ["source"],
+      type: "object",
+      properties: {
+        mode: {
+          title: "Mode",
+          type: "string",
+          minLength: 1,
+        },
+        recording: {
+          title: "Recording",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        upload: {
+          title: "Upload",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        source: {
+          title: "Source",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+      },
+    },
+    AttachmentImportStatusResponse: {
+      required: ["job_id", "state", "reason"],
+      type: "object",
+      properties: {
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "pending_upload",
+            "importing",
+            "validating",
+            "ready",
+            "failed",
+            "rejected",
+            "expired",
+            "deleted",
+          ],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          enum: [
+            "queued",
+            "disabled",
+            "bootstrap_pending",
+            "policy_denied",
+            "credential_scope_unsupported",
+            "source_unavailable",
+            "unsampled",
+            "too_large",
+            "queue_full",
+            "unsupported_version",
+            "endpoint_unconfigured",
+            "scope_unresolved",
+            "correlation_unavailable",
+            "redaction_unavailable",
+            "recording_disabled",
+            "binding_pending",
+            "not_found",
+            "conflict",
+            "throttled",
+            "validation_failed",
+            "expired",
+            "deleted",
+            "incomplete",
+            "ready",
+          ],
+        },
+      },
+    },
+    AttachmentLinkRequest: {
+      required: [
+        "source_occurrence_id",
+        "source_parent",
+        "target_parent",
+        "occurrence_id",
+        "policy_version",
+        "deletion_generation",
+      ],
+      type: "object",
+      properties: {
+        source_occurrence_id: {
+          title: "Source occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        source_parent: {
+          $ref: "#/definitions/AttachmentParent",
+        },
+        target_parent: {
+          $ref: "#/definitions/AttachmentParent",
+        },
+        occurrence_id: {
+          title: "Occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        policy_version: {
+          title: "Policy version",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        deletion_generation: {
+          title: "Deletion generation",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    AttachmentOccurrence: {
+      required: [
+        "reference",
+        "scope",
+        "parent",
+        "state",
+        "binding",
+        "capture_complete",
+        "policy_version",
+        "deletion_generation",
+        "expires_at",
+      ],
+      type: "object",
+      properties: {
+        reference: {
+          $ref: "#/definitions/AttachmentReference",
+        },
+        scope: {
+          $ref: "#/definitions/AttachmentScope",
+        },
+        parent: {
+          $ref: "#/definitions/AttachmentParent",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "pending_upload",
+            "importing",
+            "validating",
+            "ready",
+            "failed",
+            "rejected",
+            "expired",
+            "deleted",
+          ],
+        },
+        binding: {
+          title: "Binding",
+          type: "string",
+          enum: ["pending", "bound"],
+        },
+        capture_complete: {
+          title: "Capture complete",
+          type: "boolean",
+        },
+        policy_version: {
+          title: "Policy version",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        deletion_generation: {
+          title: "Deletion generation",
+          type: "integer",
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+        },
+        recording_id: {
+          title: "Recording id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AttachmentOccurrencePage: {
+      required: ["items", "next_cursor"],
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AttachmentOccurrence",
+          },
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    AttachmentRecordingManifest: {
+      required: [
+        "schema_version",
+        "recording_id",
+        "timebase",
+        "sample_format",
+        "sample_rate_hz",
+        "channels",
+        "codec",
+        "container",
+        "layout",
+        "tracks",
+        "segments",
+        "gaps",
+        "playout",
+        "capture_complete",
+        "duration_ms",
+      ],
+      type: "object",
+      properties: {
+        schema_version: {
+          title: "Schema version",
+          type: "integer",
+        },
+        recording_id: {
+          title: "Recording id",
+          type: "string",
+          format: "uuid",
+        },
+        timebase: {
+          title: "Timebase",
+          type: "string",
+          minLength: 1,
+        },
+        sample_format: {
+          title: "Sample format",
+          type: "string",
+          minLength: 1,
+        },
+        sample_rate_hz: {
+          title: "Sample rate hz",
+          type: "integer",
+        },
+        channels: {
+          title: "Channels",
+          type: "integer",
+        },
+        codec: {
+          title: "Codec",
+          type: "string",
+          minLength: 1,
+        },
+        container: {
+          title: "Container",
+          type: "string",
+          minLength: 1,
+        },
+        layout: {
+          title: "Layout",
+          type: "string",
+          enum: ["mixed", "stereo", "separate_tracks"],
+        },
+        tracks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AttachmentTrack",
+          },
+        },
+        segments: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AttachmentSegment",
+          },
+        },
+        gaps: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AttachmentGap",
+          },
+        },
+        playout: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AttachmentPlayout",
+          },
+        },
+        capture_complete: {
+          title: "Capture complete",
+          type: "boolean",
+        },
+        duration_ms: {
+          title: "Duration ms",
+          type: "integer",
+        },
+      },
+    },
+    AttachmentResolveRequest: {
+      required: ["items"],
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AttachmentResolveItem",
+          },
+        },
+      },
+    },
+    AttachmentResolveResponse: {
+      required: ["items"],
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AttachmentResolveResult",
+          },
+        },
+      },
+    },
+    AttachmentStatusResponse: {
+      required: ["upload_id", "state", "reason"],
+      type: "object",
+      properties: {
+        upload_id: {
+          title: "Upload id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "pending_upload",
+            "importing",
+            "validating",
+            "ready",
+            "failed",
+            "rejected",
+            "expired",
+            "deleted",
+          ],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          enum: [
+            "queued",
+            "disabled",
+            "bootstrap_pending",
+            "policy_denied",
+            "credential_scope_unsupported",
+            "source_unavailable",
+            "unsampled",
+            "too_large",
+            "queue_full",
+            "unsupported_version",
+            "endpoint_unconfigured",
+            "scope_unresolved",
+            "correlation_unavailable",
+            "redaction_unavailable",
+            "recording_disabled",
+            "binding_pending",
+            "not_found",
+            "conflict",
+            "throttled",
+            "validation_failed",
+            "expired",
+            "deleted",
+            "incomplete",
+            "ready",
+          ],
+        },
+      },
+    },
+    AttachmentUploadRequest: {
+      required: [
+        "schema_version",
+        "attachment_id",
+        "occurrence_id",
+        "association",
+        "policy_version",
+        "deletion_generation",
+        "mime_type",
+        "modality",
+        "direction",
+        "source_kind",
+        "declared_bytes",
+      ],
+      type: "object",
+      properties: {
+        schema_version: {
+          title: "Schema version",
+          type: "integer",
+        },
+        attachment_id: {
+          title: "Attachment id",
+          type: "string",
+          format: "uuid",
+        },
+        occurrence_id: {
+          title: "Occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        association: {
+          $ref: "#/definitions/AttachmentAssociation",
+        },
+        policy_version: {
+          title: "Policy version",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        deletion_generation: {
+          title: "Deletion generation",
+          type: "integer",
+          minimum: 0,
+        },
+        mime_type: {
+          title: "Mime type",
+          type: "string",
+          enum: [
+            "audio/wav",
+            "audio/ogg",
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/webm",
+            "audio/flac",
+            "audio/L16",
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "video/mp4",
+            "video/webm",
+            "application/pdf",
+            "application/octet-stream",
+          ],
+        },
+        modality: {
+          title: "Modality",
+          type: "string",
+          enum: ["audio", "image", "video", "document", "file"],
+        },
+        direction: {
+          title: "Direction",
+          type: "string",
+          enum: ["input", "output", "mixed"],
+        },
+        source_kind: {
+          title: "Source kind",
+          type: "string",
+          enum: [
+            "Bytes",
+            "Blob",
+            "RemoteUrl",
+            "LocalFile",
+            "OwnedRecordingFile",
+            "ProviderFile",
+          ],
+        },
+        purpose: {
+          title: "Purpose",
+          type: "string",
+          enum: [
+            "conversation_recording",
+            "turn_recording",
+            "model_input",
+            "model_output",
+            "tool_result",
+            "computer_screenshot",
+            "diagnostic",
+            "document",
+          ],
+        },
+        declared_bytes: {
+          title: "Declared bytes",
+          type: "integer",
+          maximum: 52428800,
+          minimum: 1,
+        },
+        message_index: {
+          title: "Message index",
+          type: "integer",
+        },
+        part_index: {
+          title: "Part index",
+          type: "integer",
+        },
+        recording_id: {
+          title: "Recording id",
+          type: "string",
+          format: "uuid",
+        },
+        segment_index: {
+          title: "Segment index",
+          type: "integer",
+        },
+        conversation_id: {
+          title: "Conversation id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        turn_id: {
+          title: "Turn id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        tool_call_id: {
+          title: "Tool call id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+      },
+    },
+    AttachmentUploadResponse: {
+      required: [
+        "upload_id",
+        "attachment_id",
+        "occurrence_id",
+        "state",
+        "reserved_bytes",
+        "expires_at",
+        "transfer_mode",
+        "write_capability",
+      ],
+      type: "object",
+      properties: {
+        upload_id: {
+          title: "Upload id",
+          type: "string",
+          format: "uuid",
+        },
+        attachment_id: {
+          title: "Attachment id",
+          type: "string",
+          format: "uuid",
+        },
+        occurrence_id: {
+          title: "Occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        reserved_bytes: {
+          title: "Reserved bytes",
+          type: "integer",
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+        },
+        transfer_mode: {
+          title: "Transfer mode",
+          type: "string",
+          minLength: 1,
+        },
+        write_capability: {
+          title: "Write capability",
+          type: "string",
+          maxLength: 4096,
+          minLength: 1,
         },
       },
     },
@@ -95188,6 +96594,441 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description: "List of user's goals for using the platform",
           type: "object",
           "x-nullable": true,
+        },
+      },
+    },
+    AttachmentLimits: {
+      required: [
+        "max_upload_bytes",
+        "segment_bytes",
+        "segment_duration_ms",
+        "recording_bytes",
+        "recording_duration_ms",
+        "active_transfers",
+        "active_recordings",
+        "reserved_bytes",
+        "validation_jobs",
+        "initializations_per_minute",
+        "links_per_minute",
+        "upload_bytes_per_second",
+        "playback_bytes_per_second",
+        "transfer_timeout_seconds",
+        "grant_ttl_seconds",
+        "revocation_check_seconds",
+      ],
+      type: "object",
+      properties: {
+        max_upload_bytes: {
+          title: "Max upload bytes",
+          type: "integer",
+        },
+        segment_bytes: {
+          title: "Segment bytes",
+          type: "integer",
+        },
+        segment_duration_ms: {
+          title: "Segment duration ms",
+          type: "integer",
+        },
+        recording_bytes: {
+          title: "Recording bytes",
+          type: "integer",
+        },
+        recording_duration_ms: {
+          title: "Recording duration ms",
+          type: "integer",
+        },
+        active_transfers: {
+          title: "Active transfers",
+          type: "integer",
+        },
+        active_recordings: {
+          title: "Active recordings",
+          type: "integer",
+        },
+        reserved_bytes: {
+          title: "Reserved bytes",
+          type: "integer",
+        },
+        validation_jobs: {
+          title: "Validation jobs",
+          type: "integer",
+        },
+        initializations_per_minute: {
+          title: "Initializations per minute",
+          type: "integer",
+        },
+        links_per_minute: {
+          title: "Links per minute",
+          type: "integer",
+        },
+        upload_bytes_per_second: {
+          title: "Upload bytes per second",
+          type: "integer",
+        },
+        playback_bytes_per_second: {
+          title: "Playback bytes per second",
+          type: "integer",
+        },
+        transfer_timeout_seconds: {
+          title: "Transfer timeout seconds",
+          type: "integer",
+        },
+        grant_ttl_seconds: {
+          title: "Grant ttl seconds",
+          type: "integer",
+        },
+        revocation_check_seconds: {
+          title: "Revocation check seconds",
+          type: "integer",
+        },
+      },
+    },
+    AttachmentPolicy: {
+      required: [
+        "version",
+        "enabled",
+        "allowed_sources",
+        "allowed_modalities",
+        "require_media_redaction",
+        "require_metadata_removal",
+        "allow_unredacted_media_with_text_pii",
+        "record_audio",
+        "record_video",
+      ],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        enabled: {
+          title: "Enabled",
+          type: "boolean",
+        },
+        allowed_sources: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: [
+              "Bytes",
+              "Blob",
+              "RemoteUrl",
+              "LocalFile",
+              "OwnedRecordingFile",
+              "ProviderFile",
+            ],
+          },
+        },
+        allowed_modalities: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["audio", "image", "video", "document", "file"],
+          },
+        },
+        require_media_redaction: {
+          title: "Require media redaction",
+          type: "boolean",
+        },
+        require_metadata_removal: {
+          title: "Require metadata removal",
+          type: "boolean",
+        },
+        allow_unredacted_media_with_text_pii: {
+          title: "Allow unredacted media with text pii",
+          type: "boolean",
+        },
+        record_audio: {
+          title: "Record audio",
+          type: "boolean",
+        },
+        record_video: {
+          title: "Record video",
+          type: "boolean",
+        },
+      },
+    },
+    AttachmentScope: {
+      required: ["organization_id", "workspace_id", "project_id"],
+      type: "object",
+      properties: {
+        organization_id: {
+          title: "Organization id",
+          type: "string",
+          format: "uuid",
+        },
+        workspace_id: {
+          title: "Workspace id",
+          type: "string",
+          format: "uuid",
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AttachmentParent: {
+      required: ["trace_id", "span_id"],
+      type: "object",
+      properties: {
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          maxLength: 36,
+          minLength: 1,
+        },
+        span_id: {
+          title: "Span id",
+          type: "string",
+          maxLength: 16,
+          minLength: 1,
+        },
+      },
+    },
+    AttachmentReference: {
+      required: [
+        "attachment_id",
+        "occurrence_id",
+        "direction",
+        "modality",
+        "mime_type",
+      ],
+      type: "object",
+      properties: {
+        attachment_id: {
+          title: "Attachment id",
+          type: "string",
+          format: "uuid",
+        },
+        occurrence_id: {
+          title: "Occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        direction: {
+          title: "Direction",
+          type: "string",
+          enum: ["input", "output", "mixed"],
+        },
+        modality: {
+          title: "Modality",
+          type: "string",
+          enum: ["audio", "image", "video", "document", "file"],
+        },
+        mime_type: {
+          title: "Mime type",
+          type: "string",
+          enum: [
+            "audio/wav",
+            "audio/ogg",
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/webm",
+            "audio/flac",
+            "audio/L16",
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "video/mp4",
+            "video/webm",
+            "application/pdf",
+            "application/octet-stream",
+          ],
+        },
+        purpose: {
+          title: "Purpose",
+          type: "string",
+          enum: [
+            "conversation_recording",
+            "turn_recording",
+            "model_input",
+            "model_output",
+            "tool_result",
+            "computer_screenshot",
+            "diagnostic",
+            "document",
+          ],
+        },
+      },
+    },
+    AttachmentGap: {
+      required: ["start_ms", "duration_ms", "reason"],
+      type: "object",
+      properties: {
+        start_ms: {
+          title: "Start ms",
+          type: "integer",
+        },
+        duration_ms: {
+          title: "Duration ms",
+          type: "integer",
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+        },
+        track_id: {
+          title: "Track id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AttachmentPlayout: {
+      required: ["start_ms", "duration_ms", "evidence"],
+      type: "object",
+      properties: {
+        start_ms: {
+          title: "Start ms",
+          type: "integer",
+        },
+        duration_ms: {
+          title: "Duration ms",
+          type: "integer",
+        },
+        evidence: {
+          title: "Evidence",
+          type: "string",
+          enum: ["generated", "played", "unknown", "truncated"],
+        },
+      },
+    },
+    AttachmentSegment: {
+      required: ["occurrence_id", "index", "start_ms", "duration_ms"],
+      type: "object",
+      properties: {
+        occurrence_id: {
+          title: "Occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        index: {
+          title: "Index",
+          type: "integer",
+        },
+        start_ms: {
+          title: "Start ms",
+          type: "integer",
+        },
+        duration_ms: {
+          title: "Duration ms",
+          type: "integer",
+        },
+        track_id: {
+          title: "Track id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AttachmentTrack: {
+      required: ["track_id", "channels", "direction", "role"],
+      type: "object",
+      properties: {
+        track_id: {
+          title: "Track id",
+          type: "string",
+          format: "uuid",
+        },
+        channels: {
+          type: "array",
+          items: {
+            type: "integer",
+          },
+        },
+        direction: {
+          title: "Direction",
+          type: "string",
+          enum: ["input", "output", "mixed"],
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          enum: ["user", "assistant", "mixed", "unknown"],
+        },
+      },
+    },
+    AttachmentResolveItem: {
+      required: ["occurrence_id", "parent", "representation"],
+      type: "object",
+      properties: {
+        occurrence_id: {
+          title: "Occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        parent: {
+          $ref: "#/definitions/AttachmentParent",
+        },
+        representation: {
+          title: "Representation",
+          type: "string",
+          enum: ["original", "playable", "channel", "peaks", "thumbnail"],
+        },
+        channel: {
+          title: "Channel",
+          type: "integer",
+          maximum: 31,
+          minimum: 0,
+        },
+      },
+    },
+    AttachmentResolveResult: {
+      required: ["occurrence_id", "status"],
+      type: "object",
+      properties: {
+        occurrence_id: {
+          title: "Occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "ready",
+            "not_found",
+            "pending",
+            "failed",
+            "expired",
+            "deleted",
+          ],
+        },
+        gateway_path: {
+          title: "Gateway path",
+          type: "string",
+          maxLength: 194,
+          minLength: 1,
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    AttachmentAssociation: {
+      required: ["capture_session_id", "correlation_nonce", "parent"],
+      type: "object",
+      properties: {
+        capture_session_id: {
+          title: "Capture session id",
+          type: "string",
+          format: "uuid",
+        },
+        correlation_nonce: {
+          title: "Correlation nonce",
+          type: "string",
+          format: "uuid",
+        },
+        parent: {
+          $ref: "#/definitions/AttachmentParent",
         },
       },
     },

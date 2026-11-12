@@ -82356,11 +82356,11 @@ export type tracerSavedSqlQueryListResponseDefault = {
 
 export type tracerSavedSqlQueryListResponseSuccess =
   tracerSavedSqlQueryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryListResponseError =
   tracerSavedSqlQueryListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryListResponse =
@@ -82414,11 +82414,11 @@ export type tracerSavedSqlQueryCreateResponseDefault = {
 
 export type tracerSavedSqlQueryCreateResponseSuccess =
   tracerSavedSqlQueryCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryCreateResponseError =
   tracerSavedSqlQueryCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryCreateResponse =
@@ -82456,11 +82456,11 @@ export type tracerSavedSqlQueryReadResponseDefault = {
 
 export type tracerSavedSqlQueryReadResponseSuccess =
   tracerSavedSqlQueryReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryReadResponseError =
   tracerSavedSqlQueryReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryReadResponse =
@@ -82516,11 +82516,11 @@ export type tracerSavedSqlQueryPartialUpdateResponseDefault = {
 
 export type tracerSavedSqlQueryPartialUpdateResponseSuccess =
   tracerSavedSqlQueryPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryPartialUpdateResponseError =
   tracerSavedSqlQueryPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryPartialUpdateResponse =
@@ -82559,11 +82559,11 @@ export type tracerSavedSqlQueryDeleteResponseDefault = {
 
 export type tracerSavedSqlQueryDeleteResponseSuccess =
   tracerSavedSqlQueryDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryDeleteResponseError =
   tracerSavedSqlQueryDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryDeleteResponse =
@@ -82619,11 +82619,11 @@ export type tracerSavedSqlQueryAddWidgetResponseDefault = {
 
 export type tracerSavedSqlQueryAddWidgetResponseSuccess =
   tracerSavedSqlQueryAddWidgetResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedSqlQueryAddWidgetResponseError =
   tracerSavedSqlQueryAddWidgetResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedSqlQueryAddWidgetResponse =
@@ -83619,11 +83619,11 @@ export type tracerSqlQueryListResponseDefault = {
 
 export type tracerSqlQueryListResponseSuccess =
   tracerSqlQueryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryListResponseError =
   tracerSqlQueryListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryListResponse =
@@ -83678,11 +83678,11 @@ export type tracerSqlQueryCatalogResponseDefault = {
 
 export type tracerSqlQueryCatalogResponseSuccess =
   tracerSqlQueryCatalogResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryCatalogResponseError =
   tracerSqlQueryCatalogResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryCatalogResponse =
@@ -83739,11 +83739,11 @@ export type tracerSqlQueryEstimateResponseDefault = {
 
 export type tracerSqlQueryEstimateResponseSuccess =
   tracerSqlQueryEstimateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryEstimateResponseError =
   tracerSqlQueryEstimateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryEstimateResponse =
@@ -83784,11 +83784,11 @@ export type tracerSqlQueryRunSavedResponseDefault = {
 
 export type tracerSqlQueryRunSavedResponseSuccess =
   tracerSqlQueryRunSavedResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryRunSavedResponseError =
   tracerSqlQueryRunSavedResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryRunSavedResponse =
@@ -83828,11 +83828,11 @@ export type tracerSqlQueryRunResponseDefault = {
 };
 
 export type tracerSqlQueryRunResponseSuccess = tracerSqlQueryRunResponse202 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerSqlQueryRunResponseError =
   tracerSqlQueryRunResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryRunResponse =
@@ -83870,11 +83870,11 @@ export type tracerSqlQueryReadResponseDefault = {
 
 export type tracerSqlQueryReadResponseSuccess =
   tracerSqlQueryReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryReadResponseError =
   tracerSqlQueryReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryReadResponse =
@@ -83933,11 +83933,11 @@ export type tracerSqlQueryCancelResponseDefault = {
 
 export type tracerSqlQueryCancelResponseSuccess =
   tracerSqlQueryCancelResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryCancelResponseError =
   tracerSqlQueryCancelResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSqlQueryCancelResponse =
@@ -83994,7 +83994,7 @@ export type tracerSqlQueryDownloadResponseDefault = {
 
 export type tracerSqlQueryDownloadResponseSuccess =
   tracerSqlQueryDownloadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSqlQueryDownloadResponseError = (
   | tracerSqlQueryDownloadResponse409
@@ -84002,7 +84002,7 @@ export type tracerSqlQueryDownloadResponseError = (
   | tracerSqlQueryDownloadResponse503
   | tracerSqlQueryDownloadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerSqlQueryDownloadResponse =
@@ -88176,7 +88176,7 @@ export const tracerUsersGetCodeExampleList = async (
 };
 
 export type exchangeAttachmentMediaSessionResponse204 = {
-  data: void;
+  data: string;
   status: 204;
 };
 
@@ -88225,7 +88225,7 @@ export type exchangeAttachmentMediaSessionResponseDefault = {
 
 export type exchangeAttachmentMediaSessionResponseSuccess =
   exchangeAttachmentMediaSessionResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type exchangeAttachmentMediaSessionResponseError = (
   | exchangeAttachmentMediaSessionResponse400
@@ -88237,7 +88237,7 @@ export type exchangeAttachmentMediaSessionResponseError = (
   | exchangeAttachmentMediaSessionResponse429
   | exchangeAttachmentMediaSessionResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type exchangeAttachmentMediaSessionResponse =
@@ -88302,7 +88302,7 @@ export type getAttachmentMediaResponseSuccess = (
   | getAttachmentMediaResponse200
   | getAttachmentMediaResponse206
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type getAttachmentMediaResponseError = (
   | getAttachmentMediaResponse304
@@ -88311,7 +88311,7 @@ export type getAttachmentMediaResponseError = (
   | getAttachmentMediaResponse429
   | getAttachmentMediaResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type getAttachmentMediaResponse =
@@ -88392,7 +88392,7 @@ export type bootstrapAttachmentSessionResponseDefault = {
 
 export type bootstrapAttachmentSessionResponseSuccess =
   bootstrapAttachmentSessionResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type bootstrapAttachmentSessionResponseError = (
   | bootstrapAttachmentSessionResponse400
@@ -88404,7 +88404,7 @@ export type bootstrapAttachmentSessionResponseError = (
   | bootstrapAttachmentSessionResponse429
   | bootstrapAttachmentSessionResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type bootstrapAttachmentSessionResponse =
@@ -88525,7 +88525,7 @@ export type importAttachmentResponseDefault = {
 };
 
 export type importAttachmentResponseSuccess = importAttachmentResponse202 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type importAttachmentResponseError = (
   | importAttachmentResponse400
@@ -88537,7 +88537,7 @@ export type importAttachmentResponseError = (
   | importAttachmentResponse429
   | importAttachmentResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type importAttachmentResponse =
@@ -88620,7 +88620,7 @@ export type getAttachmentImportStatusResponseDefault = {
 
 export type getAttachmentImportStatusResponseSuccess =
   getAttachmentImportStatusResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type getAttachmentImportStatusResponseError = (
   | getAttachmentImportStatusResponse400
@@ -88632,7 +88632,7 @@ export type getAttachmentImportStatusResponseError = (
   | getAttachmentImportStatusResponse429
   | getAttachmentImportStatusResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type getAttachmentImportStatusResponse =
@@ -88710,7 +88710,7 @@ export type listAttachmentOccurrencesResponseDefault = {
 
 export type listAttachmentOccurrencesResponseSuccess =
   listAttachmentOccurrencesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type listAttachmentOccurrencesResponseError = (
   | listAttachmentOccurrencesResponse400
@@ -88722,7 +88722,7 @@ export type listAttachmentOccurrencesResponseError = (
   | listAttachmentOccurrencesResponse429
   | listAttachmentOccurrencesResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type listAttachmentOccurrencesResponse =
@@ -88816,7 +88816,7 @@ export type linkAttachmentOccurrenceResponseDefault = {
 
 export type linkAttachmentOccurrenceResponseSuccess =
   linkAttachmentOccurrenceResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type linkAttachmentOccurrenceResponseError = (
   | linkAttachmentOccurrenceResponse400
@@ -88828,7 +88828,7 @@ export type linkAttachmentOccurrenceResponseError = (
   | linkAttachmentOccurrenceResponse429
   | linkAttachmentOccurrenceResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type linkAttachmentOccurrenceResponse =
@@ -88856,7 +88856,7 @@ export const linkAttachmentOccurrence = async (
 };
 
 export type deleteAttachmentOccurrenceResponse204 = {
-  data: void;
+  data: string;
   status: 204;
 };
 
@@ -88905,7 +88905,7 @@ export type deleteAttachmentOccurrenceResponseDefault = {
 
 export type deleteAttachmentOccurrenceResponseSuccess =
   deleteAttachmentOccurrenceResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type deleteAttachmentOccurrenceResponseError = (
   | deleteAttachmentOccurrenceResponse400
@@ -88917,7 +88917,7 @@ export type deleteAttachmentOccurrenceResponseError = (
   | deleteAttachmentOccurrenceResponse429
   | deleteAttachmentOccurrenceResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type deleteAttachmentOccurrenceResponse =
@@ -89013,7 +89013,7 @@ export type readRecordingManifestResponseDefault = {
 
 export type readRecordingManifestResponseSuccess =
   readRecordingManifestResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type readRecordingManifestResponseError = (
   | readRecordingManifestResponse400
@@ -89025,7 +89025,7 @@ export type readRecordingManifestResponseError = (
   | readRecordingManifestResponse429
   | readRecordingManifestResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type readRecordingManifestResponse =
@@ -89072,7 +89072,7 @@ export const readRecordingManifest = async (
 };
 
 export type updateRecordingManifestResponse204 = {
-  data: void;
+  data: string;
   status: 204;
 };
 
@@ -89121,7 +89121,7 @@ export type updateRecordingManifestResponseDefault = {
 
 export type updateRecordingManifestResponseSuccess =
   updateRecordingManifestResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type updateRecordingManifestResponseError = (
   | updateRecordingManifestResponse400
@@ -89133,7 +89133,7 @@ export type updateRecordingManifestResponseError = (
   | updateRecordingManifestResponse429
   | updateRecordingManifestResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type updateRecordingManifestResponse =
@@ -89214,7 +89214,7 @@ export type resolveAttachmentOccurrencesResponseDefault = {
 
 export type resolveAttachmentOccurrencesResponseSuccess =
   resolveAttachmentOccurrencesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type resolveAttachmentOccurrencesResponseError = (
   | resolveAttachmentOccurrencesResponse400
@@ -89226,7 +89226,7 @@ export type resolveAttachmentOccurrencesResponseError = (
   | resolveAttachmentOccurrencesResponse429
   | resolveAttachmentOccurrencesResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type resolveAttachmentOccurrencesResponse =
@@ -89303,7 +89303,7 @@ export type initializeAttachmentUploadResponseDefault = {
 
 export type initializeAttachmentUploadResponseSuccess =
   initializeAttachmentUploadResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type initializeAttachmentUploadResponseError = (
   | initializeAttachmentUploadResponse400
@@ -89315,7 +89315,7 @@ export type initializeAttachmentUploadResponseError = (
   | initializeAttachmentUploadResponse429
   | initializeAttachmentUploadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type initializeAttachmentUploadResponse =
@@ -89392,7 +89392,7 @@ export type abortAttachmentUploadResponseDefault = {
 
 export type abortAttachmentUploadResponseSuccess =
   abortAttachmentUploadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type abortAttachmentUploadResponseError = (
   | abortAttachmentUploadResponse400
@@ -89404,7 +89404,7 @@ export type abortAttachmentUploadResponseError = (
   | abortAttachmentUploadResponse429
   | abortAttachmentUploadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type abortAttachmentUploadResponse =
@@ -89485,7 +89485,7 @@ export type completeAttachmentUploadResponseDefault = {
 
 export type completeAttachmentUploadResponseSuccess =
   completeAttachmentUploadResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type completeAttachmentUploadResponseError = (
   | completeAttachmentUploadResponse400
@@ -89497,7 +89497,7 @@ export type completeAttachmentUploadResponseError = (
   | completeAttachmentUploadResponse429
   | completeAttachmentUploadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type completeAttachmentUploadResponse =
@@ -89578,7 +89578,7 @@ export type streamAttachmentContentResponseDefault = {
 
 export type streamAttachmentContentResponseSuccess =
   streamAttachmentContentResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type streamAttachmentContentResponseError = (
   | streamAttachmentContentResponse400
@@ -89590,7 +89590,7 @@ export type streamAttachmentContentResponseError = (
   | streamAttachmentContentResponse429
   | streamAttachmentContentResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type streamAttachmentContentResponse =
@@ -89674,7 +89674,7 @@ export type attachmentUploadStatusResponseDefault = {
 
 export type attachmentUploadStatusResponseSuccess =
   attachmentUploadStatusResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type attachmentUploadStatusResponseError = (
   | attachmentUploadStatusResponse400
@@ -89686,7 +89686,7 @@ export type attachmentUploadStatusResponseError = (
   | attachmentUploadStatusResponse429
   | attachmentUploadStatusResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type attachmentUploadStatusResponse =
