@@ -12,9 +12,9 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def denial_for(code):
-    from tfc.utils.evaluation_denials import EvaluationRateLimited
     from ee.usage.exceptions import UsageLimitExceeded
     from ee.usage.schemas.events import CheckResult
+    from tfc.utils.evaluation_denials import EvaluationRateLimited
 
     if code == "rate_limited":
         return EvaluationRateLimited()
@@ -29,9 +29,9 @@ def denial_for(code):
 
 @pytest.fixture
 def temporal_case(monkeypatch, organization, workspace):
-    from model_hub.models.evals_metric import EvalTemplate
-    from simulate.models import SimulateEvalConfig, RunTest
     from ee.agenthub.fix_your_agent import fix_your_agent as optimizer
+    from model_hub.models.evals_metric import EvalTemplate
+    from simulate.models import RunTest, SimulateEvalConfig
     from tfc.temporal.agent_prompt_optimiser import eval_activities as tasks
 
     template = EvalTemplate.no_workspace_objects.create(
@@ -170,8 +170,8 @@ def test_denial_blocks_baseline_and_candidate_generation(
     monkeypatch, temporal_case, code, mixed
 ):
     """Drive the real optimizer through its baseline and trial callbacks."""
-    from tfc.utils.evaluation_denials import EvaluationDenied
     from ee.agent_opt.optimizers import random_search
+    from tfc.utils.evaluation_denials import EvaluationDenied
 
     case = temporal_case
     install_judge(monkeypatch, case, code)
@@ -180,9 +180,9 @@ def test_denial_blocks_baseline_and_candidate_generation(
         AgentOptimiser,
         AgentOptimiserRun,
         AgentPromptOptimiserRun,
-        TestExecution,
         CallExecution,
         Scenarios,
+        TestExecution,
     )
     from simulate.models.prompt_trial import PromptTrial
     from simulate.models.trial_item_result import TrialItemResult
@@ -314,9 +314,11 @@ def test_simulation_optimizer_activity_denial_is_terminal(
     """Run the real activity/workflow to prove the agent path also stops retries."""
     import asyncio
     from uuid import uuid4
+
     from temporalio import activity
     from temporalio.testing import WorkflowEnvironment
-    from temporalio.worker import Worker, UnsandboxedWorkflowRunner
+    from temporalio.worker import UnsandboxedWorkflowRunner, Worker
+
     from simulate.models import (
         AgentOptimiser,
         AgentOptimiserRun,
@@ -324,11 +326,11 @@ def test_simulation_optimizer_activity_denial_is_terminal(
         TestExecution,
     )
     from tfc.temporal.agent_prompt_optimiser import activities
-    from tfc.temporal.agent_prompt_optimiser.workflows import (
-        AgentPromptOptimiserWorkflow,
-    )
     from tfc.temporal.agent_prompt_optimiser.types import (
         RunAgentPromptOptimiserWorkflowInput,
+    )
+    from tfc.temporal.agent_prompt_optimiser.workflows import (
+        AgentPromptOptimiserWorkflow,
     )
 
     case = temporal_case

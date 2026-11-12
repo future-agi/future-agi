@@ -9,13 +9,13 @@ import pytest
 
 pytest.importorskip("optuna")  # Optional agent-optimizer extra.
 from temporalio import activity
-from temporalio.worker import (
-    Interceptor,
-    ActivityInboundInterceptor,
-    Worker,
-    UnsandboxedWorkflowRunner,
-)
 from temporalio.testing import WorkflowEnvironment
+from temporalio.worker import (
+    ActivityInboundInterceptor,
+    Interceptor,
+    UnsandboxedWorkflowRunner,
+    Worker,
+)
 
 
 class AttemptInterceptor(Interceptor):
@@ -53,7 +53,7 @@ def make_run(
     algorithm="random_search",
     optimizer_config=None,
 ):
-    from model_hub.models.develop_dataset import Dataset, Row, Column, Cell
+    from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
     from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
     from model_hub.models.optimize_dataset import OptimizeDataset
     from model_hub.utils.dataset_optimization import create_dataset_optimization_steps
@@ -167,10 +167,10 @@ def execute_workflow(run, observed):
 def test_terminal_denial_must_not_retry(
     monkeypatch, organization, workspace, code, phase
 ):
-    from ee.agenthub.fix_your_agent.direct_evaluator import DirectEvaluator
     from ee.agent_opt.optimizers import random_search
-    from model_hub.views.utils import evals
+    from ee.agenthub.fix_your_agent.direct_evaluator import DirectEvaluator
     from model_hub.models.dataset_optimization_trial import DatasetOptimizationTrial
+    from model_hub.views.utils import evals
     from tfc.temporal.dataset_optimization import activities
 
     run, allowed_template, denied_template = make_run(organization, workspace)

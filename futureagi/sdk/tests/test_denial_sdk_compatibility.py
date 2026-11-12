@@ -16,7 +16,13 @@ from tfc.utils.evaluation_denials import EvaluationRateLimited
     "existing_record", [False, True], ids=["new-denial", "legacy-denial"]
 )
 def test_async_denial_runtime_is_sdk_compatible(
-    sdk_client, user, organization, workspace, eval_template, code, existing_record
+    sdk_client,  # noqa: F811
+    user,
+    organization,
+    workspace,
+    eval_template,  # noqa: F811
+    code,
+    existing_record,
 ):
     from model_hub.models.evaluation import Evaluation
     from tfc.temporal.evaluations.activities import _run_single_evaluation_sync
@@ -100,7 +106,7 @@ def test_async_denial_runtime_is_sdk_compatible(
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("empty", ["", "   ", None])
-def test_empty_required_input_is_400_before_metering(sdk_client, eval_template, empty):
+def test_empty_required_input_is_400_before_metering(sdk_client, eval_template, empty):  # noqa: F811
     with (
         patch(
             "sdk.utils.evaluations._log_and_deduct_cost_for_standalone_eval"
@@ -123,7 +129,7 @@ def test_empty_required_input_is_400_before_metering(sdk_client, eval_template, 
 
 
 @pytest.mark.django_db
-def test_nonempty_required_input_still_executes(sdk_client, eval_template):
+def test_nonempty_required_input_still_executes(sdk_client, eval_template):  # noqa: F811
     from types import SimpleNamespace
 
     result = SimpleNamespace(
