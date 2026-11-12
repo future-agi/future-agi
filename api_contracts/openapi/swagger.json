@@ -52017,7 +52017,7 @@
         "/simulate/api/harness-environments/{id}/evidence-imports/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_evidence_imports",
-                "description": "Freeze Observe sessions or calls as evidence for this environment's\ntests; returns what each holds and lacks, and what redaction would\nreplace. Nothing is drafted or run.",
+                "description": "Freeze Observe sessions or calls, or store transcripts a person added,\nas evidence for this environment's tests; returns what each holds and\nlacks, and what redaction replaces. Nothing is drafted or run.",
                 "parameters": [
                     {
                         "name": "data",
@@ -141955,29 +141955,63 @@
                 }
             }
         },
-        "EvidenceImportCreate": {
+        "EvidenceTranscriptInput": {
             "required": [
-                "project_id",
-                "source_kind",
-                "ids"
+                "name",
+                "format",
+                "text"
             ],
             "type": "object",
             "properties": {
-                "project_id": {
-                    "title": "Project id",
+                "name": {
+                    "title": "Name",
+                    "description": "What the person calls it, such as the file's name; redacted before it is stored.",
                     "type": "string",
-                    "format": "uuid"
+                    "maxLength": 120,
+                    "minLength": 1
                 },
+                "format": {
+                    "title": "Format",
+                    "description": "json: a list of {role, content} messages, or {\"messages\": [...]}. text: lines that start \"User:\" or \"Agent:\". csv: a header with a role column and a text column.",
+                    "type": "string",
+                    "enum": [
+                        "json",
+                        "text",
+                        "csv"
+                    ]
+                },
+                "text": {
+                    "title": "Text",
+                    "description": "The transcript as pasted or uploaded.",
+                    "type": "string",
+                    "maxLength": 500000,
+                    "minLength": 1
+                }
+            }
+        },
+        "EvidenceImportCreate": {
+            "required": [
+                "source_kind"
+            ],
+            "type": "object",
+            "properties": {
                 "source_kind": {
                     "title": "Source kind",
                     "type": "string",
                     "enum": [
                         "session",
-                        "call"
+                        "call",
+                        "transcript"
                     ]
                 },
+                "project_id": {
+                    "title": "Project id",
+                    "description": "Session and call imports: the Observe project.",
+                    "type": "string",
+                    "format": "uuid"
+                },
                 "ids": {
-                    "description": "Session ids, or the trace ids of calls, in the order picked.",
+                    "description": "Session and call imports: session ids, or the trace ids of calls, in the order picked.",
                     "type": "array",
                     "items": {
                         "type": "string",
@@ -141985,6 +142019,20 @@
                     },
                     "maxItems": 20,
                     "minItems": 1
+                },
+                "transcripts": {
+                    "description": "Transcript imports: one case each, in this order.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvidenceTranscriptInput"
+                    },
+                    "maxItems": 20,
+                    "minItems": 1
+                },
+                "production": {
+                    "title": "Production",
+                    "description": "Transcript imports: the person says they come from production. Unsaid, they are not called production evidence.",
+                    "type": "boolean"
                 }
             }
         },
@@ -142268,6 +142316,7 @@
             "required": [
                 "id",
                 "source_id",
+                "name",
                 "status",
                 "reason",
                 "source_available",
@@ -142296,6 +142345,11 @@
                     "type": "string",
                     "minLength": 1
                 },
+                "name": {
+                    "title": "Name",
+                    "description": "A transcript's name as the person gave it, redacted; blank for an Observe source.",
+                    "type": "string"
+                },
                 "status": {
                     "title": "Status",
                     "type": "string",
@@ -142313,7 +142367,7 @@
                 },
                 "source_available": {
                     "title": "Source available",
-                    "description": "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands.",
+                    "description": "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
                     "type": "boolean"
                 },
                 "scenario_key": {
@@ -142330,7 +142384,7 @@
                 },
                 "changed_since_import": {
                     "title": "Changed since import",
-                    "description": "Null when unknown: the source is gone, or part of it could not be read now or when the import was made.",
+                    "description": "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
                     "type": "boolean",
                     "x-nullable": true
                 },
@@ -142490,6 +142544,7 @@
                 "source_kind",
                 "created_at",
                 "simulated",
+                "production",
                 "drafting",
                 "cases",
                 "redaction"
@@ -142524,7 +142579,8 @@
                     "type": "string",
                     "enum": [
                         "session",
-                        "call"
+                        "call",
+                        "transcript"
                     ]
                 },
                 "created_at": {
@@ -142535,6 +142591,11 @@
                 "simulated": {
                     "title": "Simulated",
                     "description": "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
+                    "type": "boolean"
+                },
+                "production": {
+                    "title": "Production",
+                    "description": "True for production evidence: an Observe project that is not a Simulator project, or transcripts the person said come from production.",
                     "type": "boolean"
                 },
                 "drafting": {

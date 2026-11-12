@@ -8,7 +8,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from simulate.models import AgentDefinition, HostedHarnessJob
+from simulate.models import AgentDefinition, EvidenceImport, HostedHarnessJob
 from simulate.selectors.evidence_import import (
     environment_evidence_import,
     evidence_project,
@@ -68,8 +68,10 @@ from simulate.serializers.harness_job import (
 )
 from simulate.serializers.response.run_test import SimulateEvalConfigResponseSerializer
 from simulate.services.evidence_import import (
+    TranscriptInput,
     add_to_suite,
     create_evidence_import,
+    create_transcript_import,
 )
 from simulate.services.harness_environment import (
     annotate_for_list,
@@ -499,13 +501,27 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     )
     @action(detail=True, methods=["post"], url_path="evidence-imports")
     def evidence_imports(self, request, pk=None):
-        """Freeze Observe sessions or calls as evidence for this environment's
-        tests; returns what each holds and lacks, and what redaction would
-        replace. Nothing is drafted or run."""
+        """Freeze Observe sessions or calls, or store transcripts a person added,
+        as evidence for this environment's tests; returns what each holds and
+        lacks, and what redaction replaces. Nothing is drafted or run."""
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
         body = request.validated_data
+        if body["source_kind"] == EvidenceImport.SourceKind.TRANSCRIPT:
+            evidence_import = create_transcript_import(
+                environment=job,
+                transcripts=[
+                    TranscriptInput(one["name"], one["format"], one["text"])
+                    for one in body["transcripts"]
+                ],
+                production=body.get("production", False),
+                user=request.user,
+            )
+            return Response(
+                EvidenceImportSerializer(import_bundle(evidence_import)).data,
+                status=status.HTTP_201_CREATED,
+            )
         project = evidence_project(
             project_queryset_for_request(request), job, body["project_id"]
         )

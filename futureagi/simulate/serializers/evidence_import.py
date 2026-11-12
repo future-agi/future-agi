@@ -5,25 +5,95 @@ from rest_framework import serializers
 
 from simulate.models import EvidenceImport, EvidenceImportCase
 from simulate.selectors.evidence_import import MAX_SOURCES
+from simulate.utils.transcript_parse import FORMATS
 
 # unreadable: recorded, but could not be read; missing: not recorded.
 PART_STATUSES = ("present", "partial", "truncated", "missing", "unreadable")
+# One pasted or uploaded transcript. Only what fits the import's size budget is
+# kept, so this bounds the work of reading it, not what is stored.
+MAX_TRANSCRIPT_CHARS = 500_000
+TRANSCRIPT_NAME_CHARS = 120
+
+
+class EvidenceTranscriptInputSerializer(serializers.Serializer):
+    name = serializers.CharField(
+        max_length=TRANSCRIPT_NAME_CHARS,
+        help_text="What the person calls it, such as the file's name; redacted "
+        "before it is stored.",
+    )
+    format = serializers.ChoiceField(
+        choices=FORMATS,
+        help_text='json: a list of {role, content} messages, or {"messages": '
+        '[...]}. text: lines that start "User:" or "Agent:". csv: a header with '
+        "a role column and a text column.",
+    )
+    text = serializers.CharField(
+        max_length=MAX_TRANSCRIPT_CHARS,
+        trim_whitespace=False,
+        help_text="The transcript as pasted or uploaded.",
+    )
 
 
 class EvidenceImportCreateSerializer(serializers.Serializer):
-    project_id = serializers.UUIDField()
+    """An Observe import (session or call) names its project and ids; a
+    transcript import carries its transcripts instead."""
+
+    OBSERVE_FIELDS = ("project_id", "ids")
+    TRANSCRIPT_FIELDS = ("transcripts", "production")
+
     source_kind = serializers.ChoiceField(choices=EvidenceImport.SourceKind.choices)
+    project_id = serializers.UUIDField(
+        required=False, help_text="Session and call imports: the Observe project."
+    )
     ids = serializers.ListField(
         child=serializers.UUIDField(),
         min_length=1,
         max_length=MAX_SOURCES,
-        help_text="Session ids, or the trace ids of calls, in the order picked.",
+        required=False,
+        help_text="Session and call imports: session ids, or the trace ids of "
+        "calls, in the order picked.",
+    )
+    transcripts = serializers.ListField(
+        child=EvidenceTranscriptInputSerializer(),
+        min_length=1,
+        max_length=MAX_SOURCES,
+        required=False,
+        help_text="Transcript imports: one case each, in this order.",
+    )
+    production = serializers.BooleanField(
+        required=False,
+        help_text="Transcript imports: the person says they come from production. "
+        "Unsaid, they are not called production evidence.",
     )
 
     def validate_ids(self, value):
         if len(set(value)) != len(value):
             raise serializers.ValidationError("Each id may appear once.")
         return value
+
+    def validate(self, attrs):
+        transcript = attrs["source_kind"] == EvidenceImport.SourceKind.TRANSCRIPT
+        needed, refused = (
+            (("transcripts",), self.OBSERVE_FIELDS)
+            if transcript
+            else (self.OBSERVE_FIELDS, self.TRANSCRIPT_FIELDS)
+        )
+        kind = attrs["source_kind"]
+        errors = {
+            **{
+                field: [f"A {kind} import needs it."]
+                for field in needed
+                if field not in attrs
+            },
+            **{
+                field: [f"A {kind} import does not take it."]
+                for field in refused
+                if field in attrs
+            },
+        }
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
 
 class EvidencePartSerializer(serializers.Serializer):
@@ -84,11 +154,17 @@ class EvidenceNewCheckSerializer(serializers.Serializer):
 class EvidenceImportCaseSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     source_id = serializers.CharField()
+    name = serializers.CharField(
+        allow_blank=True,
+        help_text="A transcript's name as the person gave it, redacted; blank for "
+        "an Observe source.",
+    )
     status = serializers.ChoiceField(choices=EvidenceImportCase.Status.choices)
     reason = serializers.CharField(allow_blank=True)
     source_available = serializers.BooleanField(
         help_text="False once Observe no longer holds the source: its provenance "
-        "is unavailable, though what became of the case stands."
+        "is unavailable, though what became of the case stands. Always true for "
+        "a transcript, whose text is stored."
     )
     scenario_key = serializers.CharField(
         allow_blank=True, help_text="The drafted scenario's key, once drafted."
@@ -101,7 +177,8 @@ class EvidenceImportCaseSerializer(serializers.Serializer):
     changed_since_import = serializers.BooleanField(
         allow_null=True,
         help_text="Null when unknown: the source is gone, or part of it could not "
-        "be read now or when the import was made.",
+        "be read now or when the import was made. Always null for a transcript, "
+        "which has no source to read again.",
     )
     trace_ids = serializers.ListField(child=serializers.CharField())
     started_at = serializers.DateTimeField(allow_null=True)
@@ -160,6 +237,10 @@ class EvidenceImportSerializer(serializers.Serializer):
     simulated = serializers.BooleanField(
         help_text="True when the sources come from a Simulator project: simulated "
         "conversations, not production evidence."
+    )
+    production = serializers.BooleanField(
+        help_text="True for production evidence: an Observe project that is not a "
+        "Simulator project, or transcripts the person said come from production."
     )
     drafting = serializers.BooleanField(
         help_text="True while the environment's builder is drafting cases."

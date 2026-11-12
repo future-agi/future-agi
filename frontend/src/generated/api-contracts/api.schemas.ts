@@ -19975,17 +19975,56 @@ export type EvidenceImportCreateApiSourceKind =
 export const EvidenceImportCreateApiSourceKind = {
   session: "session",
   call: "call",
+  transcript: "transcript",
 } as const;
 
-export interface EvidenceImportCreateApi {
-  project_id: string;
-  source_kind: EvidenceImportCreateApiSourceKind;
+/**
+ * json: a list of {role, content} messages, or {"messages": [...]}. text: lines that start "User:" or "Agent:". csv: a header with a role column and a text column.
+ */
+export type EvidenceTranscriptInputApiFormat =
+  (typeof EvidenceTranscriptInputApiFormat)[keyof typeof EvidenceTranscriptInputApiFormat];
+
+export const EvidenceTranscriptInputApiFormat = {
+  json: "json",
+  text: "text",
+  csv: "csv",
+} as const;
+
+export interface EvidenceTranscriptInputApi {
   /**
-   * Session ids, or the trace ids of calls, in the order picked.
+   * What the person calls it, such as the file's name; redacted before it is stored.
+   * @minLength 1
+   * @maxLength 120
+   */
+  name: string;
+  /** json: a list of {role, content} messages, or {"messages": [...]}. text: lines that start "User:" or "Agent:". csv: a header with a role column and a text column. */
+  format: EvidenceTranscriptInputApiFormat;
+  /**
+   * The transcript as pasted or uploaded.
+   * @minLength 1
+   * @maxLength 500000
+   */
+  text: string;
+}
+
+export interface EvidenceImportCreateApi {
+  source_kind: EvidenceImportCreateApiSourceKind;
+  /** Session and call imports: the Observe project. */
+  project_id?: string;
+  /**
+   * Session and call imports: session ids, or the trace ids of calls, in the order picked.
    * @minItems 1
    * @maxItems 20
    */
-  ids: string[];
+  ids?: string[];
+  /**
+   * Transcript imports: one case each, in this order.
+   * @minItems 1
+   * @maxItems 20
+   */
+  transcripts?: EvidenceTranscriptInputApi[];
+  /** Transcript imports: the person says they come from production. Unsaid, they are not called production evidence. */
+  production?: boolean;
 }
 
 export type EvidenceImportApiSourceKind =
@@ -19994,6 +20033,7 @@ export type EvidenceImportApiSourceKind =
 export const EvidenceImportApiSourceKind = {
   session: "session",
   call: "call",
+  transcript: "transcript",
 } as const;
 
 export type EvidenceImportCaseApiStatus =
@@ -20147,15 +20187,17 @@ export interface EvidenceImportCaseApi {
   id: string;
   /** @minLength 1 */
   source_id: string;
+  /** A transcript's name as the person gave it, redacted; blank for an Observe source. */
+  name: string;
   status: EvidenceImportCaseApiStatus;
   reason: string;
-  /** False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands. */
+  /** False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored. */
   source_available: boolean;
   /** The drafted scenario's key, once drafted. */
   scenario_key: string;
   /** Checks this case adds to the environment when it is added: each one is new, never a change to an existing check. */
   new_checks: EvidenceNewCheckApi[];
-  /** Null when unknown: the source is gone, or part of it could not be read now or when the import was made. */
+  /** Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again. */
   changed_since_import: boolean;
   trace_ids: string[];
   started_at: string;
@@ -20240,6 +20282,8 @@ export interface EvidenceImportApi {
   created_at: string;
   /** True when the sources come from a Simulator project: simulated conversations, not production evidence. */
   simulated: boolean;
+  /** True for production evidence: an Observe project that is not a Simulator project, or transcripts the person said come from production. */
+  production: boolean;
   /** True while the environment's builder is drafting cases. */
   drafting: boolean;
   cases: EvidenceImportCaseApi[];

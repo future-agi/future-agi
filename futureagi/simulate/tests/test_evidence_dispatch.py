@@ -559,8 +559,8 @@ def test_a_simulator_projects_calls_are_never_called_production(cases, user, sch
     assert "from the simulated calls" in content
     assert "not production" in content
     assert "production evidence" not in content
-    assert evidence_drafts.SHOWN_SIMULATED["failure"] in content
-    assert evidence_drafts.SHOWN_SIMULATED["success"] in content
+    assert evidence_drafts.SHOWN_NOT_PRODUCTION["failure"] in content
+    assert evidence_drafts.SHOWN_NOT_PRODUCTION["success"] in content
     assert "regression" not in content
 
 
@@ -602,3 +602,58 @@ def test_the_draft_answer_says_drafting_has_started(
 
     assert response.status_code == 202, response.content
     assert response.json()["drafting"] is True
+
+
+@pytest.mark.parametrize(
+    "production, opening",
+    [
+        (
+            True,
+            "Draft one regression scenario for each case below from the transcripts",
+        ),
+        (False, "did not say they come from production"),
+    ],
+)
+def test_a_transcript_import_is_drafted_as_the_person_said(
+    environment, user, scheduled, production, opening
+):
+    from simulate.services.evidence_import import (
+        TranscriptInput,
+        create_transcript_import,
+    )
+
+    made = create_transcript_import(
+        environment=environment,
+        transcripts=[
+            TranscriptInput(
+                "Acme escalation", "text", "User: Refund me\nAgent: Done twice."
+            )
+        ],
+        production=production,
+        user=user,
+    )
+    [case] = made.cases.all()
+    conversation = evidence_drafts.start_drafting(
+        made,
+        [str(case.id)],
+        endpoint_base_url=BASE_URL,
+        user=user,
+        shows={str(case.id): "failure"},
+    )
+
+    content = _command(conversation).content
+    assert opening in content
+    assert "(the transcript transcript-1 in the evidence)" in content
+    asks = evidence_drafts.SHOWN if production else evidence_drafts.SHOWN_NOT_PRODUCTION
+    assert asks["failure"] in content
+    assert ("regression" in content) is production
+    # The person's name for it stays out of the turn; the sandbox reads the
+    # stored, redacted text, never Observe.
+    assert "Acme escalation" not in content
+    with patch(
+        "simulate.selectors.evidence_import.observe_evidence",
+        side_effect=AssertionError("Observe was read"),
+    ):
+        document = evidence_drafts.sandbox_evidence(conversation).decode()
+    assert "[turn 2] agent: Done twice." in document
+    assert "transcripts a person added" in document

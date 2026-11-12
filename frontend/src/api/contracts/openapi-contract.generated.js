@@ -63524,6 +63524,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "source_kind",
         "created_at",
         "simulated",
+        "production",
         "drafting",
         "cases",
         "redaction",
@@ -63557,7 +63558,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         source_kind: {
           title: "Source kind",
           type: "string",
-          enum: ["session", "call"],
+          enum: ["session", "call", "transcript"],
         },
         created_at: {
           title: "Created at",
@@ -63568,6 +63569,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Simulated",
           description:
             "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
+          type: "boolean",
+        },
+        production: {
+          title: "Production",
+          description:
+            "True for production evidence: an Observe project that is not a Simulator project, or transcripts the person said come from production.",
           type: "boolean",
         },
         drafting: {
@@ -63627,22 +63634,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     EvidenceImportCreate: {
-      required: ["project_id", "source_kind", "ids"],
+      required: ["source_kind"],
       type: "object",
       properties: {
-        project_id: {
-          title: "Project id",
-          type: "string",
-          format: "uuid",
-        },
         source_kind: {
           title: "Source kind",
           type: "string",
-          enum: ["session", "call"],
+          enum: ["session", "call", "transcript"],
+        },
+        project_id: {
+          title: "Project id",
+          description: "Session and call imports: the Observe project.",
+          type: "string",
+          format: "uuid",
         },
         ids: {
           description:
-            "Session ids, or the trace ids of calls, in the order picked.",
+            "Session and call imports: session ids, or the trace ids of calls, in the order picked.",
           type: "array",
           items: {
             type: "string",
@@ -63650,6 +63658,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           maxItems: 20,
           minItems: 1,
+        },
+        transcripts: {
+          description: "Transcript imports: one case each, in this order.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvidenceTranscriptInput",
+          },
+          maxItems: 20,
+          minItems: 1,
+        },
+        production: {
+          title: "Production",
+          description:
+            "Transcript imports: the person says they come from production. Unsaid, they are not called production evidence.",
+          type: "boolean",
         },
       },
     },
@@ -99553,6 +99576,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: [
         "id",
         "source_id",
+        "name",
         "status",
         "reason",
         "source_available",
@@ -99581,6 +99605,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        name: {
+          title: "Name",
+          description:
+            "A transcript's name as the person gave it, redacted; blank for an Observe source.",
+          type: "string",
+        },
         status: {
           title: "Status",
           type: "string",
@@ -99593,7 +99623,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         source_available: {
           title: "Source available",
           description:
-            "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands.",
+            "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
           type: "boolean",
         },
         scenario_key: {
@@ -99612,7 +99642,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         changed_since_import: {
           title: "Changed since import",
           description:
-            "Null when unknown: the source is gone, or part of it could not be read now or when the import was made.",
+            "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
           type: "boolean",
           "x-nullable": true,
         },
@@ -99695,6 +99725,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         suite: {
           $ref: "#/definitions/EvidenceDraftRef",
+        },
+      },
+    },
+    EvidenceTranscriptInput: {
+      required: ["name", "format", "text"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          description:
+            "What the person calls it, such as the file's name; redacted before it is stored.",
+          type: "string",
+          maxLength: 120,
+          minLength: 1,
+        },
+        format: {
+          title: "Format",
+          description:
+            'json: a list of {role, content} messages, or {"messages": [...]}. text: lines that start "User:" or "Agent:". csv: a header with a role column and a text column.',
+          type: "string",
+          enum: ["json", "text", "csv"],
+        },
+        text: {
+          title: "Text",
+          description: "The transcript as pasted or uploaded.",
+          type: "string",
+          maxLength: 500000,
+          minLength: 1,
         },
       },
     },

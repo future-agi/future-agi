@@ -40196,9 +40196,9 @@ export const SimulateApiHarnessEnvironmentsRemoveEvaluationParams = zod.object({
 });
 
 /**
- * Freeze Observe sessions or calls as evidence for this environment's
-tests; returns what each holds and lacks, and what redaction would
-replace. Nothing is drafted or run.
+ * Freeze Observe sessions or calls, or store transcripts a person added,
+as evidence for this environment's tests; returns what each holds and
+lacks, and what redaction replaces. Nothing is drafted or run.
  */
 export const SimulateApiHarnessEnvironmentsEvidenceImportsParams = zod.object({
   id: zod.string(),
@@ -40206,14 +40206,63 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsParams = zod.object({
 
 export const simulateApiHarnessEnvironmentsEvidenceImportsBodyIdsMax = 20;
 
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsItemNameMax = 120;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsItemTextMax = 500000;
+
+export const simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsMax = 20;
+
 export const SimulateApiHarnessEnvironmentsEvidenceImportsBody = zod.object({
-  project_id: zod.string().uuid(),
-  source_kind: zod.enum(["session", "call"]),
+  source_kind: zod.enum(["session", "call", "transcript"]),
+  project_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe("Session and call imports: the Observe project."),
   ids: zod
     .array(zod.string().uuid())
     .min(1)
     .max(simulateApiHarnessEnvironmentsEvidenceImportsBodyIdsMax)
-    .describe("Session ids, or the trace ids of calls, in the order picked."),
+    .optional()
+    .describe(
+      "Session and call imports: session ids, or the trace ids of calls, in the order picked.",
+    ),
+  transcripts: zod
+    .array(
+      zod.object({
+        name: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsItemNameMax,
+          )
+          .describe(
+            "What the person calls it, such as the file's name; redacted before it is stored.",
+          ),
+        format: zod
+          .enum(["json", "text", "csv"])
+          .describe(
+            'json: a list of {role, content} messages, or {"messages": [...]}. text: lines that start "User:" or "Agent:". csv: a header with a role column and a text column.',
+          ),
+        text: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsItemTextMax,
+          )
+          .describe("The transcript as pasted or uploaded."),
+      }),
+    )
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsEvidenceImportsBodyTranscriptsMax)
+    .optional()
+    .describe("Transcript imports: one case each, in this order."),
+  production: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Transcript imports: the person says they come from production. Unsaid, they are not called production evidence.",
+    ),
 });
 
 /**
@@ -40241,12 +40290,17 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
     .uuid()
     .describe("The Observe project; null for evidence from outside Observe."),
   agent_version_id: zod.string().uuid(),
-  source_kind: zod.enum(["session", "call"]),
+  source_kind: zod.enum(["session", "call", "transcript"]),
   created_at: zod.string().datetime({ offset: true }),
   simulated: zod
     .boolean()
     .describe(
       "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
+    ),
+  production: zod
+    .boolean()
+    .describe(
+      "True for production evidence: an Observe project that is not a Simulator project, or transcripts the person said come from production.",
     ),
   drafting: zod
     .boolean()
@@ -40255,6 +40309,11 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
     zod.object({
       id: zod.string().uuid(),
       source_id: zod.string().min(1),
+      name: zod
+        .string()
+        .describe(
+          "A transcript's name as the person gave it, redacted; blank for an Observe source.",
+        ),
       status: zod.enum([
         "pending",
         "unavailable",
@@ -40266,7 +40325,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
       source_available: zod
         .boolean()
         .describe(
-          "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands.",
+          "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
         ),
       scenario_key: zod
         .string()
@@ -40288,7 +40347,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
       changed_since_import: zod
         .boolean()
         .describe(
-          "Null when unknown: the source is gone, or part of it could not be read now or when the import was made.",
+          "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
         ),
       trace_ids: zod.array(zod.string().min(1)),
       started_at: zod.string().datetime({ offset: true }),
@@ -40522,12 +40581,17 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
           "The Observe project; null for evidence from outside Observe.",
         ),
       agent_version_id: zod.string().uuid(),
-      source_kind: zod.enum(["session", "call"]),
+      source_kind: zod.enum(["session", "call", "transcript"]),
       created_at: zod.string().datetime({ offset: true }),
       simulated: zod
         .boolean()
         .describe(
           "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
+        ),
+      production: zod
+        .boolean()
+        .describe(
+          "True for production evidence: an Observe project that is not a Simulator project, or transcripts the person said come from production.",
         ),
       drafting: zod
         .boolean()
@@ -40536,6 +40600,11 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
         zod.object({
           id: zod.string().uuid(),
           source_id: zod.string().min(1),
+          name: zod
+            .string()
+            .describe(
+              "A transcript's name as the person gave it, redacted; blank for an Observe source.",
+            ),
           status: zod.enum([
             "pending",
             "unavailable",
@@ -40547,7 +40616,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
           source_available: zod
             .boolean()
             .describe(
-              "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands.",
+              "False once Observe no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
             ),
           scenario_key: zod
             .string()
@@ -40569,7 +40638,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
           changed_since_import: zod
             .boolean()
             .describe(
-              "Null when unknown: the source is gone, or part of it could not be read now or when the import was made.",
+              "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
             ),
           trace_ids: zod.array(zod.string().min(1)),
           started_at: zod.string().datetime({ offset: true }),

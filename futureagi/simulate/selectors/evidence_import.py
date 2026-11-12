@@ -1,9 +1,10 @@
 """Reads for an evidence import: which Observe project an environment may take
 evidence from, and the bundle a person reviews before a test is drafted from it.
 
-The bundle is read live from Observe on every view, cut to the import's size
-budget. It says what each source holds and lacks, and what redaction would
-replace before any of it becomes scenario text or seed data.
+An Observe bundle is read live from Observe on every view, cut to the import's
+size budget. A transcript's is its stored text, cut and redacted when it was
+added. The bundle says what each source holds and lacks, and what redaction
+replaces before any of it becomes scenario text or seed data.
 """
 
 from __future__ import annotations
@@ -15,14 +16,23 @@ from dataclasses import asdict, replace
 from django.db.models import Q, QuerySet
 
 from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
+from simulate.pydantic_schemas.evidence_import import (
+    StoredRedaction,
+    StoredTranscript,
+    StoredTurn,
+)
+from simulate.utils.transcript_parse import ParsedTranscript
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.selectors.observe_evidence import (
+    MAX_TURNS,
     Label,
     SourceEvidence,
     SourceKind,
     ToolCall,
     Turn,
+    head_and_tail,
     observe_evidence,
+    recorded_turn,
 )
 from tracer.utils.pii_scrubber import PiiFinding, find_pii, find_pii_basic, redact
 
@@ -50,6 +60,12 @@ BASIC_REDACTION = (
 SOURCE_UNAVAILABLE = "The source was deleted or is no longer kept by Observe."
 SOURCE_NOT_FOUND = "No retained session or call with this id in the project."
 CUT_TO_FIT = "Cut to fit the import's size; the start is kept."
+TRANSCRIPT_NO_TOOLS = "A transcript carries no tool calls."
+TRANSCRIPT_NO_LABELS = "A transcript carries no labels."
+TRANSCRIPT_STATE_MISSING = (
+    "A transcript does not record the records the agent's tools read before the "
+    "conversation. Supply them, or label the starting state synthetic."
+)
 
 
 def evidence_project(
@@ -74,10 +90,25 @@ def evidence_project(
     )
 
 
+def is_transcript(evidence_import: EvidenceImport) -> bool:
+    return evidence_import.source_kind == EvidenceImport.SourceKind.TRANSCRIPT
+
+
 def is_simulated(evidence_import: EvidenceImport) -> bool:
     """Whether the import's sources come from a Simulator project: our own
     simulated conversations, never production evidence."""
-    return evidence_import.project.source == ProjectSourceChoices.SIMULATOR.value
+    project = evidence_import.project
+    return (
+        project is not None and project.source == ProjectSourceChoices.SIMULATOR.value
+    )
+
+
+def is_production(evidence_import: EvidenceImport) -> bool:
+    """Whether the import is production evidence: an Observe project's that is
+    not a Simulator project, or transcripts the person said come from production."""
+    if is_transcript(evidence_import):
+        return evidence_import.declared_production
+    return not is_simulated(evidence_import)
 
 
 def environment_evidence_import(
@@ -109,6 +140,130 @@ def import_evidence(
     }
 
 
+def current_evidence(
+    evidence_import: EvidenceImport, cases: list[EvidenceImportCase]
+) -> dict[str, SourceEvidence]:
+    """What each case's source holds now: Observe read again, or a
+    transcript's stored text."""
+    if is_transcript(evidence_import):
+        return {
+            case.source_id: found
+            for case in cases
+            if (found := _stored_evidence(case)) is not None
+        }
+    return import_evidence(
+        evidence_import.project,
+        evidence_import.source_kind,
+        [case.source_id for case in cases],
+    )
+
+
+def stored_transcripts(
+    named: list[tuple[str, ParsedTranscript]],
+) -> tuple[list[StoredTranscript], StoredRedaction]:
+    """Named transcripts as an import stores them: each cut to its equal share
+    of the import's budget, then every value redaction finds, in the text and
+    in the name, replaced with its token. Nothing unredacted is returned."""
+    share = MAX_IMPORT_CHARS // max(1, len(named))
+    cut = [_cut_transcript(parsed, share) for _, parsed in named]
+    texts = [name for name, _ in named] + [
+        turn.text for source in cut for turn in source.turns
+    ]
+    found, method, reason = _analysed(texts)
+    redacted = iter(
+        [redact(text, hits) for text, hits in zip(texts, found, strict=True)]
+    )
+    names = [next(redacted) for _ in named]
+    stored = [
+        StoredTranscript(
+            name=name,
+            turns=[
+                StoredTurn(
+                    role=turn.role, text=next(redacted), truncated=turn.truncated
+                )
+                for turn in source.turns
+            ],
+            turns_truncated=source.turns_truncated,
+            turns_omitted=source.turns_omitted,
+            left_out=parsed.left_out,
+        )
+        for name, source, (_, parsed) in zip(names, cut, named, strict=True)
+    ]
+    total = sum(len(hits) for hits in found)
+    return stored, StoredRedaction(method=method, reason=reason, total=total)
+
+
+def _cut_transcript(parsed: ParsedTranscript, chars: int) -> SourceEvidence:
+    """A parsed transcript cut as Observe evidence is: each turn to TURN_CHARS,
+    MAX_TURNS turns (the first and last halves), then ``chars`` characters. A
+    cut turn ends at its last whitespace, so no value redaction must find is
+    left in two pieces it cannot recognise."""
+    turns = [
+        turn
+        for one in parsed.turns
+        if (turn := recorded_turn(one.role, one.text, "", None)) is not None
+    ]
+    cut = _within(
+        SourceEvidence(
+            source_id="",
+            trace_ids=(),
+            started_at=None,
+            ended_at=None,
+            turns=head_and_tail(turns, MAX_TURNS),
+            turns_truncated=len(turns) > MAX_TURNS,
+            turns_omitted=max(0, len(turns) - MAX_TURNS),
+            transcript_unreadable=False,
+            tool_calls=(),
+            tool_calls_truncated=False,
+            labels=(),
+        ),
+        chars,
+    )
+    return replace(
+        cut,
+        turns=tuple(
+            replace(turn, text=_to_whitespace(turn.text)) if turn.truncated else turn
+            for turn in cut.turns
+        ),
+    )
+
+
+def _to_whitespace(text: str) -> str:
+    """A cut text ended at its last whitespace; empty when it has none."""
+    end = max(text.rfind(space) for space in " \t\r\n")
+    return text[:end].rstrip() if end > 0 else ""
+
+
+def _stored(case: EvidenceImportCase) -> StoredTranscript | None:
+    return (
+        StoredTranscript.model_validate(case.transcript)
+        if case.transcript is not None
+        else None
+    )
+
+
+def _stored_evidence(case: EvidenceImportCase) -> SourceEvidence | None:
+    stored = _stored(case)
+    if stored is None:
+        return None
+    return SourceEvidence(
+        source_id=case.source_id,
+        trace_ids=(),
+        started_at=None,
+        ended_at=None,
+        turns=tuple(
+            Turn(turn.role, turn.text, turn.truncated, "", None)
+            for turn in stored.turns
+        ),
+        turns_truncated=stored.turns_truncated,
+        turns_omitted=stored.turns_omitted,
+        transcript_unreadable=False,
+        tool_calls=(),
+        tool_calls_truncated=False,
+        labels=(),
+    )
+
+
 def evidence_digest(evidence: SourceEvidence) -> str:
     """A fingerprint of what a source holds, to tell later whether it changed;
     blank when part of it could not be read, since then nobody can tell."""
@@ -122,21 +277,18 @@ def import_bundle(
     evidence_import: EvidenceImport,
     evidence: dict[str, SourceEvidence] | None = None,
 ) -> dict:
-    """The import as the review shows it. ``evidence`` is what Observe holds
-    now for its sources (``import_evidence``); it is read when not given."""
+    """The import as the review shows it. ``evidence`` is what its sources hold
+    now (``current_evidence``); it is read when not given."""
     cases = list(evidence_import.cases.all())
     if evidence is None:
-        evidence = import_evidence(
-            evidence_import.project,
-            evidence_import.source_kind,
-            [case.source_id for case in cases],
-        )
+        evidence = current_evidence(evidence_import, cases)
     # A source the import found nothing for stays unavailable: it was frozen so.
     current = {
         case.source_id: evidence.get(case.source_id)
         for case in cases
         if case.status != EvidenceImportCase.Status.UNAVAILABLE
     }
+    transcript = is_transcript(evidence_import)
     return {
         "id": evidence_import.id,
         "environment_id": evidence_import.environment_id,
@@ -146,8 +298,30 @@ def import_bundle(
         "created_at": evidence_import.created_at,
         "drafting": evidence_import.drafting_job_id is not None,
         "simulated": is_simulated(evidence_import),
-        "cases": [_case(case, current.get(case.source_id)) for case in cases],
-        "redaction": _redaction(cases, current),
+        "production": is_production(evidence_import),
+        "cases": [
+            _case(
+                case, current.get(case.source_id), _stored(case) if transcript else None
+            )
+            for case in cases
+        ],
+        "redaction": (
+            _stored_redaction(evidence_import)
+            if transcript
+            else _redaction(cases, current)
+        ),
+    }
+
+
+def _stored_redaction(evidence_import: EvidenceImport) -> dict:
+    """What redaction replaced when the transcripts were stored. Their values
+    were never kept, so none is listed."""
+    stored = StoredRedaction.model_validate(evidence_import.redaction)
+    return {
+        "method": stored.method,
+        "reason": stored.reason,
+        "findings": [],
+        "total": stored.total,
     }
 
 
@@ -281,7 +455,12 @@ def _cut_labels(labels: tuple[Label, ...], room: int) -> tuple[tuple[Label, ...]
     return tuple(kept), cut
 
 
-def _case(case: EvidenceImportCase, evidence: SourceEvidence | None) -> dict:
+def _case(
+    case: EvidenceImportCase,
+    evidence: SourceEvidence | None,
+    stored: StoredTranscript | None = None,
+) -> dict:
+    """One case as the review shows it; ``stored`` is a transcript case's text."""
     if evidence is None:
         # A drafted, blocked or added case keeps what became of it; only one
         # still waiting reads as unavailable. Its evidence is gone either way.
@@ -294,6 +473,7 @@ def _case(case: EvidenceImportCase, evidence: SourceEvidence | None) -> dict:
         return {
             "id": case.id,
             "source_id": case.source_id,
+            "name": "",
             "status": EvidenceImportCase.Status.UNAVAILABLE if pending else case.status,
             "reason": reason if pending or not case.reason else case.reason,
             "source_available": False,
@@ -311,26 +491,38 @@ def _case(case: EvidenceImportCase, evidence: SourceEvidence | None) -> dict:
             "labels": _part("missing", reason, labels=[]),
         }
     digest = evidence_digest(evidence)
-    return {
+    shown = {
         "id": case.id,
         "source_id": case.source_id,
+        "name": stored.name if stored else "",
         "status": case.status,
         "reason": case.reason,
         "source_available": True,
         "scenario_key": case.scenario_key,
         "new_checks": _new_checks(case),
-        # Unknown when either side could not be read in full.
+        # Unknown when either side could not be read in full. A transcript has
+        # no source to read again, so it is never known.
         "changed_since_import": (
             digest != case.digest if digest and case.digest else None
         ),
         "trace_ids": list(evidence.trace_ids),
         "started_at": evidence.started_at,
         "ended_at": evidence.ended_at,
-        "transcript": _transcript(evidence),
+        "transcript": _transcript(evidence, stored.left_out if stored else 0),
         **_tools(evidence),
         "starting_state": _part("missing", STATE_MISSING),
         "labels": _labels(evidence),
     }
+    if stored is not None:
+        none = _part("missing", TRANSCRIPT_NO_TOOLS)
+        shown |= {
+            "tool_calls": {**none, "calls": []},
+            "tool_inputs": none,
+            "tool_outputs": none,
+            "starting_state": _part("missing", TRANSCRIPT_STATE_MISSING),
+            "labels": _part("missing", TRANSCRIPT_NO_LABELS, labels=[]),
+        }
+    return shown
 
 
 def _new_checks(case: EvidenceImportCase) -> list[dict]:
@@ -344,7 +536,19 @@ def _part(status: str, reason: str = "", **items) -> dict:
     return {"status": status, "reason": reason, **items}
 
 
-def _transcript(evidence: SourceEvidence) -> dict:
+def _transcript(evidence: SourceEvidence, left_out: int = 0) -> dict:
+    """The transcript part; ``left_out`` system or tool messages are named."""
+    part = _turns_part(evidence)
+    if left_out:
+        note = (
+            f"{left_out} system or tool message{'s' if left_out != 1 else ''} "
+            "left out: only what the user and the agent said is kept."
+        )
+        part["reason"] = f"{part['reason']} {note}".strip()
+    return part
+
+
+def _turns_part(evidence: SourceEvidence) -> dict:
     turns = [asdict(turn) for turn in evidence.turns]
     if evidence.transcript_unreadable and not turns:
         return _part(
@@ -504,42 +708,31 @@ def evidence_document(
         and case.status != EvidenceImportCase.Status.UNAVAILABLE
     ]
     if evidence is None:
-        evidence = import_evidence(
-            evidence_import.project,
-            evidence_import.source_kind,
-            [case.source_id for case in cases],
-        )
+        evidence = current_evidence(evidence_import, cases)
     values = _texts(cases, evidence)
-    found, method, reason = _analysed([text for *_, text in values])
-    redacted = {
-        (case.id, part, index, field): redact(text, hits)
-        for (case, part, index, field, text), hits in zip(values, found, strict=True)
-    }
-    kind = evidence_import.source_kind
-    lines = [
-        f"# Evidence import {evidence_import.id}: {kind}s "
-        f"from Observe project {evidence_import.project_id}.",
-        (
-            f"# These {kind}s come from a Simulator project: simulated, not "
-            "production. Never write a case as something a customer did."
-            if is_simulated(evidence_import)
-            else f"# These are production {kind}s: each case is regression evidence."
-        ),
-        "# Personal data is replaced with tokens such as <EMAIL_ADDRESS>."
-        + (f" {reason}" if reason else ""),
-        "# Observe never records the starting state: anything you assume about "
-        "it is synthetic and must be labelled so.",
-        "# Labels are what annotators said: input evidence, not the expected answer.",
-    ]
+    if is_transcript(evidence_import):
+        # Redacted when it was stored.
+        reason = StoredRedaction.model_validate(evidence_import.redaction).reason
+        redacted = {
+            (case.id, part, index, field): text
+            for case, part, index, field, text in values
+        }
+    else:
+        found, _method, reason = _analysed([text for *_, text in values])
+        redacted = {
+            (case.id, part, index, field): redact(text, hits)
+            for (case, part, index, field, text), hits in zip(
+                values, found, strict=True
+            )
+        }
+    lines = _document_head(evidence_import, reason)
     for case in cases:
         source = evidence.get(case.source_id)
         if source is None:
             continue
         lines += [
             "",
-            f"== case {case.id} ({evidence_import.source_kind} {case.source_id}, "
-            f"traces {', '.join(source.trace_ids)}, "
-            f"{source.started_at.isoformat()} to {source.ended_at.isoformat()})",
+            _document_case(evidence_import, case, source),
             f"-- transcript: {_transcript(source)['status']}",
         ]
         for i, turn in enumerate(source.turns):
@@ -571,6 +764,57 @@ def evidence_document(
             if notes:
                 lines += _wrapped(f"[label {i + 1}] notes", notes)
     return "\n".join(lines) + "\n"
+
+
+def _document_head(evidence_import: EvidenceImport, reason: str) -> list[str]:
+    """What the evidence document says before its cases: where the evidence
+    comes from, whether it is production, and what redaction did."""
+    redaction = "# Personal data is replaced with tokens such as <EMAIL_ADDRESS>." + (
+        f" {reason}" if reason else ""
+    )
+    if is_transcript(evidence_import):
+        return [
+            f"# Evidence import {evidence_import.id}: transcripts a person added. "
+            "They are not recordings Observe made: never cite a trace or a call.",
+            (
+                "# The person says they come from production: each case is "
+                "regression evidence."
+                if evidence_import.declared_production
+                else "# The person did not say they come from production. Never "
+                "write a case as something a customer did."
+            ),
+            redaction,
+            "# A transcript records no starting state, tool calls or labels: "
+            "anything you assume about the starting state is synthetic and must "
+            "be labelled so.",
+        ]
+    kind = evidence_import.source_kind
+    return [
+        f"# Evidence import {evidence_import.id}: {kind}s "
+        f"from Observe project {evidence_import.project_id}.",
+        (
+            f"# These {kind}s come from a Simulator project: simulated, not "
+            "production. Never write a case as something a customer did."
+            if is_simulated(evidence_import)
+            else f"# These are production {kind}s: each case is regression evidence."
+        ),
+        redaction,
+        "# Observe never records the starting state: anything you assume about "
+        "it is synthetic and must be labelled so.",
+        "# Labels are what annotators said: input evidence, not the expected answer.",
+    ]
+
+
+def _document_case(
+    evidence_import: EvidenceImport, case: EvidenceImportCase, source: SourceEvidence
+) -> str:
+    if source.started_at is None or source.ended_at is None:
+        return f"== case {case.id} ({evidence_import.source_kind} {case.source_id})"
+    return (
+        f"== case {case.id} ({evidence_import.source_kind} {case.source_id}, "
+        f"traces {', '.join(source.trace_ids)}, "
+        f"{source.started_at.isoformat()} to {source.ended_at.isoformat()})"
+    )
 
 
 def _wrapped(head: str, text: str) -> list[str]:

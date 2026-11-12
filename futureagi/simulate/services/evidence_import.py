@@ -1,5 +1,6 @@
-"""Making an evidence import: the Observe sessions or calls a person picked,
-frozen for one environment so a test can be drafted from them.
+"""Making an evidence import: the Observe sessions or calls a person picked, or
+transcripts they added, frozen for one environment so a test can be drafted
+from them.
 
 Nothing here drafts a scenario or starts a run.
 """
@@ -7,6 +8,7 @@ Nothing here drafts a scenario or starts a run.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 from django.db import transaction
 from django.utils import timezone
@@ -16,11 +18,18 @@ from simulate.selectors.evidence_import import (
     SOURCE_NOT_FOUND,
     evidence_digest,
     import_evidence,
+    stored_transcripts,
 )
 from simulate.services.evidence_drafts import CATALOGUE
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.versions import suite_documents
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.utils.transcript_parse import (
+    Format,
+    ParsedTranscript,
+    TranscriptError,
+    parse_transcript,
+)
 from tracer.models.project import Project
 from tracer.selectors.observe_evidence import SourceEvidence, SourceKind
 
@@ -55,6 +64,67 @@ def create_evidence_import(
             ]
         )
     return evidence_import, evidence
+
+
+@dataclass(frozen=True)
+class TranscriptInput:
+    """One transcript as a person pasted or uploaded it."""
+
+    name: str
+    form: Format
+    text: str
+
+
+def create_transcript_import(
+    *,
+    environment: HostedHarnessJob,
+    transcripts: list[TranscriptInput],
+    production: bool,
+    user,
+) -> EvidenceImport:
+    """Store ``transcripts`` as an import for ``environment``, one case each.
+    Only their redacted text is stored, cut to the import's size, and it lives
+    until the import is deleted. ``production`` is what the person said about
+    where they come from. A transcript that cannot be read refuses the whole
+    import, naming it and its line."""
+    parsed = [_parsed(number, one) for number, one in enumerate(transcripts, 1)]
+    stored, redaction = stored_transcripts(
+        [(one.name, read) for one, read in zip(transcripts, parsed, strict=True)]
+    )
+    with transaction.atomic():
+        evidence_import = EvidenceImport.objects.create(
+            organization_id=environment.organization_id,
+            workspace_id=environment.workspace_id,
+            environment=environment,
+            agent_version_id=environment.agent_version_id,
+            source_kind=EvidenceImport.SourceKind.TRANSCRIPT,
+            declared_production=production,
+            redaction=redaction.model_dump(mode="json"),
+            created_by=user,
+        )
+        EvidenceImportCase.objects.bulk_create(
+            [
+                EvidenceImportCase(
+                    evidence_import=evidence_import,
+                    position=position,
+                    source_id=f"transcript-{position + 1}",
+                    transcript=one.model_dump(mode="json"),
+                )
+                for position, one in enumerate(stored)
+            ]
+        )
+    return evidence_import
+
+
+def _parsed(number: int, transcript: TranscriptInput) -> ParsedTranscript:
+    try:
+        return parse_transcript(transcript.text, transcript.form)
+    except TranscriptError as error:
+        raise HostedHarnessError(
+            "transcript_unreadable",
+            f"Transcript {number} ({transcript.name}): {error}",
+            details={"transcript": number, "line": error.line},
+        ) from None
 
 
 def _case(
