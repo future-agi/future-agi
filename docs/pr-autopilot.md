@@ -525,21 +525,7 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    running; the required checks were already verified above), then calls
    the merge API with the expected head SHA and `merge_method: merge`. GitHub
    remains the final authority for branch protection; no bypass token or
-   `--admin` equivalent is used.
-
-   `dev` does not require up-to-date branches, so GitHub would merge a head
-   that is behind `dev`. The last read before the merge call is therefore the
-   `dev` tip and a compare with the head. If the head no longer contains the
-   tip, the run stops with "head or dev base changed" and merges nothing.
-   The approval stays, because the head did not change. The next run finds
-   the PR behind `dev` and waits until the branch is updated; that push
-   dismisses the approval and the new head is reviewed again. Two gaps
-   remain. If `dev` moves in the moment between that read and the merge
-   call, the PR merges one merge behind `dev`; the post-merge dispatches
-   then run CI on the combined `dev` tip. And while the approval stays on a
-   PR that fell behind `dev`, non-strict protection lets a person, the
-   author included, merge it by hand on that approval without updating the
-   branch, as with any person's approval today. If the state is `blocked` right after the
+   `--admin` equivalent is used. If the state is `blocked` right after the
    approval, the run fails and the next sweep tries again, because GitHub may
    still be catching up. If it is still `blocked` when the approval already
    existed, a rule needs something the autopilot cannot give (a code-owner
@@ -551,6 +537,27 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    dispatch on `dev` with `pr_number` checks at once. The controller does not
    delete the head branch. This repository has `delete_branch_on_merge` on,
    so GitHub deletes it after the merge.
+
+   `dev` does not require up-to-date branches, so GitHub would merge a head
+   that is behind `dev`. The last read before the merge call is therefore the
+   `dev` tip and a compare with the head. If the head no longer contains the
+   tip, the run stops with "head or dev base changed" and merges nothing.
+   The approval stays, because the head did not change. The next run finds
+   the PR behind `dev` and waits until the branch is updated, and the new
+   head is then reviewed again on the new base. Three gaps remain:
+   - If `dev` moves in the moment between that read and the merge call, the
+     PR merges one merge behind `dev`. The post-merge dispatches then run CI
+     on the combined `dev` tip.
+   - While the approval stays on a PR that fell behind `dev`, non-strict
+     protection lets a person, the author included, merge it by hand on that
+     approval without updating the branch, as with any person's approval
+     today.
+   - GitHub's documentation says that merging the base branch into a PR does
+     not dismiss approvals (not tested here). So after "Update branch" the
+     App's approval of the older head may still count. If the review of the
+     new head then blocks or does not finish, the PR shows that approval
+     beside the bot's escalation, and a person can merge on it. A maintainer
+     who wants to stop that dismisses the App's approval.
 
 The review check is **mandatory for the autopilot**, independently of the
 managed Claude review UI/check, which never fails. It is not installed as a

@@ -2718,7 +2718,7 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(self.api.writes("pulls/42/merge"))
         self.assertFalse(self.api.writes("actions/workflows/backend-ci.yml/dispatches"))
         # Same head: the approval stays. The PR is now behind dev, so the next
-        # run waits until the branch is updated, which dismisses the approval.
+        # run waits, spending no review, until the branch is updated.
         [review] = self.api.reviews
         self.assertEqual(review["state"], "APPROVED")
         self.assertFalse(self.api.approver.dismissals())
