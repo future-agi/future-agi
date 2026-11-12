@@ -791,13 +791,13 @@ def test_standalone_recording_facts_follow_the_full_read_gate(setup, user, monke
     assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
     reader = Reader(viewer_for(scope, user), spans)
     target = target_for(scope, row)
-    expected = probe(wav_bytes())
     facts = reader.standalone_recording(object(), target, str(row.client_id))
+    # wav_bytes(): 2 channels at 24 kHz, 240 frames, as the probe validated.
     assert facts == {
         "mime_type": "audio/wav",
-        "sample_rate": expected["sample_rate"],
-        "channels": expected["channels"],
-        "frame_count": expected["frame_count"],
+        "sample_rate": 24000,
+        "channels": 2,
+        "frame_count": 240,
     }
     # The real Voice projection plays it through a synthesized manifest.
     request = SimpleNamespace(

@@ -103,7 +103,30 @@ def read_spans(
     return {str(row["id"]): SimpleNamespace(**row) for row in rows}
 
 
-def source_state(scope, parent, span):
+class Retention:
+    """``retention_for``, looked up once per organization for one batch.
+
+    ``retention_for`` is ``started_at`` plus a per-organization window
+    (unlimited, or ``now - cutoff``), and ``trace_retention_cutoff`` asks to be
+    called once per operation, not once per unit; one lookup per organization
+    serves every source of a batch.
+    """
+
+    def __init__(self, now=None):
+        self.now = now or timezone.now()
+        self.windows = {}
+
+    def __call__(self, organization_id, started_at):
+        if organization_id not in self.windows:
+            expiry = retention_for(organization_id, self.now, now=self.now)
+            self.windows[organization_id] = (
+                None if expiry is None else expiry - self.now
+            )
+        window = self.windows[organization_id]
+        return None if window is None else started_at + window
+
+
+def source_state(scope, parent, span, *, retention=retention_for):
     """The backend ``SourceState`` for a live span, or None.
 
     Mirrors ``LiveAuthority.source`` field for field (minus the viewer-only
@@ -123,7 +146,7 @@ def source_state(scope, parent, span):
         or not isinstance(started_at, datetime)
     ):
         return None
-    expires_at = retention_for(scope.organization_id, started_at)
+    expires_at = retention(scope.organization_id, started_at)
     if expires_at is None:
         return None
     return occurrences.SourceState(
@@ -327,6 +350,7 @@ class ClickHouseParentReader:
         for link in links:
             groups.setdefault((link.scope_id, link.scope.project_id), []).append(link)
         scopes = AttachmentScope.objects.in_bulk([scope_id for scope_id, _ in groups])
+        retention = Retention()
         result = {}
         for (scope_id, project_id), group in groups.items():
             scope = scopes.get(scope_id)
@@ -362,7 +386,7 @@ class ClickHouseParentReader:
                     continue  # A malformed stored trace id proves nothing.
                 if not same_trace or str(span.project_id) != str(project_id):
                     continue  # Another trace's span id is never this parent.
-                state = source_state(scope, parent, span)
+                state = source_state(scope, parent, span, retention=retention)
                 result[key] = ParentState(
                     link.scope,
                     link.parent,
@@ -415,6 +439,26 @@ def _audio_facts(row):
         "channels": blob.channels,
         "frame_count": blob.frame_count,
     }
+
+
+class _BatchSources:
+    """One batch read's authority: its session check, its spans, one retention.
+
+    ``source`` derives the same facts as ``LiveAuthority.source`` through
+    ``source_state`` (the rule binding stores), from spans already read in one
+    batch, without the per-parent writer lookup a read never needs.
+    """
+
+    def __init__(self, authority, spans, retention):
+        self.authority, self.spans, self.retention = authority, spans, retention
+
+    def session_is_live(self, viewer):
+        return self.authority.session_is_live(viewer)
+
+    def source(self, viewer, scope, parent):
+        return source_state(
+            scope, parent, self.spans.get(parent.span_id), retention=self.retention
+        )
 
 
 class _MemoAuthority:
@@ -505,7 +549,7 @@ class ControlPlaneReader:
             if app_viewer is None or not parents:
                 continue
             spans = {}
-            authority = self._memo(spans)
+            authority = _BatchSources(self._memo(spans), spans, Retention())
             try:
                 scope = occurrences.scope_for(app_viewer, authority)
             except AttachmentError:
