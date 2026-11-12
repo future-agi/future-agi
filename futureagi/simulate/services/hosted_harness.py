@@ -950,6 +950,7 @@ def _held_back_checked(
         from simulate.services.harness_readiness import CATALOGUE
 
         labels = {one.id: one.label for one in CATALOGUE}
+        labels["scenario_dropped"] = "Certification"
         reasons = planned.plan.view["reasons"]
         named = "; ".join(
             f"{labels.get(row, row)}: {reason}" for row, reason in reasons.items()

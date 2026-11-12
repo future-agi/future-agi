@@ -52,6 +52,8 @@ BUCKETS: tuple[Bucket, ...] = ("eligible", "blocked", "stale", "untested")
 LIST_LIMIT = 200
 PAGE_SIZE = 50
 DROPPED_REASON = "dropped when the pair was certified"
+# Held-back key for a selected case certifying the pair dropped.
+DROPPED_ROW = "scenario_dropped"
 UNGRADABLE_REASON = "grades no sub-goal of this environment version"
 _HOLDING = frozenset({"blocked", "unavailable", "stale", "untested"})
 _EVIDENCE_ROWS = frozenset(one.id for one in CATALOGUE if one.area == "evidence")
@@ -290,8 +292,8 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
 
     Raises:
         HostedHarnessError: as ``selection_report``; 503 ``readiness_unavailable``
-            (retryable) when the pair's certification cannot be read; 422
-            ``scenario_dropped`` when certifying the pair dropped a selected case.
+            (retryable) when the pair's certification cannot be read. A selected case
+            certifying the pair dropped is held back and named, never sent.
     """
     bundle = pair_bundle(pairing)
     revision = evidence_revision(pairing, bundle)
@@ -308,24 +310,17 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
     dropped = [
         one["key"] for one in placement.dropped if one["code"] == "scenario_dropped"
     ]
-    if dropped:
-        raise HostedHarnessError(
-            "scenario_dropped",
-            ", ".join(dropped)
-            + (" was" if len(dropped) == 1 else " were")
-            + f" {DROPPED_REASON}, so the run cannot play"
-            + (" it" if len(dropped) == 1 else " them"),
-            status_code=422,
-            details={"keys": dropped},
-        )
     placed = placement.placed
-    held = [one.case.key for one in placed if one.bucket == "blocked"]
+    held = [one.case.key for one in placed if one.bucket == "blocked"] + dropped
     by = Counter(row for one in placed if one.bucket == "blocked" for row in one.by)
     reasons = {
         row["id"]: row["reason"] or row["label"]
         for row in report["rows"]
         if row["id"] in by
     }
+    if dropped:
+        by[DROPPED_ROW] = len(dropped)
+        reasons[DROPPED_ROW] = DROPPED_REASON
     return RunPlan(
         view={
             **_scope(pairing, placement, keys),
