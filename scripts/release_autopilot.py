@@ -167,8 +167,8 @@ def check_results(sha, names, checks, statuses):
 
     Distinct producers with the same name must all succeed. A queued rerun
     supersedes its old green result; skipped and neutral are not success.
-    Returns (did_not_succeed, not_finished) as lists of required names, both
-    empty when every name passed, or None when the data is malformed.
+    Returns (did_not_succeed, not_finished, no_result) as lists of required
+    names, all empty when every name passed, or None when the data is malformed.
     """
     latest = {}
     for row in checks:
@@ -189,15 +189,20 @@ def check_results(sha, names, checks, statuses):
             return None
         if key not in latest or row["id"] > latest[key]["id"]:
             latest[key] = row
-    did_not_succeed, not_finished = [], []
+    did_not_succeed, not_finished, no_result = [], [], []
     for name in names:
         states = {result_state(kind, row) for (key_name, kind, _), row in latest.items() if key_name == name}
         if "did not succeed" in states:
             did_not_succeed.append(name)
+        elif not states:
+            # No row at all. An aggregate job's check run appears only once the
+            # jobs it needs finish, and a re-run hides the old one until then;
+            # a name that nothing reports looks the same, so the reason says both.
+            no_result.append(name)
         elif states != {"success"}:
-            # No result yet, or a run that is queued or in progress.
+            # A run that is queued or in progress, or a pending status.
             not_finished.append(name)
-    return did_not_succeed, not_finished
+    return did_not_succeed, not_finished, no_result
 
 
 def merge_decision(pr, files, checks, statuses, metadata, config, now):
@@ -263,8 +268,14 @@ def merge_decision(pr, files, checks, statuses, metadata, config, now):
     if results[0]:
         return False, (f"required check did not succeed on this head: {', '.join(results[0])}. The autopilot "
                        "waits until a person re-runs it and it passes, or an administrator merges by hand")
+    waits = []
     if results[1]:
-        return False, f"required checks have not finished on this head: {', '.join(results[1])}"
+        waits.append(f"required checks have not finished on this head: {', '.join(results[1])}")
+    if results[2]:
+        waits.append("required checks have no result on this head yet (their workflow is still running or "
+                     f"re-running, or no workflow reports that name): {', '.join(results[2])}")
+    if waits:
+        return False, "; ".join(waits)
     return True, "release metadata, author, age, hours, hold and current-head checks passed"
 
 

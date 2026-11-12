@@ -208,9 +208,9 @@ class MergePolicyTests(unittest.TestCase):
         self.assertFalse(self.decide(checks=[CHECK, {**failure, "app": {"id": 2}}, E2E_CHECK]))
         self.assertFalse(self.decide(checks=[CHECK, {**CHECK, "id": 3, "status": "queued"}, E2E_CHECK]))
 
-    def reason(self, checks=None, statuses=None):
+    def reason(self, checks=None, statuses=None, config=None):
         return policy.merge_decision(deepcopy(PR), FILES, [CHECK, E2E_CHECK] if checks is None else checks,
-                                     statuses or [], METADATA, CONFIG, NOW)
+                                     statuses or [], METADATA, config or CONFIG, NOW)
 
     def test_a_red_required_check_is_named_and_a_running_one_is_not_finished(self):
         red = {**E2E_CHECK, "conclusion": "failure"}
@@ -223,9 +223,9 @@ class MergePolicyTests(unittest.TestCase):
                 self.assertIn("did not succeed on this head: ", reason)
                 self.assertIn("a person re-runs it", reason)
         self.assertIn(": E2E Tests Pass.", self.reason([CHECK, red])[1])
-        # A queued re-run of the red check, or no result yet, is not finished.
+        # A queued re-run of the red check, or one in progress, is not finished.
         rerun = {**E2E_CHECK, "id": 21, "status": "queued", "conclusion": None}
-        for checks in ([CHECK, red, rerun], [CHECK], [CHECK, {**E2E_CHECK, "status": "in_progress"}]):
+        for checks in ([CHECK, red, rerun], [CHECK, {**E2E_CHECK, "status": "in_progress"}]):
             with self.subTest(checks=checks):
                 allowed, reason = self.reason(checks)
                 self.assertFalse(allowed)
@@ -236,6 +236,65 @@ class MergePolicyTests(unittest.TestCase):
         self.assertEqual(self.reason([CHECK, {**E2E_CHECK, "id": None}])[1], "required check data is malformed")
         # A re-run that passes clears the wait.
         self.assertTrue(self.reason([CHECK, red, {**E2E_CHECK, "id": 21}])[0])
+
+    NO_RESULT = ("required checks have no result on this head yet (their workflow is still running or "
+                 "re-running, or no workflow reports that name): ")
+
+    def test_a_required_name_with_no_row_says_no_result_not_running(self):
+        # No row for the name: the aggregate job has not been created yet (a
+        # re-run hides the old one until then), or nothing reports that name.
+        stale = {**E2E_CHECK, "head_sha": BASE}
+        misspelled = {**E2E_CHECK, "name": "E2E Tests Passed"}
+        status_elsewhere = {"context": "E2E Tests Pass", "sha": BASE, "id": 5, "state": "success"}
+        for checks, statuses in (([CHECK], []), ([CHECK, stale], []), ([CHECK, misspelled], []),
+                                 ([CHECK], [status_elsewhere])):
+            with self.subTest(checks=checks, statuses=statuses):
+                allowed, reason = self.reason(checks, statuses)
+                self.assertFalse(allowed)
+                self.assertEqual(reason, self.NO_RESULT + "E2E Tests Pass")
+                self.assertNotIn("have not finished", reason)
+                self.assertNotIn("did not succeed", reason)
+        # A configured name that no workflow reports is named, though both real checks are green.
+        config = {**CONFIG, "RELEASE_AUTOPILOT_REQUIRED_CHECKS": "Release Checks Pass"}
+        self.assertEqual(self.reason(config=config), (False, self.NO_RESULT + "Release Checks Pass"))
+        # A running check does not hide a name with no row; both are named.
+        config = {**CONFIG, "RELEASE_AUTOPILOT_REQUIRED_CHECKS": "Release Checks Pass, Python Lint Pass"}
+        lint = {**CHECK, "id": 40, "name": "Python Lint Pass", "status": "in_progress"}
+        self.assertEqual(self.reason([CHECK, E2E_CHECK, lint], config=config)[1],
+                         "required checks have not finished on this head: Python Lint Pass; "
+                         + self.NO_RESULT + "Release Checks Pass")
+
+    def test_a_running_or_red_check_never_reads_as_no_result(self):
+        red = {**E2E_CHECK, "conclusion": "failure"}
+        rerun = {**E2E_CHECK, "id": 21, "status": "queued", "conclusion": None}
+        pending = {"context": "E2E Tests Pass", "sha": SHA, "id": 3, "state": "pending"}
+        for checks, statuses in (([CHECK, {**E2E_CHECK, "status": "in_progress"}], []), ([CHECK, red, rerun], []),
+                                 ([CHECK], [pending])):
+            with self.subTest(checks=checks, statuses=statuses):
+                allowed, reason = self.reason(checks, statuses)
+                self.assertFalse(allowed)
+                self.assertEqual(reason, "required checks have not finished on this head: E2E Tests Pass")
+                self.assertNotIn("no result", reason)
+                self.assertNotIn("did not succeed", reason)
+        # A red check is named as red even when another required name has no row.
+        allowed, reason = self.reason([red])
+        self.assertFalse(allowed)
+        self.assertTrue(reason.startswith("required check did not succeed on this head: E2E Tests Pass."))
+        self.assertNotIn("no result", reason)
+        self.assertEqual(policy.check_results(SHA, ["Backend Tests Pass", "E2E Tests Pass"], [red], []),
+                         (["E2E Tests Pass"], [], ["Backend Tests Pass"]))
+
+    def test_the_doc_quotes_each_wait_reason_the_code_gives(self):
+        doc = " ".join((Path(__file__).resolve().parents[1] / "docs/release-autopilot.md").read_text().split())
+        red = {**E2E_CHECK, "conclusion": "failure"}
+        quoted = set()
+        for checks in ([CHECK, red], [CHECK, {**E2E_CHECK, "status": "in_progress"}], [CHECK]):
+            reason = self.reason(checks)[1]
+            quoted.add(re.split(r"[:(]", reason, maxsplit=1)[0].strip())
+        self.assertEqual(len(quoted), 3)
+        for prefix in quoted:
+            with self.subTest(prefix=prefix):
+                self.assertIn(f'"{prefix}"', doc)
 
     def test_legacy_statuses_are_bound_to_the_same_commit(self):
         status = {"context": "Backend Tests Pass", "sha": SHA, "id": 1, "state": "success"}
@@ -1292,6 +1351,16 @@ class ExecutionTests(unittest.TestCase):
         output, summary, api, gates = self.poll([CHECK, {**E2E_CHECK, "status": "in_progress"}])
         self.assertIn("have not finished on this head: E2E Tests Pass", summary)
         self.assertNotIn("did not succeed", summary)
+        self.assertNotIn("no result", summary)
+        gates.assert_not_called()
+        # No row yet for a required name, as during a re-run: the same quiet wait, with its own reason.
+        output, summary, api, gates = self.poll([CHECK])
+        self.assertEqual(output, f"eligible=false\nnumber=42\nsha={SHA}\n")
+        self.assertIn("have no result on this head yet (their workflow is still running or re-running, or no "
+                      "workflow reports that name): E2E Tests Pass", summary)
+        self.assertNotIn("have not finished", summary)
+        self.assertNotIn("did not succeed", summary)
+        api.assert_not_called()
         gates.assert_not_called()
         output, summary, api, gates = self.poll([CHECK, E2E_CHECK])
         gates.assert_called_once()

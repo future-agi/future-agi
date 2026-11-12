@@ -15,7 +15,7 @@ Only the exact value `on` enables a switch.
 | --- | --- | --- |
 | `RELEASE_AUTOPILOT` | Off | Set `on` to approve and merge eligible release-please PRs. |
 | `RELEASE_AUTO_APPROVE` | Off | Set `on` to let migration-free tag pushes use `production-auto` instead of `Production`. Independent of PR auto-merge. |
-| `RELEASE_AUTOPILOT_REQUIRED_CHECKS` | `Backend Tests Pass`, `E2E Tests Pass` | Comma- or newline-separated exact check/status names, added to that fixed minimum (they can never remove one). Every name must succeed on the current PR head SHA. An explicitly nonempty but name-free list is invalid, not an empty gate. |
+| `RELEASE_AUTOPILOT_REQUIRED_CHECKS` | `Backend Tests Pass`, `E2E Tests Pass` | Comma- or newline-separated exact check/status names, added to that fixed minimum (they can never remove one). Every name must succeed on the current PR head SHA. An explicitly nonempty but name-free list is invalid, not an empty gate. A name that no workflow reports, for example a misspelling, makes every release wait with the "no result" reason below. |
 | `RELEASE_AUTOPILOT_MIN_AGE_MINUTES` | `30` | Non-negative integer minutes since the PR's last update (0–999999). The exact threshold is inclusive; malformed or future timestamps stop the merge. |
 | `AUTOPILOT_HOURS_UTC` | No time-of-day restriction | Optional `HH-HH`, start inclusive and end exclusive, e.g. `04-15`. Overnight windows such as `22-06` work; `00-24` is all day. Equal endpoints and malformed windows stop automation. |
 | `RELEASE_AUTOPILOT_WEEKENDS` | Off | Set `on` to allow Saturday/Sunday UTC. The day is the current UTC day, including for an overnight window. |
@@ -383,8 +383,16 @@ order but skips a ref that lacks the live-test files.
 **When a required check fails, the release waits.** The autopilot does not
 retry, comment or fail. Its run stays green and the step summary says
 "required check did not succeed on this head", with the check's name. While a
-check is still running, it says "required checks have not finished on this
-head". A person then does one of these:
+check is queued or running, it says "required checks have not finished on this
+head". When a required name has no check run or status on the head at all, it
+says "required checks have no result on this head yet", with the name. That
+happens while the workflow runs, because an aggregate check such as "E2E Tests
+Pass" is created only when the jobs it needs finish. It also happens during a
+re-run, because the latest-attempt list hides the old red result until the new
+one is created. A name that no workflow reports, such as a misspelled entry in
+`RELEASE_AUTOPILOT_REQUIRED_CHECKS`, gives the same reason and never clears.
+If it stays after the head's workflows have finished, check the name. A person
+then does one of these:
 
 - re-runs the failed jobs; the re-run's completion wakes the autopilot,
   and once it passes, a later poll merges;
