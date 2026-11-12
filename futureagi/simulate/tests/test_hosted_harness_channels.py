@@ -32,8 +32,8 @@ from simulate.services.hosted_harness import (
     update_execution_counts,
 )
 from simulate.services.hosted_harness_ingestion import (
-    _apply_target_metrics,
     _apply_receipt_to_call,
+    _apply_target_metrics,
     _call_lifecycle_status,
     _ingest_hosted_transcript,
     _normalized_artifact_content_type,
@@ -2133,3 +2133,75 @@ def test_scenario_receipt_manifest_and_cleanup_finalize_platform_rows(organizati
     assert finalized.current_stage == "completed"
     finalized.test_execution.refresh_from_db()
     assert finalized.test_execution.status == "completed"
+
+
+@pytest.mark.django_db
+def test_hosted_receipt_for_a_silent_call_holds_no_passing_eval(organization):
+    from simulate.services.run_results_v3 import call_outcome
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="silent-agent-receipt-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    provision = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Silent agent",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "silent-one",
+                    "name": "Caller",
+                    "situation": "Needs help",
+                    "outcome": "Receives help",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    provisioned = provision.json()["result"]
+    scenario = provisioned["scenarios"][0]
+    client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["silent-one"],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    receipt = {
+        "schema_version": "futureagi.harness-result.v1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "scenario_key": "silent-one",
+        "scenario_id": scenario["scenario_id"],
+        "scenario_attempt": 1,
+        "world_index": None,
+        "status": "passed",
+        "sub_goals": [
+            {"name": "booking_created", "held": True, "judged": False, "reason": None}
+        ],
+        "evaluations": [],
+        "call": None,
+        "failure": None,
+    }
+    receipt["digest"] = canonical_digest(receipt)
+    _, created = ingest_result_receipt(capability.attempt, receipt)
+    assert created is True
+
+    call = CallExecution.objects.get(
+        hosted_registration__job=job,
+        hosted_registration__scenario_key="silent-one",
+    )
+    (output,) = call.eval_outputs.values()
+    assert output["status"] == "skipped"
+    assert output["source"] == "harness"
+    assert call.call_metadata["processing_skipped"] is True
+    assert call.status == CallExecution.CallStatus.COMPLETED
+    assert call_outcome(call, {}) == "inconclusive"

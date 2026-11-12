@@ -455,6 +455,7 @@ _HARNESS_PASSED = frozenset(HARNESS_PASSED)
 def _outcome(
     status: str,
     harness_status: str | None,
+    skipped: bool,
     failed: Truth,
     errored: Truth,
     passed: Truth,
@@ -466,7 +467,7 @@ def _outcome(
         return "in_progress"
     if harness_status in _HARNESS_ERROR or status in ERRORED_CALL_STATUSES:
         return "error"
-    if status != "completed":
+    if status != "completed" or skipped:
         return "inconclusive"
     if harness_status in _HARNESS_FAILED or failed is True:
         return "failed"
@@ -625,6 +626,7 @@ SELECT ce.id, ce.status, ce.duration_seconds,
   ce.avg_stop_time_after_interruption_ms, ce.ai_interruption_count, ce.row_id,
   CASE WHEN jsonb_typeof(ce.call_metadata -> 'harness_outcome_status') = 'string'
     THEN ce.call_metadata ->> 'harness_outcome_status' END,
+  COALESCE(ce.call_metadata -> 'processing_skipped' = 'true'::jsonb, false),
   NULLIF(ce.call_metadata ->> 'harness_scenario_key', ''),
   NULLIF(ce.call_metadata ->> 'use_case', ''),
   NULLIF(ce.call_metadata ->> 'goal', ''),
@@ -795,6 +797,7 @@ def scan_call_values(
                 ai_interruptions,
                 row_id,
                 harness_status,
+                skipped,
                 scenario_key,
                 *metadata_goals,
                 metric_latency,
@@ -840,7 +843,7 @@ def scan_call_values(
                     "result_attack": UNGROUPED,
                     "result_task": UNGROUPED,
                     "result_outcome": _outcome(
-                        status, harness_status, failed, errored, passed
+                        status, harness_status, skipped, failed, errored, passed
                     ),
                     "scores": scores,
                 }

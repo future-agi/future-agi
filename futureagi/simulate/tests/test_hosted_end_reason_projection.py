@@ -24,6 +24,10 @@ def projected_call(monkeypatch):
     monkeypatch.setattr(
         alk_simulate_ingestion, "_apply_harness_evaluation_outputs", lambda _: None
     )
+    # The stand-in call has no transcript tables to count agent messages in.
+    monkeypatch.setattr(
+        alk_simulate_ingestion, "_skip_harness_evals_without_agent", lambda _: False
+    )
     monkeypatch.setattr(
         hosted_harness_ingestion.transaction, "on_commit", lambda *_, **__: None
     )

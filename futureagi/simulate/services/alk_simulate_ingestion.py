@@ -49,6 +49,10 @@ from simulate.services.test_executor import (
     _run_simulate_evaluations_task,
 )
 from simulate.utils.ended_reason import to_canonical_ended_reason
+from simulate.utils.processing_outcomes import (
+    build_skipped_eval_output_payload,
+    set_processing_skip_metadata,
+)
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
 from simulate.utils.websocket_notifications import notify_simulation_update
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
@@ -1478,6 +1482,7 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
             _store_alk_chat_messages(call_execution, segments)
             call_execution.transcript_available = True
             call_execution.message_count = len(segments)
+        _skip_harness_evals_without_agent(call_execution)
         call_execution.save()
         from simulate.utils.chat_simulation import _aggregate_chat_metrics
 
@@ -1519,6 +1524,7 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
             )
             call_execution.transcript_available = True
 
+        _skip_harness_evals_without_agent(call_execution)
         _apply_conversation_metrics(call_execution)
         call_execution.save()
     _deduct_alk_sim_cost_once(call_execution)
@@ -1848,6 +1854,46 @@ def _render_harness_transcript(segments: list[dict[str, Any]]) -> str:
         speaker = str(segment.get("speaker_role") or "unknown").strip().lower()
         lines.append(f"{speaker}: {content}")
     return "\n".join(lines)
+
+
+_SILENT_AGENT_SKIP_REASON = (
+    "We could not find enough agent conversation to process this call."
+)
+
+
+def _skip_harness_evals_without_agent(call_execution: CallExecution) -> bool:
+    """Withhold the harness verdicts of a call the agent never answered.
+
+    Harness checks arrive already graded, so they bypass the platform's own
+    skip decision. A call with no agent message gets no passing eval: each
+    harness entry becomes a skipped payload, and the call is marked
+    ``processing_skipped`` so its outcome reads inconclusive. Entries from any
+    other source are left alone. Run it once the transcript rows are stored.
+    Returns True when the call was marked skipped.
+    """
+    from simulate.services.test_executor import conversation_presence_signals
+
+    _, has_agent_message, _ = conversation_presence_signals(call_execution)
+    if has_agent_message:
+        return False
+
+    outputs = dict(call_execution.eval_outputs or {})
+    for output_id, entry in outputs.items():
+        if isinstance(entry, dict) and entry.get("source") == "harness":
+            outputs[output_id] = {
+                **build_skipped_eval_output_payload(
+                    eval_name=entry.get("name") or "",
+                    reason=_SILENT_AGENT_SKIP_REASON,
+                ),
+                "source": "harness",
+            }
+    call_execution.eval_outputs = outputs
+    call_execution.call_metadata = set_processing_skip_metadata(
+        call_execution.call_metadata,
+        skipped=True,
+        reason=_SILENT_AGENT_SKIP_REASON,
+    )
+    return True
 
 
 def _apply_harness_evaluation_outputs(

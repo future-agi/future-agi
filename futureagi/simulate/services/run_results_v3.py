@@ -104,6 +104,7 @@ CALL_ROW_METADATA_KEYS = (
     "harness_outcome_status",
     "harness_scenario_key",
     "harness_trial_index",
+    "processing_skipped",
     *SCORING_META_KEYS,
 )
 
@@ -198,6 +199,9 @@ def call_outcome(
     }:
         return "error"
     if call.status != CallExecution.CallStatus.COMPLETED:
+        return "inconclusive"
+    # A call the platform declined to process holds no verdict, whatever the harness said.
+    if metadata.get("processing_skipped") is True:
         return "inconclusive"
 
     verdicts = [

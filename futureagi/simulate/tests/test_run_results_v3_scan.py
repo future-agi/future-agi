@@ -22,6 +22,7 @@ from simulate.models.run_test import RunTest
 from simulate.services import run_results_v3_page as page_module
 from simulate.services import run_results_v3_scan as scan_module
 from simulate.services.harness_scenarios import AuthoredPick
+from simulate.services.run_results_v3 import call_outcome
 from simulate.services.run_results_v3_page import (
     CALL_VALUE_FIELDS,
     SQL_ORDERED_FIELDS,
@@ -992,6 +993,34 @@ def test_every_stored_entry_shape_scores_like_the_sql_read_model(
         scan_call_values(execution, columns, "-started_at"),
         _orm_rows(execution, columns, "-started_at"),
     )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("skipped", "expected"),
+    [(True, "inconclusive"), (False, "passed"), ("true", "passed"), (None, "passed")],
+)
+def test_a_skipped_call_with_a_harness_pass_is_inconclusive_in_all_three_copies(
+    run, skipped, expected
+):
+    execution, scenario = run
+    metadata = {"harness_outcome_status": "passed"}
+    if skipped is not None:
+        metadata["processing_skipped"] = skipped
+    call = CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        status="completed",
+        started_at=timezone.now(),
+        call_metadata=metadata,
+        eval_outputs={},
+    )
+    scanned = scan_call_values(execution, [], "-started_at")
+    assert [row["result_outcome"] for row in scanned] == [expected]
+    orm = _orm_rows(execution, [], "-started_at")
+    assert [row["result_outcome"] for row in orm] == [expected]
+    _assert_identical(scanned, orm)
+    assert call_outcome(call, {}) == expected
 
 
 ORDERING_CHOICES = list(RunCallsV3QuerySerializer().fields["ordering"].choices)

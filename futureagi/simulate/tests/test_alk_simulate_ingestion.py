@@ -6941,3 +6941,141 @@ class TestViewGatesReadVersionSnapshot:
         results_by_id = {r["test_execution_id"]: r for r in response.data["results"]}
         assert results_by_id[str(native_execution.id)]["failure_count"] == 0
         assert results_by_id[str(hosted_execution.id)]["failure_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# TH-9724: a call the agent never answered gets no passing eval
+# ---------------------------------------------------------------------------
+
+_SILENT_REASON = "We could not find enough agent conversation to process this call."
+
+
+def _customer_only_transcript():
+    return [
+        {
+            "speaker_role": "user",
+            "content": "Hello? Is anyone there?",
+            "start_time_ms": 0,
+            "end_time_ms": 3000,
+        },
+        {
+            "speaker_role": "user",
+            "content": "Hello?",
+            "start_time_ms": 5000,
+            "end_time_ms": 6000,
+        },
+    ]
+
+
+def _answered_transcript():
+    return _customer_only_transcript() + [
+        {
+            "speaker_role": "assistant",
+            "content": "Sorry, I am here now. How can I help?",
+            "start_time_ms": 7000,
+            "end_time_ms": 10000,
+        }
+    ]
+
+
+def _ingest_with_harness_pass(auth_client, run_test, transcript):
+    _, call_ids = _start_and_batch(auth_client, run_test)
+    resp = auth_client.patch(
+        f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+        {
+            "status": "completed",
+            "transcript": transcript,
+            "call_metadata": {
+                "harness_outcome_status": "passed",
+                "harness_evaluations": [{"name": "ride_booked", "passed": True}],
+            },
+        },
+        format="json",
+    )
+    assert resp.status_code == 200, resp.content
+    return CallExecution.objects.get(id=call_ids[0])
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestSilentAgentHarnessEvals:
+    @pytest.mark.parametrize("fixture_name", ["text_run_test", "run_test"])
+    def test_customer_only_call_gets_a_skipped_eval_and_no_pass(
+        self, auth_client, request, fixture_name
+    ):
+        from simulate.services.run_results_v3 import call_outcome
+
+        call = _ingest_with_harness_pass(
+            auth_client,
+            request.getfixturevalue(fixture_name),
+            _customer_only_transcript(),
+        )
+
+        (output,) = call.eval_outputs.values()
+        assert output["status"] == "skipped"
+        assert output["skipped"] is True
+        assert output["output"] is None
+        assert output["reason"] == _SILENT_REASON
+        assert output["name"] == "ride_booked"
+        assert output["source"] == "harness"
+        assert call.call_metadata["processing_skipped"] is True
+        assert call.call_metadata["processing_skip_reason"] == _SILENT_REASON
+        assert call_outcome(call, {}) == "inconclusive"
+
+    @pytest.mark.parametrize("fixture_name", ["text_run_test", "run_test"])
+    def test_call_the_agent_answered_keeps_its_pass(
+        self, auth_client, request, fixture_name
+    ):
+        from simulate.services.run_results_v3 import call_outcome
+
+        call = _ingest_with_harness_pass(
+            auth_client,
+            request.getfixturevalue(fixture_name),
+            _answered_transcript(),
+        )
+
+        (output,) = call.eval_outputs.values()
+        assert output["output"] == "Passed"
+        assert output["status"] == "completed"
+        assert not call.call_metadata.get("processing_skipped")
+        assert call_outcome(call, {}) == "passed"
+
+    def test_call_with_no_transcript_at_all_gets_no_pass(
+        self, auth_client, text_run_test
+    ):
+        from simulate.services.run_results_v3 import call_outcome
+
+        call = _ingest_with_harness_pass(auth_client, text_run_test, [])
+
+        (output,) = call.eval_outputs.values()
+        assert output["status"] == "skipped"
+        assert call.call_metadata["processing_skipped"] is True
+        assert call_outcome(call, {}) == "inconclusive"
+
+    def test_entries_from_other_sources_are_left_alone(self):
+        from simulate.services.alk_simulate_ingestion import (
+            _skip_harness_evals_without_agent,
+        )
+
+        native = {"name": "tone", "output": "Passed", "status": "completed"}
+        call = SimpleNamespace(
+            call_metadata={},
+            eval_outputs={
+                "native-id": native,
+                "harness-id": {
+                    "name": "ride_booked",
+                    "output": "Passed",
+                    "status": "completed",
+                    "source": "harness",
+                },
+            },
+        )
+        with patch(
+            "simulate.services.test_executor.conversation_presence_signals",
+            return_value=(2, False, True),
+        ):
+            assert _skip_harness_evals_without_agent(call) is True
+        assert call.eval_outputs["native-id"] == native
+        assert call.eval_outputs["harness-id"]["status"] == "skipped"
+        assert call.eval_outputs["harness-id"]["source"] == "harness"
