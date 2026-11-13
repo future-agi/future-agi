@@ -762,6 +762,15 @@ describe("RunDialog", () => {
     expect(screen.getByTestId("run-error")).toHaveTextContent(message);
   });
 
+  it("explains in place that every selected case is held back, with the server's reasons", () => {
+    const message =
+      "No run was created: every selected case is held back (Controlled tool routing: Called, but the test world never received it: get_deal). Fix it, or select cases it does not hold back.";
+    renderDialog({
+      error: { statusCode: 409, error: "all_cases_blocked", message },
+    });
+    expect(screen.getByTestId("run-error")).toHaveTextContent(message);
+  });
+
   it("leaves other failures to the snackbar", () => {
     renderDialog({ error: { statusCode: 500, message: "boom" } });
     expect(screen.queryByTestId("run-error")).toBeNull();

@@ -21,7 +21,7 @@ const MEASURED = {
   reset: 'supported',
   cancel: 'untested',
 };
-const COUNTS = { blocked: 1, stale: 0, untested: 10, partial: 0, unavailable: 0, supported: 5 };
+const COUNTS = { blocked: 1, stale: 0, untested: 9, partial: 0, unavailable: 1, supported: 5 };
 
 interface Ref { id: string; label: string }
 interface Row { id: string; status: string; measured: boolean; reason_code: string | null;
@@ -81,6 +81,9 @@ test('SIM-E2E-003: a pairing reads its readiness, a re-check validates it, and a
       environment_version: expect.objectContaining({ id: certified.environmentVersionId }),
       suite_version: expect.objectContaining({ id: certified.suiteVersionId }),
       evidence: 'pair_certificate',
+      // The seed stores no reading of the agent version's tools.
+      agent_tools: { read: false, count: 0 },
+      evidence_unreadable: false,
     });
     expect(report.validation.state).toBe('ready');
     expect(Object.fromEntries(report.rows.filter((row) => row.measured).map((row) => [row.id, row.status])))

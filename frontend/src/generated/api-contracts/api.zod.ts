@@ -38995,6 +38995,12 @@ export const simulateApiHarnessEnvironmentsCapabilitiesResponseRowsItemAffectedC
 
 export const simulateApiHarnessEnvironmentsCapabilitiesResponseRowsItemAffectedOfMin = 0;
 
+export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionSuiteTotalMin = 0;
+
+export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionExcludedCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionChangedCountMin = 0;
+
 export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionRequestedMin = 0;
 
 export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionEligibleMin = 0;
@@ -39025,6 +39031,20 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
       .enum(["pair_certificate", "build_certificate", "none"])
       .describe(
         "pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with.",
+      ),
+    agent_tools: zod
+      .object({
+        read: zod
+          .boolean()
+          .describe("Whether this agent version's tools have been read."),
+        count: zod.number().describe("How many tools it has; 0 when unread."),
+      })
+      .optional(),
+    evidence_unreadable: zod
+      .boolean()
+      .optional()
+      .describe(
+        "The certification archive could not be read just now, so its rows read as unmeasured; a run of this pairing is refused until it can be read.",
       ),
   }),
   validation: zod.object({
@@ -39102,7 +39122,11 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
       reason: zod.string().min(1),
       targets: zod.array(
         zod.object({
-          kind: zod.enum(["tool", "action", "check"]),
+          kind: zod
+            .enum(["tool", "agent_tool", "action", "check"])
+            .describe(
+              "agent_tool: a tool of the agent version the environment lacks.",
+            ),
           name: zod.string().min(1),
           result: zod.string().min(1),
         }),
@@ -39174,7 +39198,9 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
           keys: zod.array(zod.string().min(1)),
           truncated: zod.boolean(),
         })
-        .describe("Selected cases this row holds back."),
+        .describe(
+          "Selected cases that need this row while it is not Supported. A run holds back only the cases under a Blocked row (selection.held_back); cases under a Partial, Unavailable, Stale or Untested row still run.",
+        ),
     }),
   ),
   counts: zod.object({
@@ -39189,6 +39215,48 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
   rules_version: zod.string().min(1),
   computed_at: zod.string().min(1),
   selection: zod.object({
+    suite_total: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionSuiteTotalMin,
+      )
+      .describe("Every case of the suite version."),
+    excluded: zod.object({
+      count: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionExcludedCountMin,
+        ),
+      keys: zod.array(zod.string().min(1)),
+      truncated: zod.boolean(),
+      reason: zod
+        .enum(["not_selected"])
+        .describe("Suite cases not selected for this run."),
+    }),
+    changed: zod
+      .object({
+        count: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionChangedCountMin,
+          ),
+        keys: zod.array(zod.string().min(1)),
+        truncated: zod.boolean(),
+        since: zod
+          .object({
+            run_id: zod.string().uuid(),
+            suite_version: zod.object({
+              id: zod.string().uuid().optional(),
+              label: zod.string().min(1).optional(),
+            }),
+          })
+          .describe(
+            "The newest run of this agent and environment version the selected cases are compared with; null when there is none.",
+          ),
+      })
+      .describe(
+        "Selected cases whose contents differ from that run's suite version, or that it did not have.",
+      ),
     requested: zod
       .number()
       .min(
@@ -39313,6 +39381,12 @@ export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseRowsItemAff
 
 export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseRowsItemAffectedOfMin = 0;
 
+export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionSuiteTotalMin = 0;
+
+export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionExcludedCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionChangedCountMin = 0;
+
 export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionRequestedMin = 0;
 
 export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionEligibleMin = 0;
@@ -39344,6 +39418,20 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
         .enum(["pair_certificate", "build_certificate", "none"])
         .describe(
           "pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with.",
+        ),
+      agent_tools: zod
+        .object({
+          read: zod
+            .boolean()
+            .describe("Whether this agent version's tools have been read."),
+          count: zod.number().describe("How many tools it has; 0 when unread."),
+        })
+        .optional(),
+      evidence_unreadable: zod
+        .boolean()
+        .optional()
+        .describe(
+          "The certification archive could not be read just now, so its rows read as unmeasured; a run of this pairing is refused until it can be read.",
         ),
     }),
     validation: zod.object({
@@ -39421,7 +39509,11 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
         reason: zod.string().min(1),
         targets: zod.array(
           zod.object({
-            kind: zod.enum(["tool", "action", "check"]),
+            kind: zod
+              .enum(["tool", "agent_tool", "action", "check"])
+              .describe(
+                "agent_tool: a tool of the agent version the environment lacks.",
+              ),
             name: zod.string().min(1),
             result: zod.string().min(1),
           }),
@@ -39493,7 +39585,9 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
             keys: zod.array(zod.string().min(1)),
             truncated: zod.boolean(),
           })
-          .describe("Selected cases this row holds back."),
+          .describe(
+            "Selected cases that need this row while it is not Supported. A run holds back only the cases under a Blocked row (selection.held_back); cases under a Partial, Unavailable, Stale or Untested row still run.",
+          ),
       }),
     ),
     counts: zod.object({
@@ -39508,6 +39602,48 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
     rules_version: zod.string().min(1),
     computed_at: zod.string().min(1),
     selection: zod.object({
+      suite_total: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionSuiteTotalMin,
+        )
+        .describe("Every case of the suite version."),
+      excluded: zod.object({
+        count: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionExcludedCountMin,
+          ),
+        keys: zod.array(zod.string().min(1)),
+        truncated: zod.boolean(),
+        reason: zod
+          .enum(["not_selected"])
+          .describe("Suite cases not selected for this run."),
+      }),
+      changed: zod
+        .object({
+          count: zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionChangedCountMin,
+            ),
+          keys: zod.array(zod.string().min(1)),
+          truncated: zod.boolean(),
+          since: zod
+            .object({
+              run_id: zod.string().uuid(),
+              suite_version: zod.object({
+                id: zod.string().uuid().optional(),
+                label: zod.string().min(1).optional(),
+              }),
+            })
+            .describe(
+              "The newest run of this agent and environment version the selected cases are compared with; null when there is none.",
+            ),
+        })
+        .describe(
+          "Selected cases whose contents differ from that run's suite version, or that it did not have.",
+        ),
       requested: zod
         .number()
         .min(
@@ -39680,6 +39816,50 @@ export const SimulateApiHarnessEnvironmentsCapabilityCasesResponse = zod.object(
       .describe("The cursor for the next page; null on the last."),
   },
 );
+
+/**
+ * The pairings certified on this environment, newest first, with the exact
+agent, environment and suite versions of each. No writes.
+ */
+export const SimulateApiHarnessEnvironmentsCapabilityHistoryParams = zod.object(
+  {
+    id: zod.string(),
+  },
+);
+
+export const simulateApiHarnessEnvironmentsCapabilityHistoryQueryCursorMin = 0;
+
+export const SimulateApiHarnessEnvironmentsCapabilityHistoryQueryParams =
+  zod.object({
+    cursor: zod
+      .number()
+      .min(simulateApiHarnessEnvironmentsCapabilityHistoryQueryCursorMin)
+      .optional()
+      .describe("The previous page's next."),
+  });
+
+export const SimulateApiHarnessEnvironmentsCapabilityHistoryResponse =
+  zod.object({
+    items: zod.array(
+      zod.object({
+        bundle_id: zod.string().uuid(),
+        agent_version: zod.object({
+          id: zod.string().uuid().optional(),
+          label: zod.string().min(1).optional(),
+        }),
+        environment_version: zod.object({
+          id: zod.string().uuid().optional(),
+          label: zod.string().min(1).optional(),
+        }),
+        suite_version: zod.object({
+          id: zod.string().uuid().optional(),
+          label: zod.string().min(1).optional(),
+        }),
+        certified_at: zod.string().datetime({ offset: true }),
+      }),
+    ),
+    next: zod.string().min(1),
+  });
 
 /**
  * Validate a pairing again with a run-less check; moves no default. An absent
@@ -39923,6 +40103,23 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      release_checks: zod
+        .object({
+          status: zod
+            .enum(["ready", "checks_pending", "failed"])
+            .describe("checks_pending until every release check has passed."),
+          checks: zod.object({
+            starts: zod.enum(["passed", "failed", "pending"]),
+            resets: zod.enum(["passed", "failed", "pending"]),
+            reference_passes: zod.enum(["passed", "failed", "pending"]),
+            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+          }),
+        })
+        .optional()
+        .describe(
+          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
       stale: zod
         .boolean()
         .describe(
@@ -40028,6 +40225,23 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      release_checks: zod
+        .object({
+          status: zod
+            .enum(["ready", "checks_pending", "failed"])
+            .describe("checks_pending until every release check has passed."),
+          checks: zod.object({
+            starts: zod.enum(["passed", "failed", "pending"]),
+            resets: zod.enum(["passed", "failed", "pending"]),
+            reference_passes: zod.enum(["passed", "failed", "pending"]),
+            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+          }),
+        })
+        .optional()
+        .describe(
+          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
       stale: zod
         .boolean()
         .describe(
@@ -40133,6 +40347,23 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      release_checks: zod
+        .object({
+          status: zod
+            .enum(["ready", "checks_pending", "failed"])
+            .describe("checks_pending until every release check has passed."),
+          checks: zod.object({
+            starts: zod.enum(["passed", "failed", "pending"]),
+            resets: zod.enum(["passed", "failed", "pending"]),
+            reference_passes: zod.enum(["passed", "failed", "pending"]),
+            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+          }),
+        })
+        .optional()
+        .describe(
+          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
       stale: zod
         .boolean()
         .describe(
@@ -40289,6 +40520,25 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
+          release_checks: zod
+            .object({
+              status: zod
+                .enum(["ready", "checks_pending", "failed"])
+                .describe(
+                  "checks_pending until every release check has passed.",
+                ),
+              checks: zod.object({
+                starts: zod.enum(["passed", "failed", "pending"]),
+                resets: zod.enum(["passed", "failed", "pending"]),
+                reference_passes: zod.enum(["passed", "failed", "pending"]),
+                wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+                hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+              }),
+            })
+            .optional()
+            .describe(
+              "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+            ),
         }),
       )
       .describe("Each saved piece's new default version, by piece."),
@@ -40370,6 +40620,25 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
+          release_checks: zod
+            .object({
+              status: zod
+                .enum(["ready", "checks_pending", "failed"])
+                .describe(
+                  "checks_pending until every release check has passed.",
+                ),
+              checks: zod.object({
+                starts: zod.enum(["passed", "failed", "pending"]),
+                resets: zod.enum(["passed", "failed", "pending"]),
+                reference_passes: zod.enum(["passed", "failed", "pending"]),
+                wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+                hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+              }),
+            })
+            .optional()
+            .describe(
+              "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+            ),
         }),
       ),
       environment: zod.array(
@@ -40449,6 +40718,25 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
+          release_checks: zod
+            .object({
+              status: zod
+                .enum(["ready", "checks_pending", "failed"])
+                .describe(
+                  "checks_pending until every release check has passed.",
+                ),
+              checks: zod.object({
+                starts: zod.enum(["passed", "failed", "pending"]),
+                resets: zod.enum(["passed", "failed", "pending"]),
+                reference_passes: zod.enum(["passed", "failed", "pending"]),
+                wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+                hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+              }),
+            })
+            .optional()
+            .describe(
+              "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+            ),
         }),
       ),
       suite: zod.array(
@@ -40528,6 +40816,25 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
+          release_checks: zod
+            .object({
+              status: zod
+                .enum(["ready", "checks_pending", "failed"])
+                .describe(
+                  "checks_pending until every release check has passed.",
+                ),
+              checks: zod.object({
+                starts: zod.enum(["passed", "failed", "pending"]),
+                resets: zod.enum(["passed", "failed", "pending"]),
+                reference_passes: zod.enum(["passed", "failed", "pending"]),
+                wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+                hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+              }),
+            })
+            .optional()
+            .describe(
+              "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+            ),
         }),
       ),
     }),
@@ -41840,6 +42147,23 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      release_checks: zod
+        .object({
+          status: zod
+            .enum(["ready", "checks_pending", "failed"])
+            .describe("checks_pending until every release check has passed."),
+          checks: zod.object({
+            starts: zod.enum(["passed", "failed", "pending"]),
+            resets: zod.enum(["passed", "failed", "pending"]),
+            reference_passes: zod.enum(["passed", "failed", "pending"]),
+            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+          }),
+        })
+        .optional()
+        .describe(
+          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
     }),
   ),
   environment: zod.array(
@@ -41917,6 +42241,23 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      release_checks: zod
+        .object({
+          status: zod
+            .enum(["ready", "checks_pending", "failed"])
+            .describe("checks_pending until every release check has passed."),
+          checks: zod.object({
+            starts: zod.enum(["passed", "failed", "pending"]),
+            resets: zod.enum(["passed", "failed", "pending"]),
+            reference_passes: zod.enum(["passed", "failed", "pending"]),
+            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+          }),
+        })
+        .optional()
+        .describe(
+          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
     }),
   ),
   suite: zod.array(
@@ -41994,6 +42335,23 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
+      release_checks: zod
+        .object({
+          status: zod
+            .enum(["ready", "checks_pending", "failed"])
+            .describe("checks_pending until every release check has passed."),
+          checks: zod.object({
+            starts: zod.enum(["passed", "failed", "pending"]),
+            resets: zod.enum(["passed", "failed", "pending"]),
+            reference_passes: zod.enum(["passed", "failed", "pending"]),
+            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+          }),
+        })
+        .optional()
+        .describe(
+          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
     }),
   ),
 });
@@ -42148,6 +42506,23 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        release_checks: zod
+          .object({
+            status: zod
+              .enum(["ready", "checks_pending", "failed"])
+              .describe("checks_pending until every release check has passed."),
+            checks: zod.object({
+              starts: zod.enum(["passed", "failed", "pending"]),
+              resets: zod.enum(["passed", "failed", "pending"]),
+              reference_passes: zod.enum(["passed", "failed", "pending"]),
+              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+            }),
+          })
+          .optional()
+          .describe(
+            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
       }),
     ),
     environment: zod.array(
@@ -42227,6 +42602,23 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        release_checks: zod
+          .object({
+            status: zod
+              .enum(["ready", "checks_pending", "failed"])
+              .describe("checks_pending until every release check has passed."),
+            checks: zod.object({
+              starts: zod.enum(["passed", "failed", "pending"]),
+              resets: zod.enum(["passed", "failed", "pending"]),
+              reference_passes: zod.enum(["passed", "failed", "pending"]),
+              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+            }),
+          })
+          .optional()
+          .describe(
+            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
       }),
     ),
     suite: zod.array(
@@ -42306,6 +42698,23 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        release_checks: zod
+          .object({
+            status: zod
+              .enum(["ready", "checks_pending", "failed"])
+              .describe("checks_pending until every release check has passed."),
+            checks: zod.object({
+              starts: zod.enum(["passed", "failed", "pending"]),
+              resets: zod.enum(["passed", "failed", "pending"]),
+              reference_passes: zod.enum(["passed", "failed", "pending"]),
+              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+            }),
+          })
+          .optional()
+          .describe(
+            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
       }),
     ),
   });
@@ -42446,6 +42855,23 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        release_checks: zod
+          .object({
+            status: zod
+              .enum(["ready", "checks_pending", "failed"])
+              .describe("checks_pending until every release check has passed."),
+            checks: zod.object({
+              starts: zod.enum(["passed", "failed", "pending"]),
+              resets: zod.enum(["passed", "failed", "pending"]),
+              reference_passes: zod.enum(["passed", "failed", "pending"]),
+              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+            }),
+          })
+          .optional()
+          .describe(
+            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
       }),
     ),
     environment: zod.array(
@@ -42525,6 +42951,23 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        release_checks: zod
+          .object({
+            status: zod
+              .enum(["ready", "checks_pending", "failed"])
+              .describe("checks_pending until every release check has passed."),
+            checks: zod.object({
+              starts: zod.enum(["passed", "failed", "pending"]),
+              resets: zod.enum(["passed", "failed", "pending"]),
+              reference_passes: zod.enum(["passed", "failed", "pending"]),
+              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+            }),
+          })
+          .optional()
+          .describe(
+            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
       }),
     ),
     suite: zod.array(
@@ -42604,6 +43047,23 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
+        release_checks: zod
+          .object({
+            status: zod
+              .enum(["ready", "checks_pending", "failed"])
+              .describe("checks_pending until every release check has passed."),
+            checks: zod.object({
+              starts: zod.enum(["passed", "failed", "pending"]),
+              resets: zod.enum(["passed", "failed", "pending"]),
+              reference_passes: zod.enum(["passed", "failed", "pending"]),
+              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
+              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
+            }),
+          })
+          .optional()
+          .describe(
+            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
       }),
     ),
   });
@@ -54571,6 +55031,18 @@ export const SimulateV3TestExecutionCallsQueryParams = zod.object({
 export const simulateV3TestExecutionCallsResponseExecutionAgentDiffersDefault =
   false;
 
+export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionSuiteTotalMin = 0;
+
+export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionExcludedCountMin = 0;
+
+export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionChangedCountMin = 0;
+
+export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionRunningMin = 0;
+
+export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionHeldBackCountMin = 0;
+
+export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionHeldBackByMinOne = 0;
+
 export const simulateV3TestExecutionCallsResponseExecutionSelectedScenarioKeysDefault =
   [];
 export const simulateV3TestExecutionCallsResponseExecutionTrialsDefault = 1;
@@ -54637,6 +55109,22 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
             .enum(["pair_certificate", "build_certificate", "none"])
             .describe(
               "pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with.",
+            ),
+          agent_tools: zod
+            .object({
+              read: zod
+                .boolean()
+                .describe("Whether this agent version's tools have been read."),
+              count: zod
+                .number()
+                .describe("How many tools it has; 0 when unread."),
+            })
+            .optional(),
+          evidence_unreadable: zod
+            .boolean()
+            .optional()
+            .describe(
+              "The certification archive could not be read just now, so its rows read as unmeasured; a run of this pairing is refused until it can be read.",
             ),
         }),
         validation: zod.object({
@@ -54720,7 +55208,11 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
             reason: zod.string().min(1),
             targets: zod.array(
               zod.object({
-                kind: zod.enum(["tool", "action", "check"]),
+                kind: zod
+                  .enum(["tool", "agent_tool", "action", "check"])
+                  .describe(
+                    "agent_tool: a tool of the agent version the environment lacks.",
+                  ),
                 name: zod.string().min(1),
                 result: zod.string().min(1),
               }),
@@ -54791,7 +55283,86 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         computed_at: zod.string().min(1),
       })
       .optional()
-      .describe("The run readiness of the run's versions when it was created."),
+      .describe(
+        "The run readiness of the run's versions when it was created; null for a coding agent's key.",
+      ),
+    readiness_selection: zod
+      .object({
+        suite_total: zod
+          .number()
+          .min(
+            simulateV3TestExecutionCallsResponseExecutionReadinessSelectionSuiteTotalMin,
+          )
+          .describe("Every case of the suite version."),
+        excluded: zod.object({
+          count: zod
+            .number()
+            .min(
+              simulateV3TestExecutionCallsResponseExecutionReadinessSelectionExcludedCountMin,
+            ),
+          keys: zod.array(zod.string().min(1)),
+          truncated: zod.boolean(),
+          reason: zod
+            .enum(["not_selected"])
+            .describe("Suite cases not selected for this run."),
+        }),
+        changed: zod
+          .object({
+            count: zod
+              .number()
+              .min(
+                simulateV3TestExecutionCallsResponseExecutionReadinessSelectionChangedCountMin,
+              ),
+            keys: zod.array(zod.string().min(1)),
+            truncated: zod.boolean(),
+            since: zod
+              .object({
+                run_id: zod.string().uuid(),
+                suite_version: zod.object({
+                  id: zod.string().uuid().optional(),
+                  label: zod.string().min(1).optional(),
+                }),
+              })
+              .describe(
+                "The newest run of this agent and environment version the selected cases are compared with; null when there is none.",
+              ),
+          })
+          .describe(
+            "Selected cases whose contents differ from that run's suite version, or that it did not have.",
+          ),
+        requested: zod.number().min(1),
+        running: zod
+          .number()
+          .min(
+            simulateV3TestExecutionCallsResponseExecutionReadinessSelectionRunningMin,
+          ),
+        held_back: zod.object({
+          count: zod
+            .number()
+            .min(
+              simulateV3TestExecutionCallsResponseExecutionReadinessSelectionHeldBackCountMin,
+            ),
+          keys: zod.array(zod.string().min(1)),
+          truncated: zod.boolean(),
+          by: zod
+            .record(
+              zod.string(),
+              zod
+                .number()
+                .min(
+                  simulateV3TestExecutionCallsResponseExecutionReadinessSelectionHeldBackByMinOne,
+                ),
+            )
+            .describe("Held-back cases per readiness row that held them."),
+        }),
+        reasons: zod
+          .record(zod.string(), zod.string().min(1))
+          .describe("Each holding row's reason, in plain words."),
+      })
+      .optional()
+      .describe(
+        "The cases readiness held back from this run and why; null when runs are not pinned to versions, and for a coding agent's key.",
+      ),
     selected_scenario_keys: zod
       .array(zod.string().min(1))
       .default(

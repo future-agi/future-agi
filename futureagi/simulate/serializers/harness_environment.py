@@ -5,6 +5,7 @@ from rest_framework import serializers
 from simulate.models import HarnessNudge, HostedHarnessJob
 from simulate.serializers.harness_job import (
     TARGET_SYSTEM_PROMPT_MAX_CHARS,
+    HarnessCapabilityScopeSerializer,
     HarnessRunPinnedVersionsSerializer,
     HarnessRunWarningSerializer,
     phone_number_error,
@@ -527,6 +528,25 @@ class HarnessVersionPersonSerializer(serializers.Serializer):
     name = serializers.CharField(allow_blank=True)
 
 
+_RELEASE_RESULTS = ("passed", "failed", "pending")
+
+
+class HarnessReleaseCheckResultsSerializer(serializers.Serializer):
+    starts = serializers.ChoiceField(choices=_RELEASE_RESULTS)
+    resets = serializers.ChoiceField(choices=_RELEASE_RESULTS)
+    reference_passes = serializers.ChoiceField(choices=_RELEASE_RESULTS)
+    wrong_answer_fails = serializers.ChoiceField(choices=_RELEASE_RESULTS)
+    hidden_checks_kept = serializers.ChoiceField(choices=_RELEASE_RESULTS)
+
+
+class HarnessReleaseChecksSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=("ready", "checks_pending", "failed"),
+        help_text="checks_pending until every release check has passed.",
+    )
+    checks = HarnessReleaseCheckResultsSerializer()
+
+
 class HarnessVersionSerializer(serializers.Serializer):
     """One agent, environment or suite version, as the version lists show it."""
 
@@ -591,6 +611,14 @@ class HarnessVersionSerializer(serializers.Serializer):
     discardable = serializers.BooleanField(
         allow_null=True,
         help_text="Whether this environment can discard an agent version.",
+    )
+    release_checks = HarnessReleaseChecksSerializer(
+        allow_null=True,
+        required=False,
+        help_text=(
+            "An environment version's five release checks; null for other versions."
+            " Ready only once all five passed; a pairing still needs its own readiness."
+        ),
     )
 
 
@@ -818,6 +846,13 @@ class HarnessCapabilityRecheckResponseSerializer(serializers.Serializer):
     validation = HarnessPairValidationSerializer()
 
 
+class HarnessCapabilityAgentToolsSerializer(serializers.Serializer):
+    read = serializers.BooleanField(
+        help_text="Whether this agent version's tools have been read."
+    )
+    count = serializers.IntegerField(help_text="How many tools it has; 0 when unread.")
+
+
 class HarnessCapabilityPairingSerializer(serializers.Serializer):
     agent_version = RunVersionLabelSerializer(allow_null=True)
     environment_version = RunVersionLabelSerializer(allow_null=True)
@@ -828,6 +863,15 @@ class HarnessCapabilityPairingSerializer(serializers.Serializer):
             "pair_certificate: this pairing was certified together; build_certificate:"
             " the environment version's build, measured with the agent it was built"
             " with."
+        ),
+    )
+    # Absent from a run's snapshot taken before agent tools were read.
+    agent_tools = HarnessCapabilityAgentToolsSerializer(required=False)
+    evidence_unreadable = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "The certification archive could not be read just now, so its rows read as"
+            " unmeasured; a run of this pairing is refused until it can be read."
         ),
     )
 
@@ -852,7 +896,10 @@ class HarnessCapabilityAreaSerializer(serializers.Serializer):
 
 
 class HarnessCapabilityTargetSerializer(serializers.Serializer):
-    kind = serializers.ChoiceField(choices=("tool", "action", "check"))
+    kind = serializers.ChoiceField(
+        choices=("tool", "agent_tool", "action", "check"),
+        help_text="agent_tool: a tool of the agent version the environment lacks.",
+    )
     name = serializers.CharField()
     result = serializers.CharField()
 
@@ -995,6 +1042,27 @@ class HarnessCapabilityCasesQuerySerializer(HarnessCapabilitySelectionQuerySeria
     )
 
 
+class HarnessCapabilityHistoryQuerySerializer(serializers.Serializer):
+    cursor = serializers.IntegerField(
+        min_value=0,
+        required=False,
+        help_text="The previous page's next.",
+    )
+
+
+class HarnessCertifiedPairingSerializer(serializers.Serializer):
+    bundle_id = serializers.UUIDField()
+    agent_version = RunVersionLabelSerializer(allow_null=True)
+    environment_version = RunVersionLabelSerializer(allow_null=True)
+    suite_version = RunVersionLabelSerializer(allow_null=True)
+    certified_at = serializers.DateTimeField()
+
+
+class HarnessCertifiedPairingPageSerializer(serializers.Serializer):
+    items = HarnessCertifiedPairingSerializer(many=True)
+    next = serializers.CharField(allow_null=True)
+
+
 class HarnessCapabilityCaseListSerializer(serializers.Serializer):
     keys = serializers.ListField(child=serializers.CharField())
     truncated = serializers.BooleanField(help_text="More than 200 cases; page them.")
@@ -1032,7 +1100,7 @@ class HarnessCapabilityGradingSerializer(serializers.Serializer):
     )
 
 
-class HarnessCapabilitySelectionCountsSerializer(serializers.Serializer):
+class HarnessCapabilitySelectionCountsSerializer(HarnessCapabilityScopeSerializer):
     """The selected cases, each in one bucket: requested is their sum. Cases
     certifying dropped, or that grade no sub-goal, are listed under dropped and
     never counted."""
@@ -1062,7 +1130,11 @@ class HarnessCapabilitySelectionRowSerializer(HarnessCapabilityRowSerializer):
         min_value=0, help_text="Selected cases that need this row."
     )
     affected = HarnessCapabilityAffectedSerializer(
-        help_text="Selected cases this row holds back."
+        help_text=(
+            "Selected cases that need this row while it is not Supported. A run holds"
+            " back only the cases under a Blocked row (selection.held_back); cases"
+            " under a Partial, Unavailable, Stale or Untested row still run."
+        )
     )
 
 

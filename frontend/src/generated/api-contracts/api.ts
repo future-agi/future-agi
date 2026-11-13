@@ -606,6 +606,7 @@ import type {
   HarnessCapabilityRecheckResponseApi,
   HarnessCapabilitySelectionApi,
   HarnessCapabilitySelectionReportApi,
+  HarnessCertifiedPairingPageApi,
   HarnessCompareApi,
   HarnessConversationAdjustmentApi,
   HarnessConversationAdjustmentResponseApi,
@@ -1241,6 +1242,7 @@ import type {
   SimulateApiHarnessConversationsSessionStoreParams,
   SimulateApiHarnessEnvironmentsCapabilitiesParams,
   SimulateApiHarnessEnvironmentsCapabilityCasesParams,
+  SimulateApiHarnessEnvironmentsCapabilityHistoryParams,
   SimulateApiHarnessEnvironmentsCompareParams,
   SimulateApiHarnessEnvironmentsListParams,
   SimulateApiHarnessEnvironmentsNudgesParams,
@@ -60148,6 +60150,70 @@ export const simulateApiHarnessEnvironmentsCapabilityCases = async (
 ): Promise<simulateApiHarnessEnvironmentsCapabilityCasesResponse> => {
   return apiMutator<simulateApiHarnessEnvironmentsCapabilityCasesResponse>(
     getSimulateApiHarnessEnvironmentsCapabilityCasesUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsCapabilityHistoryResponse200 = {
+  data: HarnessCertifiedPairingPageApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilityHistoryResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilityHistoryResponseSuccess =
+  simulateApiHarnessEnvironmentsCapabilityHistoryResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsCapabilityHistoryResponseError =
+  simulateApiHarnessEnvironmentsCapabilityHistoryResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilityHistoryResponse =
+  | simulateApiHarnessEnvironmentsCapabilityHistoryResponseSuccess
+  | simulateApiHarnessEnvironmentsCapabilityHistoryResponseError;
+
+export const getSimulateApiHarnessEnvironmentsCapabilityHistoryUrl = (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsCapabilityHistoryParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/capabilities/history/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/capabilities/history/`;
+};
+
+/**
+ * The pairings certified on this environment, newest first, with the exact
+agent, environment and suite versions of each. No writes.
+ */
+export const simulateApiHarnessEnvironmentsCapabilityHistory = async (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsCapabilityHistoryParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsCapabilityHistoryResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsCapabilityHistoryResponse>(
+    getSimulateApiHarnessEnvironmentsCapabilityHistoryUrl(id, params),
     {
       ...options,
       method: "GET",

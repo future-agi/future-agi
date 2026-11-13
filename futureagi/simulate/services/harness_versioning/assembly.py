@@ -41,6 +41,8 @@ logger = structlog.get_logger(__name__)
 CERTIFICATE = "runtime-validation.json"
 TOOL_CERTIFICATION = "generic-harness/tool-certification.json"
 ACTION_CERTIFICATION = "generic-harness/action-certification.json"
+# Each tool call the qualification conversation made that reached the test world.
+TOOL_ROUTING = "generic-harness/tool-routing-observations.json"
 SEALED_MANIFEST = "environment-bundle/manifest.json"
 BUNDLE_ROOT = "environment-bundle/"
 CERTIFY_JOB_PATH = "/work/certify-job.json"
@@ -200,8 +202,8 @@ def _json_object(body: bytes | None) -> dict[str, Any] | None:
 
 
 def certification_files(files: Mapping[str, bytes], object_key: str) -> dict[str, Any]:
-    """The per-tool and per-action certification among a sealed bundle's files, with
-    the key of the archive they are kept with."""
+    """The per-tool and per-action certification and the tool routing among a sealed
+    bundle's files, with the key of the archive they are kept with."""
 
     def items(path: str, name: str) -> list[dict[str, Any]]:
         values = (_json_object(files.get(path)) or {}).get(name)
@@ -211,6 +213,8 @@ def certification_files(files: Mapping[str, bytes], object_key: str) -> dict[str
         "object_key": object_key,
         "tools": items(TOOL_CERTIFICATION, "tools"),
         "actions": items(ACTION_CERTIFICATION, "actions"),
+        "routed": items(TOOL_ROUTING, "tools"),
+        "unobserved": items(TOOL_ROUTING, "unobserved"),
     }
 
 
@@ -856,6 +860,105 @@ def source_check_command(source_digest: str | None) -> str:
     return f'python -c "{code}" {source_digest} && '
 
 
+FAILURE_RECORD_PATH = "/work/failure.json"
+_FAILURE_DOMAINS = frozenset({"harness", "world", "agent"})
+_FAILURE_FIELDS = ("phase", "stage", "code", "process", "message")
+
+
+def failure_record(sandbox: Any) -> dict[str, Any] | None:
+    """ALK's record of why the guest failed, ``{domain, phase, stage, code, process,
+    message}`` with ``domain`` one of harness, world or agent; ``None`` when a template
+    writes none or it cannot be read."""
+    try:
+        document = _json_object(
+            sandbox.fs.download_file(
+                FAILURE_RECORD_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - older templates write no record
+        logger.info("harness_failure_record_unread", error=type(exc).__name__)
+        return None
+    if not document or document.get("domain") not in _FAILURE_DOMAINS:
+        return None
+    return {
+        "domain": document["domain"],
+        **{
+            name: str(document[name])[:300] if document.get(name) else None
+            for name in _FAILURE_FIELDS
+        },
+    }
+
+
+REPORTED_PREFIX = "Reported by the sandbox's failure record: "
+
+
+def reported_excerpt(failure: dict[str, Any]) -> str | None:
+    """The failure record's message as a reader may see it: labelled as the sandbox's report. The tested agent can
+    write that file, so its text is never shown as the harness's own line and never decides whose failure it is."""
+    message = ((failure.get("details") or {}).get("harness_failure") or {}).get(
+        "message"
+    )
+    return f"{REPORTED_PREFIX}{message}" if message else None
+
+
+TOOL_ROUTING_PATH = "/work/authoring/generic-harness/tool-routing-observations.json"
+
+
+def tool_routing_observations(sandbox: Any) -> dict[str, Any] | None:
+    """The tools a check's qualification saw reaching the test world, as ALK wrote
+    them; ``None`` when absent or unreadable."""
+    try:
+        document = _json_object(
+            sandbox.fs.download_file(TOOL_ROUTING_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS)
+        )
+    except Exception as exc:  # noqa: BLE001 - older templates write none
+        logger.info("harness_tool_routing_unread", error=type(exc).__name__)
+        return None
+    if not document or not isinstance(document.get("tools"), list):
+        return None
+    return {
+        "tools": [one for one in document["tools"] if isinstance(one, dict)][:500],
+        "unobserved": [
+            one for one in document.get("unobserved") or [] if isinstance(one, dict)
+        ][:500],
+    }
+
+
+AGENT_READING_PATH = "/work/reading/agent.json"
+
+
+def agent_reading_command() -> str:
+    """Read the agent version's tools from its source into ``AGENT_READING_PATH``, its
+    model spend journalled where the gateway reads a build's. Never fails the command:
+    an unread version stays unread and the certify after it runs as without it."""
+    return (
+        "ALK_SPEND_JOURNAL=/work/authoring/cost.json python -m "
+        "fi.alk.harness.hosted_agent_reading --source /work/source "
+        f"--output {PurePosixPath(AGENT_READING_PATH).parent} || true; "
+    )
+
+
+def agent_reading(sandbox: Any) -> dict[str, Any] | None:
+    """The agent document a reading wrote, ``{sdk_version, agent}``; ``None`` when it
+    is absent or unreadable."""
+    try:
+        document = _json_object(
+            sandbox.fs.download_file(
+                AGENT_READING_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - a reading that failed writes nothing
+        logger.info("harness_agent_reading_unread", error=type(exc).__name__)
+        return None
+    if not (
+        isinstance(document, dict)
+        and isinstance(document.get("agent"), dict)
+        and isinstance(document.get("sdk_version"), str)
+    ):
+        return None
+    return document
+
+
 def certify_command() -> str:
     """Certify the pinned pair into ``/work/bundle`` and make it the run's bundle.
 
@@ -1205,6 +1308,9 @@ def mark_failed(
         }
         if failed_actions is not None:
             error["failed_actions"] = failed_actions
+        excerpt = reported_excerpt(failure)
+        if excerpt:
+            error["excerpt"] = excerpt
         if certify_only(job):
             error["source"] = FAILURE_SOURCE
         rows.exclude(state=HarnessAssembledBundle.State.READY).update(

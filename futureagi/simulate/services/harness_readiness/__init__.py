@@ -24,6 +24,7 @@ from simulate.services.harness_readiness.findings import (
 )
 from simulate.services.harness_readiness.report import (
     ReadinessReport,
+    evidence_revision,
     readiness_report,
     recheck,
     resolve_pairing,
@@ -34,6 +35,7 @@ from simulate.services.harness_readiness.selection import (
     CasePage,
     SelectionReport,
     case_page,
+    select_for_run,
     selection_report,
 )
 
@@ -52,11 +54,13 @@ __all__ = [
     "SelectionReport",
     "StructuralFinding",
     "case_page",
+    "evidence_revision",
     "pair_bundle",
     "preflight_findings",
     "readiness_report",
     "recheck",
     "resolve_pairing",
+    "select_for_run",
     "selection_report",
     "store_run_snapshot",
     "structural_findings",

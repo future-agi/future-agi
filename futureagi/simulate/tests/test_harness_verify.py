@@ -1,6 +1,7 @@
 """Held-back cases and verify: what a coding agent may read and run, and the counts it
 gets back when it verifies an agent version on the cases it never saw."""
 
+import dataclasses
 import json
 import uuid
 from types import SimpleNamespace
@@ -1047,3 +1048,66 @@ class TestWhatACodingAgentReads:
 
         environment.refresh_from_db()
         assert held_back(environment) is None
+
+
+def test_a_coding_agent_starting_a_run_reads_no_readiness_selection(
+    api_client, environment, keys
+):
+    chosen = ensure_held_back(environment)
+    hidden = chosen.scenario_keys[0]
+    shown = [key for key in _suite_keys(environment) if key not in chosen.scenario_keys]
+
+    created = _as(
+        api_client,
+        keys.coder,
+        "post",
+        f"{BASE}/{environment.id}/run/",
+        {"scenario_ids": shown, "trials": 1},
+        HTTP_IDEMPOTENCY_KEY="coder-selection",
+    )
+
+    assert created.status_code == 202, created.content
+    assert created.json()["selection"] is None
+    assert hidden not in created.content.decode()
+
+
+def test_a_coding_agent_s_verify_refused_by_readiness_names_no_case(
+    api_client, environment, keys, monkeypatch
+):
+    from simulate.services import harness_readiness
+
+    chosen = ensure_held_back(environment)
+    candidate = _second_agent(environment)
+    real = harness_readiness.select_for_run
+
+    def every_case_held(pairing, *, keys, trials):
+        # Readiness holding back every case the verify sends (a Blocked start row, or
+        # a production-only tool every held-back case uses); the 409 is the PR's own.
+        plan = real(pairing, keys=keys, trials=trials)
+        view = {
+            **plan.view,
+            "running": 0,
+            "held_back": {
+                "count": len(keys),
+                "keys": list(keys),
+                "truncated": False,
+                "by": {"start": len(keys)},
+            },
+            "reasons": {"start": "The agent did not start in the test sandbox"},
+        }
+        return dataclasses.replace(plan, view=view, held=frozenset(keys))
+
+    monkeypatch.setattr(harness_readiness, "select_for_run", every_case_held)
+
+    refused = _as(
+        api_client,
+        keys.coder,
+        "post",
+        f"{BASE}/{environment.id}/verify/",
+        {"agent_version_id": str(candidate.id), "trials": 1},
+    )
+
+    assert refused.status_code == 409, refused.content
+    assert refused.json()["error"] == "all_cases_blocked"
+    assert "selection" not in refused.json()
+    assert not any(key in refused.content.decode() for key in chosen.scenario_keys)

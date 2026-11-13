@@ -14,7 +14,7 @@ from simulate.models import (
 )
 
 CATALOG_VERSION = "1"
-RULES_VERSION = "6"
+RULES_VERSION = "8"
 
 Status = Literal["supported", "partial", "blocked", "unavailable", "untested", "stale"]
 EvidenceSource = Literal["pair_certificate", "build_certificate", "none"]
@@ -78,11 +78,20 @@ class VersionRef(TypedDict):
     label: str | None
 
 
+class AgentToolsView(TypedDict):
+    # Whether the agent version's tools were read, and how many it has.
+    read: bool
+    count: int
+
+
 class PairingView(TypedDict):
     agent_version: VersionRef | None
     environment_version: VersionRef | None
     suite_version: VersionRef | None
     evidence: EvidenceSource
+    agent_tools: AgentToolsView
+    # The certification archive could not be read: its rows read as unmeasured.
+    evidence_unreadable: bool
 
 
 class AnswerView(TypedDict):
@@ -98,7 +107,8 @@ class AreaView(TypedDict):
 
 
 class Target(TypedDict):
-    kind: Literal["tool", "action", "check"]
+    # ``agent_tool``: a tool of the agent version the environment version lacks.
+    kind: Literal["tool", "agent_tool", "action", "check"]
     name: str
     result: str
 
@@ -173,6 +183,8 @@ class Reading:
 
 
 def targets(
-    kind: Literal["tool", "action", "check"], names: list[str], result: str
+    kind: Literal["tool", "agent_tool", "action", "check"],
+    names: list[str],
+    result: str,
 ) -> list[Target]:
     return [{"kind": kind, "name": name, "result": result} for name in names]
