@@ -407,7 +407,7 @@ function RollbackRequest({
         {!submit.data && !reviewed && <Typography variant="s3">Tick the acknowledgment to continue.</Typography>}
         {preview.isPending && <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
           <Button variant="contained" disabled>Submit rollback for review</Button>
-          <StatusBadge status="checking" label="Preparing the rollback request…" />
+          <Box role="status"><StatusBadge status="checking" label="Preparing the rollback request…" /></Box>
         </Stack>}
         <OperationFeedback error={preview.error} action="prepare a recovery review" onRefresh={onRefresh} onRetry={() => { if (originalPreview.current) startPreview(originalPreview.current); }} />
         {packet && (

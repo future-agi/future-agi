@@ -270,6 +270,7 @@ it('shows a disabled submit and a checking status while preparing the rollback r
   previewState = { isPending: true };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
   expect(screen.getByText('Preparing the rollback request…')).toBeVisible();
+  expect(screen.getByText('Preparing the rollback request…').closest('[role="status"]')).not.toBeNull();
   expect(screen.getByRole('button', { name: 'Submit rollback for review' })).toBeDisabled();
 });
 
