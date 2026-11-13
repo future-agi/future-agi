@@ -12725,9 +12725,13 @@ def run_evaluation_task(evaluation_data):
             if str(metric_id) not in failed_metric_ids
         ]
         if completed_metric_ids:
-            UserEvalMetric.objects.filter(id__in=completed_metric_ids).update(
-                status=StatusType.COMPLETED.value
-            )
+            # This task set RUNNING when it started, so a FAILED seen now was
+            # written by a run that overlapped it, such as a concurrent rerun
+            # of other rows whose failed rows are still ERROR. Keep it: the
+            # condition is part of the UPDATE, so a racing FAILED still wins.
+            UserEvalMetric.objects.filter(id__in=completed_metric_ids).exclude(
+                status=StatusType.FAILED.value
+            ).update(status=StatusType.COMPLETED.value)
 
         for metric_id in metric_ids:
             metric = metric_map.get(str(metric_id))

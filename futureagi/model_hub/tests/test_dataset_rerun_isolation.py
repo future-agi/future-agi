@@ -102,11 +102,11 @@ def rerun():
         )
 
 
-def run_selected(rerun, metrics=None):
+def run_selected(rerun, metrics=None, rows=None):
     run_evaluation_task._original_func(
         {
             "metric_ids": [str(metric.id) for metric in metrics or [rerun.metric]],
-            "row_ids": [str(row.id) for row in rerun.rows[:2]],
+            "row_ids": [str(row.id) for row in rows or rerun.rows[:2]],
         }
     )
 
@@ -762,6 +762,72 @@ def test_failed_metric_does_not_change_other_metric_or_completion_counts(rerun):
         (str(call["eval"].id), call["count"], call["failed"])
         for call in completed_calls
     ] == [(str(rerun.metric.id), 0, 2), (str(healthy.id), 2, 0)]
+
+
+@pytest.mark.parametrize("passing_runs", [1, 2])
+def test_overlapping_reruns_keep_the_failure_of_another_run(rerun, passing_runs):
+    """Reruns of one metric overlap on different rows. While each passing
+    run's row is in flight, the next run starts and finishes; the innermost
+    run fails its row and finishes first. That row is still ERROR when the
+    passing runs finish later, so none of them may relabel the metric
+    COMPLETED."""
+    original = EvaluationRunner.run_evaluation_for_row
+    failing_row, passing_rows = rerun.rows[0], rerun.rows[1 : 1 + passing_runs]
+    finished = []
+
+    def run_rerun(row):
+        try:
+            run_selected(rerun, rows=[row])
+            status = UserEvalMetric.objects.get(id=rerun.metric.id).status
+            finished.append((row.order, status))
+        except Exception as error:
+            finished.append((row.order, error))
+        finally:
+            connection.close()
+
+    def run(self, row_id):
+        row = next(row for row in rerun.rows if str(row.id) == row_id)
+        if row == failing_row:
+            raise RuntimeError("synthetic row failure")
+        overlapping = Thread(target=run_rerun, args=(rerun.rows[row.order - 1],))
+        overlapping.start()
+        overlapping.join(30)
+        return original(self, row_id)
+
+    with (
+        patch.object(EvaluationRunner, "run_evaluation_for_row", run),
+        patch.object(EvaluationRunner, "_process_eval_result", result_for_row),
+    ):
+        run_rerun(passing_rows[-1])
+
+    # Runs finish innermost first; the status each one leaves behind.
+    assert finished == [
+        (row.order, StatusType.FAILED.value) for row in [failing_row, *passing_rows]
+    ]
+    assert column_state(rerun.column) == [
+        (CellStatus.ERROR.value, FAILED_REASON),
+        *[(CellStatus.PASS.value, f"row-{row.order}") for row in passing_rows],
+        *[(CellStatus.PASS.value, "previous result")] * (2 - passing_runs),
+    ]
+
+
+def test_later_rerun_completes_a_metric_an_earlier_rerun_failed(rerun):
+    """Reruns that do not overlap keep last-run-wins status: a run starts by
+    setting RUNNING, so rerunning the failed row successfully completes the
+    metric again."""
+    with (
+        patch.object(
+            EvaluationRunner, "run_evaluation_for_row", fail_rows_of(rerun.metric)
+        ),
+        patch.object(EvaluationRunner, "_process_eval_result", result_for_row),
+    ):
+        run_selected(rerun, rows=rerun.rows[:1])
+    assert status_of(rerun.metric) == StatusType.FAILED.value
+
+    with patch.object(EvaluationRunner, "_process_eval_result", result_for_row):
+        run_selected(rerun, rows=rerun.rows[:1])
+    assert column_state(rerun.column)[0] == (CellStatus.PASS.value, "row-0")
+    assert status_of(rerun.metric) == StatusType.COMPLETED.value
 
 
 def test_lost_connection_on_one_failed_row_still_finishes_the_others(rerun):
