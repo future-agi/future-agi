@@ -1234,6 +1234,44 @@ def test_live_row_watermark_includes_children_and_tombstones(row_type):
     assert "r.arrival >= %(sp_floor)s" in sql
 
 
+def test_predicate_values_bind_numbers_as_numbers_and_text_as_text():
+    huge = 10**400  # Valid JSON, beyond Float64: only its digits can match.
+    inexact = 2**53 + 1  # Float64 would round it onto its neighbour.
+    clean = validate_policy(
+        policy(
+            strata=[
+                {
+                    "name": "slice",
+                    "filters": [
+                        {
+                            "key": "score",
+                            "op": "not_in",
+                            "values": ["abc", True, 42, 42.0, huge, inexact],
+                        }
+                    ],
+                    "rate": 100,
+                }
+            ]
+        ),
+        now=NOW,
+    )
+    query = SamplingQuery(_spans_task(), clean, "v", NOW)
+    sql = query.predicate(clean["strata"][0]["filters"][0])
+    bound = [
+        value for key, value in query.params.items() if key.startswith("sp_value_")
+    ]
+    # Text keeps every value's own text form, so nothing the old comparison
+    # matched stops matching.
+    texts = ("abc", "true", "42", "42.0", str(huge), str(inexact))
+    assert texts in bound
+    # Only exactly representable numbers compare numerically.
+    numbers = next(value for value in bound if value == (42.0, 42.0))
+    assert all(type(number) is float for number in numbers)
+    assert " AND NOT (" in sql
+    assert "ifNull(toFloat64OrNull(" in sql
+    assert " NOT IN " not in sql
+
+
 @pytest.mark.parametrize("column", ["total_tokens", "total_cost"])
 def test_session_usage_filters_roll_up_members_over_the_snapshot(column):
     """Usage filters keep the list's child-aware roll-up, read once more."""

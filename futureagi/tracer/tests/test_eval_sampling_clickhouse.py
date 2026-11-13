@@ -2077,3 +2077,110 @@ def test_session_usage_filter_adds_one_snapshot_read(project, ch_seed):
     measured = (read, one_replay)
     assert read["usage"] > read["plain"], measured
     assert read["usage"] - read["plain"] < 1.5 * one_replay, measured
+
+
+def _seed_scores(project, values):
+    """One session (one root + child) per stored attribute value."""
+    sessions, spans = {}, []
+    for name, (attributes, metadata) in values.items():
+        session = TraceSession.objects.create(project=project, name=name)
+        rows = seed_contact(project, session, attributes, traces=1, seed=False)
+        for span in rows:
+            span.metadata = metadata
+        spans += rows
+        sessions[name] = f"session:{session.id}"
+    seed_ch_spans(spans)
+    return sessions
+
+
+SCORES = {
+    "number-42": ({"score": 42}, {}),
+    "number-42.5": ({"score": 42.5}, {}),
+    "string-42": ({"score": "42"}, {}),
+    "string-abc": ({"score": "abc"}, {}),
+    "bool-true": ({"score": True}, {}),
+    "missing": ({}, {}),
+    "metadata-42": ({}, {"score": 42}),
+}
+
+
+@pytest.mark.parametrize(
+    "source,op,values,expected",
+    [
+        ("span", "in", [42], {"number-42", "string-42"}),
+        ("span", "in", [42.0], {"number-42", "string-42"}),
+        ("span", "not_in", [42], {"number-42.5", "string-abc", "bool-true"}),
+        ("span", "not_in", [42.0], {"number-42.5", "string-abc", "bool-true"}),
+        ("span", "in", [42.5], {"number-42.5"}),
+        (
+            "span",
+            "not_in",
+            [42.5],
+            {"number-42", "string-42", "string-abc", "bool-true"},
+        ),
+        ("span", "in", ["42"], {"number-42", "string-42"}),
+        ("span", "in", [True], {"bool-true"}),
+        ("span", "in", ["abc", 42.0], {"string-abc", "number-42", "string-42"}),
+        ("span", "not_in", ["abc", 42.0], {"number-42.5", "bool-true"}),
+        ("metadata", "in", [42.0], {"metadata-42"}),
+        ("metadata", "not_in", [42.0], set()),
+    ],
+)
+def test_numeric_stratum_values_match_stored_numbers_in_clickhouse(
+    project, ch_seed, source, op, values, expected
+):
+    """A JSON 42 and 42.0 are one number, however ClickHouse renders it."""
+    sessions = _seed_scores(project, SCORES)
+    task = EvalTask(
+        project=project,
+        row_type="spans",
+        filters={},
+        sampling_policy=make_policy(
+            strata=[
+                {
+                    "name": "match",
+                    "filters": [
+                        {"source": source, "key": "score", "op": op, "values": values}
+                    ],
+                    "rate": 100,
+                }
+            ],
+            default={"rate": 0},
+        ),
+    )
+    policy, version = task_policy(task, now=timezone.now())
+    members = _rows(SamplingQuery(task, policy, version, sampling_clock()).members())
+    assert all(json.loads(row[1])[0] == "match" for row in members), members
+    assert {row[0] for row in members} == {sessions[name] for name in expected}
+
+
+@pytest.mark.parametrize("op", ["in", "not_in"])
+def test_large_integer_ids_never_match_their_rounded_neighbour(project, ch_seed, op):
+    """Float64 cannot tell 2**53 + 1 from 2**53; a text id must stay exact."""
+    exact, neighbour = 2**53 + 1, 2**53
+    sessions = _seed_scores(
+        project,
+        {
+            "exact": ({"account": str(exact)}, {}),
+            "neighbour": ({"account": str(neighbour)}, {}),
+        },
+    )
+    task = EvalTask(
+        project=project,
+        row_type="spans",
+        filters={},
+        sampling_policy=make_policy(
+            strata=[
+                {
+                    "name": "match",
+                    "filters": [{"key": "account", "op": op, "values": [exact]}],
+                    "rate": 100,
+                }
+            ],
+            default={"rate": 0},
+        ),
+    )
+    policy, version = task_policy(task, now=timezone.now())
+    members = _rows(SamplingQuery(task, policy, version, sampling_clock()).members())
+    expected = {"in": "exact", "not_in": "neighbour"}[op]
+    assert {row[0] for row in members} == {sessions[expected]}

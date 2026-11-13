@@ -126,11 +126,40 @@ class SamplingQuery:
         if op in ("gt", "gte", "lt", "lte"):
             symbol = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}[op]
             return f"({exists} AND toFloat64OrNull({value}) {symbol} {self.bind(item['values'][0])})"
-        values = tuple(
-            str(v).lower() if isinstance(v, bool) else str(v) for v in item["values"]
+        # Strings and booleans compare as text. A JSON number keeps its text
+        # form (an attribute stored as the string "42.0" still matches) and
+        # also compares as a number: 42 and 42.0 are one value, while
+        # ClickHouse renders a stored Float64 42 as '42' and Python renders
+        # 42.0 as '42.0'. Only a value Float64 holds exactly compares
+        # numerically, so a 17-digit integer id never matches its rounded
+        # neighbour.
+        texts, numbers = [], []
+        for v in item["values"]:
+            if isinstance(v, bool):
+                texts.append(str(v).lower())
+            elif isinstance(v, str):
+                texts.append(v)
+            else:
+                texts.append(str(v))
+                try:
+                    if float(v) == v:
+                        numbers.append(float(v))
+                except OverflowError:
+                    pass  # Beyond Float64: only its digits can match.
+        matches = []
+        if texts:
+            matches.append(f"{value} IN {self.bind(tuple(texts))}")
+        if numbers:
+            # A non-numeric value parses to NULL: no number matches it.
+            matches.append(
+                f"ifNull(toFloat64OrNull({value}) IN {self.bind(tuple(numbers))}, 0)"
+            )
+        matched = " OR ".join(matches)
+        return (
+            f"({exists} AND ({matched}))"
+            if op == "in"
+            else f"({exists} AND NOT ({matched}))"
         )
-        symbol = "IN" if op == "in" else "NOT IN"
-        return f"({exists} AND {value} {symbol} {self.bind(values)})"
 
     def _rule_case(self, values: list[str]) -> str:
         args = []

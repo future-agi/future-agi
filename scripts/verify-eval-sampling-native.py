@@ -97,6 +97,14 @@ def generate(directory: Path) -> None:
                 )
                 + ")"
             )
+            numbers = row.get("numbers", {})
+            number_sql = (
+                "map("
+                + ",".join(
+                    str(literal(value)) for pair in numbers.items() for value in pair
+                )
+                + ")"
+            )
             boolean_sql = f"map('positive',{int(row.get('positive', False))})"
             fields = [
                 PROJECT,
@@ -112,10 +120,10 @@ def generate(directory: Path) -> None:
             values.append(
                 "("
                 + ",".join(str(literal(value)) for value in fields)
-                + f",{map_sql},{boolean_sql},{row.get('version', 1)})"
+                + f",{map_sql},{number_sql},{boolean_sql},{row.get('version', 1)})"
             )
         return (
-            "INSERT INTO spans (project_id,id,trace_id,trace_session_id,end_user_id,parent_span_id,start_time,created_at,observation_type,attrs_string,attrs_bool,_version) VALUES "
+            "INSERT INTO spans (project_id,id,trace_id,trace_session_id,end_user_id,parent_span_id,start_time,created_at,observation_type,attrs_string,attrs_number,attrs_bool,_version) VALUES "
             + ",".join(values)
             + ";\n"
         )
@@ -363,6 +371,41 @@ def generate(directory: Path) -> None:
             "unit_ids": [f"session:{late_rows[-1]['session']}"],
         },
     )
+    # A JSON 42 and 42.0 are one number. ClickHouse renders a stored Float64
+    # 42 as '42', so numeric predicates must compare numbers, not text.
+    scores = {
+        "score-int": contact("score-int", numbers={"score": 42}),
+        "score-fraction": contact("score-fraction", numbers={"score": 42.5}),
+        "score-text": contact("score-text", attributes={"score": "42"}),
+        "score-word": contact("score-word", attributes={"score": "abc"}),
+    }
+    for op, values, matching in (
+        ("in", [42.0], ("score-int", "score-text")),
+        ("in", [42], ("score-int", "score-text")),
+        ("not_in", [42.0], ("score-fraction", "score-word")),
+        ("in", ["abc", 42.5], ("score-fraction", "score-word")),
+    ):
+        case(
+            f"numeric-stratum-{op}-{'-'.join(map(str, values))}",
+            [row for rows in scores.values() for row in rows],
+            {
+                **base,
+                "strata": [
+                    {
+                        "name": "match",
+                        "filters": [{"key": "score", "op": op, "values": values}],
+                        "rate": 100,
+                    }
+                ],
+                "default": {"rate": 0},
+            },
+            "members",
+            {
+                "units": sorted(f"session:{identity(name)}" for name in matching),
+                "probabilities": [1],
+                "populations": [len(matching)],
+            },
+        )
     rate_rows = [contact(f"exact-rate-{index}")[0] for index in range(100)]
     ranked_units = sorted(
         [f"session:{row['session']}" for row in rate_rows],
