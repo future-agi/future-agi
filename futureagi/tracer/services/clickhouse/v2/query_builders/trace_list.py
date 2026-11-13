@@ -335,10 +335,16 @@ class _TraceRootReplayV2:
         query, params = super().build_filter_match_query(candidate_ids, **kwargs)
         from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
 
-        if any(isinstance(value, EffectiveTagRelation) for value in params.values()):
+        if any(
+            isinstance(value, EffectiveTagRelation) for value in params.values()
+        ) and self._only_tag_leaves_read_children():
             # Tag membership is explicitly scoped to the requested event-time
-            # window. Replay full physical hours before mutable time/liveness
+            # window inside its own relation. When no other leaf reads child
+            # spans, replay full physical hours before mutable time/liveness
             # checks, rather than scanning the entire history of candidate IDs.
+            # Any other any-span or residual leaf keeps the base contract and
+            # replays every child version: a child may start long after its
+            # root, and a Tag leaf must not change what that leaf matches.
             query = query.replace(
                 "AND trace_id IN %(candidate_trace_ids)s",
                 "AND trace_id IN %(candidate_trace_ids)s\n"
@@ -346,6 +352,23 @@ class _TraceRootReplayV2:
                 "AND start_time < toStartOfHour(toDateTime64(%(end_date)s, 6, 'UTC')) + INTERVAL 1 HOUR",
             )
         return query, params
+
+    def _only_tag_leaves_read_children(self) -> bool:
+        """Whether every non-root membership leaf is an effective Tag leaf."""
+
+        from tracer.services.clickhouse.v2.effective_tags import EffectiveTagRelation
+
+        plans, residual_filters = self._partition_trace_filter_plans(
+            self._bounded_match_filters()
+        )
+        is_tag_leaf = getattr(
+            self._FILTER_BUILDER_CLS, "is_effective_tag_filter", lambda _item: False
+        )
+        return all(is_tag_leaf(item) for item in residual_filters) and all(
+            any(isinstance(value, EffectiveTagRelation) for value in plan.params.values())
+            for plan in plans
+            if plan.scope != "root"
+        )
 
     @staticmethod
     def filter_classifier_has_exact_start_time_identity() -> bool:

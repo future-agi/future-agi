@@ -419,6 +419,25 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
     _TRACE_TAGS_VERSION = "_version"
     _TRACE_TAGS_DELETED = "is_deleted"
 
+    @classmethod
+    def _is_effective_tag_column(cls, col_id, col_type) -> bool:
+        return col_id in {"tag", "tags"} and col_type in {
+            "",
+            cls.NORMAL,
+            cls.SYSTEM_METRIC,
+        }
+
+    @classmethod
+    def is_effective_tag_filter(cls, item) -> bool:
+        """Whether one public filter leaf compiles to the effective Tag relation."""
+
+        if not isinstance(item, dict):
+            return False
+        col_id = item.get("column_id") or item.get("columnId")
+        config = item.get("filter_config") or item.get("filterConfig") or {}
+        col_type = config.get("col_type") or config.get("colType") or cls.NORMAL
+        return cls._is_effective_tag_column(col_id, col_type)
+
     def _build_condition(
         self,
         col_id,
@@ -429,11 +448,7 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
         *,
         attribute_value_types=None,
     ):
-        if col_id in {"tag", "tags"} and col_type in {
-            "",
-            self.NORMAL,
-            self.SYSTEM_METRIC,
-        }:
+        if self._is_effective_tag_column(col_id, col_type):
             return self._effective_tag_condition(col_id, filter_op, filter_value)
         return super()._build_condition(
             col_id,

@@ -642,3 +642,57 @@ def test_in_place_source_names_match_reader_semantics(
         }
     )
     assert tuple(rows[0]["names"]) == expected
+
+
+def _attribute_leaf(key, value):
+    return {
+        "column_id": key,
+        "filter_config": {
+            "col_type": "SPAN_ATTRIBUTE",
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": value,
+        },
+    }
+
+
+def _classify_unbounded(stores, *leaves, ids=("alpha", "beta")):
+    builder = TraceListQueryBuilderV2(project_id=PROJECT, filters=filters(*leaves))
+    query, params = builder.build_filter_match_query(list(ids))
+    params = prepare_effective_tag_params(
+        stores.analytics.execute_ch_query,
+        params,
+        deadline=ReadDeadline.start(10000),
+    )
+    rows = stores.analytics.execute_ch_query(query, params).data
+    return query, sorted(row["trace_id"] for row in rows)
+
+
+def test_tag_leaf_does_not_hour_bound_other_any_span_leaves(stores):
+    """A Tag leaf must not change how other any-span leaves read children.
+
+    The classifier replays every child version of a finite candidate trace
+    for any-span leaves, because a child may start long after its root. Only
+    the Tag relation is scoped to the request window, inside its own subquery.
+    """
+    late = END + timedelta(hours=3)
+    seed(stores, "alpha", attrs_string={"tag.tags": '["sdk"]'})
+    seed(
+        stores,
+        "alpha",
+        span="late-child",
+        parent_span_id="root",
+        start_time=late,
+        attrs_string={"customer": "acme"},
+    )
+    seed(stores, "beta", attrs_string={"tag.tags": '["sdk"]'})
+    attribute = _attribute_leaf("customer", "acme")
+    _, without_tag = _classify_unbounded(stores, attribute)
+    assert without_tag == ["alpha"]
+    query, with_tag = _classify_unbounded(stores, leaf("tag", "sdk"), attribute)
+    assert with_tag == ["alpha"]
+    assert "AND start_time >= toStartOfHour(toDateTime64(%(start_date)s" not in query
+    # A Tag leaf alone still replays only the window's physical hours.
+    query, tag_only = _classify_unbounded(stores, leaf("tag", "sdk"))
+    assert tag_only == ["alpha", "beta"]
+    assert "AND start_time >= toStartOfHour(toDateTime64(%(start_date)s" in query
