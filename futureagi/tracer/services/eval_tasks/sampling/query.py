@@ -130,9 +130,12 @@ class SamplingQuery:
         # form (an attribute stored as the string "42.0" still matches) and
         # also compares as a number: 42 and 42.0 are one value, while
         # ClickHouse renders a stored Float64 42 as '42' and Python renders
-        # 42.0 as '42.0'. Only a value Float64 holds exactly compares
-        # numerically, so a 17-digit integer id never matches its rounded
-        # neighbour.
+        # 42.0 as '42.0'. Both sides must be exact for the numeric branch: the
+        # predicate value must be one Float64 holds exactly, and the stored
+        # text must round-trip through Float64 (toString renders the shortest
+        # round-trip form, so every stored number does). A 17-digit id stored
+        # as text, such as "9007199254740993", never matches its rounded
+        # neighbour 9007199254740992 in either direction.
         texts, numbers = [], []
         for v in item["values"]:
             if isinstance(v, bool):
@@ -151,8 +154,10 @@ class SamplingQuery:
             matches.append(f"{value} IN {self.bind(tuple(texts))}")
         if numbers:
             # A non-numeric value parses to NULL: no number matches it.
+            parsed = f"toFloat64OrNull({value})"
             matches.append(
-                f"ifNull(toFloat64OrNull({value}) IN {self.bind(tuple(numbers))}, 0)"
+                f"ifNull({parsed} IN {self.bind(tuple(numbers))} "
+                f"AND toString({parsed}) = {value}, 0)"
             )
         matched = " OR ".join(matches)
         return (

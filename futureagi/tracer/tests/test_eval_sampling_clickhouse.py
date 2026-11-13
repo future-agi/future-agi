@@ -2155,6 +2155,50 @@ def test_numeric_stratum_values_match_stored_numbers_in_clickhouse(
 
 
 @pytest.mark.parametrize("op", ["in", "not_in"])
+@pytest.mark.parametrize(
+    "predicate,stored_exact,stored_rounded",
+    [
+        (2**53, "9007199254740992", "9007199254740993"),
+        (2**54, "18014398509481984", "18014398509481985"),
+    ],
+)
+def test_stored_text_ids_never_match_an_exact_float_predicate_neighbour(
+    project, ch_seed, op, predicate, stored_exact, stored_rounded
+):
+    """The predicate is exact in Float64; the stored neighbour text is not.
+
+    toFloat64OrNull("9007199254740993") rounds to 2**53, so a numeric compare
+    alone would match it. The stored text must round-trip to compare as a number.
+    """
+    sessions = _seed_scores(
+        project,
+        {
+            "exact": ({"account": stored_exact}, {}),
+            "rounded": ({"account": stored_rounded}, {}),
+        },
+    )
+    task = EvalTask(
+        project=project,
+        row_type="spans",
+        filters={},
+        sampling_policy=make_policy(
+            strata=[
+                {
+                    "name": "match",
+                    "filters": [{"key": "account", "op": op, "values": [predicate]}],
+                    "rate": 100,
+                }
+            ],
+            default={"rate": 0},
+        ),
+    )
+    policy, version = task_policy(task, now=timezone.now())
+    members = _rows(SamplingQuery(task, policy, version, sampling_clock()).members())
+    expected = {"in": "exact", "not_in": "rounded"}[op]
+    assert {row[0] for row in members} == {sessions[expected]}
+
+
+@pytest.mark.parametrize("op", ["in", "not_in"])
 def test_large_integer_ids_never_match_their_rounded_neighbour(project, ch_seed, op):
     """Float64 cannot tell 2**53 + 1 from 2**53; a text id must stay exact."""
     exact, neighbour = 2**53 + 1, 2**53
