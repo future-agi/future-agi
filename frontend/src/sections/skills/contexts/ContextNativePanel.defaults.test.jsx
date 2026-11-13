@@ -150,3 +150,14 @@ it('offers the first-run primary in the real-route empty preview even with retai
   renderPanel({ state: 'empty' });
   expect(screen.getByRole('button', { name: 'Run your first test' })).toHaveClass('MuiButton-contained');
 });
+
+it('hands the primary to the chosen answer form when the packet belongs to an earlier selection', () => {
+  h.detail.decision = { state: 'release_ready', reasons: [] };
+  h.prepared = { fingerprint: 'sha256:packet', targetDigest: 'sha256:target' };
+  const renderForm = vi.fn(() => null);
+  renderPanel({ children: renderForm });
+  fireEvent.click(screen.getByRole('radio', { name: /^Check answers with this context/ }));
+  expect(renderForm).toHaveBeenLastCalledWith(true);
+  expect(screen.getByRole('button', { name: 'Run on current selection' })).toHaveClass('MuiButton-outlined');
+  expect(screen.getByRole('link', { name: 'Continue to release review' })).toHaveClass('MuiButton-outlined');
+});

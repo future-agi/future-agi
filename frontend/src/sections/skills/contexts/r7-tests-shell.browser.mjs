@@ -87,8 +87,20 @@ try {
       if (!state || state === 'empty') await expect(page.getByRole('checkbox', { name: /I accept up to/ })).toBeEnabled();
       if (state === 'error') await expect(page.getByText("Couldn't load application test options.", { exact: true })).toBeVisible();
       await shot(`tests-${state || 'current'}-${mode}`);
+      if (state === 'empty') {
+        await page.getByRole('button', { name: 'Run your first test', exact: true }).click();
+        await expect(page.getByRole('combobox', { name: /^Candidate version/ })).toBeFocused();
+        await shot(`tests-first-run-focus-${mode}`);
+      }
     }
   }
+  await page.goto(route());
+  await page.getByLabel('Candidate version', { exact: true }).click();
+  await page.getByRole('option', { name: 'v6', exact: true }).click();
+  await expect(page.getByText('Earlier result', { exact: true })).toBeVisible();
+  await shot('tests-earlier-selection');
+  await page.getByRole('button', { name: 'Run on current selection', exact: true }).click();
+  await expect(page.getByRole('combobox', { name: /^Candidate version/ })).toBeFocused();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(route());
   await expect(page.getByText('Latest result', { exact: true })).toBeVisible();
