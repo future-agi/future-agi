@@ -355,6 +355,41 @@ def test_google_callback_requires_identity_claims(identity_server, google_user, 
     _assert_denied(client, response, before)
 
 
+UNVERIFIED_EMAIL = {
+    "false": {"claims": {"email_verified": False}},
+    "false-string": {"claims": {"email_verified": "false"}},
+    "missing": {"omit": ("email_verified",)},
+}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("case", list(UNVERIFIED_EMAIL))
+def test_google_callback_requires_verified_email_for_existing_user(
+    identity_server, google_user, case
+):
+    identity_server["issue"](**UNVERIFIED_EMAIL[case])
+    before = AuthToken.objects.count()
+    users = User.objects.count()
+    client, response = _callback()
+    _assert_denied(client, response, before)
+    assert not AuthToken.objects.filter(user=google_user).exists()
+    assert User.objects.count() == users
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("case", list(UNVERIFIED_EMAIL))
+def test_google_callback_requires_verified_email_for_new_user(identity_server, case):
+    options = UNVERIFIED_EMAIL[case]
+    claims = {**options.get("claims", {}), "email": "google-new@example.test"}
+    identity_server["issue"](claims=claims, omit=options.get("omit", ()))
+    before = AuthToken.objects.count()
+    users = User.objects.count()
+    client, response = _callback()
+    _assert_denied(client, response, before)
+    assert User.objects.count() == users
+    assert not User.objects.filter(email="google-new@example.test").exists()
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize("status", [400, 503])
 def test_google_key_service_failure_is_closed(identity_server, google_user, status):
@@ -559,14 +594,14 @@ def test_production_callback_logging_redacts_query_and_signed_claims(
 def test_request_logging_preserves_non_sso_queries_and_callback_input():
     from django.test import RequestFactory
 
-    from tfc.logging.middleware import CredentialSafeRequestMiddleware
+    from tfc.logging.middleware import CallbackRequestMiddleware
 
     request = RequestFactory().get("/saml2_auth/auth/callback/", {"code": CODE})
-    assert CredentialSafeRequestMiddleware.format_request(request) == (
+    assert CallbackRequestMiddleware.format_request(request) == (
         "GET /saml2_auth/auth/callback/"
     )
     assert request.GET["code"] == CODE
     ordinary = RequestFactory().get("/health/", {"detail": "true"})
-    assert CredentialSafeRequestMiddleware.format_request(ordinary) == (
+    assert CallbackRequestMiddleware.format_request(ordinary) == (
         "GET /health/?detail=true"
     )

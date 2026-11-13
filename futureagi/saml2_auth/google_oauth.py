@@ -35,7 +35,8 @@ def _signing_key(keys, kid):
 
 
 def verify_google_id_token(id_token, client_id, access_token):
-    """Verify signature, required claims and the optional access-token hash.
+    """Verify signature, required claims, a verified email and the optional
+    access-token hash.
 
     Keys come only from configured Google infrastructure, never a token's jku or
     x5u header. A cache miss fetches once; an unknown kid in a warm cache refreshes
@@ -60,7 +61,7 @@ def verify_google_id_token(id_token, client_id, access_token):
     if key is None:
         raise JWTError("Unknown Google signing key")
 
-    return jwt.decode(
+    claims = jwt.decode(
         id_token,
         key,
         algorithms=["RS256"],
@@ -74,3 +75,9 @@ def verify_google_id_token(id_token, client_id, access_token):
             "require_sub": True,
         },
     )
+    # Accounts are matched by email, so only an address Google has verified
+    # may sign in or create one.
+    verified = claims.get("email_verified")
+    if str(verified).lower() != "true":
+        raise JWTError("Google email is not verified")
+    return claims
