@@ -213,9 +213,14 @@ changes none of them.
      `v*` tag that stays, and records each tip SHA. In deployment this step
      is the history check's tree read and first range. Then the header's
      re-listing: every `v*` tag again, which must point at a commit on
-     `main`, and the runs of the last 30 days on refs that a key or
-     approver environment admits, whose commits must match what was read,
-     or whose versions are read, or whose runs are deleted;
+     `main` (a new tag stays if its `.github` and script paths match
+     main's recorded tip, or are read), and the runs of the last 30 days on
+     refs that a key or approver environment admits, whose commits must
+     match what was read, or whose versions are read, or whose runs are
+     deleted. The run listing is sliced so that each slice returns all its
+     runs, because the endpoint stops at 1,000 without an error, and it
+     keeps `pull_request_target` runs, which run main's workflow file
+     whatever branch they report;
   6. the new key goes into the environments.
 
   Release jobs that use the key, the release autopilot's `merge` job
