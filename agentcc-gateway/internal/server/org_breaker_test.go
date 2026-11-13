@@ -71,6 +71,11 @@ func orgBreakerGateway(t *testing.T, failing ...string) (*Server, *httptest.Serv
 // status. The breaker keeps the default on_status_codes (429 and 5xx).
 func orgBreakerGatewayWithStatus(t *testing.T, failStatus int, failing ...string) (*Server, *httptest.Server, *keyedUpstream) {
 	t.Helper()
+	return orgBreakerGatewayWithConfig(t, failStatus, nil, failing...)
+}
+
+func orgBreakerGatewayWithConfig(t *testing.T, failStatus int, configure func(*config.Config), failing ...string) (*Server, *httptest.Server, *keyedUpstream) {
+	t.Helper()
 	keyed, primary := newKeyedUpstream(t, failStatus, failing...)
 	var backupCalls atomic.Int64
 	backup := adaptiveUpstream(t, false, 0, &backupCalls)
@@ -90,6 +95,9 @@ func orgBreakerGatewayWithStatus(t *testing.T, failStatus int, failing ...string
 		{Name: "org-a", Key: "synthetic-org-a-probe", KeyType: "byok", Metadata: map[string]string{"org_id": "org-a"}},
 		{Name: "org-b", Key: "synthetic-org-b-probe", KeyType: "byok", Metadata: map[string]string{"org_id": "org-b"}},
 		{Name: "operator", Key: "synthetic-operator-probe", KeyType: "internal"},
+	}
+	if configure != nil {
+		configure(cfg)
 	}
 	srv, gateway := adaptiveServer(t, cfg)
 	store := tenant.NewStore()

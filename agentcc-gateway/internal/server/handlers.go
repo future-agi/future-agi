@@ -505,7 +505,7 @@ func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover
 		if orgCfg.Routing.Retry != nil && orgCfg.Routing.Retry.Enabled {
 			retryer = routing.NewRetryer(h.buildOrgRetryConfig(orgCfg.Routing.Retry))
 		}
-		return routing.NewFailover(foCfg, h.registry.Router(), retryer, nil)
+		return routing.NewFailover(foCfg, h.registry.Router(), retryer, h.healthMonitor.CircuitBreakerRegistry())
 	}
 	return h.failover.Load()
 }

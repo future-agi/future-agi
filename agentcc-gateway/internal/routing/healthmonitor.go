@@ -92,6 +92,17 @@ func (hm *HealthMonitor) SetCircuitBreakerRegistry(cbReg *CircuitBreakerRegistry
 	hm.mu.Unlock()
 }
 
+// CircuitBreakerRegistry returns the active registry, including its persistent
+// org breakers, even when only an org's config enables failover.
+func (hm *HealthMonitor) CircuitBreakerRegistry() *CircuitBreakerRegistry {
+	if hm == nil {
+		return nil
+	}
+	hm.mu.RLock()
+	defer hm.mu.RUnlock()
+	return hm.cbReg
+}
+
 // getOrCreate returns the stats for a provider, creating if necessary.
 func (hm *HealthMonitor) getOrCreate(providerID string) *providerStats {
 	hm.mu.RLock()

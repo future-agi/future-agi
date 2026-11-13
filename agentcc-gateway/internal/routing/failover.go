@@ -64,7 +64,7 @@ func NewFailover(cfg config.FailoverConfig, router *Router, retryer *Retryer, cb
 		codes:   codes,
 	}
 	if cbReg.IsEnabled() {
-		f.orgBreakers = NewScopedCircuitBreakerRegistry(cbReg.cfg)
+		f.orgBreakers = cbReg.orgBreakers
 	}
 	return f
 }
@@ -138,7 +138,10 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 	var lastErr error
 	var originalProvider string
 
-	for attempt := 1; attempt <= f.cfg.MaxAttempts; attempt++ {
+	// Refused targets are excluded, but only admitted provider calls spend the
+	// attempt budget. Selection ends once all distinct providers are excluded.
+	attempt := 0
+	for attempt < f.cfg.MaxAttempts {
 		// Select a target, excluding already-tried providers.
 		var result *RoutingResult
 		var err error
@@ -150,6 +153,9 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 		if err != nil {
 			if lastErr != nil {
 				return nil, lastErr // Return the actual provider error, not "no targets"
+			}
+			if len(excluded) > 0 {
+				return nil, models.ErrServiceUnavailable(fmt.Sprintf("all providers for model %q are unavailable", model))
 			}
 			return nil, err
 		}
@@ -173,6 +179,7 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 		}
 
 		// Call the provider (with retry if configured).
+		attempt++
 		var callErr error
 		if f.retryer.IsEnabled() {
 			_, callErr = f.retryer.Execute(attemptCtx, func() error {
@@ -201,7 +208,7 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 				ModelOverride:    result.Target.ModelOverride,
 				Attempts:         attempt,
 				OriginalProvider: originalProvider,
-				FallbackUsed:     attempt > 1,
+				FallbackUsed:     result.Target.ProviderID != originalProvider,
 				StrategyName:     result.StrategyName,
 			}, nil
 		}
@@ -220,11 +227,6 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 		}
 	}
 
-	if lastErr == nil {
-		// Every attempt was refused by a breaker. Org breakers do not take a
-		// target out of routing, so this is reachable; never return (nil, nil).
-		return nil, fmt.Errorf("all providers for model %q are unavailable", model)
-	}
 	return nil, lastErr
 }
 
