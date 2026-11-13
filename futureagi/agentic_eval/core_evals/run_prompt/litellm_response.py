@@ -3339,6 +3339,9 @@ class RunPrompt:
         index=None,
         max_index=None,
         run_type=None,
+        trace_id=None,
+        parent_span_id=None,
+        row_context=None,
     ):
         """
         Execute LLM/TTS/STT request and return response.
@@ -3356,9 +3359,13 @@ class RunPrompt:
             index: Result index for WebSocket messages
             max_index: Total number of results for WebSocket messages
             run_type: Type of run (for tracking)
+            trace_id: Root trace id for the row execution (issue #2665)
+            parent_span_id: Parent (row) span id the model-call span hangs off
+            row_context: Dict with dataset_id, row_id, column_id, variant, source
 
         Returns:
-            Tuple of (response, value_info)
+            Tuple of (response, value_info). When tracing is active, value_info
+            additionally carries ``span_id`` and ``trace_id`` for Cell storage.
         """
         logger.info(
             f"[RunPrompt] litellm_response called, USE_NEW_RUNPROMPT_HANDLERS={USE_NEW_RUNPROMPT_HANDLERS}",
@@ -3366,29 +3373,171 @@ class RunPrompt:
             streaming=streaming,
         )
 
-        if USE_NEW_RUNPROMPT_HANDLERS:
-            logger.info(
-                "[RunPrompt] Using NEW handler implementation",
-                model=self.model,
-                streaming=streaming,
-                template_id=template_id,
+        # Dataset/experiment row tracing (issue #2665): wrap the model call in a
+        # span so each row leaves a recoverable trace. Only active when callers
+        # opt in by passing a trace_id + row_context.
+        tracing_enabled = bool(trace_id and row_context)
+        llm_span_id = None
+        start_ns = None
+        if tracing_enabled:
+            from tracer.services.dataset_tracing import new_span_id, now_ns
+
+            llm_span_id = new_span_id()
+            start_ns = now_ns()
+
+        try:
+            # Execute the actual LLM call
+            if USE_NEW_RUNPROMPT_HANDLERS:
+                logger.info(
+                    "[RunPrompt] Using NEW handler implementation",
+                    model=self.model,
+                    streaming=streaming,
+                    template_id=template_id,
+                )
+                response, value_info = self._litellm_response_new(
+                    streaming=streaming,
+                    template_id=template_id,
+                    version=version,
+                    index=index,
+                    max_index=max_index,
+                    run_type=run_type,
+                )
+            else:
+                response, value_info = self._litellm_response_old(
+                    streaming=streaming,
+                    template_id=template_id,
+                    version=version,
+                    index=index,
+                    max_index=max_index,
+                    run_type=run_type,
+                )
+
+            if tracing_enabled:
+                self._emit_dataset_model_span(
+                    trace_id=trace_id,
+                    span_id=llm_span_id,
+                    parent_span_id=parent_span_id,
+                    start_ns=start_ns,
+                    end_ns=now_ns(),
+                    response=response,
+                    value_info=value_info,
+                    error=None,
+                    row_context=row_context,
+                )
+                if not isinstance(value_info, dict):
+                    value_info = {}
+                value_info["span_id"] = llm_span_id
+                value_info["trace_id"] = trace_id
+
+            return response, value_info
+
+        except Exception as e:
+            if tracing_enabled:
+                self._emit_dataset_model_span(
+                    trace_id=trace_id,
+                    span_id=llm_span_id,
+                    parent_span_id=parent_span_id,
+                    start_ns=start_ns,
+                    end_ns=now_ns(),
+                    response=None,
+                    value_info={"error": str(e)},
+                    error=e,
+                    row_context=row_context,
+                )
+
+            # Re-raise to preserve existing error handling
+            raise
+
+    def _emit_dataset_model_span(
+        self,
+        *,
+        trace_id,
+        span_id,
+        parent_span_id,
+        start_ns,
+        end_ns,
+        response,
+        value_info,
+        error,
+        row_context,
+    ):
+        """Emit the model-call span for a dataset/experiment row (issue #2665).
+
+        Best-effort only: emission failure is logged and swallowed so tracing can
+        never fail or slow a dataset run.
+        """
+        try:
+            from tracer.services.dataset_tracing import (
+                ATTR_DURATION_MS,
+                ATTR_ERROR_MESSAGE,
+                ATTR_ERROR_TYPE,
+                ATTR_INPUT_TOKENS,
+                ATTR_INPUT_VALUE,
+                ATTR_OPERATION,
+                ATTR_OUTPUT_TOKENS,
+                ATTR_OUTPUT_VALUE,
+                ATTR_REQUEST_MODEL,
+                ATTR_TOTAL_TOKENS,
+                SPAN_KIND_LLM,
+                build_span,
+                emit_dataset_spans,
+                identity_attributes,
             )
-            return self._litellm_response_new(
-                streaming=streaming,
-                template_id=template_id,
-                version=version,
-                index=index,
-                max_index=max_index,
-                run_type=run_type,
+
+            usage = {}
+            if isinstance(value_info, dict):
+                metadata = value_info.get("metadata") or {}
+                usage = metadata.get("usage") or {}
+            prompt_tokens = usage.get("prompt_tokens")
+            completion_tokens = usage.get("completion_tokens")
+            total_tokens = usage.get("total_tokens")
+
+            attributes = {
+                ATTR_OPERATION: "chat",
+                ATTR_REQUEST_MODEL: self.model,
+                ATTR_INPUT_VALUE: getattr(self, "messages", None),
+                ATTR_OUTPUT_VALUE: response,
+                ATTR_DURATION_MS: (end_ns - start_ns) / 1_000_000,
+            }
+            attributes.update(identity_attributes(
+                dataset_id=row_context.get("dataset_id"),
+                row_id=row_context.get("row_id"),
+                column_id=row_context.get("column_id"),
+                variant=row_context.get("variant"),
+                source=row_context.get("source"),
+            ))
+            if prompt_tokens is not None:
+                attributes[ATTR_INPUT_TOKENS] = prompt_tokens
+            if completion_tokens is not None:
+                attributes[ATTR_OUTPUT_TOKENS] = completion_tokens
+            if total_tokens is not None:
+                attributes[ATTR_TOTAL_TOKENS] = total_tokens
+            if error is not None:
+                attributes[ATTR_ERROR_TYPE] = type(error).__name__
+                attributes[ATTR_ERROR_MESSAGE] = str(error)
+
+            span = build_span(
+                name=f"llm.{self.model}",
+                trace_id=trace_id,
+                span_id=span_id,
+                parent_span_id=parent_span_id,
+                start_time=start_ns,
+                end_time=end_ns,
+                span_kind=SPAN_KIND_LLM,
+                attributes=attributes,
+                status_code="ERROR" if error is not None else "OK",
             )
-        else:
-            return self._litellm_response_old(
-                streaming=streaming,
-                template_id=template_id,
-                version=version,
-                index=index,
-                max_index=max_index,
-                run_type=run_type,
+
+            emit_dataset_spans(
+                [span],
+                organization_id=getattr(self, "organization_id", None),
+                workspace_id=getattr(self, "workspace_id", None),
+            )
+        except Exception:  # noqa: BLE001 - tracing is best-effort
+            logger.exception(
+                "dataset_model_span_emit_failed",
+                trace_id=trace_id,
+                span_id=span_id,
             )
 
     async def litellm_response_async(
