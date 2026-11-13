@@ -838,6 +838,62 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
         self.assertEqual(code, 1, proc.stdout + proc.stderr)
         self.assertIn((path, 1, "TID251"), found, proc.stdout)
 
+    def test_config_only_invalid_nested_ruff_toml_stops(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("futureagi/app/existing.py", "VALUE = 1\n")
+        base = self.commit()
+        path = "futureagi/app/ruff.toml"
+        self.write(path, "line-length = true\n")
+        self.commit()
+
+        self.assert_gate_stopped(base, path)
+
+    def test_config_only_invalid_nested_pyproject_stops(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        path = "futureagi/app/pyproject.toml"
+        self.write(path, "[tool.ruff]\nline-length = true\n")
+        self.commit()
+
+        self.assert_gate_stopped(base, path)
+
+    def test_config_only_valid_nested_config_passes(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        self.write("futureagi/app/ruff.toml", "line-length = 99\n")
+        self.commit()
+
+        code, found, proc = self.gate(base)
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+        self.assertIn("No new violations.", proc.stdout)
+
+    def test_config_validation_reads_committed_head_not_checkout(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        path = "futureagi/app/ruff.toml"
+        self.write(path, "line-length = 99\n")
+        valid_head = self.commit()
+        self.write(path, "line-length = true\n")
+        code, found, proc = self.gate(base)
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+        self.assertIn("No new violations.", proc.stdout)
+
+        self.write(path, "line-length = true\n")
+        self.commit()
+        self.write(path, "line-length = 99\n")
+        self.assert_gate_stopped(valid_head, path)
+
+    def test_invalid_config_alongside_python_change_stops(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("futureagi/app/existing.py", "VALUE = 1\n")
+        base = self.commit()
+        path = "futureagi/app/ruff.toml"
+        self.write(path, "line-length = true\n")
+        self.write("futureagi/app/existing.py", "VALUE = 2\n")
+        self.commit()
+
+        self.assert_gate_stopped(base, path)
+
     def test_non_table_tool_or_ruff_reports_gate_error(self):
         self.write("futureagi/pyproject.toml", CONFIG)
         base = self.commit()

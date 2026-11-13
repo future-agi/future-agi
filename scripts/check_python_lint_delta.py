@@ -21,10 +21,11 @@ Three passes run on the changed files under futureagi/:
 Only config-named entries in futureagi/ or at the repository root are read:
 these are the paths Ruff can discover for backend files. Both comparison trees
 use the committed configuration from the trusted tip, including [project]
-metadata. A config-only change has no changed Python files to compare. Changing
-formatter settings and reformatting in one PR is judged against the trusted
-tip's formatter. An in-scope config using `extend`, or one at the trusted tip
-that cannot be parsed as TOML, stops the check rather than following settings
+metadata. Changed head configs are checked separately with pinned Ruff, even
+when no Python file changes. Changing formatter settings and reformatting in
+one PR is judged against the trusted tip's formatter. An in-scope config
+using `extend`, or one at the trusted tip that cannot be parsed as TOML, stops
+the check rather than following settings
 outside the committed overlay.
 
 Usage, from the repo root:
@@ -295,6 +296,52 @@ def reject_extended_configs(
             raise GateError(
                 f"{path}: Ruff config uses extend; cannot compare referenced settings"
             )
+
+
+def validate_changed_head_configs(
+    ruff: str,
+    head_configs: dict[str, bytes | None],
+    merge_base_configs: dict[str, bytes | None],
+) -> None:
+    """Ask pinned Ruff to load changed head settings without reading head code."""
+    for path, content in sorted(head_configs.items()):
+        if content == merge_base_configs.get(path):
+            continue
+        if content is None:
+            raise GateError(f"{path}: head config is not a regular file")
+        if (
+            PurePosixPath(path).name == "pyproject.toml"
+            and ruff_section(path, content) is None
+        ):
+            continue  # A pyproject without [tool.ruff] is not a Ruff config.
+        with tempfile.TemporaryDirectory(prefix="lint-config-check-") as tmp:
+            config = Path(tmp) / path
+            config.parent.mkdir(parents=True, exist_ok=True)
+            config.write_bytes(content)
+            probe = config.parent / "__lint_config_probe__.py"
+            probe.write_text("pass\n", encoding="utf-8")
+            proc = subprocess.run(
+                [
+                    ruff,
+                    "check",
+                    "--no-cache",
+                    "--no-fix",
+                    "--exit-zero",
+                    "--output-format",
+                    "json",
+                    "--config",
+                    str(config),
+                    "--",
+                    str(probe),
+                ],
+                cwd=Path(tmp),
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode:
+                error = proc.stderr.strip().replace(str(config), path)[:2000]
+                raise GateError(f"{path}: head Ruff config cannot be loaded: {error}")
 
 
 def trusted_head_tree(
@@ -689,6 +736,7 @@ def check(
             raise GateError(f"{path}: head config is not a regular file")
     reject_extended_configs(base_configs, trusted=True)
     reject_extended_configs(head_configs)
+    validate_changed_head_configs(ruff, head_configs, merge_base_configs)
     # Overlay every committed in-scope config, including unchanged ones:
     # checkout filters must not substitute different settings in either tree.
     if not files:
