@@ -669,11 +669,13 @@ address counts by that address. `config.extraEnv` wins over both.
 
 - The default trusts the private and shared ranges pod networks use
   (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`,
-  `fc00::/7`). An in-cluster caller in them that reaches the API directly,
-  not through the controller, can then set the address it is counted by:
-  narrow `trustedProxies` to the controller's pod network (k3s:
-  `10.42.0.0/16`, as in [`examples/ingress-traefik.yaml`](examples/ingress-traefik.yaml)),
-  or let only the controller reach the API with `networkPolicy.ingressFrom`.
+  `fc00::/7`). They also hold every other pod: a pod that reaches the API
+  directly, not through the controller, can set the address it is counted
+  by. Let only the controller reach the API (`networkPolicy.enabled` with
+  `networkPolicy.ingressFrom`), or list only the controller's own addresses.
+  A pod network such as k3s's `10.42.0.0/16`
+  ([`examples/ingress-traefik.yaml`](examples/ingress-traefik.yaml)) leaves
+  out addresses outside the cluster, not the other pods.
 - GKE's Gateway and Ingress connect from `35.191.0.0/16` and
   `130.211.0.0/22` (Envoy-based classes from the region's proxy-only
   subnet), which the default does not trust, and add `<client>, <load
@@ -1580,7 +1582,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `ingress.objects.host` | `""` | Host of the bundled object storage (`objectStorage.mode=bundled`), for browser downloads [MINIO_URL]. Evaluation only, like the bundled storage itself: it publishes the bucket through the Ingress. Empty: not exposed. |
 | `ingress.websocket.enabled` | `false` | A second Ingress for the API's WebSocket paths (`/ws/`) with its own annotations, so long-lived connections get long timeouts without raising them for every request. Same class, host and TLS as the main one. |
 | `ingress.websocket.annotations` | `{}` | Annotations of the WebSocket Ingress, over `ingress.annotations`. ingress-nginx: `nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"` and `proxy-send-timeout: "3600"`. Traefik has no per-Ingress timeout: raise the entrypoint's `respondingTimeouts` (examples/ingress-traefik.yaml). |
-| `ingress.trustedProxies` | `"10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,fc00::/7"` | [MCP_OAUTH_TRUSTED_PROXIES] with the Ingress on: addresses or networks of the ingress controller, comma-separated. The MCP OAuth request limits (`/token`, `/revoke`, `/register`, `/mcp/oauth/token/`) count a request from one of them by the last X-Forwarded-For address, the client the controller saw [MCP_OAUTH_TRUSTED_PROXY_HOPS=1]; any other peer counts by its own address. Default: the private and shared ranges pod networks use. Narrow it to the controller's pod network (k3s: `10.42.0.0/16`, kubeadm with flannel: `10.244.0.0/16`) so in-cluster callers that reach the API directly are counted by their own address too. Empty: every request through the controller counts by the controller's address, so its clients share one limit. `config.extraEnv` wins (README "Client addresses behind the Ingress or Gateway"). |
+| `ingress.trustedProxies` | `"10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,fc00::/7"` | [MCP_OAUTH_TRUSTED_PROXIES] with the Ingress on: addresses or networks of the ingress controller, comma-separated. The MCP OAuth request limits (`/token`, `/revoke`, `/register`, `/mcp/oauth/token/`) count a request from one of them by the last X-Forwarded-For address, the client the controller saw [MCP_OAUTH_TRUSTED_PROXY_HOPS=1]; any other peer counts by its own address. Default: the private and shared ranges pod networks use, which also hold the other pods: a pod that reaches the API directly, not through the controller, can set the address it is counted by unless `networkPolicy` lets only the controller reach the API (`ingressFrom`) or this lists only the controller's own addresses. Empty: every request through the controller counts by the controller's address, so its clients share one limit. `config.extraEnv` wins (README "Client addresses behind the Ingress or Gateway"). |
 | `gatewayApi.enabled` | `false` | Render HTTPRoutes for the UI and the API (OTLP/HTTP on the exact paths `/v1/traces` and `/tracer/v1/traces` to fi-collector), plus the optional routes below. URLs (`urls.*`) are derived from these hosts unless the ingress is on. |
 | `gatewayApi.parentRefs` | `[]` | Gateways (and listeners) the routes attach to, e.g. `[{name: public, namespace: gateway-system, sectionName: https}]`. |
 | `gatewayApi.tls` | `true` | The Gateway terminates TLS for these hosts: derived URLs use https. `false`: http. |

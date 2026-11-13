@@ -53,6 +53,10 @@ objectStorage:
 # a Google-managed certificate on the Gateway (created separately).
 gatewayApi:
   enabled: true
+  # The MCP OAuth request limits count requests from GKE's load balancer by
+  # its own address until gatewayApi.trustedProxies lists its ranges and the
+  # load balancer's address, with MCP_OAUTH_TRUSTED_PROXY_HOPS "2" in
+  # config.extraEnv: README "Client addresses behind the Ingress or Gateway".
   parentRefs:
     - name: futureagi-external
       namespace: futureagi
