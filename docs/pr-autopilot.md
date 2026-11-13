@@ -70,7 +70,7 @@ creates it, with no rules, the first time the `approve-and-merge` job runs.
 | Repository variable `PR_AUTOPILOT` | Unset/off; only exact `on` enables automation | Set to `on` only after the rollout checks below; unset or use `off` to stop new runs |
 | Policy list `trusted_authors` in `.github/pr-autopilot.yml` | Empty: nobody is trusted | A person adds a login through a reviewed PR into `dev` that changes this list. The file is HIGH, so the autopilot never merges such a PR, and only `dev`'s copy is used. Exact GitHub logins; no wildcards |
 | Repository variable `PR_AUTOPILOT_TRUSTED_AUTHORS` | Unset: use the policy list as it is | Optional. A comma-separated list of logins that can only narrow the policy list: a login that is not in the policy list is not trusted, and a list that names no policy login trusts nobody. It cannot add an author |
-| Repository variable `AUTOPILOT_HOURS_UTC` | Unset: any day/time, but only when the feature is on | Optionally set `04-15` or another zero-padded `HH-HH` window; Monday–Friday, UTC, inclusive start/exclusive end; `00-24` means all weekday hours |
+| Repository variable `AUTOPILOT_HOURS_UTC` | Unset: any day/time, but only when the feature is on | Optionally set `04-15` or another zero-padded `HH-HH` window; Monday–Friday, UTC, inclusive start/exclusive end; `00-24` means all weekday hours. The release autopilot (`docs/release-autopilot.md`) reads the same repository variable, so a change applies to both |
 | Repository secret `ANTHROPIC_API_KEY` | Absent: skip the AI job and never auto-merge, even if an older review passed | Provision an API key for the approved Anthropic account, with budget/usage monitoring; do not put it in the policy or PR |
 | Existing repository variable `DEV_CDN_AUTO_DEPLOY` | Unset: preserve the existing enabled-on-push behavior | Exact `false` prevents the post-merge dev CDN dispatch; all other values preserve its existing behavior |
 | PR label `autopilot-hold` | Absent | Add to stop automation for one PR; remove only when the PR may be reconsidered |
@@ -272,7 +272,10 @@ person, that writer can land a job that names `pr-autopilot` on `dev` (or
 `release-autopilot` on `main`), dispatch it and read the approver key. A
 leaked key outlives the later settings: with Contents: write it can push to
 unprotected branches and give approvals that count, and it is never the last
-pusher. So steps 2 to 5 come before the key is added in step 6.
+pusher. So steps 2 to 5, and the whole one-time baseline in the
+`deploy_github.tf` header of `future-agi/deployment`, come before the key is
+added in step 6. Where these steps and that header differ on the order,
+follow the header.
 
 1. **Create the approver App.** Use it only for the two autopilots in this
    repository (this one and `release-autopilot.yml`), and install it on
@@ -375,23 +378,42 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    `docs/release-autopilot.md` names the jobs here that run another branch's
    code, and the order for the `sdk-sync.yml` check: on `main` with or
    before the change that names `release-bot`, and before that environment
-   gets a key copy. Once
-   every such job names an environment, delete the organisation secrets,
-   generate a new private key for the release-bot App and delete the old one,
-   because any branch workflow could read the old key. Before the new key
-   reaches any environment, a person who authored, pushed or approved none of
-   the commits that touched them reads the key jobs' workflow files and
-   scripts once, in full, at each branch they run from and at each `v*` tag
-   that stays; the `deploy_github.tf` header in `future-agi/deployment` lists
-   them. Step 6 waits for this.
+   gets a key copy. The header moves the key in six steps, here and in
+   deployment, docs, agent-learning-kit and futureagi-sdk:
+   1. review rules on every admitted and fixed-ref branch (steps 2 and 3
+      here);
+   2. the environments with their rules and no key (step 4 here), the `v*`
+      tag ruleset, the tag sweep, and each key job naming its environment;
+   3. delete the organisation secrets and every repository copy. Generate
+      the new private key first and hold it outside GitHub, because GitHub
+      refuses to delete an App's only key, then delete every old key,
+      because any branch workflow could read it. Finish the credential and
+      Apps checks;
+   4. dismiss bot approvals and flag bot-pushed heads, the baseline's first
+      two checks;
+   5. the one-time read: a person who authored, pushed or approved none of
+      the commits that touched them reads the key jobs' workflow files and
+      scripts once, in full, at each branch they run from and at each `v*`
+      tag that stays, and records each tip SHA. Here that includes `dev`'s
+      `scripts/pr_risk.py` and `.github/pr-autopilot.yml`, which the
+      approving job runs with the approver token; the header lists the
+      files;
+   6. the new release-bot key goes into the environments.
+
+   Release jobs that use the key stop working from step 3 to step 6. The
+   dismissals come after the deletion because the old key can post a new
+   approval until it is deleted. Step 6 below (the approver key) waits for
+   the whole one-time baseline, not only for these six steps.
 6. **Confirm, then add the approver key.** On a throwaway PR into `dev`, let
    a workflow on the PR's branch try to approve that PR with its
    `GITHUB_TOKEN`. GitHub must refuse it, and the PR must show no approval.
-   Only then add `AUTOPILOT_APPROVER_CLIENT_ID` (variable) and
-   `AUTOPILOT_APPROVER_PRIVATE_KEY` (secret) to both environments. If the
-   approver key was stored anywhere a branch workflow could read before
-   steps 2 to 5 were done, generate a new private key for the App, delete
-   the old one and store only the new one.
+   Add `AUTOPILOT_APPROVER_CLIENT_ID` (variable) and
+   `AUTOPILOT_APPROVER_PRIVATE_KEY` (secret) to both environments only then,
+   and only once the whole one-time baseline in the `deploy_github.tf`
+   header is complete, so that its dismissals never remove an approval this
+   App made. If the approver key was stored anywhere a branch workflow could
+   read before then, generate a new private key for the App, delete the old
+   one and store only the new one.
 7. **Check live, before `PR_AUTOPILOT` is set to `on`,** that the App's
    approval counts. On a throwaway PR into `dev`, approve with a token minted
    exactly as the workflow does (pull-requests: write only). Then
