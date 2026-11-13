@@ -23,6 +23,8 @@ const HEARTBEAT_INTERVAL = 10000;
 // authorizes the socket (sockets/consumer.py, sockets/membership.py,
 // tfc/middleware/jwt_auth.py). The same credential would be refused again, so
 // these never reconnect; a new token or organization opens a fresh socket.
+// Any other code, including 1011 when the server could not complete
+// authentication (database or cache unavailable), reconnects with backoff.
 const AUTHORIZATION_CLOSE_CODES = new Set([4001, 4002, 4003]);
 
 export const WebSocketProvider = ({ children }) => {

@@ -34,6 +34,7 @@ from tfc.middleware.workspace_context import (
     set_workspace_context,
 )
 from tfc.settings.settings import MIDDLEWARE
+from tfc.utils.websocket_relay_auth import RELAY_SIGNATURE_HEADER, relay_signature
 
 pytestmark = [pytest.mark.integration, pytest.mark.django_db(transaction=True)]
 PASSWORD = "Synthetic-relay-test-password"
@@ -218,15 +219,20 @@ def receive_optional(ws):
 
 
 def relay(server, headers, target):
+    """POST a synthetic message; ``headers`` may be built from the raw body."""
+
     message = {"alert_title": "Synthetic notification", "marker": uuid4().hex}
     body = {"message": message}
     if target:
         body.update(send_to_uuid=True, uuid=target)
         message["uuid"] = target
+    raw = json.dumps(body).encode()
+    if callable(headers):
+        headers = headers(raw)
     response = server[0].post(
         server[1] + "/call-websocket/",
-        json=body,
-        headers=headers,
+        data=raw,
+        headers={"Content-Type": "application/json", **headers},
         timeout=30,
     )
     return response, message
@@ -234,6 +240,19 @@ def relay(server, headers, target):
 
 def key_headers(key):
     return {"X-Api-Key": key.api_key, "X-Secret-Key": key.secret_key}
+
+
+def internal_headers(key, signed_org=None, signed_body=None):
+    """Headers the server-side relay caller sends: system key plus signature."""
+
+    def build(raw):
+        signature = relay_signature(
+            signed_org or key.organization_id,
+            raw if signed_body is None else signed_body,
+        )
+        return {**key_headers(key), RELAY_SIGNATURE_HEADER: signature}
+
+    return build
 
 
 def remove_member_and_log_in_again(server, org, owner, member):
@@ -272,7 +291,7 @@ def test_system_key_delivers_only_to_its_organization(relay_server, targeted):
         subscriber(relay_server, org, owner, target) as own,
         subscriber(relay_server, other_org, other_owner, target) as other,
     ):
-        response, message = relay(relay_server, key_headers(key), target)
+        response, message = relay(relay_server, internal_headers(key), target)
         assert response.status_code == 200, response.text
         assert json.loads(own.recv(timeout=10)) == message
         assert receive_optional(other) is None
@@ -294,13 +313,13 @@ def test_removed_member_fresh_login_cannot_relay(
     old_login = login(relay_server, member)
     assert not old_login.get("requires_org_setup", False)
     with subscriber(relay_server, org, owner, target) as ws:
-        before, message = relay(
+        # Member sessions never publish, before or after removal.
+        before, _ = relay(
             relay_server,
             {"Authorization": "Bearer " + old_login["access"]},
             target,
         )
-        assert before.status_code == 200, before.text
-        assert json.loads(ws.recv(timeout=10)) == message
+        assert (before.status_code, receive_optional(ws)) == (403, None)
 
         fresh_login = remove_member_and_log_in_again(relay_server, org, owner, member)
         assert fresh_login["access"] != old_login["access"]
@@ -311,14 +330,73 @@ def test_removed_member_fresh_login_cannot_relay(
         delivered = receive_optional(ws)
 
         # A denied relay must not look successful just because the socket died.
-        control, control_message = relay(relay_server, key_headers(key), target)
+        control, control_message = relay(relay_server, internal_headers(key), target)
         assert control.status_code == 200, control.text
         assert json.loads(ws.recv(timeout=10)) == control_message
         assert (response.status_code, delivered) == (403, None)
         assert response.json()["code"] == "permission_denied"
-        assert (
-            response.json()["message"] == "An authenticated organization is required."
+
+
+def caller_headers(server, caller, org, owner, member, key):
+    """Return relay headers for a caller other than the internal relay client."""
+
+    if caller in ("owner-session", "member-session"):
+        user = owner if caller == "owner-session" else member
+        return {"Authorization": "Bearer " + login(server, user)["access"]}
+    if caller in ("user-api-key", "mcp-api-key"):
+        user_key = OrgApiKey.no_workspace_objects.create(
+            name="Synthetic personal key",
+            organization=org,
+            workspace=key.workspace,
+            type=caller.split("-")[0],
+            user=member if caller == "user-api-key" else owner,
+            enabled=True,
         )
+        return key_headers(user_key)
+    if caller == "unsigned-system-key":
+        return key_headers(key)
+    if caller == "signature-for-another-organization":
+        other_org, _, _, _ = create_organization()
+        return internal_headers(key, signed_org=other_org.pk)
+    if caller == "signature-for-another-body":
+        return internal_headers(key, signed_body=b'{"message": {}}')
+    if caller == "signature-without-system-key":
+        session = {"Authorization": "Bearer " + login(server, owner)["access"]}
+        return lambda raw: {
+            **session,
+            RELAY_SIGNATURE_HEADER: relay_signature(org.pk, raw),
+        }
+    raise AssertionError(caller)
+
+
+@pytest.mark.parametrize("targeted", [False, True], ids=["broadcast", "targeted"])
+@pytest.mark.parametrize(
+    "caller",
+    [
+        "owner-session",
+        "member-session",
+        "user-api-key",
+        "mcp-api-key",
+        "unsigned-system-key",
+        "signature-for-another-organization",
+        "signature-for-another-body",
+        "signature-without-system-key",
+    ],
+)
+def test_relay_accepts_only_internal_callers(relay_server, caller, targeted):
+    org, owner, member, key = create_organization()
+    target = str(uuid4()) if targeted else None
+    headers = caller_headers(relay_server, caller, org, owner, member, key)
+    with subscriber(relay_server, org, owner, target) as ws:
+        response, _ = relay(relay_server, headers, target)
+        delivered = receive_optional(ws)
+
+        # The internal caller is the positive control on the same socket.
+        control, control_message = relay(relay_server, internal_headers(key), target)
+        assert control.status_code == 200, control.text
+        assert json.loads(ws.recv(timeout=10)) == control_message
+        assert (response.status_code, delivered) == (403, None), response.text
+        assert response.json()["code"] == "permission_denied"
 
 
 @pytest.mark.parametrize(
@@ -349,7 +427,7 @@ def test_removed_member_socket_receives_no_former_org_traffic(
             if removed is not None and target:
                 subscribe(removed, target)
             if publisher == "system_key":
-                response, message = relay(relay_server, key_headers(key), target)
+                response, message = relay(relay_server, internal_headers(key), target)
                 assert response.status_code == 200, response.text
             elif target:
                 message = {"chunk": "synthetic", "marker": uuid4().hex, "uuid": target}
@@ -405,13 +483,13 @@ def test_open_member_socket_closes_when_membership_is_removed(relay_server, targ
         subscriber(relay_server, org, owner, target) as own,
         subscriber(relay_server, org, member, target) as open_member,
     ):
-        before, message = relay(relay_server, key_headers(key), target)
+        before, message = relay(relay_server, internal_headers(key), target)
         assert before.status_code == 200, before.text
         assert json.loads(own.recv(timeout=10)) == message
         assert json.loads(open_member.recv(timeout=10)) == message
 
         remove_member_and_log_in_again(relay_server, org, owner, member)
-        after, message = relay(relay_server, key_headers(key), target)
+        after, message = relay(relay_server, internal_headers(key), target)
         assert after.status_code == 200, after.text
         # The organization's remaining member is the positive control.
         assert json.loads(own.recv(timeout=10)) == message

@@ -199,6 +199,8 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         organization_id = event.get("organization_id")
         if organization_id is not None and organization_id != self.organization_id:
             return
+        # A SAML socket must not reuse its cached credential check either.
+        self._guard.expire()
         await self._membership.ensure_member(force=True)
 
     def _uuid_group_name(self, uuid):

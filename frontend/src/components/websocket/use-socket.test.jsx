@@ -172,3 +172,36 @@ it("still reconnects after an abnormal drop of an open socket", () => {
   });
   expect(sockets).toHaveLength(2);
 });
+
+it("reconnects when the server could not complete authentication", () => {
+  vi.useFakeTimers();
+  render(tree());
+  // The handshake is accepted and then closed with 1011 while the backend
+  // cannot reach its database or cache; the credential was never refused.
+  act(() => {
+    sockets[0].emit("open");
+    sockets[0].emit("close", { code: 1011 });
+  });
+  act(() => {
+    vi.advanceTimersByTime(5000);
+  });
+  expect(sockets).toHaveLength(2);
+  expect(new URL(sockets[1].url).searchParams.get("token")).toBe(
+    "synthetic-token",
+  );
+  act(() => {
+    sockets[1].emit("open");
+    sockets[1].emit("close", { code: 1011 });
+  });
+  act(() => {
+    vi.advanceTimersByTime(5000);
+  });
+  expect(sockets).toHaveLength(3);
+  // Once the credential itself is refused, the same token is not retried.
+  act(() => {
+    sockets[2].emit("open");
+    sockets[2].emit("close", { code: 4003 });
+  });
+  waitLongerThanEveryBackoff();
+  expect(sockets).toHaveLength(3);
+});

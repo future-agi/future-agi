@@ -23,6 +23,11 @@ class SamlSocketGuard:
         self.revoked = False
         self._last_validated_at = 0.0
 
+    def expire(self) -> None:
+        """Make the next push revalidate instead of reusing a recent result."""
+
+        self._last_validated_at = 0.0
+
     async def ensure_live(self, *, inbound: bool) -> bool:
         """Return whether the socket remains usable, closing revoked sessions."""
 

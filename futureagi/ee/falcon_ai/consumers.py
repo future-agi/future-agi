@@ -1,4 +1,5 @@
 import asyncio
+import time
 import uuid
 from urllib.parse import parse_qs
 
@@ -15,6 +16,7 @@ from ee.usage.schemas.events import UsageEvent
 from ee.usage.services.config import BillingConfig
 from ee.usage.services.emitter import emit
 from ee.usage.services.metering import check_usage
+from sockets.membership import MembershipSocketGuard, user_socket_group
 from sockets.org_scope import membership_organization
 from sockets.saml_guard import SamlSocketGuard
 from tfc.ee_gating import EEFeature, FeatureUnavailable, check_ee_feature
@@ -41,7 +43,9 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         self._message_timestamps = []  # For rate limiting
         self._rate_limit = 10  # max messages per window
         self._rate_window = 60  # seconds
+        self.user_group_name = None
         self._guard = SamlSocketGuard(self)
+        self._membership = MembershipSocketGuard(self)
 
     async def connect(self):
         user = self.scope.get("user")
@@ -58,6 +62,7 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         self.workspace_id = params.get("workspace_id", [None])[0]
 
         # Resolve organization: prefer workspace_id (accurate), fall back to membership
+        resolved_at = time.monotonic()
         if self.workspace_id:
             org = await self._get_organization_from_workspace(self.workspace_id)
             if org is None:
@@ -90,6 +95,10 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         # Resolve workspace
         self.workspace = await self._get_workspace()
 
+        # The per-user group lets membership changes close this socket.
+        self.user_group_name = user_socket_group(self.user.id)
+        await self.channel_layer.group_add(self.user_group_name, self.channel_name)
+        self._membership.mark_validated(resolved_at)
         await self.accept()
         logger.info(
             "falcon_ai_ws_connected",
@@ -101,12 +110,12 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
     async def receive_json(self, content):
         if not await self._guard.ensure_live(inbound=True):
             return
+        if not await self._ensure_member():
+            return
         msg_type = content.get("type")
 
         # Rate limiting — only for actionable message types, not ping/reconnect
         if msg_type in ("chat", "feedback", "stop"):
-            import time
-
             now = time.time()
             self._message_timestamps = [
                 t for t in self._message_timestamps if now - t < self._rate_window
@@ -266,22 +275,52 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
 
     async def _handle_stop(self):
         if self._agent_task and not self._agent_task.done():
-            # A cluster-RCA run executes in a non-cancellable worker thread that
-            # keeps calling the LLM after the coroutine unwinds. The bridge stashes
-            # a threading.Event on the task; set it so the agent loop stops
-            # cooperatively and returns its partial result (with accumulated cost,
-            # which the bridge then bills from the thread). Set before cancel so the
-            # worker observes it; harmless no-op for non-RCA runs.
-            rca_stop_event = getattr(self._agent_task, "_rca_stop_event", None)
-            if rca_stop_event is not None:
-                rca_stop_event.set()
-            self._agent_task.cancel()
-            try:
-                await self._agent_task
-            except asyncio.CancelledError:
-                pass
+            await self._cancel_agent_task()
             self._agent_task = None
             await self.send_json({"type": "stopped"})
+
+    async def _cancel_agent_task(self):
+        task = self._agent_task
+        if task is None or task.done():
+            return
+        # A cluster-RCA run executes in a non-cancellable worker thread that
+        # keeps calling the LLM after the coroutine unwinds. The bridge stashes
+        # a threading.Event on the task; set it so the agent loop stops
+        # cooperatively and returns its partial result (with accumulated cost,
+        # which the bridge then bills from the thread). Set before cancel so the
+        # worker observes it; harmless no-op for non-RCA runs.
+        rca_stop_event = getattr(task, "_rca_stop_event", None)
+        if rca_stop_event is not None:
+            rca_stop_event.set()
+        task.cancel()
+        if task is asyncio.current_task():
+            # Called from the run itself; it unwinds at its next await.
+            return
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _ensure_member(self, *, force=False):
+        """Whether this socket may still act for its organization.
+
+        A socket whose membership ended is closed and its agent run stopped.
+        """
+
+        if await self._membership.ensure_member(force=force):
+            return True
+        if self._membership.closed:
+            await self._cancel_agent_task()
+        return False
+
+    async def membership_changed(self, event):
+        """Revalidate now; one of this user's memberships has changed."""
+
+        organization_id = event.get("organization_id")
+        if organization_id is not None and organization_id != self.organization_id:
+            return
+        self._guard.expire()
+        await self._ensure_member(force=True)
 
     async def _handle_feedback(self, content):
         message_id = content.get("message_id")
@@ -554,10 +593,17 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         # DON'T cancel the agent task on disconnect — let it finish and save the result.
         # The send_json wrapper handles disconnected sockets gracefully (logs warning, no crash).
         # When the user reconnects and loads the conversation, they'll see the completed response.
-        # Only cancel if the user explicitly clicked "Stop" (handled in _handle_stop).
+        # Only cancel if the user explicitly clicked "Stop" (handled in _handle_stop)
+        # or the membership ended (handled in _ensure_member).
+        if self.user_group_name:
+            await self.channel_layer.group_discard(
+                self.user_group_name, self.channel_name
+            )
 
     async def send_json(self, content, close=False):
         if not await self._guard.ensure_live(inbound=False):
+            return
+        if not await self._ensure_member():
             return
         try:
             await super().send_json(content, close=close)

@@ -17,6 +17,7 @@ from structlog.testing import capture_logs
 from accounts.models import OrgApiKey
 from model_hub.utils import call_websocket
 from sockets.consumer import DataConsumer
+from tfc.utils.websocket_relay_auth import RELAY_SIGNATURE_HEADER, relay_signature
 from tfc.views.socket import CallWebsocketView
 
 ORG = "00000000-0000-4000-8000-000000000001"
@@ -95,11 +96,22 @@ def relay_settings():
         yield
 
 
-def post_relay(payload):
-    request = APIRequestFactory().post("/call-websocket/", payload, format="json")
+def post_relay(payload, *, raw=None, signature=None):
+    """Call the relay as its internal caller: the system key and a signature."""
+
+    raw = json.dumps(payload).encode() if raw is None else raw
+    if signature is None:
+        signature = relay_signature(ORG, raw)
+    request = APIRequestFactory().post(
+        "/call-websocket/",
+        raw,
+        content_type="application/json",
+        **{"HTTP_" + RELAY_SIGNATURE_HEADER.upper().replace("-", "_"): signature},
+    )
     # The selected authenticated organization wins over both the user default
     # and any untrusted organization_id in the body.
     request.organization = SimpleNamespace(id=ORG)
+    request.org_api_key = SimpleNamespace(type="system", organization_id=ORG)
     force_authenticate(
         request,
         user=SimpleNamespace(
@@ -109,8 +121,9 @@ def post_relay(payload):
     return CallWebsocketView.as_view()(request)
 
 
-def relay_http(url, *, json, **kwargs):
-    response = post_relay(json)
+def relay_http(url, *, data, headers, **kwargs):
+    # Forward the exact bytes and signature that call_websocket sent.
+    response = post_relay(None, raw=data, signature=headers[RELAY_SIGNATURE_HEADER])
     response.render()
     http = requests.Response()
     http.status_code = response.status_code
@@ -180,7 +193,7 @@ def assert_helper_delivery(message, targeted, target):
                     uuid=target if targeted else None,
                 )
             assert result["status"] is True, result
-            payload = post.call_args.kwargs["json"]
+            payload = json.loads(post.call_args.kwargs["data"])
             assert "organization_id" not in payload
             if not targeted:
                 assert "uuid" not in payload
@@ -248,16 +261,22 @@ def test_relay_requires_authentication():
 @pytest.mark.parametrize("targeted", [False, True])
 @pytest.mark.parametrize("organization_attribute", ["missing", "none"])
 def test_relay_requires_authenticated_organization(targeted, organization_attribute):
-    request = APIRequestFactory().post(
-        "/call-websocket/",
+    raw = json.dumps(
         {
             "message": {"alert_title": "Synthetic notification"},
             "send_to_uuid": targeted,
             "uuid": TARGET,
             "organization_id": ORG,
-        },
-        format="json",
+        }
+    ).encode()
+    request = APIRequestFactory().post(
+        "/call-websocket/",
+        raw,
+        content_type="application/json",
+        HTTP_X_RELAY_SIGNATURE=relay_signature(ORG, raw),
     )
+    # Even a correctly signed system-key request needs its organization.
+    request.org_api_key = SimpleNamespace(type="system", organization_id=ORG)
     if organization_attribute == "none":
         request.organization = None
     # A legacy user FK and an untrusted body cannot restore tenant authority.
@@ -272,7 +291,41 @@ def test_relay_requires_authenticated_organization(targeted, organization_attrib
         response = CallWebsocketView.as_view()(request)
     assert response.status_code == 403
     assert response.data["code"] == "permission_denied"
-    assert response.data["message"] == "An authenticated organization is required."
+    layer.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "key_type, key_org, signed_org, signed_body",
+    [
+        pytest.param("user", ORG, ORG, None, id="user-key"),
+        pytest.param("mcp", ORG, ORG, None, id="mcp-key"),
+        pytest.param(None, None, ORG, None, id="session-without-key"),
+        pytest.param("system", OTHER_ORG, ORG, None, id="key-of-another-org"),
+        pytest.param("system", ORG, OTHER_ORG, None, id="signed-for-another-org"),
+        pytest.param("system", ORG, ORG, b"{}", id="signed-another-body"),
+        pytest.param("system", ORG, None, None, id="unsigned"),
+    ],
+)
+def test_relay_refuses_callers_other_than_the_internal_client(
+    key_type, key_org, signed_org, signed_body
+):
+    raw = json.dumps({"message": {"alert_title": "Synthetic notification"}}).encode()
+    headers = {}
+    if signed_org is not None:
+        headers["HTTP_X_RELAY_SIGNATURE"] = relay_signature(
+            signed_org, raw if signed_body is None else signed_body
+        )
+    request = APIRequestFactory().post(
+        "/call-websocket/", raw, content_type="application/json", **headers
+    )
+    request.organization = SimpleNamespace(id=ORG)
+    if key_type is not None:
+        request.org_api_key = SimpleNamespace(type=key_type, organization_id=key_org)
+    force_authenticate(request, user=SimpleNamespace(is_authenticated=True))
+    with patch("tfc.views.socket.get_channel_layer") as layer:
+        response = CallWebsocketView.as_view()(request)
+    assert response.status_code == 403
+    assert response.data["code"] == "permission_denied"
     layer.assert_not_called()
 
 

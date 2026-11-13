@@ -32,6 +32,10 @@ def _make_consumer(query_string="workspace_id=ws-123", user=None):
     consumer.accept = AsyncMock()
     consumer.close = AsyncMock()
     consumer.send_json = AsyncMock()
+    consumer.channel_layer = AsyncMock()
+    consumer.channel_name = "synthetic-channel"
+    # Membership revalidation has its own tests (test_consumer_membership.py).
+    consumer._membership.ensure_member = AsyncMock(return_value=True)
     return consumer
 
 

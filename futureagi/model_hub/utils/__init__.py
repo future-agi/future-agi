@@ -1,3 +1,4 @@
+import json
 from urllib.parse import urlparse
 
 import requests
@@ -7,6 +8,7 @@ from django.conf import settings
 from accounts.models import OrgApiKey
 from tfc.ee_loader import is_cloud_env
 from tfc.utils.safe_traceback import sanitized_exception_traceback
+from tfc.utils.websocket_relay_auth import RELAY_SIGNATURE_HEADER, relay_signature
 
 logger = structlog.get_logger(__name__)
 
@@ -66,13 +68,20 @@ def call_websocket(organization_id, message, send_to_uuid=False, uuid=None):
         if not org_key.api_key or not org_key.secret_key:
             logger.error("websocket_relay_missing_credentials")
             return {"status": "error", "message": "Failed to generate API keys"}
+        # The relay accepts only internal callers: sign the exact body sent.
+        body = json.dumps(payload, allow_nan=False).encode()
+        signed_organization_id = getattr(org_key, "organization_id", None)
         response = requests.post(
             url,
-            json=payload,
+            data=body,
             timeout=60,
             headers={
+                "Content-Type": "application/json",
                 "X-Api-Key": org_key.api_key,
                 "X-Secret-Key": org_key.secret_key,
+                RELAY_SIGNATURE_HEADER: relay_signature(
+                    signed_organization_id or organization_id, body
+                ),
             },
         )
         response.raise_for_status()
