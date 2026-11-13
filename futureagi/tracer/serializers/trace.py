@@ -149,6 +149,8 @@ class TraceSerializer(serializers.ModelSerializer):
 
 
 class CommaSeparatedStringListField(serializers.Field):
+    swagger_empty_input_default = ""
+
     def to_internal_value(self, data):
         if data in (None, ""):
             return []
@@ -995,9 +997,9 @@ class UsersQuerySerializer(StrictInputSerializer):
         required=False, allow_blank=False, max_length=4096, help_text=CURSOR_HELP_TEXT
     )
     cursor_mode = serializers.BooleanField(required=False, default=False)
+    # Omission retains legacy enrichment; an explicit empty value opts out.
     requested_columns = JSONOrCommaSeparatedStringListField(
         required=False,
-        default=list,
         help_text=(
             "JSON-encoded list of visible Users-table fields. Raw-derived "
             "metrics are hydrated only when explicitly requested."
