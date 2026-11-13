@@ -71,6 +71,7 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.span_notes import SpanNotes
 from tracer.models.trace import Trace
+from tracer.queries.eval_clustering import retire_eval_memberships
 from tracer.selectors.trace_filter_reads import (
     CURSOR_REQUIRED_CODE,
     CURSOR_REQUIRED_MESSAGE,
@@ -699,6 +700,24 @@ class _RecalculateLeftNoResult(Exception):
     result has been put back."""
 
 
+def _retire_for_recompute(pk):
+    """Retire a result while its replacement is computed.
+
+    Its Error Feed memberships stay until a replacement exists
+    (``_finish_retirement``): a recompute that fails puts the result back
+    whole, still counted in its issue. Returns how many rows were retired."""
+    return (
+        EvalLogger.objects.using("default")
+        .filter(pk=pk)
+        .update(deleted=True, deleted_at=timezone.now())
+    )
+
+
+def _finish_retirement(pk):
+    """Retire the Error Feed memberships of a result retired for good."""
+    retire_eval_memberships(EvalLogger.all_objects.using("default").filter(pk=pk))
+
+
 def _recompute_task_result(previous, feedback_id):
     """Recompute one eval-task result (Recalculate on an Observe result).
 
@@ -711,8 +730,11 @@ def _recompute_task_result(previous, feedback_id):
     eval errored or was skipped, the run raised, or the entry was taken from
     this run) the new entry is retired and the previous result is put back,
     and ``_RecalculateLeftNoResult`` is raised. An exception from the run is
-    re-raised after the same restore.
+    re-raised after the same restore. If something else retired the new
+    entry meanwhile (the task was deleted, Delete & rerun), that retirement
+    stands and the previous result stays retired too.
     """
+    from tracer.services.eval_tasks.entries import _record_instant_answer
     from tracer.services.eval_tasks.run_entry import run_entry
 
     selection = (
@@ -721,9 +743,7 @@ def _recompute_task_result(previous, feedback_id):
         else None
     )
     with transaction.atomic(using="default"):
-        if not soft_delete_eval_results(
-            EvalLogger.objects.using("default").filter(pk=previous.pk)
-        ):
+        if not _retire_for_recompute(previous.pk):
             # Retired since it was read: nothing left to recalculate.
             raise Exception("No eval associated with this span")
         (entry,) = EvalLogger.objects.bulk_create(
@@ -748,23 +768,36 @@ def _recompute_task_result(previous, feedback_id):
 
     def restore_previous():
         with transaction.atomic(using="default"):
-            soft_delete_eval_results(
+            if not soft_delete_eval_results(
                 EvalLogger.objects.using("default").filter(pk=entry.pk)
-            )
+            ):
+                # Already retired by someone else: the task was deleted or
+                # rerun while this ran. The previous result goes with it.
+                _finish_retirement(previous.pk)
+                logger.info(
+                    "recalculate_previous_result_left_retired",
+                    eval_logger_id=str(previous.pk),
+                    eval_task_id=str(previous.eval_task_id),
+                )
+                return
             try:
-                # A savepoint: if a newer entry holds the row's live slot (a
-                # Delete & rerun landed while this ran), it stays, and so
-                # does the retirement.
+                # A savepoint: if a newer entry holds the row's live slot,
+                # it stays, and so does the retirement.
                 with transaction.atomic(using="default"):
                     EvalLogger.all_objects.using("default").filter(
                         pk=previous.pk
                     ).update(deleted=False, deleted_at=None)
             except IntegrityError:
+                _finish_retirement(previous.pk)
                 logger.warning(
                     "recalculate_previous_result_not_restored",
                     eval_logger_id=str(previous.pk),
                     eval_task_id=str(previous.eval_task_id),
                 )
+                return
+        # The failed run may have copied its answer over an Instant eval
+        # run's answer for this row; copy the restored one back.
+        _record_instant_answer(previous.pk, previous.eval_task_id)
 
     try:
         status = run_entry(entry, feedback_id=feedback_id)
@@ -780,6 +813,7 @@ def _recompute_task_result(previous, feedback_id):
         )
         restore_previous()
         raise _RecalculateLeftNoResult()
+    _finish_retirement(previous.pk)
     return True
 
 
@@ -1945,7 +1979,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # does.
             return _recompute_task_result(eval_logger, feedback_id)
 
-        soft_delete_eval_results(EvalLogger.objects.filter(pk=eval_logger.pk))
+        _retire_for_recompute(eval_logger.pk)
 
         def put_back():
             EvalLogger.all_objects.using("default").filter(pk=eval_logger.pk).update(
@@ -1983,6 +2017,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         ):
             put_back()
             raise _RecalculateLeftNoResult()
+        _finish_retirement(eval_logger.pk)
         return status
 
     # Primary for the whole request, as submit_feedback: the recalculate it

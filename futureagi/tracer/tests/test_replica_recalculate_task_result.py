@@ -260,3 +260,157 @@ def test_recompute_that_raises_keeps_the_task_result(
     )
     assert retired.count() == 1
     assert retired.get().status == EvalEntryStatus.RUNNING
+
+
+# -- review follow-ups: what a failed or superseded recompute leaves behind ---
+
+
+def _engine_down(monkeypatch):
+    def _down(_request):
+        raise RuntimeError("model provider unavailable")
+
+    monkeypatch.setattr("evaluations.engine.run_eval", _down, raising=False)
+    monkeypatch.setattr("evaluations.engine.runner.run_eval", _down, raising=False)
+
+
+def _issue_with(result):
+    """A Feed issue that counts ``result`` as its only member."""
+    from tracer.models.trace_error_analysis import (
+        ClusterSource,
+        ErrorClusterTraces,
+        TraceErrorGroup,
+    )
+
+    config = result.custom_eval_config
+    issue = TraceErrorGroup.objects.create(
+        project=config.project,
+        cluster_id=f"E-RECALC-{result.pk.hex[:6]}",
+        error_type="eval",
+        issue_group=config.name,
+        source=ClusterSource.EVAL,
+        eval_target_type=result.target_type,
+        eval_config=config,
+        error_count=1,
+        total_events=1,
+        unique_traces=1,
+    )
+    member = ErrorClusterTraces.objects.create(
+        cluster=issue, trace=result.trace, eval_logger=result
+    )
+    return issue, member
+
+
+def _membership(member):
+    from tracer.models.trace_error_analysis import ErrorClusterTraces
+
+    return ErrorClusterTraces.all_objects.using("default").get(pk=member.pk)
+
+
+def test_failed_recompute_keeps_the_result_in_its_feed_issue(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    stub_cost_log,
+    monkeypatch,
+):
+    _engine_down(monkeypatch)
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+    issue, member = _issue_with(previous)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert _stored(previous.pk).deleted is False
+    assert _membership(member).deleted is False
+    issue.refresh_from_db()
+    assert (issue.deleted, issue.error_count) == (False, 1)
+
+
+def test_replaced_result_leaves_its_feed_issue(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    stub_run_eval,
+    stub_cost_log,
+):
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+    _issue, member = _issue_with(previous)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 200, response.data
+    assert _stored(previous.pk).deleted is True
+    assert _membership(member).deleted is True
+
+
+def test_task_deleted_during_recompute_keeps_its_results_retired(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """Deleting the task retires every live entry, the new one included; a
+    failed recompute must not bring the previous result back."""
+    from tracer.services.eval_tasks.entries import soft_delete_live
+
+    def _deleted_meanwhile(entry, **_kwargs):
+        soft_delete_live(eval_task)
+        return "deleted"
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.run_entry.run_entry", _deleted_meanwhile
+    )
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert _stored(previous.pk).deleted is True
+    assert not _live(observation_span, custom_eval_config).exists()
+
+
+def test_failed_recompute_copies_the_kept_answer_back(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    stub_cost_log,
+    monkeypatch,
+):
+    """An errored run copies its answer to an Instant eval run's answers
+    (mark_terminal); the kept result's answer is copied back over it."""
+    from tracer.services.eval_tasks import entries
+
+    copied = []
+    monkeypatch.setattr(
+        entries,
+        "_record_instant_answer",
+        lambda entry_id, task_id: copied.append((str(entry_id), str(task_id))),
+    )
+    _engine_down(monkeypatch)
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert len(copied) == 2
+    assert copied[-1] == (str(previous.pk), str(eval_task.id))
