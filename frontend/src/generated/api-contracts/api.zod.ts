@@ -27047,13 +27047,22 @@ export const ModelHubGetEvalConfigListResponse = zod.object({
   }),
 });
 
+export const ModelHubGetEvalLogsListQueryParams = zod.object({
+  log_id: zod.string().uuid(),
+  order: zod.string().optional(),
+  source: zod.string().optional(),
+  include_source_navigation: zod.enum(["true", "false"]).optional(),
+});
+
+export const modelHubGetEvalLogsListResponseResultSourceNavigationSpanIdOneMax = 255;
+
 export const ModelHubGetEvalLogsListResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
     log_id: zod.string().uuid(),
     created_at: zod.string().datetime({ offset: true }),
     evaluation_id: zod.string().uuid(),
-    source: zod.string().optional(),
+    source: zod.union([zod.string(), zod.null()]).optional(),
     required_keys: zod.array(zod.string().min(1)),
     values: zod.object({}).passthrough(),
     output: zod.object({}).passthrough(),
@@ -27061,12 +27070,41 @@ export const ModelHubGetEvalLogsListResponse = zod.object({
     error_details: zod.object({}).passthrough().optional(),
     error_localizer_status: zod.string().optional(),
     error_localizer_message: zod.string().optional(),
-    dataset_id: zod.string().uuid().optional(),
-    span_id: zod.string().uuid().optional(),
-    trace_id: zod.string().uuid().optional(),
-    prompt_id: zod.string().uuid().optional(),
-    optimization_id: zod.string().uuid().optional(),
-    experiment_id: zod.string().uuid().optional(),
+    dataset_id: zod.union([zod.string().uuid(), zod.null()]).optional(),
+    span_id: zod.union([zod.string().min(1), zod.null()]).optional(),
+    trace_id: zod.union([zod.string().uuid(), zod.null()]).optional(),
+    prompt_id: zod.union([zod.string().uuid(), zod.null()]).optional(),
+    optimization_id: zod.union([zod.string().uuid(), zod.null()]).optional(),
+    experiment_id: zod.union([zod.string().uuid(), zod.null()]).optional(),
+    source_navigation: zod
+      .object({
+        status: zod.enum([
+          "ready",
+          "no_reference",
+          "unsupported_source",
+          "unsupported_target",
+          "incomplete_reference",
+          "invalid_reference",
+          "ambiguous_reference",
+          "unavailable",
+          "source_not_recorded",
+          "temporarily_unavailable",
+        ]),
+        kind: zod.union([zod.enum(["trace", "voice_call"]), zod.null()]),
+        project_id: zod.union([zod.string().uuid(), zod.null()]),
+        trace_id: zod.union([zod.string().uuid(), zod.null()]),
+        span_id: zod.union([
+          zod
+            .string()
+            .min(1)
+            .max(
+              modelHubGetEvalLogsListResponseResultSourceNavigationSpanIdOneMax,
+            ),
+          zod.null(),
+        ]),
+        retryable: zod.boolean(),
+      })
+      .optional(),
   }),
 });
 
@@ -75269,6 +75307,8 @@ export const tracerTraceListVoiceCallsCreateResponseQueryAppliedFilterCountMin =
 export const TracerTraceListVoiceCallsCreateResponse =
   TracerTraceListVoiceCallsResponse;
 
+export const tracerTraceVoiceCallDetailQueryExpectedSpanIdMax = 255;
+
 export const TracerTraceVoiceCallDetailQueryParams = zod.object({
   test_execution_id: zod
     .string()
@@ -75304,6 +75344,14 @@ export const TracerTraceVoiceCallDetailQueryParams = zod.object({
     .optional()
     .describe(
       "Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.",
+    ),
+  expected_span_id: zod
+    .string()
+    .min(1)
+    .max(tracerTraceVoiceCallDetailQueryExpectedSpanIdMax)
+    .optional()
+    .describe(
+      "Optional evaluated span. Requires project_id; the response is 409 unless this read proves the span belongs to the call's single conversation root.",
     ),
 });
 
