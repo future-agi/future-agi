@@ -77200,8 +77200,8 @@
         "/tracer/v1/projects/{project_id}/attachments/imports": {
             "post": {
                 "operationId": "importAttachment",
-                "summary": "No trusted source resolver is deployed: every import is refused.",
-                "description": "The body is authenticated and shape-checked first, so the refusal is\nthe same for every well-formed request and reveals nothing about the\nsource. No source is fetched, sealed or recorded.",
+                "summary": "Admit a completed-recording import with ORIGINAL credentials only.",
+                "description": "A write capability never reaches this route (``principal.identity``\naccepts app sessions and API keys only). The source is an opaque\nenvelope or a registered provider output: no URL, path or credential\nis ever in the body. Admission (scope ``allow_import`` plus deny-wins\nprivacy, exact policy and deletion generation, atomic reservations)\nruns before any byte is read; the worker does the transfer.\n\nA single-attachment import has no trusted resolver deployed and is\nrefused identically for every well-formed request.",
                 "parameters": [
                     {
                         "name": "data",
