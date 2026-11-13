@@ -738,9 +738,39 @@ def test_window_overlay_pages_do_not_budget_dead_lifetime_assignments(monkeypatc
     assert {trace for _, trace in overlay.trace_names} == live_traces
 
 
+def test_window_overlay_work_bound_is_non_retryable(stores, monkeypatch):
+    """Dead lifetime rows consume scanned work, but not the live bind budget."""
+    seed(stores, "alpha", total_tokens=_tokens("alpha", "root"))
+    manual("alpha", ["wanted"])
+    lifetime_assignments(names=("wanted",), count=6)
+    monkeypatch.setattr(effective_tags, "_ASSIGNMENT_PAGE_SIZE", 2)
+    monkeypatch.setattr(effective_tags, "MAX_GRAPH_OVERLAY_SCAN_PAGES", 2)
+    response = post_graph(stores, monkeypatch, "trace", leaf("tag", "wanted"))
+    assert response.status_code == 400, response.data
+    assert response.data["code"] == "tag_filter_too_broad"
+
+
+def test_window_overlay_deadline_before_work_bound_is_retryable(stores, monkeypatch):
+    seed(stores, "alpha", total_tokens=_tokens("alpha", "root"))
+    manual("alpha", ["wanted"])
+    monkeypatch.setattr(effective_tags, "_ASSIGNMENT_PAGE_SIZE", 2)
+    original = effective_tags._query_assignments
+
+    def expired(predicate, *, deadline, limit):
+        if limit == 1:
+            return original(
+                predicate, deadline=ReadDeadline(total_ms=1, started=0), limit=limit
+            )
+        return original(predicate, deadline=deadline, limit=limit)
+
+    monkeypatch.setattr(effective_tags, "_query_assignments", expired)
+    response = post_graph(stores, monkeypatch, "trace", leaf("tag", "wanted"))
+    assert response.status_code == 503, response.data
+
+
 @pytest.mark.unit
 def test_large_curated_window_suppression_walk_is_capped(monkeypatch):
-    """A dense curated set cannot trigger an unlimited PG fallback walk."""
+    """Only pages with window-live curated hits consume the suppression budget."""
     monkeypatch.setattr(effective_tags, "MAX_WINDOW_OVERLAY_PAGES", 2)
     monkeypatch.setattr(
         effective_tags, "_query_assignments", lambda *args, **kwargs: []
@@ -765,7 +795,7 @@ def test_large_curated_window_suppression_walk_is_capped(monkeypatch):
             ]
 
     monkeypatch.setattr(effective_tags, "_assignment_pages", pages)
-    with pytest.raises(TagReadUnavailable, match="tag_overlay_budget_exceeded"):
+    assert (
         effective_tags.legacy_suppressions(
             execute,
             project_ids=(PROJECT,),
@@ -774,6 +804,56 @@ def test_large_curated_window_suppression_walk_is_capped(monkeypatch):
             window_start=BEGIN,
             window_end=END,
         )
+        == set()
+    )
+
+    def execute_live(_sql, params, **_kwargs):
+        if not params["tag_suppress_scoped"]:
+            return SimpleNamespace(data=rows)
+        return SimpleNamespace(
+            data=[
+                {"legacy_project": PROJECT, "legacy_trace": trace}
+                for trace in params["tag_suppress_traces"]
+            ]
+        )
+
+    with pytest.raises(TagReadUnavailable, match="tag_overlay_budget_exceeded"):
+        effective_tags.legacy_suppressions(
+            execute_live,
+            project_ids=(PROJECT,),
+            values=("wanted",),
+            deadline=ReadDeadline.start(10_000),
+            window_start=BEGIN,
+            window_end=END,
+        )
+
+
+def test_dense_curated_suppression_ignores_dead_lifetime_pages(stores, monkeypatch):
+    """More than eight thousand cleared/unmatched old rows must not hide live tags."""
+    tagged_project(stores)
+    lifetime_assignments(count=8_100)
+    for index in range(3):
+        trace = f"imported-{index}"
+        seed(stores, trace, total_tokens=1 << (16 + index))
+        stores.execute(
+            "INSERT INTO traces VALUES (%(project)s, %(trace)s, '[\"wanted\"]', 1, 0)",
+            {"project": PROJECT, "trace": trace},
+        )
+    manual("imported-0", ["kept"])
+    monkeypatch.setattr(effective_tags, "MAX_TAG_OVERLAY_KEYS", 4)
+    monkeypatch.setattr(effective_tags, "MAX_CURATED_SUPPRESSION_CANDIDATES", 4)
+    response = post_graph(stores, monkeypatch, "trace", leaf("tag", "wanted"))
+    assert graph_total(response) == expected_tokens(
+        "trace",
+        ("alpha", "beta", "gamma", "delta"),
+        ("alpha/root", "beta/child", "gamma/child", "delta/root"),
+    ) + (1 << 17) + (1 << 18)
+    plan = compile_exact_graph_row_predicates(
+        [leaf("tag", "wanted")], project_id=PROJECT, observe_type="trace"
+    )
+    assert bound(plan, "_assigned_keys") == [
+        (("", ""), (PROJECT, "epsilon"), (PROJECT, "imported-0"))
+    ]
 
 
 def test_graph_tag_window_excludes_lifetime_span_assignments(stores):

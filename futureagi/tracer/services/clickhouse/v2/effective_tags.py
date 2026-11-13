@@ -46,7 +46,11 @@ MAX_TAG_CANDIDATE_TRACES = 512
 # those traces have an assignment; above it the assignments are paged instead.
 MAX_CURATED_SUPPRESSION_CANDIDATES = MAX_TAG_OVERLAY_KEYS
 _ASSIGNMENT_PAGE_SIZE = 1000
-# Dense curated suppression fallbacks cannot walk unlimited lifetime history.
+# At most 64,000 examined assignment rows per window graph leaf. This is
+# deliberately well beyond the 8,100 dead rows in busy projects, but prevents
+# a lifetime-scale backlog from repeatedly timing out as a retryable 503.
+MAX_GRAPH_OVERLAY_SCAN_PAGES = 64
+# Dense curated suppression fallbacks budget pages with window-live hits only.
 MAX_WINDOW_OVERLAY_PAGES = 8
 TAG_OVERLAY_SETTINGS = {
     "max_threads": 2,
@@ -621,8 +625,13 @@ def read_tag_overlay(
         # A graph's trace witness needs a live root in the window. Span
         # assignments additionally need their exact latest physical identity.
         # Page PostgreSQL first; only live keys count against SQL bind limits.
-        # The deadline, rather than lifetime page count, bounds dead history.
-        for page in _assignment_pages(predicate, deadline=deadline):
+        # Scanned rows have their own work bound; the deadline still protects
+        # slow reads that hit it before this deterministic bound.
+        for page_number, page in enumerate(
+            _assignment_pages(predicate, deadline=deadline), start=1
+        ):
+            if page_number > MAX_GRAPH_OVERLAY_SCAN_PAGES:
+                raise TagReadUnavailable("tag_overlay_budget_exceeded")
             candidates = TagOverlay()
             for record in page:
                 candidates.add(record)
@@ -815,18 +824,21 @@ def legacy_suppressions(
                 raise TagReadUnavailable(over_budget)
             suppressed = {_assignment_key(record) for record in records} & curated
         return suppressed
-    for page_number, page in enumerate(
-        _assignment_pages(unmatched, deadline=deadline), start=1
-    ):
-        if live_roots and page_number > MAX_WINDOW_OVERLAY_PAGES:
-            raise TagReadUnavailable(over_budget)
+    live_hit_pages = 0
+    for page in _assignment_pages(unmatched, deadline=deadline):
         keys = {_assignment_key(record) for record in page}
         traces = sorted({trace for _, trace in keys})
+        page_hits: set[tuple[str, str]] = set()
         for start in range(0, len(traces), MAX_TAG_CANDIDATE_TRACES):
             batch = tuple(traces[start : start + MAX_TAG_CANDIDATE_TRACES])
-            suppressed |= curated_matches(batch) & keys
-            if len(suppressed) > MAX_TAG_OVERLAY_KEYS:
+            page_hits |= curated_matches(batch) & keys
+        if live_roots and page_hits:
+            live_hit_pages += 1
+            if live_hit_pages > MAX_WINDOW_OVERLAY_PAGES:
                 raise TagReadUnavailable(over_budget)
+        suppressed |= page_hits
+        if len(suppressed) > MAX_TAG_OVERLAY_KEYS:
+            raise TagReadUnavailable(over_budget)
     return suppressed
 
 
