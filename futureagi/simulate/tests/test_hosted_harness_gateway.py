@@ -4218,9 +4218,11 @@ def test_an_untraced_agent_is_measured_through_names_its_own_exporters_never_rea
         ("off-org", {"project": "other_org"}),
     ],
 )
-def test_the_agents_observability_switch_never_stops_the_measurement(
+def test_an_untraced_agent_is_measured_whatever_its_observability_switch_says(
     tag, options, organization, workspace, user, settings, monkeypatch
 ):
+    # Measuring records the models, tokens and timing only, never prompts or replies, so the
+    # switch does not stop it. A traced agent's switch still does (see _REFUSALS).
     world = _ExportWorld(
         organization,
         workspace,
@@ -4228,12 +4230,13 @@ def test_the_agents_observability_switch_never_stops_the_measurement(
         settings,
         monkeypatch,
         tag=tag,
-        instrumentation="traceai",
+        instrumentation="none",
         **options,
     ).launch()
 
     assert world.export_log() == []
     assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert world.mark["FI_SIMULATION_INSTRUMENT"] == "traceai"
     assert world.secrets == _INGEST_PAIR
     # The spans go to the hidden project, never to the agent's own.
     assert quote(world.project.name, safe="") not in _mark_text(world.mark)
@@ -4535,6 +4538,27 @@ _REFUSALS = {
     "metadata_id_not_a_uuid": ({"bind": "bad_id"}, "not_bound", "info"),
     "agent_of_another_organisation": ({"bind": "other_org"}, "not_bound", "info"),
     "agent_deleted": ({"bind": "deleted"}, "not_bound", "info"),
+    # A traced agent exports what its own setup records, prompts and replies included: its
+    # observability switch decides, whatever the instrumentation.
+    "row_disabled": ({"provider": "disabled"}, "observability_off", "info"),
+    "no_observability_row": ({"provider": "missing"}, "observability_off", "info"),
+    "project_deleted": ({"project": "deleted"}, "observability_off", "info"),
+    "provider_row_deleted": ({"provider": "deleted"}, "observability_off", "info"),
+    "project_of_another_organisation": (
+        {"project": "other_org"},
+        "observability_off",
+        "info",
+    ),
+    "traceai_row_disabled": (
+        {"instrumentation": "traceai", "provider": "disabled"},
+        "observability_off",
+        "info",
+    ),
+    "traceai_no_observability_row": (
+        {"instrumentation": "traceai", "provider": "missing"},
+        "observability_off",
+        "info",
+    ),
     "hidden_project_without_workspace": (
         {"hidden": "no_workspace"},
         "no_workspace",
@@ -4657,6 +4681,7 @@ _REFUSALS = {
 _BEFORE_THE_HIDDEN_PROJECT = {
     "snapshot_unsupported",
     "not_bound",
+    "observability_off",
     "not_source",
 }
 

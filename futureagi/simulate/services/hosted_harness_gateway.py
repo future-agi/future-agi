@@ -1225,13 +1225,15 @@ _INGEST_ALIAS_PREFIX = "FI_SIMULATION_INGEST_"
 _INGEST_API_KEY_ALIAS = f"{_INGEST_ALIAS_PREFIX}API_KEY"
 _INGEST_SECRET_KEY_ALIAS = f"{_INGEST_ALIAS_PREFIX}SECRET_KEY"
 # Refusals that fire on every launch that was never meant to export: unbound, from an
-# unlisted snapshot, a hosted agent, or an instrumentation the sandbox cannot measure. They log
-# at info so the reasons someone running the platform can act on stand out at warning.
+# unlisted snapshot, a hosted agent, a traced agent with observability off, or an
+# instrumentation the sandbox cannot measure. They log at info so the reasons someone running the
+# platform can act on stand out at warning.
 _QUIET_EXPORT_REASONS = frozenset(
     {
         "not_bound",
         "snapshot_unsupported",
         "not_source",
+        "observability_off",
         "not_instrumented",
     }
 )
@@ -1321,8 +1323,6 @@ def _decide_observability_export(
 
     agent = _bound_agent_definition(job, payload)
 
-    # The agent's observability switch does not decide this: the spans measure the run (its
-    # models, tokens and cost) and go to the hidden project, never to the agent's own.
     from simulate.services.agent_setup import agent_summary
 
     summary = agent_summary(agent.id)
@@ -1334,6 +1334,17 @@ def _decide_observability_export(
         _MEASURE_SNAPSHOTS_SETTING
     ):
         raise _ExportRefused("not_instrumented")
+    # A traced agent exports what its own setup records, prompts and replies included, so its
+    # observability switch still decides. An untraced agent is measured whatever the switch
+    # says: the sandbox records its models, tokens and timing only, never prompts or replies.
+    if summary.instrumentation != "none":
+        provider = agent.observability_provider
+        if provider is None or provider.deleted or not provider.enabled:
+            raise _ExportRefused("observability_off")
+        # The row only gates the export: spans go to the hidden project, never to this one.
+        project = provider.project
+        if project.deleted or project.organization_id != job.organization_id:
+            raise _ExportRefused("observability_off")
     from tracer.services.simulation_project import ensure_simulation_project
 
     # A failure to make the project escapes to the guard, which logs the exception's class.
