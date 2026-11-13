@@ -120058,6 +120058,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "invalid_reference",
             "ambiguous_reference",
             "unavailable",
+            "source_not_recorded",
             "temporarily_unavailable",
           ],
         },

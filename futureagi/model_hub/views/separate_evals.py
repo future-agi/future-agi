@@ -134,7 +134,6 @@ from model_hub.serializers.eval_runner import (
 from model_hub.services.eval_log_source_navigation import (
     MAX_SOURCE_PROJECTS,
     SourceNavigation,
-    organization_source_project_ids,
     readable_source_project_ids,
     readable_source_projects,
     resolve_eval_log_source_navigation,
@@ -5964,10 +5963,12 @@ def _pending_eval_usage_payload(template_id, page, page_size):
 # a payload listed by eval config under it; a payload without the marker is
 # therefore a cache miss, as the observe namespaces treat an unmarked latency
 # snapshot (graph_metric_statistic.snapshot_names_its_statistic). The value
-# names the current rule: an older log is listed only when its trace is held
-# in one readable project and in no other project of the organization, so a
-# snapshot computed under the earlier "source_project" rule is never served.
-EVAL_USAGE_TRACE_LOGS_BY = "source_project_unique_in_org"
+# names the current rule: a log that recorded its project is listed by that
+# project; an older log by the readable projects running this eval now (the
+# rule Usage had before sources were recorded). Snapshots computed under an
+# earlier value ("source_project", "source_project_unique_in_org") are never
+# served.
+EVAL_USAGE_TRACE_LOGS_BY = "recorded_source_project"
 
 
 def eval_usage_snapshot_lists_by_source(snapshot) -> bool:
@@ -6009,34 +6010,31 @@ def _eval_usage_source_project_ids(request, workspace, template_id) -> list[str]
     ]
 
 
-def _eval_usage_outside_project_ids(organization, project_ids) -> list[str] | None:
-    """The organization's projects outside the listable scope, or None.
+def _eval_usage_configured_project_ids(organization, workspace, template_id):
+    """Projects that hold a current config of this eval (older logs only).
 
-    Deleted and unreadable projects are included. An older log whose trace is
-    also held in one of them is not listed (its readable copy may be a
-    replay). None past the project bound: then no older log is listed.
+    This is the scope Usage listed every trace-attached log by before eval logs
+    recorded their project, kept unchanged for the logs that did not; the
+    selector limits it to the readable projects.
     """
-    organization_projects = organization_source_project_ids(organization.id)
-    if organization_projects is None:
-        logger.warning(
-            "eval_usage.organization_project_scope_too_large",
-            organization_id=str(organization.id),
-        )
-        return None
-    listable = set(project_ids)
-    return [p for p in organization_projects if p not in listable]
+    project_configs = CustomEvalConfig.objects.filter(
+        eval_template_id=template_id,
+        deleted=False,
+        project__organization=organization,
+    )
+    if workspace:
+        project_configs = project_configs.filter(project__workspace=workspace)
+    return [
+        str(value)
+        for value in project_configs.values_list("project_id", flat=True).distinct()
+    ]
 
 
-def _eval_usage_source_scope(project_ids, outside_project_ids) -> str | None:
+def _eval_usage_source_scope(project_ids, configured_project_ids) -> str | None:
     """A short fingerprint of the project scope a Usage snapshot listed by."""
     if project_ids is None:
         return None
-    scope = json.dumps(
-        [
-            sorted(project_ids),
-            None if outside_project_ids is None else sorted(outside_project_ids),
-        ]
-    )
+    scope = json.dumps([sorted(project_ids), sorted(configured_project_ids or ())])
     return hashlib.sha256(scope.encode()).hexdigest()[:32]
 
 
@@ -6155,13 +6153,13 @@ class EvalUsageStatsView(APIView):
             clickhouse_usage_enabled = (
                 settings.EVAL_USAGE_CLICKHOUSE_ENABLED and is_clickhouse_enabled()
             )
-            source_project_ids = outside_project_ids = None
+            source_project_ids = configured_project_ids = None
             if clickhouse_usage_enabled:
                 source_project_ids = _eval_usage_source_project_ids(
                     request, workspace, template_id
                 )
-                outside_project_ids = _eval_usage_outside_project_ids(
-                    organization, source_project_ids
+                configured_project_ids = _eval_usage_configured_project_ids(
+                    organization, workspace, template_id
                 )
             cache_identity = {
                 "organization_id": str(organization.id),
@@ -6179,12 +6177,11 @@ class EvalUsageStatsView(APIView):
                 # source (TH-4804) dropped logs whose eval config had moved or
                 # been deleted; a new identity never serves them.
                 "trace_logs_by": EVAL_USAGE_TRACE_LOGS_BY,
-                # Which older logs are listed depends on the organization's
-                # projects (readable, deleted, other workspaces): a snapshot
-                # computed before a project was deleted, added or moved is
-                # never served.
+                # Which logs are listed depends on the projects the caller may
+                # read and, for older logs, on the projects running this eval:
+                # a snapshot computed for another scope is never served.
                 "source_scope": _eval_usage_source_scope(
-                    source_project_ids, outside_project_ids
+                    source_project_ids, configured_project_ids
                 ),
             }
             if clickhouse_usage_enabled:
@@ -6230,8 +6227,8 @@ class EvalUsageStatsView(APIView):
                 usage_read = read_eval_usage(
                     organization_id=str(organization.id),
                     workspace_id=str(workspace.id) if workspace else None,
-                    project_ids=source_project_ids,
-                    outside_project_ids=outside_project_ids,
+                    project_ids=source_project_ids or [],
+                    configured_project_ids=configured_project_ids or [],
                     template_id=str(template_id),
                     start_date=start_date,
                     end_date=end_date,

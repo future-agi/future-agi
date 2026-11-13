@@ -13661,6 +13661,7 @@ export const EvalLogSourceNavigationApiStatus = {
   invalid_reference: "invalid_reference",
   ambiguous_reference: "ambiguous_reference",
   unavailable: "unavailable",
+  source_not_recorded: "source_not_recorded",
   temporarily_unavailable: "temporarily_unavailable",
 } as const;
 

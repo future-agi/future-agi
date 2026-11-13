@@ -100,8 +100,7 @@ def live_trace_project_sets_sql(
     *,
     candidate_trace_ids_sql: str,
     project_ids_param: str = "project_ids",
-    outside_project_ids_param: str | None = None,
-    scan_project_ids_param: str | None = None,
+    configured_project_ids_param: str | None = None,
 ) -> str:
     """Return, per candidate trace, every requested project holding it live.
 
@@ -113,12 +112,12 @@ def live_trace_project_sets_sql(
     so a tombstone in one project cannot hide or resurrect another project's
     copy. The caller must provide a finite trace-ID candidate query.
 
-    With ``outside_project_ids_param`` the relation also returns
-    ``held_elsewhere``: 1 when any row of the trace, live or tombstoned, is in
-    one of those projects (ones the caller may not read). Those projects are
-    never in ``live_project_ids``. The scan then reads the projects bound to
-    ``scan_project_ids_param``, which must be both lists together, so one
-    pruned scan answers both questions.
+    With ``configured_project_ids_param`` the relation also returns
+    ``configured_live``: 1 exactly when :func:`latest_live_trace_projects_sql`
+    over those projects would return the trace (rows of it, live or
+    tombstoned, in exactly one of them, and that copy's latest version live).
+    They must be a subset of ``project_ids_param``, which is the only scope
+    the relation reads.
 
     The candidate IDs are an ``IN`` set next to the project list, not a join:
     ClickHouse prunes the ``(project_id, id)`` primary key with both, so the
@@ -126,33 +125,25 @@ def live_trace_project_sets_sql(
     trace of every requested project, which grows with the workspace.
     """
 
-    names = [project_ids_param, outside_project_ids_param, scan_project_ids_param]
-    if (outside_project_ids_param is None) != (scan_project_ids_param is None):
-        raise ValueError("Outside and scan project parameters go together")
+    names = [project_ids_param, configured_project_ids_param]
     if not all(_PARAM_NAME_RE.fullmatch(name) for name in names if name is not None):
         raise ValueError("Invalid ClickHouse parameter name")
     if not candidate_trace_ids_sql.strip():
         raise ValueError("A bounded trace-ID candidate query is required")
 
-    if outside_project_ids_param is None:
-        scanned = project_ids_param
-        live_projects = "groupUniqArray(project_id) AS live_project_ids"
-        live_filter = "WHERE latest_is_deleted = 0"
-    else:
-        scanned = scan_project_ids_param
-        live_projects = f"""groupUniqArrayIf(
-                project_id,
-                latest_is_deleted = 0
-                AND project_id IN %({project_ids_param})s
-            ) AS live_project_ids,
+    configured_live = ""
+    if configured_project_ids_param is not None:
+        configured = f"project_id IN %({configured_project_ids_param})s"
+        configured_live = f""",
             toUInt8(
-                countIf(project_id IN %({outside_project_ids_param})s) > 0
-            ) AS held_elsewhere"""
-        live_filter = ""
+                countIf({configured}) = 1
+                AND countIf({configured} AND latest_is_deleted = 0) = 1
+            ) AS configured_live"""
     return f"""
         SELECT
             trace_id,
-            {live_projects}
+            groupUniqArrayIf(project_id, latest_is_deleted = 0)
+                AS live_project_ids{configured_live}
         FROM (
             SELECT
                 trace_project_scan.id AS trace_id,
@@ -162,13 +153,12 @@ def live_trace_project_sets_sql(
                     trace_project_scan._version
                 ) AS latest_is_deleted
             FROM {_TRACE_TABLE} AS trace_project_scan
-            PREWHERE trace_project_scan.project_id IN %({scanned})s
+            PREWHERE trace_project_scan.project_id IN %({project_ids_param})s
               AND trace_project_scan.id IN (
                   SELECT trace_id FROM ({candidate_trace_ids_sql})
               )
             GROUP BY trace_project_scan.id, trace_project_scan.project_id
         ) AS trace_project_state
-        {live_filter}
         GROUP BY trace_id
     """
 

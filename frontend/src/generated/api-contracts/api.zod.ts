@@ -27269,6 +27269,7 @@ export const ModelHubGetEvalLogsListResponse = zod.object({
           "invalid_reference",
           "ambiguous_reference",
           "unavailable",
+          "source_not_recorded",
           "temporarily_unavailable",
         ]),
         kind: zod.union([zod.enum(["trace", "voice_call"]), zod.null()]),

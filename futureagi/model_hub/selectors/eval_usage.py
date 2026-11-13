@@ -219,12 +219,11 @@ def _latest_usage_slice(
     # config (whose project can change, or which can be deleted, after the
     # run). ``project_ids`` are the projects the caller may read. A log that
     # recorded its project is listed only while that project is readable and
-    # holds the trace live. An older log is listed while a readable project
-    # holds its trace live and no copy of the trace (live or tombstoned)
-    # exists in any other project of the organization, deleted or unreadable
-    # ones included: then the readable copy may be a replay, not the source
-    # it ran on. ``outside_project_ids`` are those other projects; past the
-    # project bound ``legacy_attributable`` is 0 and older logs are not listed.
+    # holds the trace live. An older log recorded no project, so nothing can
+    # name its source; it keeps the rule Usage had before sources were
+    # recorded, limited to readable projects: ``configured_project_ids`` are
+    # the readable projects running this eval now, and the log is listed when
+    # its trace is held by exactly one of them and live there.
     trace_candidates = f"""
         SELECT DISTINCT toUUIDOrZero(eval_trace_id) AS trace_id
         FROM {_USAGE_TABLE}
@@ -233,8 +232,7 @@ def _latest_usage_slice(
     """
     trace_projects = live_trace_project_sets_sql(
         candidate_trace_ids_sql=trace_candidates,
-        outside_project_ids_param="outside_project_ids",
-        scan_project_ids_param="trace_scan_project_ids",
+        configured_project_ids_param="configured_project_ids",
     )
     return f"""
         SELECT current_usage.*
@@ -246,9 +244,7 @@ def _latest_usage_slice(
             current_usage.eval_trace_id = ''
             OR if(
                 current_usage.eval_source_project_id = '',
-                %(legacy_attributable)s = 1
-                AND notEmpty(readable_trace_projects.live_project_ids)
-                AND readable_trace_projects.held_elsewhere = 0,
+                readable_trace_projects.configured_live = 1,
                 has(
                     readable_trace_projects.live_project_ids,
                     toUUIDOrZero(current_usage.eval_source_project_id)
@@ -281,7 +277,7 @@ def read_eval_usage(
     organization_id: str,
     workspace_id: str | None,
     project_ids: list[str] | tuple[str, ...],
-    outside_project_ids: list[str] | tuple[str, ...] | None,
+    configured_project_ids: list[str] | tuple[str, ...],
     template_id: str,
     start_date: datetime,
     end_date: datetime,
@@ -308,6 +304,7 @@ def read_eval_usage(
         organization_id=organization_id,
         workspace_id=workspace_id,
     )
+    readable = set(project_ids)
     params.update(
         {
             "template_id": template_id,
@@ -315,16 +312,12 @@ def read_eval_usage(
             # rows when the caller may read no project in the workspace.
             "project_ids": tuple(project_ids)
             or ("00000000-0000-0000-0000-000000000000",),
-            # The organization's other projects (deleted and unreadable ones
-            # included). None: past the project bound, so an older log, which
-            # recorded no project, cannot be attributed and is not listed.
-            "outside_project_ids": tuple(outside_project_ids or ())
-            or ("00000000-0000-0000-0000-000000000000",),
-            "legacy_attributable": 0 if outside_project_ids is None else 1,
-            # One pruned traces scan answers both: the readable projects'
-            # live copies and any copy in the outside projects.
-            "trace_scan_project_ids": tuple(
-                sorted({*project_ids, *(outside_project_ids or ())})
+            # Older logs only: the readable projects that run this eval now,
+            # a subset of project_ids (the only projects the trace scan reads).
+            "configured_project_ids": tuple(
+                project_id
+                for project_id in configured_project_ids
+                if project_id in readable
             )
             or ("00000000-0000-0000-0000-000000000000",),
             "start_date": _utc(start_date),

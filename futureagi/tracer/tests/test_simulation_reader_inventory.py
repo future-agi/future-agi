@@ -868,10 +868,10 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             PROJECT_SET,
             why=(
                 "the eval usage page reads the API call log and lists a run's trace "
-                "log by the source it ran on: the project the log recorded, or the "
-                "project holding its trace, always within the project ids its view "
-                "passes in (the caller's readable projects, from the project manager "
-                "in readable_source_projects)"
+                "log by the project the log recorded; an older log, which recorded "
+                "none, by the projects holding a config of the template. Both stay "
+                "within the project ids its view passes in (the caller's readable "
+                "projects, from the project manager in readable_source_projects)"
             ),
             table="usage_apicalllog",
         ),
@@ -1989,11 +1989,6 @@ TOKEN_FILES = {
     "tracer/models/project.py": "declares the column and the manager",
     "tracer/migrations/0115_project_simulation_agent.py": "adds the column",
     "tracer/services/simulation_project.py": "creates the project, opens it for a run",
-    "model_hub/services/eval_log_source_navigation.py": (
-        "lists every project id of an organization, hidden ones included, only "
-        "to refuse an older eval log whose trace is also held outside the "
-        "readable scope; never reads or shows that project"
-    ),
 }
 
 _DETAIL = "tracer.services.clickhouse.v2.trace_detail_reads"

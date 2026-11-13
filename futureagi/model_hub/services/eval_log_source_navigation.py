@@ -98,14 +98,15 @@ def _classify_reference(log_row, config) -> SourceNavigation | _Candidate:
     )
 
 
-# The trace reader binds at most this many projects in one read.
+# A Usage read binds at most this many projects in one ClickHouse statement.
 MAX_SOURCE_PROJECTS = 4096
 
 
 def readable_source_projects(request, workspace_id=None):
-    """Projects the caller may read in a log's workspace.
+    """Projects the caller may read in a workspace.
 
-    An eval log's trace is looked up only here, never through its eval config.
+    Usage lists a log that recorded its project only while that project is
+    one of these; the eval config's current project never decides it.
     """
     # Import lazily: the shared scope helper belongs to the tracer view module.
     from tracer.views.trace import _project_queryset_for_request
@@ -129,123 +130,31 @@ def readable_source_project_ids(request, workspace_id=None) -> list[str] | None:
     return None if len(project_ids) > MAX_SOURCE_PROJECTS else project_ids
 
 
-def _resolve_project_scope(
-    request, log_row, candidate
-) -> tuple[list[str], SourceNavigation | None]:
-    """Return the project ids the trace read may search, or a terminal state."""
+def _recorded_project_scope(request, log_row, candidate) -> SourceNavigation | str:
+    """Return the recorded project's id when the caller may read it, else a state."""
     # Import lazily: the shared scope helper belongs to the tracer view module.
     from tracer.views.trace import _project_queryset_for_request
 
-    if candidate.project_id is not None:
-        scope = _project_queryset_for_request(request)
-        project = scope.filter(id=candidate.project_id).first()
-        if project is None:
-            return [], SourceNavigation("unavailable")
-        if (
-            log_row.workspace_id
-            and project.workspace_id
-            and str(log_row.workspace_id) != str(project.workspace_id)
-        ):
-            return [], SourceNavigation("invalid_reference")
-        return [str(project.id)], None
-
-    # Older logs did not record their project. The eval config is writable (its
-    # project and template can change after the eval ran), so it says nothing
-    # about where this log's trace lives and is never read here: search the
-    # projects this user may read in the log's workspace for the trace itself,
-    # and let the read refuse a trace found in more than one of them.
-    # One past the reader's project bound, so an oversized scope fails closed.
-    project_ids = [
-        str(project_id)
-        for project_id in readable_source_projects(request, log_row.workspace_id)
-        .order_by("id")
-        .values_list("id", flat=True)[: MAX_SOURCE_PROJECTS + 1]
-    ]
-    if not project_ids:
-        return [], SourceNavigation("unavailable")
-    return project_ids, None
-
-
-def organization_source_project_ids(organization_id) -> list[str] | None:
-    """Every project of an organization, or None past the reader's bound.
-
-    Deleted and simulation projects are included: a copy of a trace in any of
-    them means a log that never recorded its project cannot be attributed to
-    one readable copy. Used only to decide "unavailable", never to read.
-    """
-    from tracer.models.project import Project
-
-    if organization_id in (None, ""):
-        return None
-    project_ids = [
-        str(project_id)
-        for project_id in Project.with_simulation.filter(
-            organization_id=organization_id
-        )
-        .order_by("id")
-        .values_list("id", flat=True)[: MAX_SOURCE_PROJECTS + 1]
-    ]
-    return None if len(project_ids) > MAX_SOURCE_PROJECTS else project_ids
-
-
-# One pruned point read on the traces (project_id, id) key: any row, live or
-# tombstoned, of the trace in a project outside the caller's readable scope.
-_OUTSIDE_COPY_QUERY = """
-    SELECT 1 AS present
-    FROM traces
-    PREWHERE project_id IN %(outside_project_ids)s
-      AND id = toUUID(%(trace_id)s)
-    LIMIT 1
-"""
-_OUTSIDE_COPY_SETTINGS = {
-    "max_threads": 1,
-    "max_memory_usage": 512 * 1024 * 1024,
-    "max_bytes_to_read": 1024 * 1024 * 1024,
-    "read_overflow_mode": "throw",
-}
-_OUTSIDE_COPY_TIMEOUT_MS = 3_000
-
-
-def _legacy_trace_held_outside(
-    *, analytics, log_row, trace_id: str, readable_project_ids: list[str]
-) -> bool:
-    """Whether an older log's trace also exists outside the readable scope.
-
-    Such a log cannot be attributed: its original project may be the deleted
-    or unreadable one, and a readable copy (a replay or duplicate ingestion)
-    is not the source it ran on. The check is org-scoped; it fails closed past
-    the project bound and never names or counts the other project.
-    """
-    organization_projects = organization_source_project_ids(
-        getattr(log_row, "organization_id", None)
+    project = (
+        _project_queryset_for_request(request).filter(id=candidate.project_id).first()
     )
-    if organization_projects is None:
-        return True
-    readable = set(readable_project_ids)
-    outside = tuple(p for p in organization_projects if p not in readable)
-    if not outside:
-        return False
-    result = analytics.execute_ch_query(
-        _OUTSIDE_COPY_QUERY,
-        {"outside_project_ids": outside, "trace_id": trace_id},
-        timeout_ms=_OUTSIDE_COPY_TIMEOUT_MS,
-        settings=_OUTSIDE_COPY_SETTINGS,
-    )
-    return bool(getattr(result, "data", result))
+    if project is None:
+        return SourceNavigation("unavailable")
+    if (
+        log_row.workspace_id
+        and project.workspace_id
+        and str(log_row.workspace_id) != str(project.workspace_id)
+    ):
+        return SourceNavigation("invalid_reference")
+    return str(project.id)
 
 
 def _map_read_error(exc) -> SourceNavigation:
     if isinstance(exc, TraceDetailNotFound):
         return SourceNavigation("unavailable")
-    # More readable projects than one read may bind: retrying cannot help.
     if (
         isinstance(exc, TraceDetailReadUnavailable)
-        and exc.code == "project_scope_too_large"
-    ):
-        return SourceNavigation("unavailable")
-    if isinstance(exc, TraceDetailReadUnavailable) and exc.code in (
-        "ambiguous_span_identity",
-        "ambiguous_project",
+        and exc.code == "ambiguous_span_identity"
     ):
         return SourceNavigation("ambiguous_reference")
     return SourceNavigation("temporarily_unavailable")
@@ -266,46 +175,31 @@ def resolve_eval_log_source_navigation(
         candidate = _classify_reference(log_row, config)
         if isinstance(candidate, SourceNavigation):
             result = candidate
+        elif candidate.project_id is None:
+            # An older log never recorded the project it ran on. Its eval
+            # config is writable, and a trace id is not unique across projects
+            # (a replay or re-import writes the same ids elsewhere), so no
+            # lookup can name its source: it gets no navigation, and no trace
+            # is read for it.
+            result = SourceNavigation("source_not_recorded")
         else:
-            project_ids, scope_result = _resolve_project_scope(
-                request, log_row, candidate
-            )
-            analytics = analytics or (
-                None if scope_result is not None else V2AnalyticsQueryService()
-            )
-            if scope_result is not None:
-                result = scope_result
-            elif candidate.project_id is None and _legacy_trace_held_outside(
-                analytics=analytics,
-                log_row=log_row,
-                trace_id=candidate.trace_id,
-                readable_project_ids=project_ids,
-            ):
-                result = SourceNavigation("unavailable")
+            scope = _recorded_project_scope(request, log_row, candidate)
+            if isinstance(scope, SourceNavigation):
+                result = scope
             else:
                 detail = (read_detail or read_trace_detail)(
-                    analytics=analytics,
-                    project_ids=project_ids,
+                    analytics=analytics or V2AnalyticsQueryService(),
+                    project_ids=[scope],
                     trace_id=candidate.trace_id,
                     eval_config_ids_resolver=None,
                     include_annotations=False,
                     deadline_ms=deadline_ms,
-                    unique_project=True,
                 )
-                # A recorded project is the only one read; otherwise the read
-                # found the trace in exactly one of the scoped projects.
-                project_id = (
-                    project_ids[0] if candidate.project_id else str(detail.project_id)
-                )
-                result = (
-                    classify_trace_source(
-                        detail,
-                        project_id=project_id,
-                        trace_id=candidate.trace_id,
-                        span_id=candidate.span_id,
-                    )
-                    if project_id in project_ids
-                    else SourceNavigation("invalid_reference")
+                result = classify_trace_source(
+                    detail,
+                    project_id=scope,
+                    trace_id=candidate.trace_id,
+                    span_id=candidate.span_id,
                 )
     except (TraceDetailNotFound, TraceDetailReadUnavailable) as exc:
         error_code = getattr(exc, "code", None)

@@ -110,83 +110,76 @@ def _selected_granules(client, table, sql, params):
     return selected, total, plan
 
 
-def test_outside_copies_come_from_the_same_pruned_scan(trace_table, monkeypatch):
-    """TH-4804 gate: an older log is attributed only when no project outside
-    the caller's readable scope holds its trace (live or tombstoned). That
-    check rides on the same candidate-pruned scan of the readable and the
-    organization's other projects."""
+def test_configured_live_matches_the_rule_before_sources_were_recorded(
+    trace_table, monkeypatch
+):
+    """TH-4804 r9: an older eval log recorded no project, so Usage keeps the
+    rule it had before (``latest_live_trace_projects_sql`` over the projects
+    running the eval), limited to readable projects. ``configured_live`` must
+    agree with that relation trace by trace, from the same pruned scan of the
+    readable projects only."""
     client, table = trace_table
-    readable, outside = uuid.uuid4(), uuid.uuid4()
+    configured_a, configured_b, readable_c, unreadable = (uuid.uuid4() for _ in "abcd")
     client.execute(
         f"INSERT INTO {table} SELECT generateUUIDv4(), %(p)s, 0, 1 FROM numbers({TRACES})",
-        {"p": readable},
+        {"p": configured_a},
     )
-    client.execute(
-        f"INSERT INTO {table} SELECT generateUUIDv4(), %(p)s, 0, 1 FROM numbers({TRACES})",
-        {"p": outside},
-    )
-    candidates = [
-        row[0]
-        for row in client.execute(
-            f"SELECT id FROM {table} WHERE project_id = %(p)s ORDER BY id LIMIT 3",
-            {"p": readable},
-        )
-    ]
-    replayed, tombstoned_elsewhere, single = candidates
+    t = {
+        name: uuid.uuid4()
+        for name in "only_a both_ab tomb_a a_and_c tomb_a_live_b only_c a_and_unreadable tomb_then_live".split()
+    }
     client.execute(
         f"INSERT INTO {table} VALUES",
         [
-            (replayed, outside, 0, 1),
-            (tombstoned_elsewhere, outside, 0, 1),
-            (tombstoned_elsewhere, outside, 1, 2),
+            (t["only_a"], configured_a, 0, 1),
+            (t["both_ab"], configured_a, 0, 1),
+            (t["both_ab"], configured_b, 0, 1),
+            (t["tomb_a"], configured_a, 0, 1),
+            (t["tomb_a"], configured_a, 1, 2),
+            (t["a_and_c"], configured_a, 0, 1),
+            (t["a_and_c"], readable_c, 0, 1),
+            (t["tomb_a_live_b"], configured_a, 1, 2),
+            (t["tomb_a_live_b"], configured_b, 0, 1),
+            (t["only_c"], readable_c, 0, 1),
+            (t["a_and_unreadable"], configured_a, 0, 1),
+            (t["a_and_unreadable"], unreadable, 0, 1),
+            (t["tomb_then_live"], configured_b, 1, 1),
+            (t["tomb_then_live"], configured_b, 0, 2),
         ],
     )
-    client.execute(f"OPTIMIZE TABLE {table} FINAL")
+    # No OPTIMIZE: both relations must collapse versions themselves.
     monkeypatch.setattr(trace_project_scope, "_TRACE_TABLE", table)
-    sql = trace_project_scope.live_trace_project_sets_sql(
-        candidate_trace_ids_sql=(
-            "SELECT toUUID(arrayJoin(%(candidate_ids)s)) AS trace_id"
-        ),
-        outside_project_ids_param="outside_project_ids",
-        scan_project_ids_param="scan_project_ids",
-    )
+    candidates = "SELECT toUUID(arrayJoin(%(candidate_ids)s)) AS trace_id"
     params = {
-        "project_ids": (readable,),
-        "outside_project_ids": (outside,),
-        "scan_project_ids": (readable, outside),
-        "candidate_ids": candidates,
+        "project_ids": (configured_a, configured_b, readable_c),
+        "configured_project_ids": (configured_a, configured_b),
+        "candidate_ids": [str(trace) for trace in t.values()],
     }
-
-    rows = {
-        trace: (set(projects), held)
-        for trace, projects, held in client.execute(sql, params)
-    }
-    # The outside project is never a live listing project; any row there,
-    # tombstoned or not, marks the trace as held elsewhere.
-    assert rows == {
-        replayed: ({readable}, 1),
-        tombstoned_elsewhere: ({readable}, 1),
-        single: ({readable}, 0),
-    }
-    selected, total, plan = _selected_granules(client, table, sql, params)
-    # 200 granules in all; the three candidates sit in at most a few per project.
-    assert total >= 2 * TRACES // GRANULARITY
-    assert selected <= 6, plan
-
-
-def test_navigation_outside_copy_read_is_a_pruned_point_read(trace_table):
-    from model_hub.services import eval_log_source_navigation as navigation
-
-    client, table = trace_table
-    outside = uuid.uuid4()
-    client.execute(
-        f"INSERT INTO {table} SELECT generateUUIDv4(), %(p)s, 0, 1 FROM numbers({TRACES})",
-        {"p": outside},
+    sql = trace_project_scope.live_trace_project_sets_sql(
+        candidate_trace_ids_sql=candidates,
+        configured_project_ids_param="configured_project_ids",
     )
-    (trace_id,) = client.execute(f"SELECT id FROM {table} LIMIT 1")[0]
-    sql = navigation._OUTSIDE_COPY_QUERY.replace("FROM traces", f"FROM {table}")
-    params = {"outside_project_ids": (outside,), "trace_id": str(trace_id)}
-    assert client.execute(sql, params) == [(1,)]
+    listed = {
+        trace for trace, _projects, live in client.execute(sql, params) if live == 1
+    }
+    before = trace_project_scope.latest_live_trace_projects_sql(
+        candidate_trace_ids_sql=candidates,
+        project_ids_param="configured_project_ids",
+    )
+    expected = {trace for trace, _project in client.execute(before, params)}
+    assert (
+        listed
+        == expected
+        == {
+            t["only_a"],
+            t["a_and_c"],
+            t["a_and_unreadable"],
+            t["tomb_then_live"],
+        }
+    )
+    # The scan reads the readable projects only, pruned by the candidates.
+    assert "%(project_ids)s" in sql.split("GROUP BY")[0]
     selected, total, plan = _selected_granules(client, table, sql, params)
     assert total >= TRACES // GRANULARITY
-    assert selected <= 2, plan
+    # At most one granule per candidate (plus the unmerged small parts).
+    assert selected <= len(t) + 2, plan

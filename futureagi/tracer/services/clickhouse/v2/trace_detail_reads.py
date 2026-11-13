@@ -436,13 +436,8 @@ def read_trace_detail(
     eval_config_ids_resolver: Callable[[str], Iterable[str]] | None = None,
     include_annotations: bool = True,
     deadline_ms: int = _DETAIL_DEADLINE_MS,
-    unique_project: bool = False,
 ) -> TraceDetailRead:
-    """Execute the finite identity/content/eval/annotation read plan.
-
-    With ``unique_project``, a trace id that is live in more than one scoped
-    project raises ``ambiguous_project`` instead of serving the newest copy.
-    """
+    """Execute the finite identity/content/eval/annotation read plan."""
 
     builder = TraceDetailReadBuilder(project_ids=project_ids, trace_id=trace_id)
     started = monotonic()
@@ -481,20 +476,6 @@ def read_trace_detail(
         identity_params,
         max_result_rows=_MAX_PHYSICAL_SPANS + 1,
     )
-    # Live copies in several scoped projects are ambiguous whatever their size;
-    # decide that before the span limit, which retrying cannot fix either.
-    if (
-        unique_project
-        and len(
-            {
-                str(row["project_id"])
-                for row in identity_rows
-                if not row.get("latest_is_deleted") and row.get("project_id")
-            }
-        )
-        > 1
-    ):
-        raise TraceDetailReadUnavailable("ambiguous_project")
     if len(identity_rows) > _MAX_PHYSICAL_SPANS:
         raise TraceDetailReadUnavailable("span_limit_exceeded")
 
@@ -513,10 +494,7 @@ def read_trace_detail(
     # A trace id is not unique across projects: a replay, re-import or shared
     # provider account writes the same trace into several projects. Every
     # candidate is already inside the authorized scope, so serve the most
-    # recently written copy as one project's coherent tree, unless the caller
-    # must not guess between copies.
-    if unique_project and len({str(row["project_id"]) for row in live_rows}) > 1:
-        raise TraceDetailReadUnavailable("ambiguous_project")
+    # recently written copy as one project's coherent tree.
     project_id = str(
         max(
             live_rows,

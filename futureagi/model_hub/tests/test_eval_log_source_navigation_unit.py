@@ -27,6 +27,7 @@ STATUSES = (
     "invalid_reference",
     "ambiguous_reference",
     "unavailable",
+    "source_not_recorded",
     "temporarily_unavailable",
 )
 
@@ -228,17 +229,7 @@ def test_ambiguous_ancestry(resolve, spans):
             "ambiguous_reference",
             "ambiguous_span_identity",
         ),
-        (
-            TraceDetailReadUnavailable("ambiguous_project"),
-            "ambiguous_reference",
-            "ambiguous_project",
-        ),
         (TraceDetailNotFound(), "unavailable", None),
-        (
-            TraceDetailReadUnavailable("project_scope_too_large"),
-            "unavailable",
-            "project_scope_too_large",
-        ),
         (
             TraceDetailReadUnavailable("deadline_exceeded"),
             "temporarily_unavailable",
@@ -256,7 +247,7 @@ def test_ambiguous_ancestry(resolve, spans):
         ),
         (RuntimeError("boom"), "temporarily_unavailable", None),
     ],
-    ids=["u22", "u22b", "u24", "u24b", "u25", "u26", "u27", "u28"],
+    ids=["u22", "u24", "u25", "u26", "u27", "u28"],
 )
 def test_reader_error_mapping(resolve, exc, status, code):
     resolve.reader.side_effect = exc
@@ -290,7 +281,6 @@ def test_u29_bounded_singleton_read(resolve):
         eval_config_ids_resolver=None,
         include_annotations=False,
         deadline_ms=1234,
-        unique_project=True,
     )
 
 
@@ -383,99 +373,102 @@ def test_invalid_span_string_is_not_repaired(resolve, span_id):
     resolve.reader.assert_not_called()
 
 
+# TH-4804 r9: an older log never recorded the project it ran on. Its eval
+# config is writable and a trace id is not unique across projects (a replay or
+# re-import writes the same ids elsewhere), so no lookup by trace id can name
+# its source: it gets no navigation, before any project or trace read.
+NOT_RECORDED = {
+    "status": "source_not_recorded",
+    "kind": None,
+    "project_id": None,
+    "trace_id": None,
+    "span_id": None,
+    "retryable": False,
+}
+
+
 @pytest.fixture
-def legacy(resolve, monkeypatch):
-    """An older log with no recorded project; its eval config is never read."""
-    scope = resolve.manager.filter.return_value
-    scope.order_by.return_value.values_list.return_value = [PROJECT, ROOT]
-    config_lookup = Mock(
-        side_effect=AssertionError("older logs must not read the config")
-    )
+def older_log(resolve, monkeypatch):
+    """Fail on any read an older log must not trigger."""
+    config_lookup = Mock(side_effect=AssertionError("older logs read no config"))
     monkeypatch.setattr(CustomEvalConfig.all_objects, "filter", config_lookup)
-    resolve.config_lookup = config_lookup
-    # By default the organization has no project outside the readable scope.
-    organization_projects = Mock(return_value=[PROJECT, ROOT])
     monkeypatch.setattr(
-        navigation, "organization_source_project_ids", organization_projects
+        navigation,
+        "V2AnalyticsQueryService",
+        Mock(side_effect=AssertionError("older logs open no ClickHouse client")),
     )
-    resolve.organization_projects = organization_projects
+    resolve.config_lookup = config_lookup
     return resolve
 
 
-def test_u33_legacy_log_reads_the_scoped_projects_not_the_config(legacy):
-    result = legacy(_config(project_id=None))
-    assert result.as_dict()["project_id"] == PROJECT
-    legacy.config_lookup.assert_not_called()
-    assert legacy.reader.call_args.kwargs["project_ids"] == [PROJECT, ROOT]
-    assert legacy.reader.call_args.kwargs["unique_project"] is True
-
-
-def test_u34_legacy_read_outside_the_scope_is_invalid(legacy):
-    legacy.reader.return_value = _detail(_span(project_id=OTHER), project_id=OTHER)
-    assert legacy(_config(project_id=None)).status == "invalid_reference"
-
-
-def _outside_analytics(present):
+@pytest.mark.parametrize(
+    "changes",
+    [{"project_id": None}, {}],
+    ids=["null", "absent"],
+)
+def test_u33_older_log_gets_source_not_recorded_without_any_read(older_log, changes):
+    config = _config(**changes)
+    if not changes:
+        del config["project_id"]
     analytics = Mock()
-    analytics.execute_ch_query.return_value = SimpleNamespace(
-        data=[{"present": 1}] if present else []
+    with capture_logs() as logs:
+        result = older_log(config, analytics=analytics)
+    assert result.as_dict() == NOT_RECORDED
+    # No trace read, no ClickHouse query, no project or config lookup.
+    older_log.reader.assert_not_called()
+    assert analytics.mock_calls == []
+    older_log.manager.filter.assert_not_called()
+    older_log.config_lookup.assert_not_called()
+    assert [log["status"] for log in logs] == ["source_not_recorded"]
+
+
+def test_u34_older_log_with_a_live_replay_elsewhere_is_still_not_recorded(
+    older_log,
+):
+    """The gate's tombstone case: readable project A holds the original,
+    tombstoned; readable project B holds a live replay with the same ids. The
+    older log must not resolve to B."""
+    older_log.manager.filter.return_value.first.return_value = SimpleNamespace(
+        id=OTHER, workspace_id=None
     )
-    return analytics
+    older_log.reader.return_value = _detail(_span(project_id=OTHER), project_id=OTHER)
+    assert older_log(_config(project_id=None)).as_dict() == NOT_RECORDED
+    older_log.reader.assert_not_called()
 
 
-def test_u36_legacy_trace_also_held_outside_the_scope_is_unavailable(legacy):
-    """A copy in a deleted or unreadable project: the readable copy may be a
-    replay, so the older log is not attributed to it and nothing is read."""
-    legacy.organization_projects.return_value = [PROJECT, ROOT, OTHER]
-    analytics = _outside_analytics(present=True)
-    result = legacy(_config(project_id=None), analytics=analytics)
-    assert result.as_dict() == {
-        "status": "unavailable",
-        "kind": None,
-        "project_id": None,
-        "trace_id": None,
-        "span_id": None,
-        "retryable": False,
-    }
-    legacy.reader.assert_not_called()
-    query, params = analytics.execute_ch_query.call_args.args
-    assert "PREWHERE project_id IN %(outside_project_ids)s" in query
-    assert "id = toUUID(%(trace_id)s)" in query
-    assert params == {"outside_project_ids": (OTHER,), "trace_id": TRACE}
+def test_u35_older_log_answer_does_not_depend_on_other_workspaces(older_log):
+    """The gate's cross-workspace case: the answer is computed before any
+    project or trace read, so a same-id trace anywhere cannot change it."""
+    first = older_log(_config(project_id=None), analytics=Mock())
+    older_log.reader.return_value = _detail(_span(project_id=OTHER), project_id=OTHER)
+    second = older_log(_config(project_id=None), analytics=Mock())
+    assert first.as_dict() == second.as_dict() == NOT_RECORDED
 
 
-def test_u37_legacy_trace_only_in_readable_projects_still_resolves(legacy):
-    legacy.organization_projects.return_value = [PROJECT, ROOT, OTHER]
-    analytics = _outside_analytics(present=False)
-    result = legacy(_config(project_id=None), analytics=analytics)
-    assert result.status == "ready"
-    assert legacy.reader.call_args.kwargs["project_ids"] == [PROJECT, ROOT]
-
-
-def test_u38_legacy_log_past_the_organization_bound_fails_closed(legacy):
-    legacy.organization_projects.return_value = None
-    analytics = _outside_analytics(present=False)
-    assert legacy(_config(project_id=None), analytics=analytics).status == (
-        "unavailable"
+def test_u36_malformed_older_log_keeps_its_exact_status(older_log):
+    assert older_log(_config(project_id=None, span_id=" x")).status == (
+        "invalid_reference"
     )
-    analytics.execute_ch_query.assert_not_called()
-    legacy.reader.assert_not_called()
-
-
-def test_u39_recorded_project_never_reads_the_organization_scope(resolve, monkeypatch):
-    organization_projects = Mock(side_effect=AssertionError("not for recorded logs"))
-    monkeypatch.setattr(
-        navigation, "organization_source_project_ids", organization_projects
+    assert older_log(_config(project_id=None, custom_eval_config_id=None)).status == (
+        "incomplete_reference"
     )
+    older_log.reader.assert_not_called()
+
+
+def test_u37_recorded_project_reads_only_that_project(resolve):
     assert resolve(_config()).status == "ready"
-    organization_projects.assert_not_called()
+    assert resolve.reader.call_args.kwargs["project_ids"] == [PROJECT]
+    assert "unique_project" not in resolve.reader.call_args.kwargs
 
 
-def test_u35_legacy_log_with_no_readable_project_is_unavailable(legacy):
-    scope = legacy.manager.filter.return_value
-    scope.order_by.return_value.values_list.return_value = []
-    assert legacy(_config(project_id=None)).status == "unavailable"
-    legacy.reader.assert_not_called()
+def test_u38_the_org_wide_machinery_is_gone():
+    for name in (
+        "organization_source_project_ids",
+        "_legacy_trace_held_outside",
+        "_OUTSIDE_COPY_QUERY",
+        "_resolve_project_scope",
+    ):
+        assert not hasattr(navigation, name), name
 
 
 # Task 761: the typing-only changes in _classify_reference and the scope branch

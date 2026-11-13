@@ -23,6 +23,8 @@ Status = Literal[
     "invalid_reference",
     "ambiguous_reference",
     "unavailable",
+    # An older log that never recorded the project it ran on: no navigation.
+    "source_not_recorded",
     "temporarily_unavailable",
 ]
 Kind = Literal["trace", "voice_call"]
