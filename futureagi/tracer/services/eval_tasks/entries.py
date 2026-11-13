@@ -355,6 +355,36 @@ def soft_delete_eval_results(results: QuerySet[EvalLogger]) -> int:
         return results.update(deleted=True, deleted_at=timezone.now())
 
 
+def retire_pending_replacement(results: QuerySet[EvalLogger]) -> int:
+    """Phase one of a two-phase delete: retire eval results that may come back.
+
+    Recalculate retires a result while its replacement is computed. Its Error
+    Feed memberships stay, because a recompute that fails puts it back whole,
+    still counted in its issue. Every call must be followed by
+    ``finish_retirement`` (the retirement is final) or ``restore_retired``
+    (it is undone). Returns how many results were retired.
+    """
+    return results.update(deleted=True, deleted_at=timezone.now())
+
+
+def finish_retirement(results: QuerySet[EvalLogger]) -> None:
+    """Phase two: the retirement of ``results`` is final.
+
+    Retires the Error Feed memberships of those still retired, so an issue
+    never keeps a trace whose eval no longer exists. A result put back
+    meanwhile keeps its memberships. Idempotent."""
+    retire_eval_memberships(results.filter(deleted=True))
+
+
+def restore_retired(results: QuerySet[EvalLogger]) -> int:
+    """Phase two, undone: put retired results back. Returns how many.
+
+    Their memberships were never retired (``retire_pending_replacement``).
+    Raises ``IntegrityError`` when a newer entry holds a result's live slot;
+    run it in a savepoint and ``finish_retirement`` on that failure."""
+    return results.filter(deleted=True).update(deleted=False, deleted_at=None)
+
+
 def soft_delete_live(task: EvalTask) -> int:
     """Soft-delete every live entry of the task (Delete & rerun). Returns count."""
     return soft_delete_eval_results(

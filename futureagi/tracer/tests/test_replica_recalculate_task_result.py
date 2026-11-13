@@ -380,6 +380,9 @@ def test_task_deleted_during_recompute_keeps_its_results_retired(
     response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
 
     assert response.status_code == 400
+    # The message says what happened: the previous result is gone.
+    assert "previous result is kept" not in str(response.data)
+    assert "was not kept" in str(response.data)
     assert _stored(previous.pk).deleted is True
     assert not _live(observation_span, custom_eval_config).exists()
 
@@ -414,3 +417,452 @@ def test_failed_recompute_copies_the_kept_answer_back(
     assert response.status_code == 400
     assert len(copied) == 2
     assert copied[-1] == (str(previous.pk), str(eval_task.id))
+
+
+# -- last round: overlapping Recalculates, a request killed mid-eval ----------
+
+
+def _recalculation_rows():
+    from tracer.models.observation_span import EvalRecalculation
+
+    return EvalRecalculation.objects.using("default")
+
+
+def _snapshot(span, config):
+    """Every result of the span and config, deleted or not, as stored."""
+    return sorted(
+        (str(row.pk), row.status, row.deleted)
+        for row in EvalLogger.all_objects.using("default").filter(
+            observation_span=span, custom_eval_config=config
+        )
+    )
+
+
+def test_recalculate_while_another_runs_is_refused(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    stub_run_eval,
+    stub_cost_log,
+    monkeypatch,
+):
+    """Request A has retired P and is running its replacement. Request B finds
+    that RUNNING replacement as the live result: it is refused and changes
+    nothing, so A's run stays the only one and P can still come back."""
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+    seen = {}
+
+    def _second_request_meanwhile(entry, **_kwargs):
+        seen["before"] = _snapshot(observation_span, custom_eval_config)
+        seen["response"] = _recalculate(
+            auth_client, observation_span, custom_eval_config, feedback
+        )
+        seen["after"] = _snapshot(observation_span, custom_eval_config)
+        return EvalEntryStatus.ERRORED
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.run_entry.run_entry", _second_request_meanwhile
+    )
+
+    first = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    second = seen["response"]
+    assert second.status_code == 400
+    assert "already running" in str(second.data)
+    assert seen["after"] == seen["before"]
+    assert len(seen["before"]) == 2  # P retired, A running; no B entry
+    # A failed afterwards and put P back: the refused B did not strand it.
+    assert first.status_code == 400
+    assert "previous result is kept" in str(first.data)
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+    assert not _recalculation_rows().exists()
+
+
+@pytest.mark.parametrize("status", [EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING])
+def test_recalculate_of_a_result_the_task_is_evaluating_is_refused(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    stub_run_eval,
+    stub_cost_log,
+    status,
+):
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+    EvalLogger.objects.using("default").filter(pk=previous.pk).update(status=status)
+    before = _snapshot(observation_span, custom_eval_config)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert "still being evaluated" in str(response.data)
+    assert _snapshot(observation_span, custom_eval_config) == before
+    assert stub_run_eval.requests == []
+
+
+def test_result_requeued_between_the_check_and_the_retirement_is_not_replaced(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    stub_run_eval,
+    stub_cost_log,
+    monkeypatch,
+):
+    """The race fence: the view reads a completed result, then the engine
+    requeues it (Edit -> Save of a stale config) before Recalculate retires
+    it. The retirement is conditional on the result still being terminal, so
+    nothing is replaced."""
+    import tracer.views.observation_span as view
+
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+    real_properties = view.get_mixpanel_properties
+
+    def _requeued_meanwhile(*args, **kwargs):
+        EvalLogger.objects.using("default").filter(pk=previous.pk).update(
+            status=EvalEntryStatus.PENDING
+        )
+        return real_properties(*args, **kwargs)
+
+    monkeypatch.setattr(view, "get_mixpanel_properties", _requeued_meanwhile)
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert "still being evaluated" in str(response.data)
+    assert _snapshot(observation_span, custom_eval_config) == [
+        (str(previous.pk), EvalEntryStatus.PENDING, False)
+    ]
+    assert stub_run_eval.requests == []
+    assert not _recalculation_rows().exists()
+
+
+def test_concurrent_begin_on_the_same_result_lets_one_through(
+    replica,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+):
+    """Two requests that both read P as terminal: the second retirement finds
+    P already retired by the first and is refused, adding no entry."""
+    from tracer.services.eval_tasks.recalculate import (
+        ALREADY_RUNNING,
+        RecalculationRefused,
+        begin_recalculation,
+    )
+
+    previous, _feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+    stale_copy = EvalLogger.objects.using("default").get(pk=previous.pk)
+
+    entry = begin_recalculation(previous)
+    with pytest.raises(RecalculationRefused) as refused:
+        begin_recalculation(stale_copy)
+
+    assert refused.value.message == ALREADY_RUNNING
+    assert _snapshot(observation_span, custom_eval_config) == sorted(
+        [
+            (str(previous.pk), EvalEntryStatus.COMPLETED, True),
+            (str(entry.pk), EvalEntryStatus.RUNNING, False),
+        ]
+    )
+    assert list(_recalculation_rows().values_list("replacement_id", flat=True)) == [
+        entry.pk
+    ]
+
+
+def test_failed_recompute_never_brings_back_an_unfinished_entry(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """Put-back only restores a terminal result. If the retired previous
+    result is not terminal any more, it stays retired and the user is told
+    it was not kept."""
+    previous, feedback = _write_result(
+        replica, eval_task, observation_span, custom_eval_config, user
+    )
+
+    def _errored_and_previous_unfinished(entry, **_kwargs):
+        EvalLogger.all_objects.using("default").filter(pk=previous.pk).update(
+            status=EvalEntryStatus.RUNNING
+        )
+        EvalLogger.objects.using("default").filter(pk=entry.pk).update(
+            status=EvalEntryStatus.ERRORED
+        )
+        return EvalEntryStatus.ERRORED
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.run_entry.run_entry",
+        _errored_and_previous_unfinished,
+    )
+
+    response = _recalculate(auth_client, observation_span, custom_eval_config, feedback)
+
+    assert response.status_code == 400
+    assert "was not kept" in str(response.data)
+    assert _stored(previous.pk).deleted is True
+    assert not _live(observation_span, custom_eval_config).exists()
+
+
+class _WorkerKilled(BaseException):
+    """What the request sees of a SIGKILL or an OOM: nothing after it runs.
+    A BaseException, so no ``except Exception`` restores anything."""
+
+
+def _killed_mid_eval(monkeypatch):
+    def _killed(entry, **_kwargs):
+        raise _WorkerKilled()
+
+    monkeypatch.setattr("tracer.services.eval_tasks.run_entry.run_entry", _killed)
+
+
+def _age_recalculation(seconds):
+    """Move the left-behind recalculation and its replacement into the past."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    then = timezone.now() - timedelta(seconds=seconds)
+    rows = list(_recalculation_rows())
+    _recalculation_rows().update(started_at=then)
+    EvalLogger.all_objects.using("default").filter(
+        pk__in=[row.replacement_id for row in rows]
+    ).update(updated_at=then)
+    return rows
+
+
+def _sweep():
+    from tracer.tasks.eval_task_sweeper import sweep_stale_recalculations
+
+    return sweep_stale_recalculations._original_func()
+
+
+def _crashed_recalculation(
+    monkeypatch, auth_client, user, replica, eval_task, span, config
+):
+    """A Recalculate whose worker died mid-eval, an hour and a half ago."""
+    from tracer.services.eval_tasks.recalculate import RECOVER_AFTER_SECONDS
+
+    previous, feedback = _write_result(replica, eval_task, span, config, user)
+    issue, member = _issue_with(previous)
+    _killed_mid_eval(monkeypatch)
+    with pytest.raises(_WorkerKilled):
+        _recalculate(auth_client, span, config, feedback)
+    (row,) = _age_recalculation(RECOVER_AFTER_SECONDS + 60)
+    assert _stored(previous.pk).deleted is True
+    assert _stored(row.replacement_id).status == EvalEntryStatus.RUNNING
+    return previous, row.replacement_id, issue, member
+
+
+def test_sweep_restores_a_result_whose_recalculate_was_killed_mid_eval(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    previous, replacement_id, issue, member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    # The result was retired, but kept its Feed membership while it could
+    # still come back.
+    assert _membership(member).deleted is False
+
+    counts = _sweep()
+
+    assert counts["restored"] == 1
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+    assert _stored(replacement_id).deleted is True
+    assert _membership(member).deleted is False
+    issue.refresh_from_db()
+    assert (issue.deleted, issue.error_count) == (False, 1)
+    assert not _recalculation_rows().exists()
+    # Idempotent: a second tick finds nothing.
+    assert _sweep()["restored"] == 0
+
+
+def test_sweep_keeps_a_replacement_that_completed_before_the_crash(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """The run finished but the request died before it retired the previous
+    result's Feed membership: the sweep keeps the replacement and retires
+    the membership, so the issue does not count a deleted eval."""
+    previous, replacement_id, issue, member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    EvalLogger.objects.using("default").filter(pk=replacement_id).update(
+        status=EvalEntryStatus.COMPLETED
+    )
+
+    counts = _sweep()
+
+    assert counts["kept"] == 1
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        replacement_id
+    ]
+    assert _stored(previous.pk).deleted is True
+    assert _membership(member).deleted is True
+    issue.refresh_from_db()
+    assert issue.error_count == 0
+    assert not _recalculation_rows().exists()
+
+
+def test_sweep_after_delete_and_rerun_leaves_the_result_retired(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """Delete & rerun retired the replacement after the crash. The previous
+    result stays retired with it, and leaves its Feed issue."""
+    from tracer.services.eval_tasks.entries import soft_delete_live
+
+    previous, replacement_id, _issue, member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    soft_delete_live(eval_task)
+
+    counts = _sweep()
+
+    assert counts["left_retired"] == 1
+    assert not _live(observation_span, custom_eval_config).exists()
+    assert _membership(member).deleted is True
+    assert not _recalculation_rows().exists()
+
+
+@pytest.mark.parametrize("state", ["young", "requeued", "reclaimed_recently"])
+def test_sweep_leaves_a_recalculation_that_may_still_be_running(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+    state,
+):
+    """Too young to be dead, or handed to the task's engine by its reaper
+    (PENDING, or RUNNING under a fresh claim): the sweep waits."""
+    from django.utils import timezone
+
+    previous, replacement_id, _issue, member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    replacement = EvalLogger.objects.using("default").filter(pk=replacement_id)
+    if state == "young":
+        _age_recalculation(60)
+    elif state == "requeued":
+        replacement.update(status=EvalEntryStatus.PENDING)
+    else:
+        replacement.update(updated_at=timezone.now())
+    before = _snapshot(observation_span, custom_eval_config)
+
+    counts = _sweep()
+
+    assert counts["restored"] == counts["kept"] == counts["left_retired"] == 0
+    assert _snapshot(observation_span, custom_eval_config) == before
+    assert _membership(member).deleted is False
+    assert _recalculation_rows().count() == 1
+
+
+def test_late_write_of_a_run_the_sweep_gave_up_on_is_refused(
+    replica,
+    auth_client,
+    user,
+    observation_span,
+    custom_eval_config,
+    eval_task,
+    monkeypatch,
+):
+    """A run still alive past the bound cannot land on the retired
+    replacement: its terminal write is fenced on the entry being live."""
+    from tracer.services.eval_tasks.entries import mark_terminal
+
+    previous, replacement_id, _issue, _member = _crashed_recalculation(
+        monkeypatch,
+        auth_client,
+        user,
+        replica,
+        eval_task,
+        observation_span,
+        custom_eval_config,
+    )
+    stale = EvalLogger.all_objects.using("default").get(pk=replacement_id)
+    _sweep()
+
+    landed = mark_terminal(
+        stale, EvalEntryStatus.COMPLETED, config_hash="late", epoch=stale.updated_at
+    )
+
+    assert landed is False
+    assert [row.pk for row in _live(observation_span, custom_eval_config)] == [
+        previous.pk
+    ]
+
+
+def test_the_recalculation_sweep_is_scheduled():
+    from tfc.temporal.schedules.tracer import TRACER_SCHEDULES
+
+    (schedule,) = [
+        s for s in TRACER_SCHEDULES if s.schedule_id == "sweep-stale-recalculations"
+    ]
+    assert schedule.activity_name == "sweep_stale_recalculations"

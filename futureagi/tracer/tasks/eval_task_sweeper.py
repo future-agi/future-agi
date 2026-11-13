@@ -54,6 +54,7 @@ from tracer.selectors.eval_tasks.stranded import (
     find_stranded_tasks,
     sweepable_statuses,
 )
+from tracer.services.eval_tasks.recalculate import recover_stale_recalculations
 from tracer.services.eval_tasks.recovery import (
     RecoveryInterrupted,
     recover_stranded_tasks,
@@ -103,10 +104,32 @@ def sweep_stranded_eval_tasks():
     return result
 
 
+@temporal_activity(time_limit=300, queue="tasks_s", max_retries=0)
+def sweep_stale_recalculations():
+    """Finish Recalculates whose request died mid-eval. Counts only.
+
+    Recalculate on an eval-task result runs the eval inside the user's
+    request, after retiring the previous result. A request killed meanwhile
+    (a deploy's SIGKILL, an OOM) leaves the replacement ``RUNNING`` and the
+    previous result retired; nothing in the engine finishes that on a
+    completed or paused task. This puts the previous result back, or keeps a
+    replacement that completed, once the recalculation is older than any run
+    may last (``tracer.services.eval_tasks.recalculate``).
+
+    It spends nothing (no eval runs), so it is not gated on
+    ``EVAL_TASK_SWEEP_MAX_TASKS``; pausing its schedule stops it.
+    ``max_retries=0``: the next tick retries what this one could not finish.
+    """
+    result = recover_stale_recalculations()
+    logger.info("recalculate_sweep_completed", **result)
+    return result
+
+
 __all__ = [
     "RecoveryInterrupted",
     "find_stranded_tasks",
     "recover_task",
+    "sweep_stale_recalculations",
     "sweep_stranded_eval_tasks",
     "sweepable_statuses",
 ]
