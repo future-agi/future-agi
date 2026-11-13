@@ -224,7 +224,7 @@ export default function ReadyToRun({
                     {[
                       a.detail,
                       names &&
-                        `Skipped in this run (${skips.length}): ${names}`,
+                        `Blocked in this run (${skips.length}): ${names}`,
                     ]
                       .filter(Boolean)
                       .join("\n")}
@@ -274,7 +274,7 @@ export default function ReadyToRun({
                                   : String(a.detail || "")
                                       .split(/\s+—\s+|(?<=\.)\s/)[0]
                                       .replace(/\.$/, ""),
-                                skips.length ? `${skips.length} skipped` : null,
+                                skips.length ? `${skips.length} blocked` : null,
                               ]
                                 .filter(Boolean)
                                 .join(" · ")}

@@ -150,6 +150,11 @@ export default function RunPlanDialog({
   scopeLead,
   alsoScopes = [],
   breakdown = null,
+  /* The environment's saved versions [{ label, current }] and the scope
+     breakdown for an older one — run setup picks the environment version
+     too (runs.md step 1). */
+  envVersionOptions = [],
+  breakdownOf = null,
   seedFrom = null,
   /* The readiness report for the picked agent on this environment —
      compatibility belongs to the pair, so it follows the Agent pick. */
@@ -208,14 +213,36 @@ export default function RunPlanDialog({
   const otherAgent =
     agentChoices.find((a) => a.key === agentKey && !a.current) || null;
   const suite = suites.find((x) => x.id === suiteId) || null;
-  const shownCount = suite ? suite.ids.length : scenarioCount;
+  /* The environment version this run uses: the current one unless picked. */
+  const currentEnvLabel =
+    envVersionOptions.find((v) => v.current)?.label ||
+    envLabel ||
+    currentEnvVersion(env, envState)?.label ||
+    "v1";
+  const [envVer, setEnvVer] = useState(null);
+  const pickedEnv = envVer && envVer !== currentEnvLabel ? envVer : null;
+  const bd = pickedEnv && breakdownOf ? breakdownOf(pickedEnv) : breakdown;
+  /* The version's scenarios in all — the count line splits them into
+     eligible, blocked and excluded. */
+  const scopeCount = bd
+    ? bd.eligible + bd.blocked + bd.excluded
+    : scenarioCount;
+  const shownCount = suite
+    ? suite.ids.length
+    : pickedEnv && bd
+      ? bd.eligible
+      : scenarioCount;
   /* Ready to run is for exactly what would run: the picked agent, its picked
      version and the picked suite (the pair, and its cases). */
   const pickedKey =
     agentKey || agentChoices.find((a) => a.current)?.key || null;
   const reportFor = (version) =>
     compatOf
-      ? compatOf(pickedKey, { version, ids: suite ? suite.ids : null })
+      ? compatOf(pickedKey, {
+          version,
+          ids: suite ? suite.ids : null,
+          envVersion: pickedEnv,
+        })
       : null;
   /* Several versions compared: one run each, so one Ready to run each —
      the switch above it says which one is shown. */
@@ -286,6 +313,7 @@ export default function RunPlanDialog({
     setShowBreakdown(false);
     setLimits(runLimitsOf(env, envState));
     setShowLimits(false);
+    setEnvVer(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -429,7 +457,8 @@ export default function RunPlanDialog({
     : 0;
   const overrun = Math.ceil(perTrialHigh * Math.max(1, parallel || 1));
 
-  const unit = voice ? "call" : "trial";
+  /* The plan's word for one scenario run once, voice or text (glossary: Trial). */
+  const unit = "trial";
   const external = estimate.external[0] || null;
   const fieldSx = {
     "& .MuiInputBase-input": { py: 0.5, fontVariantNumeric: "tabular-nums" },
@@ -471,7 +500,7 @@ export default function RunPlanDialog({
               {[
                 env?.name || "Environment",
                 voice ? "Voice" : "Text",
-                `environment ${currentEnvVersion(env, envState)?.label || "v1"}`,
+                `environment ${pickedEnv || currentEnvLabel}`,
                 runLocation
                   ? runLocation === "hosted"
                     ? "hosted"
@@ -718,9 +747,42 @@ export default function RunPlanDialog({
                         useFlexGap
                         flexWrap="wrap"
                       >
-                        <Box component="span">
-                          {`${envLabel || currentEnvVersion(env, envState)?.label || "v1"} ·`}
-                        </Box>
+                        {envVersionOptions.length > 1 ? (
+                          <TextField
+                            select
+                            size="small"
+                            value={pickedEnv || currentEnvLabel}
+                            onChange={(e) => setEnvVer(e.target.value)}
+                            SelectProps={{ renderValue: (v) => v }}
+                            inputProps={{ "aria-label": "Environment version" }}
+                            sx={{ minWidth: 88, ...fieldSx }}
+                          >
+                            {envVersionOptions.map((v) => (
+                              <MenuItem
+                                key={v.label}
+                                value={v.label}
+                                sx={{ gap: 1 }}
+                              >
+                                <Box component="span" sx={{ flex: 1 }}>
+                                  {v.label}
+                                </Box>
+                                {v.current && (
+                                  <Box
+                                    component="span"
+                                    sx={{
+                                      typography: "s3",
+                                      color: "text.tertiary",
+                                    }}
+                                  >
+                                    current
+                                  </Box>
+                                )}
+                              </MenuItem>
+                            ))}
+                          </TextField>
+                        ) : (
+                          <Box component="span">{`${currentEnvLabel} ·`}</Box>
+                        )}
                         {suites.length ? (
                           <TextField
                             select
@@ -731,7 +793,7 @@ export default function RunPlanDialog({
                             sx={{ minWidth: 180, ...fieldSx }}
                           >
                             <MenuItem value="all">
-                              {`All · ${scenarioCount}`}
+                              {`All · ${scopeCount}`}
                             </MenuItem>
                             {suites.map((x) => (
                               <MenuItem key={x.id} value={x.id}>
@@ -741,7 +803,7 @@ export default function RunPlanDialog({
                           </TextField>
                         ) : (
                           <Box component="span">
-                            {`${scenarioCount} scenarios`}
+                            {`${scopeCount} scenarios`}
                           </Box>
                         )}
                       </Stack>
@@ -929,12 +991,12 @@ export default function RunPlanDialog({
                   inputProps={{
                     min: 1,
                     max: 20,
-                    "aria-label": "Attempts per scenario",
+                    "aria-label": "Repeats per scenario",
                     style: { textAlign: "right" },
                   }}
                   sx={{ width: 64, ...fieldSx }}
                 />
-                <span>{`attempt${Number(attempts) === 1 ? "" : "s"} each`}</span>
+                <span>{`repeat${Number(attempts) === 1 ? "" : "s"}`}</span>
                 <Box
                   component="span"
                   sx={{
@@ -954,18 +1016,18 @@ export default function RunPlanDialog({
               so they're a note on the run count, not a group of their own. */}
             {!pairFailed &&
               !allHeld &&
-              (compat || breakdown) &&
+              (compat || bd) &&
               (() => {
-                const fromSuite = suite ? null : breakdown;
+                const fromSuite = suite ? null : bd;
                 const out = [
                   blockedN > 0 && {
                     n: blockedN,
-                    text: "wait on fixes",
+                    text: "blocked for this agent",
                     why: `Held back and recorded as not run — ${leftOut}.`,
                   },
                   fromSuite?.blocked > 0 && {
                     n: fromSuite.blocked,
-                    text: `not in ${currentEnvVersion(env, envState)?.label || "this version"}`,
+                    text: `blocked on ${pickedEnv || currentEnvLabel}`,
                     why: fromSuite.blockedWhy || "",
                   },
                   fromSuite?.excluded > 0 && {
@@ -978,8 +1040,8 @@ export default function RunPlanDialog({
                 const stale = fromSuite?.stale || 0;
                 const line = [
                   out.length
-                    ? `${runCount} of ${total} run`
-                    : `All ${runCount} run`,
+                    ? `${runCount} of ${total} eligible`
+                    : `All ${runCount} eligible`,
                   ...out.map((o) => `${o.n} ${o.text}`),
                   stale ? `${stale} stale` : null,
                 ]
@@ -1563,6 +1625,7 @@ export default function RunPlanDialog({
                   }
                   onStart({
                     attempts: Number(attempts),
+                    envVersion: pickedEnv,
                     versions: otherAgent ? [otherAgent.version] : versions,
                     withAgent: otherAgent
                       ? {
@@ -1659,6 +1722,8 @@ RunPlanDialog.propTypes = {
   alsoScopes: PropTypes.array,
   /* { eligible, stale, blocked, blockedWhy, excluded, excludedWhy } — scopeBreakdownOf. */
   breakdown: PropTypes.object,
+  envVersionOptions: PropTypes.array,
+  breakdownOf: PropTypes.func,
   /* "run 3" when the run reuses an earlier run's seed. */
   seedFrom: PropTypes.string,
   /* The compatibility report for this scope — blocked cases ask for a reviewed subset. */

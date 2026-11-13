@@ -1100,6 +1100,7 @@ export default function EnvironmentWorkspace() {
     suiteIds,
     versionSubsets,
     addEvals: picked,
+    envVersion: pickedEnv,
   }) => {
     const req = runPlanReq;
     setRunPlanReq(null);
@@ -1126,7 +1127,7 @@ export default function EnvironmentWorkspace() {
         alertAt,
         continues: req.continues,
         snapshot: req.snapshot,
-        envVersion: req.envVersion,
+        envVersion: pickedEnv || req.envVersion,
         candidate,
         limits,
         toolReplay: req.toolReplay,
@@ -2552,8 +2553,8 @@ export default function EnvironmentWorkspace() {
                 return (
                   <Typography sx={{ typography: "s3", color: "inherit" }}>
                     {sz.over
-                      ? `${selectedCount || meteredScenarios} scenarios × ${sz.repeats} repeats = ${sz.conversations} conversations — over ${sz.cap}, so it runs ${batchAtOnce} at once (Settings → Conversations at once). You can leave the page while it runs.`
-                      : `${sz.conversations} of ${sz.cap} conversations a run allows · up to ${sz.parallel} at once${sz.voice ? ` · voice runs in real time: ${sz.voice.line}` : ""}`}
+                      ? `${selectedCount || meteredScenarios} scenarios × ${sz.repeats} repeats = ${sz.conversations} trials — over ${sz.cap}, so it runs ${batchAtOnce} at once (Settings → Conversations at once). You can leave the page while it runs.`
+                      : `${sz.conversations} of ${sz.cap} trials a run allows · up to ${sz.parallel} at once${sz.voice ? ` · voice runs in real time: ${sz.voice.line}` : ""}`}
                   </Typography>
                 );
               })()}
@@ -3426,6 +3427,25 @@ export default function EnvironmentWorkspace() {
           alsoCount={runPlanReq?.also?.length || 0}
           initialVersion={runPlanReq?.agent}
           alsoScopes={alsoScopes}
+          envVersionOptions={
+            runPlanReq && !runPlanReq.continues && !runPlanReq.snapshot
+              ? environmentVersions(env, envState).map((v) => ({
+                  label: v.label,
+                  current: v.current,
+                }))
+              : []
+          }
+          breakdownOf={(v) =>
+            scopeBreakdownOf(
+              worldEnv,
+              { ...envState, activeEnvVersion: v },
+              {
+                plan: runPlan(worldEnv, envState, { envVersion: v }),
+                gaps: allGaps,
+                agentLabel: runPlanReq?.agent || null,
+              },
+            )
+          }
           breakdown={
             runPlanReq && !runPlanReq.continues && !runPlanReq.snapshot
               ? scopeBreakdownOf(worldEnv, envState, {
@@ -3450,14 +3470,20 @@ export default function EnvironmentWorkspace() {
              environment's own, or another compatible one (the pair). */
           compatOf={
             runPlanReq && !runPlanReq.continues && !runPlanReq.snapshot
-              ? (key, { version = null, ids = null } = {}) => {
+              ? (
+                  key,
+                  { version = null, ids = null, envVersion = null } = {},
+                ) => {
                   const other =
                     key && key !== agentKey
                       ? connectedAgents.find((a) => a.key === key)
                       : null;
                   return compatibilityOf({
                     env: worldEnv,
-                    envState,
+                    /* An older environment version picked in the plan. */
+                    envState: envVersion
+                      ? { ...envState, activeEnvVersion: envVersion }
+                      : envState,
                     agent: other || {
                       ...envState.agent,
                       values: {

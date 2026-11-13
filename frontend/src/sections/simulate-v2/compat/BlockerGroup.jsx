@@ -100,7 +100,7 @@ export default function BlockerGroup({ areas, kit, onFix, skippedIds }) {
                 component="span"
                 sx={{ typography: "s3", color: "text.tertiary", ml: 1 }}
               >
-                {`${skipped} skipped`}
+                {`${skipped} blocked`}
               </Box>
             )}
           </Typography>
@@ -196,7 +196,7 @@ export default function BlockerGroup({ areas, kit, onFix, skippedIds }) {
               >
                 {[
                   x.kind === "link" ? "on the agent" : null,
-                  x.skips ? `${x.skips} skipped` : null,
+                  x.skips ? `${x.skips} blocked` : null,
                 ]
                   .filter(Boolean)
                   .join(" · ")}
