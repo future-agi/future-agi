@@ -1930,6 +1930,9 @@ class PreviewRunPromptColumnView(APIView):
                         row_id=row.id,
                         col_id=None,
                         model_name=config.get("model", ""),
+                        template_format=(config.get("run_prompt_config") or {}).get(
+                            "template_format"
+                        ),
                     )
                     if output_format != "audio":
                         messages = remove_empty_text_from_messages(messages)
