@@ -278,9 +278,10 @@ func cacheNamespace(rc *models.RequestContext) string {
 // message's text is compared by similarity, so everything else must match
 // exactly. The partition is the exact-match cache key (namespace, model, every
 // message, and the options that key covers) of the request with that compared
-// text removed: other instructions, earlier turns, further content parts
-// (images, extra text), the speaker name, tools or response_format that differ
-// never share an entry, however similar the question.
+// text replaced by a placeholder: other instructions, earlier turns, further
+// content parts (images, extra text), where the text sits among them, the
+// speaker name, tools or response_format that differ never share an entry,
+// however similar the question.
 func semanticPartition(namespace string, req *models.ChatCompletionRequest) string {
 	ctx := *req
 	ctx.Messages = append([]models.Message(nil), req.Messages...)
@@ -293,32 +294,39 @@ func semanticPartition(namespace string, req *models.ChatCompletionRequest) stri
 	return req.Model + "|ctx=" + BuildCacheKey(namespace, &ctx)
 }
 
-// withoutComparedText removes from a user message's content the text that
-// extractLastUserMessage vectorizes, keeping every other part.
+// withoutComparedText replaces in a user message's content the text that
+// extractLastUserMessage vectorizes with a placeholder, keeping every other
+// part and the position of that text among them. It picks the same branch
+// (string, parts, raw) as extractLastUserMessage.
 func withoutComparedText(content json.RawMessage) json.RawMessage {
 	var s string
 	if json.Unmarshal(content, &s) == nil {
 		return json.RawMessage(`""`)
 	}
+	var typed []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
 	var parts []json.RawMessage
-	if json.Unmarshal(content, &parts) != nil {
-		return json.RawMessage(`null`) // the raw content itself is vectorized
-	}
-	rest := make([]json.RawMessage, 0, len(parts))
-	removed := false
-	for _, part := range parts {
-		var tp struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+	if json.Unmarshal(content, &typed) == nil && json.Unmarshal(content, &parts) == nil {
+		for i, tp := range typed {
+			if tp.Type != "text" || tp.Text == "" {
+				continue
+			}
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(parts[i], &fields) != nil {
+				break
+			}
+			// Parts that parse have string text, so the placeholder cannot
+			// match a part of another request, an empty text part included.
+			fields["text"] = json.RawMessage(`true`)
+			parts[i], _ = json.Marshal(fields)
+			b, _ := json.Marshal(parts)
+			return b
 		}
-		if !removed && json.Unmarshal(part, &tp) == nil && tp.Type == "text" && tp.Text != "" {
-			removed = true
-			continue
-		}
-		rest = append(rest, part)
 	}
-	b, _ := json.Marshal(rest)
-	return b
+	// extractLastUserMessage vectorizes the raw content: keep all of it.
+	return content
 }
 
 // BuildCacheKey generates a deterministic cache key from the request.

@@ -229,3 +229,46 @@ func storeThenLookupReq(t *testing.T, first, second *models.ChatCompletionReques
 	res := p.ProcessRequest(context.Background(), rc2)
 	return res.Action == pipeline.ShortCircuit, rc2.Metadata["cache_status"] + " sim=" + rc2.Metadata["cache_similarity"]
 }
+
+func textPart(text string) map[string]any { return map[string]any{"type": "text", "text": text} }
+
+func imagePart(url string) map[string]any {
+	return map[string]any{"type": "image_url", "image_url": map[string]string{"url": url}}
+}
+
+func contentMsg(parts ...map[string]any) models.Message {
+	b, _ := json.Marshal(parts)
+	return models.Message{Role: "user", Content: b}
+}
+
+// The compared text keeps its place among the other parts. The same sentence
+// before the first image or between the two images asks about a different
+// image, so the requests must not share an entry.
+func TestSemanticCacheKeepsComparedTextPosition(t *testing.T) {
+	q := "Describe only the image immediately following this sentence."
+	cat, dog := imagePart("https://img.example.test/cat.png"), imagePart("https://img.example.test/dog.png")
+	cases := []struct {
+		name          string
+		first, second []models.Message
+	}{
+		{"text moved between the images",
+			[]models.Message{contentMsg(textPart(q), cat, dog)},
+			[]models.Message{contentMsg(cat, textPart(q), dog)}},
+		{"text swapped with an empty text part",
+			[]models.Message{contentMsg(textPart(""), cat, textPart(q), dog)},
+			[]models.Message{contentMsg(textPart(q), cat, textPart(""), dog)}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if hit, st := storeThenLookup(t, c.first, c.second); hit {
+				t.Errorf("served the answer for a different text position (%s)", st)
+			}
+		})
+	}
+	// Positive control: the same layout with a paraphrased sentence still hits.
+	first := []models.Message{contentMsg(cat, textPart(q), dog)}
+	second := []models.Message{contentMsg(cat, textPart("describe only the image immediately following this sentence"), dog)}
+	if hit, st := storeThenLookup(t, first, second); !hit {
+		t.Errorf("paraphrase with the same layout missed (%s)", st)
+	}
+}
