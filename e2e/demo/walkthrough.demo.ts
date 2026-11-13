@@ -494,6 +494,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       await glide(send);
       // The composer itself shows "production v1 → v2", so readiness is checked only after the URL changes.
       await loading(page.getByText(/support-agent · production v1 → v2/), async () => { await send.click(); await page.waitForURL(/mine=1/); });
+      await setCaption(page, chip, 'The request is sent. Nothing has moved yet.');
       await glide(page.getByText(/support-agent · production v1 → v2/));
       await caption('The request is sent. Nothing has moved yet.', 1800);
       await as('priya', '/dashboard/skills', page.getByRole('cell').getByRole('link', { name: 'refund-policy', exact: true }));
