@@ -71,6 +71,7 @@ const LLMTracingSpanDetailDrawer = ({ refreshGrid }) => {
       hasPrev={hasPrev}
       hasNext={hasNext}
       initialEvalFocus={evalFocus === true}
+      refreshParentGrid={refreshGrid}
     />
   );
 };

@@ -95,4 +95,13 @@ describe("LLMTracingSpanDetailDrawer project pin", () => {
       }),
     );
   });
+
+  it("hands the span grid's refresh to the drawer so tag saves refresh it", () => {
+    // A drawer tag save changes the row's tags and revision; without the
+    // grid refresh the next grid edit is refused as stale (409).
+    const refreshGrid = vi.fn();
+    render(<LLMTracingSpanDetailDrawer refreshGrid={refreshGrid} />);
+
+    expect(lastDrawerProps().refreshParentGrid).toBe(refreshGrid);
+  });
 });
