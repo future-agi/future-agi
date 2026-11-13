@@ -212,18 +212,23 @@ changes none of them.
      scripts once, in full, at each branch the jobs run from and at each
      `v*` tag that stays, and records each tip SHA. In deployment this step
      is the history check's tree read and first range. Then the header's
-     re-listing: every `v*` tag again, compared with step 2's listing (a
-     moved tag is put back at its step-2 commit, and a new tag stays if its
-     commit is on `main` and its `.github` and listed paths match main's
-     recorded tip, or are read), and the runs of the last 30 days on refs
-     that a key or approver environment admits. Each run is compared only
-     on its own workflow file, what that file reaches through `uses: ./`
-     and the paths the one-time read lists for it; those files must match
-     what was read, or their versions are read, or the run is deleted. The
-     run listing is sliced so that each slice returns all its runs, because
-     the endpoint stops at 1,000 without an error, and it keeps
-     `pull_request_target` runs, which run main's workflow file whatever
-     branch they report;
+     re-listing: every `v*` tag again, and each must point at a commit on
+     `main`. Tags are compared with step 2's listing, which holds only the
+     tags kept after the sweep. A moved tag is put back at its step-2
+     commit; that tag push starts `release-images.yml` on the tag with
+     every component, and its runs are cancelled and deleted, not approved
+     in Production. Any other tag is deleted unless its commit is on `main`
+     and its `.github` and listed paths match main's recorded tip, or are
+     read. Then the runs of the last 30 days on refs that a key or approver
+     environment admits. Each run is compared only on its own workflow
+     file, what that file reaches through `uses: ./` and the paths the
+     one-time read lists for it; those files must match what was read, or
+     their versions are read, or the run is deleted. The run listing is
+     sliced so that each slice returns all its runs, because the endpoint
+     stops at 1,000 without an error, and it keeps `pull_request_target`
+     runs, which run main's workflow file whatever branch they report. The
+     merged-PR runs, `pull_request` runs created at or after their PR was
+     merged, have the branch it merged into as their ref and are deleted;
   6. the new key goes into the environments.
 
   Release jobs that use the key, the release autopilot's `merge` job
