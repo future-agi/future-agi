@@ -445,7 +445,8 @@ follow the header.
       tip, or a reader reads the differing files at the tag. Each run of
       the last 30 days on a ref that a key or approver environment admits is
       compared only on its own workflow file, what that file reaches
-      through `uses: ./` and the paths the one-time read lists for it,
+      through `uses: ./` (at the base, and at the run's own version where
+     the workflow file differs) and the paths the one-time read lists for it,
       such as `scripts/pr_risk.py` and `.github/pr-autopilot.yml` for this
       workflow. Those files must match what was read, or their versions
       are read, or the run is deleted. Runs on `dev`, which only
