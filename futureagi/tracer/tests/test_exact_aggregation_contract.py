@@ -2337,7 +2337,9 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
     )
     assert "tracer.tasks" in TEMPORAL_ACTIVITY_MODULES
     assert set(get_workflows_for_queue(EXACT_AGGREGATION_TASK_QUEUE)) == {
-        TaskRunnerWorkflow, SQLExecutionWorkflow, SQLRetentionWorkflow,
+        TaskRunnerWorkflow,
+        SQLExecutionWorkflow,
+        SQLRetentionWorkflow,
     }
     # SQL workflows use this control queue but never its single scan slot.
     admitted_tasks = (refresh_exact_aggregation_snapshot,)
@@ -2347,8 +2349,12 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
         EXACT_AGGREGATION_TASK_QUEUE
     }
     assert set(registered_activities) == admitted_activities
-    assert _ACTIVITY_WRAPPERS[execute_sql.name] in get_activities_for_queue("sql_workbench")
-    assert _ACTIVITY_WRAPPERS[purge_expired_sql_results.name] in get_activities_for_queue("tasks_s")
+    assert _ACTIVITY_WRAPPERS[execute_sql.name] in get_activities_for_queue(
+        "sql_workbench"
+    )
+    assert _ACTIVITY_WRAPPERS[
+        purge_expired_sql_results.name
+    ] in get_activities_for_queue("tasks_s")
     # Keep the activity registered on the former generic queue during rollout
     # so already-scheduled workflows can finish on an old queue worker. New
     # dispatches are asserted above to target only the admitted queue.
