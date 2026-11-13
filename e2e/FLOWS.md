@@ -30,6 +30,28 @@
 - voice detail preserves scalar Fail and adds the exact latest per-span rollup; eval-cell click selects Evals and shows its explanation
 - native Failed and Passed filters send the config-bound predicate; browser and API return exactly the call ID or the empty set, respectively
 
+### AGENT-E2E-002 — Agents remain complete across bounded list pages
+
+**Goal:** A developer can browse all of their agents in bounded pages without losing rows or changing supported page sizes.
+
+**Spec:** `flows/agents/graph-page-size-cap.spec.ts:20`
+
+**Tags:** —
+
+**User steps:**
+
+1. create 101 uniquely named graphs through the public graph API
+2. open Agents Playground and search for the unique flow prefix
+3. compare the exact first-page names and IDs with the authorized 25-row list response
+4. move to page two and compare the exact next 25 rows with the list API
+5. request page sizes 101 and 100000000 and require a 100-row page with capped metadata
+6. follow next_page and require the final seeded graph without duplicated or omitted IDs
+
+**Backend state verified:**
+
+- The UI displays the exact ordered graph set returned by the authorized list request at supported page sizes.
+- Above-cap graph requests return at most 100 rows, metadata reflects the cap, and following next_page returns the complete seeded ID set once.
+
 ## alerts
 
 ### ALERT-E2E-001 — a fired alert opens the traces from that fire’s own window
@@ -87,6 +109,28 @@
 - choices-eval alert with a valid label is created
 - PG tracer_useralertmonitor: the scoring monitor’s threshold_metric_value is NULL, the choices monitor’s is the label, both org-scoped
 - alerts list shows the scoring alert’s Alert Type as the bare eval name and the choices alert’s as "name (label)"
+
+### ALERT-E2E-003 — alert owners configure webhooks without private destinations or unauthorized changes
+
+**Goal:** An authorized alert owner configures a public webhook through the alert editor while private destinations and unauthorized changes are refused.
+
+**Spec:** `flows/alerts/webhook-configuration.spec.ts:11`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a uniquely named muted monitor with no notification destinations
+2. open the alert editor, choose Webhook, enter a public URL and save
+3. read the exact saved destination through the detail API and Postgres
+4. try a private destination through the editor and verify rejection
+5. try cross-organization, cross-workspace and viewer updates
+
+**Backend state verified:**
+
+- The browser-saved webhook is returned by the alert detail API and stored on the owner organization's muted monitor.
+- A private destination is rejected and the saved webhook remains unchanged.
+- Cross-organization, cross-workspace and viewer updates are refused without changing the saved webhook.
 
 ## annotations
 
@@ -278,6 +322,30 @@
 - the onboarding POST and the fresh accounts_user row contain exactly the selected role and goal
 - the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
 - ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
+
+### AUTH-E2E-016 — after a same-tab logout the next account sees none of the previous account's state
+
+**Goal:** After account A logs out in a tab, account B signing in on the same tab sees none of A's state
+
+**Spec:** `flows/auth/logout-clears-previous-account.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. sign in as account A through the login form
+2. open Error Feed from the sidebar and search for a value only A typed
+3. log out through the workspace menu and confirm
+4. sign in as account B through the login form in the same tab, without a page reload
+5. open Error Feed from the sidebar as B
+
+**Backend state verified:**
+
+- both seeded organizations have completed setup in PG with their minted names
+- A's Error Feed list request carries A's organization and A's search value
+- no request B sends carries another organization, every request B sends from the app after signing in carries exactly B's organization, and no Error Feed list request of B carries a search value
+- the access token left in the tab after B signs in resolves to B's user and organization
+- no A-identifying value appears in B's page text, API requests, localStorage or sessionStorage
 
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
