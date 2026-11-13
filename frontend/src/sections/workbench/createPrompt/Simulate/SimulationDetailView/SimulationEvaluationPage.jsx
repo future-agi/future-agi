@@ -185,7 +185,7 @@ const SimulationEvaluationPage = ({
             borderColor="divider"
             borderRadius={1}
           >
-            <Typography fontSize={13} fontWeight={600} mb={0.5}>
+            <Typography fontSize={12} fontWeight={600} mb={0.5}>
               No evaluations added
             </Typography>
             <Typography fontSize={12} color="text.secondary" mb={2}>

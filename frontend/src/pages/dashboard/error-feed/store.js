@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { create } from "zustand";
+import { create } from "src/utils/zustand";
 
 /**
  * UI-only state for the Error Feed.

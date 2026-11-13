@@ -290,17 +290,22 @@ if has_ee("ee.cloud.control_plane") and is_cloud_env():
 # Site ID for django.contrib.sites
 SITE_ID = 1
 
+STARTUP_SCHEMA_GUARD_ENABLED = os.getenv(
+    "STARTUP_SCHEMA_GUARD_ENABLED", "false"
+).strip().lower() in ("true", "1", "yes")
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",  #
     "tfc.middleware.cors_origin.OriginCheckMiddleware",
+    "tfc.middleware.schema_readiness.SchemaReadinessMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "tfc.telemetry.middleware.OTelContextMiddleware",  # OpenTelemetry context enrichment (after auth)
-    "django_structlog.middlewares.RequestMiddleware",  # Structured logging - adds request_id, ip, etc.
+    "tfc.logging.middleware.CallbackRequestMiddleware",  # Request-event formatting for OAuth callbacks.
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # 'tfc.middleware.debug_middleware.DebugMiddleware',
@@ -1436,6 +1441,7 @@ AUTH0_ALGORITHM = "RS256"
 GITHUB_API_ENDPOINT = "https://api.github.com"
 GITHUB_OAUTH_URL = "https://github.com/login/oauth"
 GOOGLE_USERINFO_API = "https://www.googleapis.com/oauth2/v1/userinfo"
+GOOGLE_OAUTH_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 MICROSOFT_OAUTH_URL = "https://login.microsoftonline.com/common/oauth2/v2.0"
 MICROSOFT_GRAPH_API = "https://graph.microsoft.com/v1.0"
 
@@ -1647,6 +1653,17 @@ del _runtime_numeric_settings
 # CH-direct stacks set it to `tracer_eval_logger_v2`). See
 # tracer/services/clickhouse/v2/schema/011_eval_logger_v2.sql + docs/CH25_MIGRATION.md.
 CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
+
+# Operational SQL workbench budgets, not edition/pricing entitlements.
+from .sql_workbench import (  # noqa: E402,F401
+    SQL_WORKBENCH_AUDIT_RETENTION_DAYS,
+    SQL_WORKBENCH_ESTIMATES_PER_MINUTE,
+    SQL_WORKBENCH_MAX_ACTOR_QUERIES_24H,
+    SQL_WORKBENCH_MAX_ACTOR_RESULT_BYTES_24H,
+    SQL_WORKBENCH_MAX_ORG_QUERIES_24H,
+    SQL_WORKBENCH_MAX_ORG_RESULT_BYTES_24H,
+    SQL_WORKBENCH_RESULT_CACHE_SECONDS,
+)
 
 # Where the eval runner reads span data from.
 #   "postgres"   — current behavior; reads from tracer_observation_span (Django ORM)

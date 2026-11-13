@@ -1,4 +1,4 @@
-import { Box, Button, LinearProgress } from "@mui/material";
+import { Box, Button } from "@mui/material";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "src/routes/hooks";
 import { useMutation } from "@tanstack/react-query";
@@ -22,6 +22,7 @@ import RightSection from "./RightSection";
 import ColumnConfigureDropDown from "./ColumnDropdown/ColumnConfigureDropDown";
 import RunsList from "./RunsList";
 import ProjectBreadCrumbs from "./ProjectBreadCrumbs";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const defaultFilter = {
   column_id: "",
@@ -183,7 +184,7 @@ const ProjectDetailView = () => {
   };
 
   if (isProjectDetailLoading) {
-    return <LinearProgress />;
+    return <LoadingScreen />;
   }
 
   return (
@@ -219,7 +220,7 @@ const ProjectDetailView = () => {
             size="small"
             // sx={{
             //   color: "text.disabled",
-            //   fontSize: "13px",
+            //   fontSize: "12px",
             //   fontWeight: 500,
             //   width: "119px",
             //   height: "38px",
@@ -236,7 +237,7 @@ const ProjectDetailView = () => {
             variant="outlined"
             // sx={{
             //   color: "text.disabled",
-            //   fontSize: "13px",
+            //   fontSize: "12px",
             //   fontWeight: 500,
             //   width: "138px",
             //   height: "38px",
@@ -253,7 +254,7 @@ const ProjectDetailView = () => {
             size="small"
             // sx={{
             //   color: "text.disabled",
-            //   fontSize: "13px",
+            //   fontSize: "12px",
             //   fontWeight: 500,
             //   width: "114px",
             //   height: "38px",

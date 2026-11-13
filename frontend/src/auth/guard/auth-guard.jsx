@@ -238,8 +238,9 @@ function Container({ children }) {
     router,
   ]);
 
+  // Keep the splash up through the redirect check instead of a blank frame.
   if (!checked) {
-    return null;
+    return <SplashScreen />;
   }
 
   return <>{children}</>;

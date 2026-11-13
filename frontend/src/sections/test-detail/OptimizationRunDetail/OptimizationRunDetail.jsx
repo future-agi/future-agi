@@ -3,6 +3,7 @@ import { Box } from "@mui/material";
 import DataTablePagination from "src/components/data-table/DataTablePagination";
 import { useQueryClient } from "@tanstack/react-query";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, { useMemo, useRef, useState, useCallback } from "react";
 import { useNavigate, useParams } from "react-router";
 import axios, { endpoints } from "src/utils/axios";

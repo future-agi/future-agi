@@ -28,6 +28,7 @@ import ImageDatapointCard from "src/sections/common/ImageDatapointCard";
 import ImagesDatapointCard from "src/sections/common/ImagesDatapointCard";
 import AudioDatapointCard from "src/components/custom-audio/AudioDatapointCard";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import Iconify from "src/components/iconify";
 import { LoadingButton } from "@mui/lab";
@@ -789,7 +790,7 @@ const DatapointDrawerChild = () => {
                 >
                   <Typography
                     fontWeight={500}
-                    fontSize={13}
+                    fontSize={12}
                     color="text.primary"
                   >
                     Score
@@ -799,7 +800,7 @@ const DatapointDrawerChild = () => {
                       <Box
                         sx={{
                           color: theme.palette.error.main,
-                          fontSize: "13px",
+                          fontSize: "12px",
                         }}
                       >
                         Error
@@ -887,7 +888,7 @@ const DatapointDrawerChild = () => {
                 >
                   <Typography
                     fontWeight={500}
-                    fontSize={13}
+                    fontSize={12}
                     color="text.primary"
                   >
                     Explanation

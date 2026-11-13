@@ -94,7 +94,7 @@ const ChooseProjectExperimentWinnerDrawerChild = ({
         variant="caption"
         sx={{ marginTop: 0, padding: theme.spacing(0, 2.5, 0) }}
         color="text.secondary"
-        fontSize="13px"
+        fontSize="12px"
         fontWeight={400}
       >
         Choose the overall importance value of the given variable below to
@@ -108,7 +108,7 @@ const ChooseProjectExperimentWinnerDrawerChild = ({
       >
         <Typography
           sx={{
-            fontSize: "13px",
+            fontSize: "12px",
             fontWeight: 500,
             color: "text.primary",
             padding: theme.spacing(2, 2.5, 0),
