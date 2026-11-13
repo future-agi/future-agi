@@ -19,7 +19,7 @@ test('OBS-E2E-062: Users setup preserves project names as Python string literals
     userGoal: 'A developer opens an empty project\'s Users setup and obtains a Python example that preserves the project name as one string literal',
     steps: ['ingest a trace without end-user attributes for an ordinary project',
       'open project Users and read its setup example',
-      'repeat for names containing a quote, newline, backslash and a non-BMP Unicode character',
+      'repeat for names containing a quote, a backslash and a non-BMP Unicode character',
       'compare displayed code with the public API result and inspect the project_name argument'],
     backendChecks: ['the collector-created PostgreSQL project retains the exact minted name and actor organization',
       'the example API encodes the exact project name into one quoted Python literal',
@@ -31,7 +31,8 @@ test('OBS-E2E-062: Users setup preserves project names as Python string literals
   const req = await request.newContext();
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const prefix = `e2e-obs62-${suffix}`;
-  const names = [`${prefix}-plain`, `${prefix}-quote"line\nback\\slash`, `${prefix}-astral\u{1f680}`];
+  // The collector refuses control characters in project names; futureagi/tracer/tests/test_user_code_example_literal.py covers their encoding.
+  const names = [`${prefix}-plain`, `${prefix}-quote"back\\slash`, `${prefix}-astral\u{1f680}`];
   try {
     for (const [index, projectName] of names.entries()) {
       await test.step(['ordinary project golden path', 'quoted project regression', 'non-BMP literal regression'][index], async () => {

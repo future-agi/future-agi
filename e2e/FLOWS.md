@@ -2563,7 +2563,7 @@
 
 1. ingest a trace without end-user attributes for an ordinary project
 2. open project Users and read its setup example
-3. repeat for names containing a quote, newline, backslash and a non-BMP Unicode character
+3. repeat for names containing a quote, a backslash and a non-BMP Unicode character
 4. compare displayed code with the public API result and inspect the project_name argument
 
 **Backend state verified:**
