@@ -11,6 +11,7 @@ import pytest
 from django.core.management import call_command
 from django.db import connection
 
+from tracer.management.commands import reconcile_legacy_trace_tags as reconcile
 from tracer.services.clickhouse.v2 import get_v2_config
 from tracer.services.entity_tag_reads import attach_legacy_trace_tags
 from tracer.tests.test_entity_tag_assignment_postgres import assignment_schema  # noqa: F401
@@ -237,7 +238,7 @@ def test_dual_write_between_ch_candidate_and_pg_tag_reads_is_not_reverted(
 ):
     seed, latest, version, _ = stores
     trace = seed(PROJECT, ["old-pg"], ["stale-ch"])
-    cfg = get_v2_config()
+    cfg = reconcile.get_v2_config()
     ch = clickhouse_connect.get_client(
         host=cfg["host"],
         port=cfg["http_port"],
@@ -287,6 +288,62 @@ def test_dual_write_between_ch_candidate_and_pg_tag_reads_is_not_reverted(
         ch.close()
 
 
+def test_dual_write_between_pg_tags_and_full_ch_read_is_skipped(stores, monkeypatch):
+    seed, latest, version, _ = stores
+    trace = seed(PROJECT, ["old-pg"], ["stale-ch"])
+    cfg = reconcile.get_v2_config()
+    ch = clickhouse_connect.get_client(
+        host=cfg["host"],
+        port=cfg["http_port"],
+        username=cfg["user"],
+        password=cfg["password"],
+        database=cfg["database"],
+    )
+    original_get_client = clickhouse_connect.get_client
+    raced = False
+
+    class RacingClient:
+        def __init__(self, client):
+            self.client = client
+
+        def query(self, sql, *args, **kwargs):
+            nonlocal raced
+            if "SELECT * FROM traces" in sql and not raced:
+                raced = True
+                # The PG half of the dual write commits after the PG snapshot;
+                # the CH half lands before the full row is read.
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE tracer_trace SET tags = %s::jsonb WHERE id = %s",
+                        [json.dumps(["fresh"]), trace],
+                    )
+                ch.insert(
+                    "traces",
+                    [[trace, PROJECT, json.dumps(["fresh"]), 2]],
+                    column_names=["id", "project_id", "tags", "_version"],
+                )
+            return self.client.query(sql, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self.client, name)
+
+    monkeypatch.setattr(
+        clickhouse_connect,
+        "get_client",
+        lambda **kwargs: RacingClient(original_get_client(**kwargs)),
+    )
+    try:
+        output = StringIO()
+        call_command("reconcile_legacy_trace_tags", stdout=output)
+        assert raced
+        assert latest(trace) == ["fresh"]
+        assert version(trace) == 2
+        assert "changed during scan 1" in output.getvalue()
+        assert "mirrored 0 trace(s)" in output.getvalue()
+    finally:
+        ch.close()
+
+
 def test_reconcile_fetches_full_ch_rows_only_for_differences(stores, monkeypatch):
     seed, latest, _, _ = stores
     different = seed(PROJECT, ["pg"], ["ch"])
@@ -330,6 +387,39 @@ def test_resume_after_id_skips_earlier_traces(stores):
         stdout=StringIO(),
     )
     assert [latest(trace) for trace in traces] == [["ch"], ["ch"], ["pg"]]
+
+
+def test_reconcile_reads_pg_page_and_tags_from_primary(stores, monkeypatch):
+    from tfc.routers import ReadReplicaRouter, _is_force_primary
+
+    seed, _, _, _ = stores
+    seed(PROJECT, ["pg"], ["ch"])
+    primary_reads = []
+    original_db_for_read = ReadReplicaRouter.db_for_read
+
+    def recording_db_for_read(self, model, **hints):
+        if model.__name__ == "Trace":
+            primary_reads.append(_is_force_primary())
+        return original_db_for_read(self, model, **hints)
+
+    monkeypatch.setattr(ReadReplicaRouter, "db_for_read", recording_db_for_read)
+    call_command("reconcile_legacy_trace_tags", stdout=StringIO())
+    assert len(primary_reads) >= 2
+    assert all(primary_reads)
+
+
+def test_committed_batches_print_resume_cursor(stores):
+    seed, latest, _, _ = stores
+    traces = sorted(seed(PROJECT, ["pg"], ["ch"]) for _ in range(3))
+    output = StringIO()
+    call_command("reconcile_legacy_trace_tags", "--batch-size", "1", stdout=output)
+    cursors = [
+        line.split("resume with --after-id ", 1)[1]
+        for line in output.getvalue().splitlines()
+        if "resume with --after-id " in line
+    ]
+    assert cursors == traces
+    assert [latest(trace) for trace in traces] == [["pg"]] * 3
 
 
 def test_only_tags_change_and_deleted_traces_stay_deleted(stores):

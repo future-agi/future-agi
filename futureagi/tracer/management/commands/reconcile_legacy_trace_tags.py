@@ -13,6 +13,7 @@ from uuid import UUID
 
 from django.core.management.base import BaseCommand, CommandError
 
+from tfc.routers import force_primary
 from tracer.services.clickhouse.v2 import get_v2_config
 
 
@@ -62,15 +63,16 @@ class Command(BaseCommand):
         if opts["organization_id"]:
             qs = qs.filter(project__organization_id=opts["organization_id"])
 
-        scanned = different = written = missing = 0
+        scanned = different = written = missing = changed = 0
         last_id = opts["after_id"]
         try:
             while True:
-                page = list(
-                    (qs.filter(id__gt=last_id) if last_id else qs).values_list(
-                        "id", "project_id", "deleted"
-                    )[:size]
-                )
+                with force_primary():
+                    page = list(
+                        (qs.filter(id__gt=last_id) if last_id else qs).values_list(
+                            "id", "project_id", "deleted"
+                        )[:size]
+                    )
                 if not page:
                     break
                 last_id = page[-1][0]
@@ -83,36 +85,38 @@ class Command(BaseCommand):
                 # between these reads must not be undone with stale PG values.
                 states = client.query(
                     """SELECT project_id, id,
-                    argMax(tuple(tags, is_deleted), _version) AS state
+                    argMax(tuple(tags, is_deleted), _version) AS state,
+                    max(_version) AS version
                     FROM traces
                     WHERE project_id IN %(projects)s AND id IN %(ids)s
                     GROUP BY project_id, id""",
                     parameters=params,
                 )
                 ch_states = {
-                    (str(project_id), str(trace_id)): state
-                    for project_id, trace_id, state in states.result_rows
+                    (str(project_id), str(trace_id)): (state, version)
+                    for project_id, trace_id, state, version in states.result_rows
                 }
                 live_ids = []
                 for trace_id, project_id, deleted in page:
                     state = ch_states.get((str(project_id), str(trace_id)))
                     if state is None:
                         missing += 1
-                    elif not deleted and not state[1]:
+                    elif not deleted and not state[0][1]:
                         live_ids.append(trace_id)
                 # PG tags are fetched only for IDs with a live CH candidate.
-                pg_tags_by_id = {
-                    str(trace_id): tags if tags is not None else []
-                    for trace_id, tags in qs.filter(
-                        id__in=live_ids, deleted=False
-                    ).values_list("id", "tags")
-                }
+                with force_primary():
+                    pg_tags_by_id = {
+                        str(trace_id): tags if tags is not None else []
+                        for trace_id, tags in qs.filter(
+                            id__in=live_ids, deleted=False
+                        ).values_list("id", "tags")
+                    }
                 candidates = {
                     (str(project_id), str(trace_id)): pg_tags_by_id[str(trace_id)]
                     for trace_id, project_id, _ in page
                     if str(trace_id) in pg_tags_by_id
                     and not _matches_tags(
-                        ch_states[(str(project_id), str(trace_id))][0],
+                        ch_states[(str(project_id), str(trace_id))][0][0],
                         pg_tags_by_id[str(trace_id)],
                     )
                 }
@@ -133,11 +137,14 @@ class Command(BaseCommand):
                         prior = dict(zip(columns, values, strict=True))
                         key = (str(prior["project_id"]), str(prior["id"]))
                         pg_tags = candidates.get(key)
-                        if (
-                            pg_tags is None
-                            or prior["is_deleted"]
-                            or _matches_tags(prior["tags"], pg_tags)
-                        ):
+                        if pg_tags is None:
+                            continue
+                        # A PG-then-CH write after our PG read can make that
+                        # snapshot stale. Leave changed rows for the next pass.
+                        if prior["_version"] != ch_states[key][1]:
+                            changed += 1
+                            continue
+                        if prior["is_deleted"] or _matches_tags(prior["tags"], pg_tags):
                             continue
                         different += 1
                         if not opts["dry_run"]:
@@ -155,7 +162,8 @@ class Command(BaseCommand):
                         written += len(changes)
                 self.stdout.write(
                     f"  scanned {scanned} trace(s); differing {different}; "
-                    f"no CH trace row {missing}"
+                    f"no CH trace row {missing}; changed during scan {changed}; "
+                    f"resume with --after-id {last_id}"
                 )
         finally:
             client.close()
