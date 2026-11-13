@@ -8,6 +8,7 @@ Do not use the ambient workspace manager for capability-owned requests.
 import uuid
 
 from django.db import models
+from django.db.models.functions import Coalesce
 
 
 class AttachmentState(models.TextChoices):
@@ -32,6 +33,9 @@ class AttachmentScope(models.Model):
     allow_unredacted_media_with_text_pii = models.BooleanField(default=False)
     # Creating NEW recordings is a separate opt-in from capturing attachments.
     record_audio = models.BooleanField(default=False)
+    # Importing provider recordings is a third, separate opt-in. It sits in the
+    # 0133 scope-fence policy tuple, so flipping it requires a policy_version bump.
+    allow_import = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
 
@@ -48,7 +52,10 @@ class AttachmentWriteGrant(ScopedAttachmentRecord):
     """Explicit owner-managed eligibility; never inferred from an ingest key."""
 
     api_key = models.ForeignKey("accounts.OrgApiKey", on_delete=models.PROTECT)
-    granted_by = models.ForeignKey("accounts.User", on_delete=models.PROTECT)
+    # The grant outlives the person who made it: offboarding never blocks on it.
+    granted_by = models.ForeignKey(
+        "accounts.User", null=True, on_delete=models.SET_NULL
+    )
     enabled = models.BooleanField(default=False)
     expires_at = models.DateTimeField()
 
@@ -154,6 +161,24 @@ class AttachmentOccurrence(ScopedAttachmentRecord):
     capture_complete = models.BooleanField(default=False)
     # Server-side projection of the F01 Reference fields; never trusted for authority.
     purpose = models.CharField(max_length=32, default="")
+    # F01 Reference placement: where the attachment sits inside its parent span
+    # (message/part position, speaker role, audio channel, conversation turn,
+    # tool call). Persisted at write time because link, import and recording
+    # occurrences have no other source for it. Immutable (0133 identity loop).
+    message_index = models.PositiveIntegerField(null=True)
+    part_index = models.PositiveIntegerField(null=True)
+    role = models.CharField(max_length=16, null=True)
+    channel = models.PositiveSmallIntegerField(null=True)
+    conversation_id = models.CharField(max_length=128, null=True)
+    turn_id = models.CharField(max_length=128, null=True)
+    tool_call_id = models.CharField(max_length=128, null=True)
+    # Last time the orphan sweep confirmed the bound parent span still exists
+    # in ClickHouse; the sweep's cursor. Operational, not identity.
+    source_checked_at = models.DateTimeField(null=True)
+    # First sweep that found the parent span missing; cleared when it is seen
+    # again. The sweep tombstones only after a second miss at least the orphan
+    # grace later, never on one read. Operational, not identity.
+    source_missing_since = models.DateTimeField(null=True)
     recording = models.ForeignKey(
         "tracer.AttachmentRecording", null=True, on_delete=models.PROTECT
     )
@@ -168,10 +193,30 @@ class AttachmentOccurrence(ScopedAttachmentRecord):
             models.Index(
                 fields=["scope", "trace_id", "span_id"], name="attachment_parent_idx"
             ),
-            # The binding worker's claim set: unbound rows only.
+            # Expiry sweeps scan live rows per scope by their two expiry clocks.
             models.Index(
-                fields=["created_at", "id"],
-                condition=models.Q(bound_at__isnull=True),
+                fields=["scope", "expires_at"],
+                condition=models.Q(deleted_at__isnull=True),
+                name="attachment_occ_expiry_idx",
+            ),
+            models.Index(
+                fields=["scope", "source_expires_at"],
+                condition=models.Q(deleted_at__isnull=True),
+                name="attachment_occ_src_expiry_idx",
+            ),
+            # Orphan sweep: live bound rows, least recently checked first.
+            models.Index(
+                models.F("source_checked_at").asc(nulls_first=True),
+                condition=models.Q(deleted_at__isnull=True, bound_at__isnull=False),
+                name="attachment_occ_checked_idx",
+            ),
+            # The binding worker's claim: per scope, least recently checked
+            # first. Each scope's window is one bounded scan of this index.
+            models.Index(
+                models.F("scope"),
+                Coalesce("bind_checked_at", "created_at"),
+                models.F("id"),
+                condition=models.Q(bound_at__isnull=True, deleted_at__isnull=True),
                 name="attachment_unbound_claim_idx",
             ),
         ]
@@ -252,15 +297,22 @@ class UploadReservation(ScopedAttachmentRecord):
 
     class Meta:
         indexes = [
+            # expire_reservations: unsettled rows in expiry order. A plain
+            # (settled_at, expires_at) index could not give that order for
+            # IS NULL, so it seq-scanned a 100k-row backlog (decision 7).
             models.Index(
-                fields=["settled_at", "expires_at"],
-                name="attachment_reservation_expiry",
+                fields=["expires_at"],
+                condition=models.Q(settled_at__isnull=True),
+                name="attachment_reservation_due_idx",
             )
         ]
 
 
 class AttachmentBudget(models.Model):
-    """Stable lock rows. Lock global, organization, project in that order."""
+    """Stable lock rows: ``global:<shard>``, ``org:<id>``, ``project:<id>``.
+
+    Lock one global shard, then the organization, then the project row.
+    """
 
     key = models.CharField(max_length=80, primary_key=True)
     reserved_bytes = models.PositiveBigIntegerField(default=0)
@@ -279,7 +331,9 @@ class AttachmentMediaSession(models.Model):
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey("accounts.User", on_delete=models.PROTECT)
+    # Deleting a user deletes their media sessions (and, through them, their
+    # playback grants); the audit trail keeps only the bare actor UUID.
+    user = models.ForeignKey("accounts.User", on_delete=models.CASCADE)
     organization = models.ForeignKey("accounts.Organization", on_delete=models.PROTECT)
     application_session_id = models.UUIDField()
     token_digest = models.CharField(max_length=64, unique=True)
@@ -297,7 +351,7 @@ class AttachmentMediaSession(models.Model):
 
 
 class AttachmentPlaybackGrant(ScopedAttachmentRecord):
-    media_session = models.ForeignKey(AttachmentMediaSession, on_delete=models.PROTECT)
+    media_session = models.ForeignKey(AttachmentMediaSession, on_delete=models.CASCADE)
     occurrence = models.ForeignKey(AttachmentOccurrence, on_delete=models.PROTECT)
     token_digest = models.CharField(max_length=64, unique=True)
     representation = models.CharField(max_length=16, default="original")
@@ -400,7 +454,13 @@ class AttachmentAuditEvent(ScopedAttachmentRecord):
 
 
 class AttachmentOutbox(ScopedAttachmentRecord):
+    """Durable work queue; every ``event`` kind has exactly one registered consumer
+    (``tracer.services.attachments.lifecycle.CONSUMERS``)."""
+
     upload = models.ForeignKey(AttachmentUpload, null=True, on_delete=models.PROTECT)
+    # Set at creation on every row that has one; immutable afterwards (0133). It
+    # lets erase work be keyed on the attachment when there is no upload job.
+    attachment = models.ForeignKey(Attachment, null=True, on_delete=models.PROTECT)
     event = models.CharField(
         max_length=32,
         choices=[
@@ -421,5 +481,20 @@ class AttachmentOutbox(ScopedAttachmentRecord):
             models.UniqueConstraint(
                 fields=["scope", "upload", "event", "generation"],
                 name="attachment_outbox_unique",
+            ),
+            # NULLs are distinct in the constraint above, so upload-less rows
+            # (attachment-keyed erase work) need their own uniqueness.
+            models.UniqueConstraint(
+                fields=["scope", "attachment", "event", "generation"],
+                condition=models.Q(upload__isnull=True, attachment__isnull=False),
+                name="attachment_outbox_attachment_unique",
+            ),
+        ]
+        indexes = [
+            # Drains select due, unprocessed rows of one event kind.
+            models.Index(
+                fields=["event", "available_at"],
+                condition=models.Q(processed_at__isnull=True),
+                name="attachment_outbox_due_idx",
             )
         ]

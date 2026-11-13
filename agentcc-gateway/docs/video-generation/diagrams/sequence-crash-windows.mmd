@@ -1,0 +1,46 @@
+%% TH-8088 sequence: crash windows W0-W4 (R13) and recovery. Mermaid.
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant H as Handler
+  participant R as Redis store
+  participant W1 as Worker A (dies)
+  participant W2 as Worker B (takes over after lease TTL)
+  participant P as Provider
+
+  Note over H,R: W0: accepted, not yet claimed
+  H->>R: job submitting/prepared (reservation held)
+  Note over W1: crash here -> nothing sent
+  W2->>R: lease expired -> claim (fence+1)
+  W2->>R: phase still prepared -> safe to submit
+
+  Note over W1,P: W1: after phase=calling write, before request sent
+  W2->>R: claim; phase=calling, no provider id
+  W2->>W2: cannot distinguish W1/W2/W3 -> submission_unknown, reconcile_state=pending
+  alt adapter CorrelationLookup = ByToken (Kling external_task_id, Nova clientRequestToken)
+    W2->>P: query by token / re-invoke same token
+    P-->>W2: found id | not found (proven absent)
+    W2->>R: attach provider_job_id -> queued  |  phase=prepared -> resubmit once
+  else CorrelationLookup = Heuristic (BytePlus list + safety_identifier + created_at window)
+    W2->>P: GET /contents/generations/tasks?filter.model&filter.status
+    P-->>W2: items[]
+    W2->>W2: exactly one match -> attach; zero/ambiguous -> keep unknown
+  else CorrelationLookup = None (Luma, Veo, Runway, MiniMax, xAI, DashScope, fal)
+    W2->>R: remain submission_unknown until reconcile_by
+  end
+  Note over W2,R: reconcile_by elapsed -> failed/submission_unresolved, retry_safe=false, upstream_may_continue=true, reservation unsettled, alert
+
+  Note over W1,P: W2: request sent, response lost / W3: response received, save lost
+  W1->>P: POST create task
+  P-->>W1: 200 {id}
+  Note over W1: crash before HSET phase=received
+  W2->>R: claim; phase=calling (same handling as W1)
+
+  Note over W1,C: W4: saved, reply lost
+  W1->>R: HSET phase=received status=queued provider_job_id
+  Note over W1: crash before HTTP reply
+  C->>H: retry POST with same Idempotency-Key and body
+  H->>R: SET idem NX -> exists; fingerprint equal
+  H-->>C: 202 same id, status queued (no new reservation, no new provider call)
+
+  Note over W2,R: W5-W7: poll/copy/settle crashes resume via lease expiry; run_by, artifacts state and settlement flag are persisted so clocks never reset and settlement happens once

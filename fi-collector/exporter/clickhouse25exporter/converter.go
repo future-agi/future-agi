@@ -63,15 +63,20 @@ const (
 	// kind — mirrors Python get_observation_type, which returns "unknown".
 	observationTypeUnknown = "unknown"
 
-	// A LiveKit worker's true root is `job_entrypoint`, and the SDK marks no
-	// conversation root there. With attachments enabled, an untyped root of
-	// that name carrying `lk.job_id` is the call's conversation root, so a
-	// LiveKit call with a recording is listed in Voice. Mirrors Python
+	// The LiveKit SDK marks no conversation root. A call's true root is
+	// `job_entrypoint` when tracing is set up before the job starts, or
+	// `agent_session` when it is set up inside the entrypoint (the LiveKit
+	// README Quick Start, with no job_entrypoint span). With attachments
+	// enabled, an untyped, parentless span of either name carrying
+	// `lk.job_id` is the call's conversation root, so a LiveKit call with a
+	// recording is listed in Voice. Mirrors Python
 	// tracer.utils.otel.resolve_observation_type.
-	liveKitJobRootName          = "job_entrypoint"
 	liveKitJobIDKey             = "lk.job_id"
 	observationTypeConversation = "conversation"
 )
+
+// liveKitJobRootNames are the span names a LiveKit call's root can carry.
+var liveKitJobRootNames = map[string]struct{}{"job_entrypoint": {}, "agent_session": {}}
 
 // attachmentsEnabled mirrors Django's FI_ATTACHMENTS_ENABLED (default off):
 // with it unset the converter's output is unchanged.
@@ -82,8 +87,13 @@ func liveKitJobRoot(observationType, parentID, name string, attrsStr map[string]
 	return attachmentsEnabled &&
 		observationType == observationTypeUnknown &&
 		parentID == "" &&
-		name == liveKitJobRootName &&
+		isLiveKitJobRootName(name) &&
 		attrsStr[liveKitJobIDKey] != ""
+}
+
+func isLiveKitJobRootName(name string) bool {
+	_, ok := liveKitJobRootNames[name]
+	return ok
 }
 
 // knownObservationTypes mirrors ObservationSpan.OBSERVATION_SPAN_TYPES; the

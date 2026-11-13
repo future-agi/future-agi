@@ -28,6 +28,7 @@ from tracer.services.attachments import (
     uploads,
     validation,
 )
+from tracer.services.attachments import probe as probe_module
 from tracer.services.attachments.contract import (
     SERVER_MODALITIES,
     AttachmentError,
@@ -172,7 +173,15 @@ VALID = [
         1,
         (0.2, 0.4),
     ),
-    ("flac", lambda: fixture("tone.flac"), "audio/flac", "audio", 16000, 1, (0.19, 0.21)),
+    (
+        "flac",
+        lambda: fixture("tone.flac"),
+        "audio/flac",
+        "audio",
+        16000,
+        1,
+        (0.19, 0.21),
+    ),
     (
         "webm-audio",
         lambda: fixture("tone.webm"),
@@ -195,6 +204,35 @@ VALID = [
     ),
     ("m4a", lambda: fixture("tone.m4a"), "audio/mp4", "audio", 16000, 1, (0.19, 0.4)),
     ("mp4", lambda: fixture("clip.mp4"), "video/mp4", "video", 0, 0, None),
+    # frag_keyframe+empty_moov: mvhd and mdhd carry no duration and there is no
+    # mehd, so the duration is summed from the moof/traf/trun boxes.
+    (
+        "m4a-fragmented",
+        lambda: fixture("tone-frag.m4a"),
+        "audio/mp4",
+        "audio",
+        16000,
+        1,
+        (0.95, 1.1),
+    ),
+    (
+        "m4a-fragmented-multi",
+        lambda: fixture("tone-frag-multi.m4a"),
+        "audio/mp4",
+        "audio",
+        16000,
+        1,
+        (0.95, 1.1),
+    ),
+    (
+        "mp4-fragmented",
+        lambda: fixture("clip-frag.mp4"),
+        "video/mp4",
+        "video",
+        0,
+        0,
+        None,
+    ),
     ("webm-video", lambda: fixture("clip.webm"), "video/webm", "video", 0, 0, None),
     ("pdf", pdf_bytes, "application/pdf", "document", 0, 0, None),
 ]
@@ -267,6 +305,14 @@ def _jpeg_dims(data, width, height):
     return data[:at] + struct.pack(">HH", height, width) + data[at + 4 :]
 
 
+def _frag_patch(name, box, offset, value):
+    """Overwrite a 32-bit field ``offset`` bytes into the first ``box`` body."""
+    data = bytearray(fixture(name))
+    at = data.index(box) + 4 + offset
+    data[at : at + 4] = struct.pack(">I", value)
+    return bytes(data)
+
+
 def _mp3_frame_44100():
     # MPEG-1 layer III, 128 kbit/s, 44.1 kHz: a different stream's frame.
     return b"\xff\xfb\x90\x00" + b"\x00" * (144 * 128000 // 44100 - 4)
@@ -288,16 +334,25 @@ def _mp3_frame_44100():
         pytest.param(
             lambda: gray_png(64, 64, extra=[(b"acTL", b"\x00" * 8)]), id="apng"
         ),
+        pytest.param(lambda: _jpeg_dims(picture("JPEG"), 60000, 60000), id="jpeg-dims"),
+        # Under the pixel cap but over the per-side cap.
+        pytest.param(lambda: _jpeg_dims(picture("JPEG"), 20000, 1), id="jpeg-wide"),
+        pytest.param(lambda: _jpeg_dims(picture("JPEG"), 1, 20000), id="jpeg-tall"),
+        # Both end in EOI, but the first EOI is not the last two bytes.
+        pytest.param(lambda: picture("JPEG") + picture("JPEG"), id="jpeg-concatenated"),
         pytest.param(
-            lambda: _jpeg_dims(picture("JPEG"), 60000, 60000), id="jpeg-dims"
+            lambda: picture("JPEG") + POLYGLOT_TAIL + b"\xff\xd9",
+            id="jpeg-eoi-then-tail",
         ),
         pytest.param(
-            lambda: b"RIFF"
-            + struct.pack("<I", 22)
-            + b"WEBPVP8X"
-            + struct.pack("<I", 10)
-            + b"\x00" * 4
-            + (16383).to_bytes(3, "little") * 2,
+            lambda: (
+                b"RIFF"
+                + struct.pack("<I", 22)
+                + b"WEBPVP8X"
+                + struct.pack("<I", 10)
+                + b"\x00" * 4
+                + (16383).to_bytes(3, "little") * 2
+            ),
             id="webp-canvas",
         ),
         # External or embedded resources, chained streams, concatenations.
@@ -308,8 +363,9 @@ def _mp3_frame_44100():
             id="mp4-external-dref",
         ),
         pytest.param(
-            lambda: unknown_size(fixture("tone.webm"), SEGMENT_ID)
-            + b"\x19\x41\xa4\x69\x80",
+            lambda: (
+                unknown_size(fixture("tone.webm"), SEGMENT_ID) + b"\x19\x41\xa4\x69\x80"
+            ),
             id="webm-attachments",
         ),
         pytest.param(lambda: fixture("tone.ogg") * 2, id="ogg-chained"),
@@ -324,6 +380,19 @@ def _mp3_frame_44100():
             id="pdf-javascript",
         ),
         pytest.param(lambda: wav_bytes()[:44] + b"\x00" * 9, id="wav-misaligned"),
+        # Fragmented MP4: a trun that declares fewer entries than it holds, a
+        # tfhd default duration far past the 2 h cap, a traf for no track.
+        pytest.param(
+            lambda: _frag_patch("tone-frag.m4a", b"trun", 4, 16),
+            id="fmp4-trun-count-short",
+        ),
+        pytest.param(
+            lambda: _frag_patch("tone-frag-multi.m4a", b"tfhd", 16, 0xFFFFFFF0),
+            id="fmp4-duration-over-cap",
+        ),
+        pytest.param(
+            lambda: _frag_patch("tone-frag.m4a", b"tfhd", 4, 7), id="fmp4-unknown-track"
+        ),
     ],
 )
 def test_probe_rejects_bombs_and_active_containers(tmp_path, make):
@@ -333,6 +402,78 @@ def test_probe_rejects_bombs_and_active_containers(tmp_path, make):
 
 def test_png_at_the_inflate_bound_is_accepted(tmp_path):
     assert run(tmp_path, gray_png(4000, 4000))["mime_type"] == "image/png"
+
+
+def riff_chunk(kind, body):
+    return kind + struct.pack("<I", len(body)) + body + b"\x00" * (len(body) & 1)
+
+
+def animated_webp_canvas(width, height, frames):
+    """VP8X animation of ``frames`` 1x1 lossless frames on a large canvas."""
+    vp8x = bytes([0x02, 0, 0, 0]) + (width - 1).to_bytes(3, "little")
+    vp8x += (height - 1).to_bytes(3, "little")
+    frame = riff_chunk(
+        b"ANMF",
+        b"\x00" * 12
+        + (100).to_bytes(3, "little")
+        + b"\x00"
+        + riff_chunk(b"VP8L", b"\x2f\x00\x00\x00\x00"),
+    )
+    body = b"WEBP" + riff_chunk(b"VP8X", vp8x) + riff_chunk(b"ANIM", b"\x00" * 6)
+    body += frame * frames
+    return b"RIFF" + struct.pack("<I", len(body)) + body
+
+
+def test_animated_webp_total_pixels_are_capped(tmp_path):
+    # 16384 x 2441 is under the 40 MP still-image cap; 4 frames stay under the
+    # 160 MP animation cap and 5 frames go over it.
+    width, height = probe_module.MAX_IMAGE_SIDE, 2441
+    assert width * height <= probe_module.MAX_IMAGE_PIXELS
+    assert 4 * width * height <= probe_module.MAX_ANIMATION_PIXELS < 5 * width * height
+    assert run(tmp_path, animated_webp_canvas(width, height, 4))["mime_type"] == (
+        "image/webp"
+    )
+    with pytest.raises(ValueError):
+        run(tmp_path, animated_webp_canvas(width, height, 5))
+
+
+def flac_with_false_headers():
+    """tone.flac with no max frame size and a 64 KiB tail of false frame headers.
+
+    Every header passes its CRC-8, so the end-of-file search CRC-16s from each
+    one to EOF. Without a total budget that is about 8 MiB of pure-Python CRC.
+    """
+    data = bytearray(fixture("tone.flac"))
+    data[15:18] = b"\x00\x00\x00"  # STREAMINFO max_frame_size: unknown
+    header = bytes([0xFF, 0xF8, 0x19, 0x08, 0x00])
+    header += bytes([probe_module._crc8(header)])
+    tail = bytearray(65536)
+    for offset in range(0, len(tail) - 8, 256):
+        tail[offset : offset + len(header)] = header
+    return bytes(data + tail)
+
+
+def test_flac_end_search_crc_work_is_capped(tmp_path, monkeypatch):
+    payload = flac_with_false_headers()
+    crc_bytes = []
+    real_crc16 = probe_module._crc16
+
+    def counting(chunk):
+        crc_bytes.append(len(chunk))
+        return real_crc16(chunk)
+
+    monkeypatch.setattr(probe_module, "_crc16", counting)
+    with pytest.raises(ValueError):
+        run(tmp_path, payload)
+    assert len(crc_bytes) > 1
+    assert sum(crc_bytes) <= probe_module.FLAC_CRC_BUDGET
+
+
+def test_flac_crc_budget_applies_to_valid_files(tmp_path, monkeypatch):
+    assert run(tmp_path, fixture("tone.flac"))["mime_type"] == "audio/flac"
+    monkeypatch.setattr(probe_module, "FLAC_CRC_BUDGET", 0)
+    with pytest.raises(ValueError):
+        run(tmp_path, fixture("tone.flac"))
 
 
 def test_policy_advertises_only_validated_modalities(setup):
@@ -389,7 +530,9 @@ def _stored(setup, payload, mime, modality):
         pytest.param(SVG, "image/png", id="svg-declared-png"),
     ],
 )
-def test_type_mismatch_is_rejected_not_relabelled(setup, monkeypatch, payload, declared):
+def test_type_mismatch_is_rejected_not_relabelled(
+    setup, monkeypatch, payload, declared
+):
     modality = {"image": "image", "audio": "audio", "video": "video"}[
         declared.split("/")[0]
     ]
@@ -491,7 +634,11 @@ def _readable(setup, user, monkeypatch, payload, mime, modality, representation)
     )
     retention.bind_retention(scope_id=scope.id, occurrence_id=row.id, source=state)
     viewer = occurrences.Viewer(
-        user.id, uuid.uuid4(), scope.organization_id, scope.workspace_id, scope.project_id
+        user.id,
+        uuid.uuid4(),
+        scope.organization_id,
+        scope.workspace_id,
+        scope.project_id,
     )
     authority = AuthorityDouble(viewer, state)
     _, cookie = playback.exchange(viewer, authority)
@@ -532,17 +679,83 @@ def _get(r, **headers):
 
 
 SERVED_ROWS = [
-    ("png", lambda: picture("PNG"), "image/png", "image", 'inline; filename="image.png"'),
-    ("jpeg", lambda: picture("JPEG"), "image/jpeg", "image", 'inline; filename="image.jpg"'),
-    ("webp", lambda: picture("WEBP"), "image/webp", "image", 'inline; filename="image.webp"'),
-    ("ogg", lambda: fixture("tone.ogg"), "audio/ogg", "audio", 'inline; filename="audio.ogg"'),
-    ("mp3", lambda: fixture("tone.mp3"), "audio/mpeg", "audio", 'inline; filename="audio.mp3"'),
-    ("flac", lambda: fixture("tone.flac"), "audio/flac", "audio", 'inline; filename="audio.flac"'),
-    ("webm-audio", lambda: fixture("tone.webm"), "audio/webm", "audio", 'inline; filename="audio.webm"'),
-    ("m4a", lambda: fixture("tone.m4a"), "audio/mp4", "audio", 'inline; filename="audio.m4a"'),
-    ("mp4", lambda: fixture("clip.mp4"), "video/mp4", "video", 'inline; filename="video.mp4"'),
-    ("webm-video", lambda: fixture("clip.webm"), "video/webm", "video", 'inline; filename="video.webm"'),
-    ("pdf", pdf_bytes, "application/pdf", "document", 'attachment; filename="document.pdf"'),
+    (
+        "png",
+        lambda: picture("PNG"),
+        "image/png",
+        "image",
+        'inline; filename="image.png"',
+    ),
+    (
+        "jpeg",
+        lambda: picture("JPEG"),
+        "image/jpeg",
+        "image",
+        'inline; filename="image.jpg"',
+    ),
+    (
+        "webp",
+        lambda: picture("WEBP"),
+        "image/webp",
+        "image",
+        'inline; filename="image.webp"',
+    ),
+    (
+        "ogg",
+        lambda: fixture("tone.ogg"),
+        "audio/ogg",
+        "audio",
+        'inline; filename="audio.ogg"',
+    ),
+    (
+        "mp3",
+        lambda: fixture("tone.mp3"),
+        "audio/mpeg",
+        "audio",
+        'inline; filename="audio.mp3"',
+    ),
+    (
+        "flac",
+        lambda: fixture("tone.flac"),
+        "audio/flac",
+        "audio",
+        'inline; filename="audio.flac"',
+    ),
+    (
+        "webm-audio",
+        lambda: fixture("tone.webm"),
+        "audio/webm",
+        "audio",
+        'inline; filename="audio.webm"',
+    ),
+    (
+        "m4a",
+        lambda: fixture("tone.m4a"),
+        "audio/mp4",
+        "audio",
+        'inline; filename="audio.m4a"',
+    ),
+    (
+        "mp4",
+        lambda: fixture("clip.mp4"),
+        "video/mp4",
+        "video",
+        'inline; filename="video.mp4"',
+    ),
+    (
+        "webm-video",
+        lambda: fixture("clip.webm"),
+        "video/webm",
+        "video",
+        'inline; filename="video.webm"',
+    ),
+    (
+        "pdf",
+        pdf_bytes,
+        "application/pdf",
+        "document",
+        'attachment; filename="document.pdf"',
+    ),
 ]
 
 

@@ -1257,6 +1257,16 @@ func TestSpanAttributeIsNotTheResourceMark(t *testing.T) {
 	}
 }
 
+// buildLiveKitQuickStart is the LiveKit README Quick Start shape: tracing is set
+// up inside the entrypoint, so the untyped `agent_session` is the parentless
+// root and an `llm_request` is its child.
+func buildLiveKitQuickStart(withJobID bool) ptrace.Traces {
+	traces := buildLiveKitJob("agent_session", withJobID)
+	child := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(1)
+	child.SetName("llm_request")
+	return traces
+}
+
 // buildLiveKitJob is a LiveKit worker trace: the untyped `job_entrypoint` root
 // and its `agent_session` child, as the traceAI LiveKit exporter sends them.
 func buildLiveKitJob(rootName string, withJobID bool) ptrace.Traces {
@@ -1290,8 +1300,9 @@ func buildLiveKitJob(rootName string, withJobID bool) ptrace.Traces {
 }
 
 // TestLiveKitJobRootIsAVoiceCallOnlyWithAttachments pins the Voice root mapping
-// for LiveKit calls: only an untyped true root named job_entrypoint with
-// lk.job_id, and only with attachments enabled (default off = unchanged).
+// for LiveKit calls: only an untyped true root named job_entrypoint or
+// agent_session with lk.job_id, and only with attachments enabled (default
+// off = unchanged). An agent_session under job_entrypoint keeps its type.
 func TestLiveKitJobRootIsAVoiceCallOnlyWithAttachments(t *testing.T) {
 	previous := attachmentsEnabled
 	t.Cleanup(func() { attachmentsEnabled = previous })
@@ -1321,6 +1332,24 @@ func TestLiveKitJobRootIsAVoiceCallOnlyWithAttachments(t *testing.T) {
 	for _, c := range cases {
 		attachmentsEnabled = c.enabled
 		if got := types(buildLiveKitJob(c.root, c.jobID)); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: observation types %v want %v", c.name, got, c.want)
+		}
+	}
+	// README Quick Start: no job_entrypoint, the parentless agent_session is
+	// the call root; its children and a disabled flag are unchanged.
+	quickStart := []struct {
+		name    string
+		enabled bool
+		jobID   bool
+		want    []string
+	}{
+		{"quick start root", true, true, []string{"conversation", "unknown"}},
+		{"quick start disabled", false, true, []string{"unknown", "unknown"}},
+		{"quick start no lk.job_id", true, false, []string{"unknown", "unknown"}},
+	}
+	for _, c := range quickStart {
+		attachmentsEnabled = c.enabled
+		if got := types(buildLiveKitQuickStart(c.jobID)); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: observation types %v want %v", c.name, got, c.want)
 		}
 	}

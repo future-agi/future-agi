@@ -1,18 +1,25 @@
-"""Deletion primitives and replayable erase jobs, not deletion-hook integration.
+"""Deletion primitives, deletion hooks and replayable erase jobs.
 
-Callers must invoke these from authoritative ingestion/deletion transactions.
-CH-only/remapped source deletion and the deployed enterprise retention scheduler
-are not implemented by this module. Fail closed on unknown retention provenance.
+Hooks: ``tombstone_traces`` (trace and trace-session deletion),
+``fence_projects`` (project deletion) and ``fence_workspace`` (workspace
+deletion) are called by the product's PostgreSQL deletion paths. Retention that
+only removes ClickHouse rows (TTL, the enterprise retention activities) is
+caught by ``lifecycle.sweep_orphans``, which tombstones bound occurrences whose
+parent span stayed missing across two sweeps ``orphan_grace()`` apart. Fail
+closed on unknown retention provenance.
 """
 
 from datetime import timedelta
+from uuid import UUID
 
+import structlog
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
 from tracer.models.attachment import (
     Attachment,
+    AttachmentAuditEvent,
     AttachmentOccurrence,
     AttachmentOutbox,
     AttachmentScope,
@@ -22,7 +29,39 @@ from tracer.models.attachment import (
 from tracer.services.attachments.accounting import audit
 from tracer.services.attachments.contract import AttachmentError
 from tracer.services.attachments.occurrences import get_occurrence
-from tracer.services.attachments.uploads import TRANSFER_SECONDS, _lock_budgets, settle
+from tracer.services.attachments.uploads import (
+    TRANSFER_SECONDS,
+    lock_all_budgets,
+    settle,
+)
+
+logger = structlog.get_logger(__name__)
+
+
+def run_deletion_hook(hook, **kwargs):
+    """Call a deletion hook without ever failing the product's own deletion.
+
+    The hook runs in a savepoint, so a failure leaves the caller's transaction
+    usable. The sweeps are the backstop: a deleted trace's spans leave
+    ClickHouse (``sweep_orphans``) and unbound occurrences expire.
+    """
+    try:
+        with transaction.atomic():
+            return hook(**kwargs)
+    except Exception:  # noqa: BLE001 - deletion boundary; the lifecycle sweeps retry
+        logger.exception("attachment_deletion_hook_failed", hook=hook.__name__)
+        return 0
+
+
+def tombstone_deleted_traces(traces):
+    """Hook for trace / trace-session deletion: ``traces`` have ``project_id`` and ``id``."""
+    by_project = {}
+    for trace in traces:
+        by_project.setdefault(trace.project_id, []).append(trace.id)
+    return sum(
+        run_deletion_hook(tombstone_traces, project_id=project_id, trace_ids=ids)
+        for project_id, ids in by_project.items()
+    )
 
 
 @transaction.atomic
@@ -104,35 +143,80 @@ def _tombstone(row, scope, *, actor_id=None, reason):
         event="deletion",
         reason=reason,
     )
-    if _unreferenced(scope, row.attachment_id):
-        upload = AttachmentUpload.objects.select_for_update().get(
-            scope=scope, attachment_id=row.attachment_id
-        )
+    # A second occurrence of an already tombstoned attachment (two expired
+    # ``link`` occurrences in one sweep batch) must not touch the attachment
+    # again: its tombstone is immutable (0133) and rewriting it would roll the
+    # whole batch back and wedge the sweep on the same rows forever.
+    if not Attachment.objects.filter(
+        pk=row.attachment_id, scope=scope, deleted_at__isnull=True
+    ).exists() or not _unreferenced(scope, row.attachment_id):
+        return True
+    upload = (
+        AttachmentUpload.objects.select_for_update()
+        .filter(scope=scope, attachment_id=row.attachment_id)
+        .first()
+    )
+    if upload is not None:
         # Release unsettled reservations before marking READY storage deleted.
         settle(upload.id, scope_id=scope.id, outcome=AttachmentState.DELETED)
-        Attachment.objects.filter(pk=row.attachment_id, scope=scope).update(
-            state=AttachmentState.DELETED, deleted_at=timezone.now()
-        )
-        AttachmentUpload.objects.filter(pk=upload.id, scope=scope).update(
-            state=AttachmentState.DELETED
-        )
+    Attachment.objects.filter(
+        pk=row.attachment_id, scope=scope, deleted_at__isnull=True
+    ).update(state=AttachmentState.DELETED, deleted_at=timezone.now())
+    if upload is None:
+        # No upload job (an imported segment): queue erase work keyed on the
+        # attachment. ``erase`` refuses it until that storage layout has an
+        # erase path, so the row stays visible instead of being dropped.
         AttachmentOutbox.objects.update_or_create(
             scope=scope,
-            upload=upload,
+            upload=None,
+            attachment_id=row.attachment_id,
             event="erase",
-            generation=upload.deletion_generation,
+            generation=scope.deletion_generation,
             defaults={"processed_at": None, "available_at": timezone.now()},
         )
+        return True
+    AttachmentUpload.objects.filter(pk=upload.id, scope=scope).update(
+        state=AttachmentState.DELETED
+    )
+    AttachmentOutbox.objects.update_or_create(
+        scope=scope,
+        upload=upload,
+        event="erase",
+        generation=upload.deletion_generation,
+        defaults={"processed_at": None, "available_at": timezone.now()},
+        create_defaults={
+            "processed_at": None,
+            "available_at": timezone.now(),
+            "attachment_id": upload.attachment_id,
+        },
+    )
     return True
 
 
 @transaction.atomic
 def delete_occurrence(viewer, authority, *, occurrence_id, parent):
     row, scope, _ = get_occurrence(viewer, authority, occurrence_id, parent, write=True)
-    _lock_budgets(scope)
+    lock_all_budgets(scope)
     scope = AttachmentScope.objects.select_for_update().get(pk=scope.id)
     row, _, _ = get_occurrence(viewer, authority, occurrence_id, parent, write=True)
     return _tombstone(row, scope, actor_id=viewer.user_id, reason="requested")
+
+
+BATCH = 100
+
+
+def _tombstone_all(scope, rows_query, *, reason):
+    """Tombstone every row of ``rows_query`` in batches of ``BATCH``.
+
+    Each tombstoned row drops out of the query (``deleted_at`` is set), so the
+    loop always terminates; one parent with many segments is never refused.
+    """
+    total = 0
+    while True:
+        rows = list(rows_query.filter(deleted_at__isnull=True).order_by("id")[:BATCH])
+        total += sum(_tombstone(row, scope, reason=reason) for row in rows)
+        if len(rows) < BATCH:
+            return total
 
 
 @transaction.atomic
@@ -141,24 +225,121 @@ def tombstone_parent(*, scope_id, parent, source_generation):
     if type(source_generation) is not int or source_generation < 0:
         raise AttachmentError("invalid_generation")
     scope = AttachmentScope.objects.get(pk=scope_id)
-    _lock_budgets(scope)
+    lock_all_budgets(scope)
     scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
-    rows = list(
-        AttachmentOccurrence.objects.filter(
-            scope=scope,
-            trace_id=parent.trace_id,
-            span_id=parent.span_id,
-            deleted_at__isnull=True,
-        )
-        .filter(
-            Q(source_generation__isnull=True)
-            | Q(source_generation__lte=source_generation)
-        )
-        .order_by("id")[:101]
+    rows = AttachmentOccurrence.objects.filter(
+        scope=scope, trace_id=parent.trace_id, span_id=parent.span_id
+    ).filter(
+        Q(source_generation__isnull=True) | Q(source_generation__lte=source_generation)
     )
-    if len(rows) > 100:
-        raise AttachmentError("deletion_batch_required", 409)
-    return sum(_tombstone(row, scope, reason="retention") for row in rows)
+    return _tombstone_all(scope, rows, reason="retention")
+
+
+def tombstone_traces(*, project_id, trace_ids):
+    """Deletion hook: the product deleted these traces in PostgreSQL.
+
+    That deletion is authoritative for every span of the trace, so no source
+    generation guard applies (the guard protects newer bindings from a stale
+    ClickHouse re-read, not from a user delete). One transaction per trace
+    batch; a project without an attachment scope costs one indexed lookup.
+    """
+    scope = AttachmentScope.objects.filter(project_id=project_id).first()
+    if scope is None or not trace_ids:
+        return 0
+    ids = sorted({UUID(str(value)) for value in trace_ids})
+    total = 0
+    for start in range(0, len(ids), BATCH):
+        with transaction.atomic():
+            lock_all_budgets(scope)
+            locked = AttachmentScope.objects.select_for_update().get(pk=scope.pk)
+            rows = AttachmentOccurrence.objects.filter(
+                scope=locked, trace_id__in=ids[start : start + BATCH]
+            )
+            total += _tombstone_all(locked, rows, reason="requested")
+    return total
+
+
+@transaction.atomic
+def tombstone_occurrences(*, scope_id, occurrence_ids, missing_before):
+    """Orphan sweep: these bound occurrences lost their parent span in ClickHouse.
+
+    Only rows whose span has been missing since ``missing_before`` or earlier
+    are tombstoned, so a live read that cleared ``source_missing_since`` after
+    the sweep's own read always wins.
+    """
+    scope = AttachmentScope.objects.get(pk=scope_id)
+    lock_all_budgets(scope)
+    scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
+    rows = AttachmentOccurrence.objects.filter(
+        scope=scope,
+        pk__in=list(occurrence_ids),
+        bound_at__isnull=False,
+        source_missing_since__lte=missing_before,
+    )
+    return _tombstone_all(scope, rows, reason="retention")
+
+
+def fence_projects(*, project_ids):
+    """Deletion hook: deny reads at once, then let the sweep erase the bytes."""
+    scope_ids = list(
+        AttachmentScope.objects.filter(project_id__in=list(project_ids)).values_list(
+            "pk", flat=True
+        )
+    )
+    for scope_id in scope_ids:
+        fence_scope(scope_id=scope_id)
+    return len(scope_ids)
+
+
+def fence_workspace(*, workspace_id):
+    """Deletion hook for a workspace: every attachment scope inside it."""
+    scope_ids = list(
+        AttachmentScope.objects.filter(workspace_id=workspace_id).values_list(
+            "pk", flat=True
+        )
+    )
+    for scope_id in scope_ids:
+        fence_scope(scope_id=scope_id)
+    return len(scope_ids)
+
+
+def _fenced(scope):
+    return AttachmentOccurrence.objects.filter(
+        scope=scope,
+        deleted_at__isnull=True,
+        deletion_generation__lt=scope.deletion_generation,
+    )
+
+
+def _expired(scope):
+    now = timezone.now()
+    return AttachmentOccurrence.objects.filter(
+        scope=scope, deleted_at__isnull=True
+    ).filter(Q(expires_at__lte=now) | Q(source_expires_at__lte=now))
+
+
+@transaction.atomic
+def tombstone_fenced(*, scope_id, limit=BATCH):
+    """Physical cleanup after ``fence_scope``: occurrences from older generations."""
+    if type(limit) is not int or not 1 <= limit <= BATCH:
+        raise AttachmentError("invalid_request")
+    scope = AttachmentScope.objects.get(pk=scope_id)
+    if not _fenced(scope).exists():
+        return 0  # Nothing to clean: skip the budget locks (sweep runs per scope).
+    lock_all_budgets(scope)
+    scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
+    rows = list(_fenced(scope).order_by("id")[:limit])
+    return sum(_tombstone(row, scope, reason="scope_deleted") for row in rows)
+
+
+def purge_audit(*, before, limit=1000):
+    """Drop audit rows older than ``before``; bounded per call."""
+    ids = list(
+        AttachmentAuditEvent.objects.filter(created_at__lt=before)
+        .order_by("created_at")
+        .values_list("pk", flat=True)[:limit]
+    )
+    return AttachmentAuditEvent.objects.filter(pk__in=ids).delete()[0]
 
 
 @transaction.atomic
@@ -166,15 +347,11 @@ def expire_occurrences(*, scope_id, limit=100):
     if type(limit) is not int or not 1 <= limit <= 100:
         raise AttachmentError("invalid_request")
     scope = AttachmentScope.objects.get(pk=scope_id)
-    _lock_budgets(scope)
+    if not _expired(scope).exists():
+        return 0  # Nothing due: skip the budget locks (sweep runs per scope).
+    lock_all_budgets(scope)
     scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
-    rows = list(
-        AttachmentOccurrence.objects.filter(scope=scope, deleted_at__isnull=True)
-        .filter(
-            Q(expires_at__lte=timezone.now()) | Q(source_expires_at__lte=timezone.now())
-        )
-        .order_by("id")[:limit]
-    )
+    rows = list(_expired(scope).order_by("id")[:limit])
     return sum(_tombstone(row, scope, reason="retention") for row in rows)
 
 
@@ -208,6 +385,10 @@ def erase(event_id, *, storage):
     now = timezone.now()
     if event.processed_at or event.available_at > now:
         return False
+    if event.upload_id is None:
+        # Attachment-keyed erase work (no upload job). Its storage layout has no
+        # erase path in this module yet; refusing keeps the row for the owner.
+        raise AttachmentError("cleanup_unsupported", 409)
     upload = AttachmentUpload.objects.select_related("capture_session").get(
         pk=event.upload_id, scope=scope
     )

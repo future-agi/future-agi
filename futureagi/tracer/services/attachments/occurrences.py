@@ -29,6 +29,7 @@ from tracer.models.attachment import (
 from tracer.models.project import Project
 from tracer.services.attachments.bootstrap import session_policy
 from tracer.services.attachments.contract import (
+    PLACEMENT_FIELDS,
     AttachmentError,
     admit_audio,
     span_id,
@@ -153,26 +154,14 @@ def source_for(viewer, authority, scope, parent, *, write=False):
     return state
 
 
-def get_occurrence(
-    viewer, authority, occurrence_id, parent, *, write=False, ready=False
-):
-    scope = scope_for(viewer, authority, write=write)
-    state = source_for(viewer, authority, scope, parent, write=write)
-    try:
-        occurrence_id = UUID(str(occurrence_id))
-    except (ValueError, TypeError, AttributeError):
-        raise not_found() from None
-    row = (
-        AttachmentOccurrence.objects.select_related("attachment", "capture_session")
-        .filter(
-            scope=scope,
-            client_id=occurrence_id,
-            trace_id=parent.trace_id,
-            span_id=parent.span_id,
-        )
-        .first()
-    )
-    now = timezone.now()
+def check_readable(row, scope, state, now, *, ready=False):
+    """Raise not_found unless ``row`` is readable under ``scope`` and ``state``.
+
+    The one per-row gate behind every occurrence read: ``get_occurrence`` and
+    the batched trace/Voice reader (``control_plane.list_authorized``) both
+    call it, so a prefetched row is authorized exactly like a fetched one.
+    ``row`` needs ``attachment`` and ``capture_session`` loaded.
+    """
     if (
         row is None
         or row.deleted_at
@@ -203,6 +192,28 @@ def get_occurrence(
         )
     except (AttachmentError, TypeError):
         raise not_found() from None
+
+
+def get_occurrence(
+    viewer, authority, occurrence_id, parent, *, write=False, ready=False
+):
+    scope = scope_for(viewer, authority, write=write)
+    state = source_for(viewer, authority, scope, parent, write=write)
+    try:
+        occurrence_id = UUID(str(occurrence_id))
+    except (ValueError, TypeError, AttributeError):
+        raise not_found() from None
+    row = (
+        AttachmentOccurrence.objects.select_related("attachment", "capture_session")
+        .filter(
+            scope=scope,
+            client_id=occurrence_id,
+            trace_id=parent.trace_id,
+            span_id=parent.span_id,
+        )
+        .first()
+    )
+    check_readable(row, scope, state, timezone.now(), ready=ready)
     return row, scope, min(row.expires_at, row.source_expires_at, state.expires_at)
 
 
@@ -216,6 +227,10 @@ def metadata(row, scope, expires_at):
     }
     if row.purpose:
         reference["purpose"] = row.purpose
+    for name in PLACEMENT_FIELDS:
+        value = getattr(row, name)
+        if value is not None:
+            reference[name] = value
     document = {
         "reference": reference,
         "scope": {
@@ -369,6 +384,9 @@ def link(viewer, authority, body):
                     span_id=target_parent.span_id,
                     direction=row.direction,
                     purpose=row.purpose,
+                    # LinkRequest carries no placement: the new occurrence is the
+                    # same content in the same role, so it inherits the source's.
+                    **{name: getattr(row, name) for name in PLACEMENT_FIELDS},
                     policy_version=scope.policy_version,
                     deletion_generation=scope.deletion_generation,
                     bound_at=timezone.now(),

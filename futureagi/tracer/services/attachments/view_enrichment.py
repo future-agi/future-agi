@@ -6,6 +6,7 @@ URL, inferred provider, new route or playback grant is manufactured here.
 
 from datetime import UTC, datetime
 from itertools import islice
+from uuid import UUID, uuid5
 
 from .binding import Parent, Scope
 from .reads import MAX_PARENTS, ReadTarget, attachment_statuses
@@ -100,9 +101,11 @@ def enrich_observations(*, request, project_id, observations, reader=None):
 
 RECORDING_PURPOSE = "conversation_recording"
 # I04 coarse states. A recording is projected playable only with an authorized
-# manifest whose bytes the gateway can serve as-is (see ``_playable``); every
-# other ready recording reads as not-ready until channel/stitched derivatives
-# (B11) exist.
+# manifest whose bytes the gateway can serve as-is: a server recording that is
+# one mixed segment (``_playable``), or a standalone upload (no recording_id)
+# of any validated audio type, described by a manifest synthesized from its
+# validated blob facts (``standalone_manifest``). Every other ready recording
+# reads as not-ready until channel/stitched derivatives (B11) exist.
 _COARSE_RECORDING_STATES = {
     "pending": "pending",
     "pending_upload": "pending_upload",
@@ -112,6 +115,113 @@ _COARSE_RECORDING_STATES = {
     "ready": "pending",
     "failed": "failed",
 }
+
+
+# Validated standalone audio type -> RecordingManifest (codec, container). The
+# probe admits only Opus in Ogg; WebM and MP4 may also carry Vorbis/Opus/FLAC,
+# which the codec enum cannot name, so the codec there is a hint: the player
+# plays the served bytes by their validated MIME, never by this field.
+STANDALONE_CODECS = {
+    "audio/wav": ("pcm", "wav"),
+    "audio/ogg": ("opus", "ogg"),
+    "audio/mpeg": ("mp3", "mp3"),
+    "audio/mp4": ("aac", "mp4"),
+    "audio/webm": ("opus", "webm"),
+    "audio/flac": ("flac", "flac"),
+}
+# F01 RecordingManifest bounds: Segment.duration_ms <= 30 s, recording <= 2 h.
+MAX_SEGMENT_MS = 30000
+MAX_RECORDING_MS = 7200000
+_STANDALONE_TRACK = "fi.attachments.v1/standalone-mixed"
+
+
+def standalone_manifest(occurrence_id, facts):
+    """The playable manifest of one standalone audio occurrence, or None.
+
+    ``facts`` are the blob's validated ``{mime_type, sample_rate, channels,
+    frame_count}``. The whole file is one mixed track (``sample_format``
+    ``encoded``; no channel or role is implied, F01). The timeline is tiled
+    with segments of at most ``MAX_SEGMENT_MS`` that all name this occurrence:
+    F01 caps a segment at 30 s, so a longer file cannot be one segment. Such
+    a manifest is a read projection only; it is never stored, and the F01
+    oracle's distinct-occurrence rule for stored manifests does not apply.
+    ``recording_id`` is the occurrence id, since no server recording exists.
+    """
+    try:
+        codec, container = STANDALONE_CODECS[facts["mime_type"]]
+        rate, channels, frames = (
+            facts["sample_rate"],
+            facts["channels"],
+            facts["frame_count"],
+        )
+        occurrence = UUID(occurrence_id)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+    if (
+        any(type(value) is not int for value in (rate, channels, frames))
+        or not 8000 <= rate <= 192000
+        or not 1 <= channels <= 32
+    ):
+        return None
+    duration = (frames * 1000 + rate // 2) // rate
+    if not 1 <= duration <= MAX_RECORDING_MS:
+        return None
+    return {
+        "schema_version": 1,
+        "recording_id": str(occurrence),
+        "timebase": "session_relative_ms",
+        "sample_format": "encoded",
+        "sample_rate_hz": rate,
+        "channels": channels,
+        "codec": codec,
+        "container": container,
+        "layout": "mixed",
+        "tracks": [
+            {
+                "track_id": str(uuid5(occurrence, _STANDALONE_TRACK)),
+                "channels": list(range(channels)),
+                "direction": "mixed",
+                "role": "mixed",
+            }
+        ],
+        "segments": [
+            {
+                "occurrence_id": str(occurrence),
+                "index": index,
+                "start_ms": start,
+                "duration_ms": min(MAX_SEGMENT_MS, duration - start),
+            }
+            for index, start in enumerate(range(0, duration, MAX_SEGMENT_MS))
+        ],
+        "gaps": [],
+        "playout": [],
+        "capture_complete": True,
+        "duration_ms": duration,
+    }
+
+
+def _playable_standalone(manifest, occurrence_id):
+    """Every segment is this occurrence and they tile the whole timeline."""
+    try:
+        end = 0
+        for index, segment in enumerate(manifest["segments"]):
+            if (
+                segment["occurrence_id"] != occurrence_id
+                or segment["index"] != index
+                or segment["start_ms"] != end
+                or not 1 <= segment["duration_ms"] <= MAX_SEGMENT_MS
+            ):
+                return False
+            end += segment["duration_ms"]
+        return (
+            manifest["layout"] == "mixed"
+            and manifest["sample_format"] == "encoded"
+            and manifest["capture_complete"] is True
+            and not manifest["gaps"]
+            and end == manifest["duration_ms"] > 0
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def _playable(manifest, occurrence_id):
@@ -147,7 +257,9 @@ def enrich_voice_detail(*, request, result, reader=None):
     recording; two recordings anywhere in the call are never resolved by
     guessing. The shape is `{occurrence_id, parent, state}` plus `manifest`
     only when ``state`` is `ready`; ``parent`` is the occurrence's own span.
-    No origin, URL or grant is projected.
+    A ready standalone recording (no ``recording_id``) is re-authorized and
+    plays through ``standalone_manifest``. No origin, URL or grant is
+    projected.
     """
     observations = result.get("observation_span") or []
     enrich_observations(
@@ -189,16 +301,20 @@ def enrich_voice_detail(*, request, result, reader=None):
         "state": _COARSE_RECORDING_STATES[status],
     }
     scope = _request_scope(request, result.get("project_id"))
-    if (
-        status == "ready"
-        and len(items) == 1
-        and "recording_id" in item
-        and scope is not None
-    ):
-        manifest = reader.recording_manifest(
-            request, ReadTarget(scope, parent), recording_id
-        )
-        if manifest is not None and _playable(manifest, occurrence_id):
+    if status == "ready" and len(items) == 1 and scope is not None:
+        target = ReadTarget(scope, parent)
+        if "recording_id" in item:
+            manifest = reader.recording_manifest(request, target, recording_id)
+            playable = manifest is not None and _playable(manifest, occurrence_id)
+        else:
+            # Re-authorized for this exact occurrence (ready only); any denial
+            # leaves the projection not-ready.
+            facts = reader.standalone_recording(request, target, occurrence_id)
+            manifest = standalone_manifest(occurrence_id, facts) if facts else None
+            playable = manifest is not None and _playable_standalone(
+                manifest, occurrence_id
+            )
+        if playable:
             projection["state"] = "ready"
             projection["manifest"] = manifest
     result["recording_attachment"] = projection

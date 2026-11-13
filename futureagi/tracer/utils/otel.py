@@ -1430,26 +1430,30 @@ def get_observation_type(span_kind: str) -> str:
     )
 
 
-LIVEKIT_JOB_ROOT = "job_entrypoint"
+# A LiveKit call's root span: ``job_entrypoint`` when tracing is set up before
+# the job starts, ``agent_session`` when it is set up inside the entrypoint
+# (the LiveKit README Quick Start), so there is no job_entrypoint span.
+LIVEKIT_JOB_ROOTS = frozenset(("job_entrypoint", "agent_session"))
 LIVEKIT_JOB_ID = "lk.job_id"
 
 
 def resolve_observation_type(span_kind: str, otel_span, attributes) -> str:
     """``get_observation_type`` plus the LiveKit job root, attachments only.
 
-    A LiveKit worker's true root is ``job_entrypoint``; the SDK marks no
-    conversation root there (``agent_session`` is its child). With
-    attachments enabled, an untyped root of that name carrying ``lk.job_id``
-    is the call's conversation root, so a LiveKit call with a recording is
-    listed in Voice. Disabled, this is ``get_observation_type`` unchanged.
-    Mirrors the collector's ``liveKitJobRoot``.
+    The LiveKit SDK marks no conversation root. With attachments enabled, an
+    untyped, parentless ``job_entrypoint`` or ``agent_session`` span carrying
+    ``lk.job_id`` is the call's conversation root, so a LiveKit call with a
+    recording is listed in Voice. An ``agent_session`` under a
+    ``job_entrypoint`` has a parent and is unchanged. Disabled, this is
+    ``get_observation_type`` unchanged. Mirrors the collector's
+    ``liveKitJobRoot``.
     """
     observation_type = get_observation_type(span_kind)
     if (
         observation_type == "unknown"
         and getattr(settings, "FI_ATTACHMENTS_ENABLED", False)
         and not otel_span.get("parent_id")
-        and otel_span.get("name") == LIVEKIT_JOB_ROOT
+        and otel_span.get("name") in LIVEKIT_JOB_ROOTS
         and attributes.get(LIVEKIT_JOB_ID) not in (None, "")
     ):
         return "conversation"

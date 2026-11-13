@@ -37,7 +37,7 @@ def consume(principal, nbytes, *, limit=None):
     try:
         cache.add(key, 0, timeout=WINDOW_SECONDS * 2)
         used = cache.incr(key, nbytes)
-    except Exception:
+    except Exception:  # noqa: BLE001 - cache backend boundary; logged, fails closed
         logger.warning("attachment_egress_limiter_unavailable")
         raise EgressDenied() from None
     if used > limit:
@@ -51,7 +51,7 @@ def admit(principal, *, limit=None):
     window = int(time.time() // WINDOW_SECONDS)
     try:
         used = cache.get(_key(principal, window), 0)
-    except Exception:
+    except Exception:  # noqa: BLE001 - cache backend boundary; logged, fails closed
         logger.warning("attachment_egress_limiter_unavailable")
         raise EgressDenied() from None
     if not isinstance(used, int) or used >= limit:
