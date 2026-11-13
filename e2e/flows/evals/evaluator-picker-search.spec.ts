@@ -114,7 +114,7 @@ test('EVAL-E2E-013: a Jev choice stays under the pointer while ordinary model se
             const row = Array.from(paper?.querySelectorAll('[role="menuitem"]') ?? [])
               .find(element => element.textContent?.startsWith('Jev latest'));
             if ((input as HTMLInputElement).value === 'Jev' && row &&
-              !paper?.textContent?.includes('FutureAGI Models')) {
+              !Array.from(paper?.querySelectorAll('div') ?? []).some(label => label.textContent === 'Future AGI')) {
               const { x, y, width, height: rowHeight } = row.getBoundingClientRect();
               win.pickerSamples.push({ x, y, width, height: rowHeight,
                 loading: Boolean(paper?.querySelector('[role="progressbar"]')) });

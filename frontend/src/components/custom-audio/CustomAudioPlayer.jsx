@@ -371,7 +371,7 @@ const CustomAudioPlayer = ({
       onMouseDown={(event) => event.stopPropagation()}
     >
       {showFileName && (
-        <Typography sx={{ fontSize: "13px", ml: "5px", color: "text.primary" }}>
+        <Typography sx={{ fontSize: "12px", ml: "5px", color: "text.primary" }}>
           {audioData?.fileName}
         </Typography>
       )}

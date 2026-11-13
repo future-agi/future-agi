@@ -1,6 +1,6 @@
 import SelectionBar from "src/components/selection-bar";
 import ErrorState from "src/components/error-state";
-import { Badge, Box, Button, LinearProgress, Typography } from "@mui/material";
+import { Badge, Box, Button, Typography } from "@mui/material";
 import { styled } from "@mui/material/styles";
 import LoadingButton from "@mui/lab/LoadingButton";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -158,10 +158,8 @@ const ProjectWrapperView = () => {
     },
   });
 
-  if (isLoading) {
-    return <LinearProgress />;
-  }
-
+  // The count only decides first-run vs list. While it loads, render the list
+  // so its own query runs in parallel and the table shows the only loader.
   if (isError) {
     return (
       <ErrorState
@@ -172,7 +170,7 @@ const ProjectWrapperView = () => {
     );
   }
 
-  if (!isProjectCount) {
+  if (!isLoading && !isProjectCount) {
     return <ProjectFtux />;
   }
 
@@ -218,7 +216,8 @@ const ProjectWrapperView = () => {
                 color="text.tertiary"
                 fontWeight={"fontWeightRegular"}
               >
-                Send traces from your agents to inspect every step, debug failures and track cost and latency.
+                Send traces from your agents to inspect every step, debug
+                failures and track cost and latency.
               </Typography>
             </Box>
           </Box>
@@ -298,6 +297,7 @@ const ProjectWrapperView = () => {
                 setSelectedRowsData={setSelectedRowsData}
                 filters={observeFilters}
                 onFirstRunChange={setObserveFirstRun}
+                countPending={isLoading}
               />
               <TraceFilterPanel
                 anchorEl={filterAnchorEl}
