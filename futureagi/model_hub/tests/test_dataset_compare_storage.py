@@ -342,6 +342,55 @@ def test_minio_creates_a_missing_compare_bucket_only_for_this_account(
     assert client.created == [bucket]
 
 
+class _ReadsCountingClient(_CreationClient):
+    """_CreationClient that counts bucket policy reads and can be given a
+    policy later."""
+
+    def __init__(self, exists, policy=None):
+        super().__init__(exists)
+        self.policy = policy
+        self.policy_reads = 0
+
+    def get_bucket_policy(self, bucket):
+        self.policy_reads += 1
+        if self.policy is None:
+            return super().get_bucket_policy(bucket)
+        return self.policy
+
+
+def test_gcs_refuses_a_missing_compare_bucket_with_a_clear_error(monkeypatch, settings):
+    from model_hub.utils.compare_storage import write_compare_json
+    from tfc.utils.storage_client import PrivateBucketRefused
+
+    client = _ReadsCountingClient(exists=False)
+    bucket = _use_creation_client(monkeypatch, settings, client, "gcs")
+    logged = []
+    monkeypatch.setattr(
+        storage_client.logger,
+        "error",
+        lambda event, **fields: logged.append((event, fields)),
+    )
+    compare_id = str(uuid.uuid4())
+    with pytest.raises(PrivateBucketRefused) as missing:
+        write_compare_json(compare_id, "metadata.json", {"status": "completed"})
+    assert str(missing.value) == (
+        f"compare bucket {bucket} does not exist; create it private"
+    )
+    assert logged == [
+        (
+            "storage_private_bucket_missing",
+            {"bucket": bucket, "error": str(missing.value)},
+        )
+    ]
+    assert client.created == [] and client.written == []
+
+    # Once it is created, it is used. GCS access is IAM, not a bucket policy.
+    client.exists = True
+    write_compare_json(compare_id, "metadata.json", {"status": "completed"})
+    assert client.written == [f"compare/{compare_id}/metadata.json"]
+    assert client.policy_reads == 0
+
+
 class _PolicyTextClient:
     """An existing bucket whose policy read returns the given text."""
 

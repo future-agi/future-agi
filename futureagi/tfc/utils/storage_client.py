@@ -327,9 +327,19 @@ def ensure_bucket(client: Minio, bucket_name: str) -> None:
 class PrivateBucketRefused(Exception):
     """A bucket meant for server-only data that may be readable by others."""
 
-    def __init__(self, bucket_name: str):
-        super().__init__(f"bucket {bucket_name} is not known to be private")
+    def __init__(self, bucket_name: str, message: str | None = None):
+        super().__init__(message or f"bucket {bucket_name} is not known to be private")
         self.bucket_name = bucket_name
+
+
+class PrivateBucketMissing(PrivateBucketRefused):
+    """A private bucket that has to be created in advance and does not exist."""
+
+    def __init__(self, bucket_name: str):
+        super().__init__(
+            bucket_name,
+            f"compare bucket {bucket_name} does not exist; create it private",
+        )
 
 
 # Answers to a policy read that mean the bucket has no policy: none is set,
@@ -379,17 +389,24 @@ def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
     created in advance: the S3 client cannot send ExpectedBucketOwner on the
     bucket and object calls, so it cannot confirm that a bucket of that name
     belongs to this account, and does not create one. GCS buckets are
-    pre-created with IAM, as for ensure_bucket.
+    created in advance, private, with IAM; their access is not a bucket policy,
+    so only their existence is checked. A missing S3 or GCS bucket raises
+    PrivateBucketMissing.
     """
     if bucket_name in _checked_private_buckets:
         return
+    exists = client.bucket_exists(bucket_name)
+    if not exists and STORAGE_BACKEND in ("s3", "gcs"):
+        error = PrivateBucketMissing(bucket_name)
+        logger.error(
+            "storage_private_bucket_missing", bucket=bucket_name, error=str(error)
+        )
+        raise error
     if STORAGE_BACKEND == "gcs":
+        # GCS bucket access is IAM, not a bucket policy the S3 API can read.
         _checked_private_buckets.add(bucket_name)
         return
-    if not client.bucket_exists(bucket_name):
-        if STORAGE_BACKEND == "s3":
-            logger.error("storage_private_bucket_missing", bucket=bucket_name)
-            raise PrivateBucketRefused(bucket_name)
+    if not exists:
         try:
             client.make_bucket(bucket_name)
         except Exception as exc:
