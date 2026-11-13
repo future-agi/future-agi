@@ -26,7 +26,8 @@ var ErrTooManyNewProjects = errors.New("stamp: too many new project names in one
 
 // StampResourceAttrs walks all ResourceSpans in the traces, resolves
 // project_name -> project_id from the auth result, and stamps fi.project_id
-// + fi.org_id onto each ResourceSpans' resource attributes.
+// + fi.org_id onto each ResourceSpans' resource attributes. Versioned projects
+// also receive fi.project_version_id after scoped primary-backed resolution.
 //
 // ResourceSpans with an unresolvable project name are dropped.
 // Returns the number of dropped ResourceSpans (0 in the happy path).
@@ -88,6 +89,8 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 	unresolvable := make(map[string]struct{})
 	for i := 0; i < rss.Len(); i++ {
 		attrs := rss.At(i).Resource().Attributes()
+		// Only the scoped resolver may supply this internal version stamp.
+		clearInternalVersionStamp(attrs)
 		projectName := getStrAttr(attrs, "project_name")
 		projectID, ok := result.GetProjectInWorkspace(result.WorkspaceID, projectName)
 		if !ok || projectID == "" {
@@ -98,6 +101,9 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 		attrs.PutStr("fi.project_id", projectID)
 		attrs.PutStr("fi.org_id", result.OrgID)
 		stampObserveProjectType(attrs, result, projectID)
+		if err := a.stampProjectVersion(ctx, cacheKey, result, projectID, attrs); err != nil {
+			return 0, err
+		}
 	}
 
 	if len(unresolvable) == 0 {
@@ -114,6 +120,16 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 	})
 
 	return before - rss.Len(), nil
+}
+
+// clearInternalVersionStamp removes every producer-supplied copy of the
+// internal version stamp. OTLP resource attributes may repeat a key and
+// Map.Remove deletes only the first match, so a single Remove would let a
+// second copy reach the exporter unvalidated.
+func clearInternalVersionStamp(attrs pcommon.Map) {
+	attrs.RemoveIf(func(key string, _ pcommon.Value) bool {
+		return key == "fi.project_version_id"
+	})
 }
 
 // resourceProjectTypeKey is the resource attribute the fi_instrumentation SDK

@@ -99,14 +99,15 @@ type Session struct {
 
 
 type Trace struct {
-	ID        string
-	ProjectID string
-	Name      string
-	Input     string
-	Output    string
-	SessionID string
-	CreatedAt string
-	Version uint64
+	ID               string
+	ProjectID        string
+	ProjectVersionID string // scoped version resolved at ingestion; empty means unset
+	Name             string
+	Input            string
+	Output           string
+	SessionID        string
+	CreatedAt        string
+	Version          uint64
 }
 
 // Batch collects the DISTINCT curated identities seen across ONE span batch,
@@ -332,8 +333,8 @@ func sessionRow(s Session, now time.Time) map[string]any {
 // be provided. is_deleted=0 (an app soft-delete writes its own higher-_version
 // tombstone). name/session_id are OMITTED when empty so the Nullable columns are
 // SQL NULL (round-tripped by dictGet); tags / metadata / error /
-// error_analysis_status / project_version_id are left to their defaults — the
-// collector has no PG source and the app mirror fills them if it owns the trace.
+// error_analysis_status are left to their defaults. project_version_id comes
+// from the scoped ingestion resolver and is omitted when it was not resolved.
 func traceRow(t Trace, now time.Time) map[string]any {
 	row := map[string]any{
 		"id":         t.ID,
@@ -350,6 +351,9 @@ func traceRow(t Trace, now time.Time) map[string]any {
 	}
 	if t.SessionID != "" {
 		row["session_id"] = t.SessionID
+	}
+	if t.ProjectVersionID != "" {
+		row["project_version_id"] = t.ProjectVersionID
 	}
 	return row
 }
