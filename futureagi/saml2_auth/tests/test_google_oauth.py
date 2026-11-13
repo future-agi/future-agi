@@ -541,7 +541,7 @@ def test_production_callback_logging_redacts_query_and_signed_claims(
     from tfc.settings import settings as production
 
     # Execute the production middleware and both real structured handlers, not
-    # the reduced pytest middleware or a structlog.testing processor bypass.
+    # the reduced pytest middleware or a structlog.testing processor.
     settings.MIDDLEWARE = production.MIDDLEWARE
     settings.BASE_DIR = tmp_path
     monkeypatch.setenv("ENV_TYPE", "production")
