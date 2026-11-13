@@ -4,6 +4,7 @@ Do not import this module from workflows: driver exceptions are inspected here,
 then Temporal carries only a stable application-error type across the boundary.
 """
 
+import re
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from functools import wraps
@@ -15,8 +16,9 @@ from temporalio.exceptions import ApplicationError
 
 logger = structlog.get_logger(__name__)
 
-# Not every OperationalError/InternalError is an outage (bad credentials,
-# statement errors and bad configuration must still terminate the task).
+# Not every OperationalError/InternalError is an outage (the application's bad
+# credentials, statement errors and bad configuration must still terminate the
+# task).
 _TRANSIENT_SQLSTATES = {
     "08000",  # connection exception
     "08001",  # unable to establish connection
@@ -43,6 +45,25 @@ _CONNECTION_MESSAGES = (
     "could not send data to server",
     "consuming input failed",
 )
+# PgBouncer sends its own refusals as SQLSTATE 08P01, the code PostgreSQL uses
+# for real protocol violations, so only these texts mark an outage or
+# maintenance: PostgreSQL unreachable behind the pooler, a crashed server
+# connection, a wait for a server that never came, DISABLE, KILL and a pooler
+# shutdown. server_login_retry is the pooler's own "try again later" for its
+# login to PostgreSQL, whatever cached error newer releases append; the
+# application's own credentials are refused by PgBouncer's client
+# authentication instead. Those and its other 08P01s (startup parameters,
+# limits), and PostgreSQL's own protocol violations, stay non-transient.
+_POOLER_OUTAGE = re.compile(
+    r"\(server_login_retry\)"
+    r"|server conn crashed\?"
+    r"|\bquery_wait_timeout\b"
+    r"|client_login_timeout \(server down\)"
+    r'|\bdatabase "[^"]*" is disabled'
+    r"|\bdatabase removed\b"
+    r"|\bpooler is shutting down\b"
+    r"|\bserver shutting down\b"
+)
 
 
 def _driver_error(exc: BaseException | None) -> psycopg.Error | None:
@@ -59,11 +80,20 @@ def is_transient_database_error(exc: BaseException) -> bool:
     driver = _driver_error(exc)
     if driver is None:
         return False
-    if driver.sqlstate:
-        return driver.sqlstate in _TRANSIENT_SQLSTATES
-    return isinstance(
+    if driver.sqlstate in _TRANSIENT_SQLSTATES:
+        return True
+    if driver.sqlstate not in (None, "08P01") or not isinstance(
         driver, (psycopg.OperationalError, psycopg.InterfaceError)
-    ) and any(text in str(driver).lower() for text in _CONNECTION_MESSAGES)
+    ):
+        return False
+    # A refusal at connect time arrives without a SQLSTATE, inside libpq's
+    # "connection failed: ... FATAL: ..." text.
+    message = str(driver)
+    if _POOLER_OUTAGE.search(message):
+        return True
+    return driver.sqlstate is None and any(
+        text in message.lower() for text in _CONNECTION_MESSAGES
+    )
 
 
 @contextmanager

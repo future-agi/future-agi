@@ -50,6 +50,29 @@ def test_unobserved_submission_is_conservatively_non_retryable():
     assert caught.value.type == "EvalTaskClaimOutcomeUnknown"
 
 
+@pytest.mark.parametrize(
+    "submitted,error_type,non_retryable",
+    [
+        (False, "EvalTaskDatabaseUnavailable", False),
+        (True, "EvalTaskClaimOutcomeUnknown", True),
+    ],
+)
+def test_pooler_refusal_during_claim(submitted, error_type, non_retryable):
+    """Before submission it keeps the retry budget; after, the claim parks."""
+    with pytest.raises(ApplicationError) as caught:
+        with database_control_errors(
+            task_id="synthetic-task",
+            control_activity="claim",
+            claim=True,
+            claim_submitted=lambda: submitted,
+        ):
+            raise psycopg.errors.ProtocolViolation(
+                "server login has been failing, try again later (server_login_retry)"
+            )
+    assert caught.value.type == error_type
+    assert caught.value.non_retryable is non_retryable
+
+
 @pytest.mark.e2e
 @pytest.mark.django_db(transaction=True, databases=["default", "default_direct"])
 @pytest.mark.parametrize("failure", [None, "refused", "08001", "08006"])

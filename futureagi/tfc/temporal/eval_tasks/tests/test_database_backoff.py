@@ -17,6 +17,7 @@ from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 
 from tfc.temporal.eval_tasks import activities, get_activities, get_workflows
 from tfc.temporal.eval_tasks import workflows as wf
+from tfc.temporal.eval_tasks.db_errors import is_transient_database_error
 from tfc.temporal.eval_tasks.tests.test_workflows import (
     _patch_completing_run_entry,
     _patch_noop_reconcile,
@@ -46,8 +47,6 @@ def _db_error(kind="refused"):
 
 @pytest.mark.parametrize("kind", ["refused", "timeout", "lost", "read_only"])
 def test_driver_outage_classification(kind):
-    from tfc.temporal.eval_tasks.db_errors import is_transient_database_error
-
     assert is_transient_database_error(_db_error(kind))
 
 
@@ -63,9 +62,71 @@ def test_driver_outage_classification(kind):
     ],
 )
 def test_configuration_and_deterministic_errors_are_not_outages(exc):
-    from tfc.temporal.eval_tasks.db_errors import is_transient_database_error
-
     assert not is_transient_database_error(exc)
+
+
+# PgBouncer's own refusals while PostgreSQL behind it is unreachable, paused,
+# disabled or killed, or the pooler is restarting (wordings of 1.18 to 1.26).
+# It sends them as SQLSTATE 08P01, or inside libpq's text at connect time.
+_PGBOUNCER_OUTAGES = {
+    "login-retry": (
+        "server login has been failing, try again later (server_login_retry)"
+    ),
+    "login-retry-cached": (
+        "server login has been failing, cached error: connect failed"
+        " (server_login_retry)"
+    ),
+    "server-crashed": "server conn crashed?",
+    "wait-timeout": "query_wait_timeout",
+    "login-timeout": "client_login_timeout (server down)",
+    "disabled": 'database "synthetic_db" is disabled',
+    "killed": "database removed",
+    "pooler-shutdown": "pooler is shutting down",
+    "server-shutdown": "server shutting down",
+}
+
+
+def _at_query_and_connect(message):
+    at_query = OperationalError("writer unavailable")
+    at_query.__cause__ = psycopg.errors.ProtocolViolation(message)
+    at_connect = OperationalError("writer unavailable")
+    at_connect.__cause__ = psycopg.OperationalError(
+        'connection failed: connection to server at "127.0.0.1", port 6432'
+        f" failed: FATAL:  {message}"
+    )
+    return at_query, at_connect
+
+
+@pytest.mark.parametrize(
+    "message", list(_PGBOUNCER_OUTAGES.values()), ids=list(_PGBOUNCER_OUTAGES)
+)
+def test_pgbouncer_outage_refusals_are_transient(message):
+    assert all(map(is_transient_database_error, _at_query_and_connect(message)))
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # PostgreSQL's own protocol violations.
+        "invalid frontend message type 0",
+        'bind message supplies 1 parameters, but prepared statement "" requires 2',
+        "insufficient data left in message",
+        # PgBouncer refusing the client itself, or a statement it ran.
+        "unsupported startup parameter in options: work_mem",
+        "no such user: synthetic_user",
+        '"trust" authentication failed',
+        'password authentication failed for user "synthetic_user"',
+        "no more connections allowed (max_client_conn)",
+        "query_timeout",
+    ],
+)
+def test_protocol_violations_and_pooler_client_refusals_are_not_outages(message):
+    assert not any(map(is_transient_database_error, _at_query_and_connect(message)))
+
+
+def test_pooler_text_under_another_sqlstate_is_not_an_outage():
+    raised = psycopg.errors.RaiseException('database "synthetic_db" is disabled')
+    assert not is_transient_database_error(raised)
 
 
 @pytest.mark.parametrize(
