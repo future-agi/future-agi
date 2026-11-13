@@ -7,6 +7,9 @@ logic and are unit-tested directly; the wrappers add heartbeating and OTel
 context propagation, mirroring ``tfc/temporal/evaluations/activities.py``.
 """
 
+import asyncio
+import time
+
 import structlog
 from django.db import close_old_connections
 from temporalio import activity
@@ -549,6 +552,16 @@ def _prewarm_instant_summary(task_id: str) -> None:
 # =============================================================================
 
 
+# Poll a busy sampling cohort lease until it can have expired.
+_BUSY_LEASE_POLL_SECONDS = 10
+_BUSY_LEASE_MARGIN_SECONDS = 30
+_busy_clock = time.monotonic
+
+
+async def _busy_wait(seconds: float) -> None:
+    await asyncio.sleep(seconds)
+
+
 @activity.defn
 async def reconcile_eval_task_activity(
     input: ReconcileActivityInput,
@@ -557,12 +570,32 @@ async def reconcile_eval_task_activity(
         EvalTaskReadBudgetExceeded,
         EvalTaskSelectionRejected,
     )
+    from tracer.services.eval_tasks.sampling.errors import SamplingReconcileBusy
+    from tracer.services.eval_tasks.sampling.service import reconcile_lease_duration
 
     try:
         async with Heartbeater():
-            result = await otel_sync_to_async(_reconcile_sync, thread_sensitive=False)(
-                input.task_id
+            # A reconcile that was killed or cancelled (deploy, pause + rerun)
+            # keeps its cohort lease until the lease expires. Wait that lease
+            # out here, heartbeating, instead of spending the activity's short
+            # retry budget inside the lease window and failing the task. A lease
+            # that is still held after a full lease period belongs to a live,
+            # renewing reconcile: report busy as before.
+            busy_deadline = (
+                _busy_clock()
+                + reconcile_lease_duration().total_seconds()
+                + _BUSY_LEASE_MARGIN_SECONDS
             )
+            while True:
+                try:
+                    result = await otel_sync_to_async(
+                        _reconcile_sync, thread_sensitive=False
+                    )(input.task_id)
+                    break
+                except SamplingReconcileBusy:
+                    if _busy_clock() >= busy_deadline:
+                        raise
+                    await _busy_wait(_BUSY_LEASE_POLL_SECONDS)
             logger.info(
                 "eval_task_reconciled",
                 task_id=result["task_id"],
