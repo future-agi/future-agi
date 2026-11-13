@@ -1,4 +1,5 @@
 import re
+from typing import Any
 
 import pandas as pd
 import structlog
@@ -59,6 +60,8 @@ def generate_annotations_task(
             workspace__is_default=True,
             workspace__organization=org,
         )
+    if annotation.dataset_id is None:
+        raise Dataset.DoesNotExist("Auto annotation requires an annotation dataset")
     dataset = Dataset.no_workspace_objects.get(
         workspace_scope,
         id=annotation.dataset_id,
@@ -366,7 +369,7 @@ class AutoAnnotation:
                             )
                         except ImportError:
 
-                            def llm_usage_properties(obj):
+                            def llm_usage_properties(obj: Any) -> dict[str, int]:
                                 return {}
 
                         actual_cost = 0
