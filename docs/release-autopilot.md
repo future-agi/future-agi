@@ -25,7 +25,7 @@ Only the exact value `on` enables a switch.
 | `RELEASE_AUTO_APPROVE` | Off | Set `on` to let migration-free tag pushes use `production-auto` instead of `Production`. Independent of PR auto-merge. |
 | `RELEASE_AUTOPILOT_REQUIRED_CHECKS` | `Backend Tests Pass`, `E2E Tests Pass` | Comma- or newline-separated exact check/status names, added to that fixed minimum (they can never remove one). Every name must succeed on the current PR head SHA. An explicitly nonempty but name-free list is invalid, not an empty gate. A name that no workflow reports, for example a misspelling, makes every release wait with the "no result" reason below. |
 | `RELEASE_AUTOPILOT_MIN_AGE_MINUTES` | `30` | Non-negative integer minutes since the PR's last update (0–999999). The exact threshold is inclusive; malformed or future timestamps stop the merge. |
-| `AUTOPILOT_HOURS_UTC` | No time-of-day restriction | Optional `HH-HH`, start inclusive and end exclusive, e.g. `04-15`. Overnight windows such as `22-06` work; `00-24` is all day. Equal endpoints and malformed windows stop automation. |
+| `AUTOPILOT_HOURS_UTC` | No time-of-day restriction | Optional `HH-HH`, start inclusive and end exclusive, e.g. `04-15`. Overnight windows such as `22-06` work; `00-24` is all day. Equal endpoints and malformed windows stop automation. The low-risk PR autopilot (`docs/pr-autopilot.md`) reads the same repository variable, so a change applies to both. |
 | `RELEASE_AUTOPILOT_WEEKENDS` | Off | Set `on` to allow Saturday/Sunday UTC. The day is the current UTC day, including for an overnight window. |
 
 **Who can change the switches.** Any member with the Write role can create,
@@ -111,8 +111,10 @@ changes none of them.
     `release-autopilot` on `main`, run it and read the key, and a leaked key
     outlives the later settings. So the owner first turns Actions approvals
     off, adds the last-push ruleset, creates the environments with their
-    branch rules and completes the release-bot key custody below. Then the
-    owner confirms on a throwaway PR into `dev` that GitHub refuses an
+    branch rules, completes the release-bot key custody below and finishes
+    the whole one-time baseline in the `deploy_github.tf` header, so that
+    its dismissals never remove an approval this App made. Then the owner
+    confirms on a throwaway PR into `dev` that GitHub refuses an
     approval by a branch workflow's `GITHUB_TOKEN`, and only then adds the
     approver variable and key. If the key was stored anywhere a branch
     workflow could read before that, generate a new private key, delete the
@@ -180,25 +182,43 @@ changes none of them.
   and that no document classifies, `ORG_READ_TOKEN` and `EE_REPO_READ_TOKEN`
   here among them, and three checks: fine-grained Active tokens, the
   organisation's restriction on classic tokens, and each App installation's
-  repositories. Last before the deployment apply, the one-time baseline in
-  the `deploy_github.tf` header runs here too, on every unmerged PR, open or
-  closed: bot approvals are dismissed, and each PR whose final head a bot
-  pushed is reviewed in full by a person who did not author, push to or
-  approve it, or closed. On 12 Nov that flagged eleven open PRs into `dev`
-  (fixibot and the release bot) and eight fork heads pushed by `cursor[bot]`
-  or `github-actions[bot]`; the header lists them. Two of the header's
-  baseline checks run earlier, inside the key custody. The tag sweep runs
-  once the `v*` tag ruleset below is active and before any environment that
-  admits tags gets a key copy: it deletes each `v*` tag whose commit is not
-  on `main`, or cuts it again under a name that no key environment admits.
-  On 12 Nov that was `v1.1.4-dev`, `v1.1.5-dev`,
-  `v1.31.1-pr2381-ci.0419d696f` and `v1.31.1-pr2400.4feedeacf5`. Then,
-  before the newly generated key reaches any environment, a person who
-  authored, pushed or approved none of the commits that touched them reads
-  the key jobs' workflow files and scripts once, in full, at each branch
-  the jobs run from and at each `v*` tag that stays. The header lists the
-  files and the listing check for modules that could shadow the ones these
-  scripts import.
+  repositories. The one-time baseline in the `deploy_github.tf` header runs
+  here too, on every unmerged PR, open or closed: bot approvals are
+  dismissed, and each PR whose final head a bot pushed is reviewed in full
+  by a person who did not author, push to or approve it, or closed. On
+  12 Nov that flagged eleven open PRs into `dev` (fixibot and the release
+  bot) and eight fork heads pushed by `cursor[bot]` or
+  `github-actions[bot]`; the header lists them. The header moves the key in
+  six steps, in future-agi, deployment, docs, agent-learning-kit and
+  futureagi-sdk:
+  1. review rules on every admitted and fixed-ref branch (Actions approvals
+     off and the last-push ruleset);
+  2. the environments with their rules and no key, the `v*` tag ruleset,
+     the tag sweep, and each key job naming its environment. The sweep
+     deletes each `v*` tag whose commit is not on `main`, or cuts it again
+     under a name that no key environment admits. On 12 Nov that was
+     `v1.1.4-dev`, `v1.1.5-dev`, `v1.31.1-pr2381-ci.0419d696f` and
+     `v1.31.1-pr2400.4feedeacf5`;
+  3. delete the organisation secret and every repository copy. Generate the
+     new private key first and hold it outside GitHub, because GitHub
+     refuses to delete an App's only key, then delete every old key. Finish
+     the credential and Apps checks;
+  4. dismiss bot approvals and flag bot-pushed heads, the baseline's first
+     two checks;
+  5. the one-time read: a person who authored, pushed or approved none of
+     the commits that touched them reads the key jobs' workflow files and
+     scripts once, in full, at each branch the jobs run from and at each
+     `v*` tag that stays, and records each tip SHA. In deployment this step
+     is the history check's tree read and first range;
+  6. the new key goes into the environments.
+
+  Release jobs that use the key, the release autopilot's `merge` job
+  included, stop working from step 3 to step 6. The dismissals come after
+  the deletion because the old key can post a new approval until it is
+  deleted. The rest of the baseline runs last before the deployment apply.
+  The header lists the files to read and the listing check for modules
+  and bytecode that could shadow the ones these scripts import. Where this
+  text and the header differ, follow the header.
   Hold the key only in environment secrets whose deployment branch policy
   admits only refs that one writer cannot create or merge into alone, and
   delete the organisation secret and the repository copies. "Protected
@@ -210,9 +230,8 @@ changes none of them.
   approval on, with the same untested bot-push caveat), and add the tag
   ruleset below before an environment that admits tags gets the key. A job
   that names an environment still reads organisation secrets, so every job
-  below names its environment first, and the organisation secret is deleted
-  last. Then generate a new private key for the release-bot App and delete the
-  old ones, because any branch workflow could read the old key. The other
+  below names its environment before the organisation secret is deleted
+  (steps 2 and 3 above). The other
   remedy, a separate App for deployment bumps under the same custody, is
   described in those deployment documents. The separate App covers only
   `future-agi/deployment`. This repository still needs the move, because the
@@ -759,8 +778,10 @@ candidate backend image with the backend's environment (read from the branch's
 code, not run). It sees every installed Django app, ee's included, and stops
 the first region at `migration-check-failed` (pending migrations exit 1, so
 the line reads `migration-check-failed; exit 1`). A check that never ran or
-did not finish (`migration-check-did-not-run`, `migration-check-did-not-finish`
-or `migration-check-timeout`) is an infrastructure failure, not a sign of
+did not finish, or whose Job the cluster API did not return three times in a
+row (`migration-check-did-not-run`, `migration-check-did-not-finish`,
+`migration-check-timeout` or `migration-check-read-failed`), is an
+infrastructure failure, not a sign of
 migrations; a person re-runs the failed job without the migrate procedure
 (`docs/auto-deploy.md`, "Applying migrations after a failed check"). A
 third-party app's migrations from a dependency bump are in the same position. What that check will not
