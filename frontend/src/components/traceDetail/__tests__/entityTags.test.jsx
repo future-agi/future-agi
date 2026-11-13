@@ -280,6 +280,125 @@ describe("scoped entity tag writes", () => {
     );
   });
 
+  it("builds each successive bulk add on each item's acknowledged result", async () => {
+    const child = {
+      ...entity,
+      tag_target: { ...target, span_id: "child" },
+    };
+    const revisions = new Map([
+      ["root-1", 0],
+      ["child", 0],
+    ]);
+    const save = async (_url, body) => {
+      const revision = revisions.get(body.span_id);
+      if (body.expected_tag_revision !== revision) throw { statusCode: 409 };
+      revisions.set(body.span_id, revision + 1);
+      return {
+        data: {
+          result: {
+            tags: [{ name: "sdk" }, ...body.tags],
+            manual_tags: body.tags,
+            source_tag_names: ["sdk"],
+            tag_revision: revision + 1,
+          },
+        },
+      };
+    };
+    axios.patch.mockImplementation(save);
+    axios.post.mockImplementation(save);
+    renderEditor({
+      bulkItems: [
+        { id: "root-1", type: "trace", entity, currentTags: entity.tags },
+        { id: "child", type: "span", entity: child, currentTags: child.tags },
+      ],
+    });
+    nextTag.name = "a";
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith("Tags applied to 2 items", {
+        variant: "success",
+      }),
+    );
+    nextTag.name = "b";
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(revisions.get("child")).toBe(2));
+    for (const method of [axios.patch, axios.post]) {
+      expect(method.mock.calls[1][1]).toMatchObject({
+        expected_tag_revision: 1,
+        tags: [
+          { name: "a", color: "#123456" },
+          { name: "b", color: "#123456" },
+        ],
+      });
+    }
+    expect(enqueueSnackbar).not.toHaveBeenCalledWith(
+      expect.stringContaining("changed. Refresh"),
+      expect.anything(),
+    );
+  });
+
+  it("retries a partially failed bulk add without losing successful revisions", async () => {
+    const child = {
+      ...entity,
+      tag_target: { ...target, span_id: "child" },
+    };
+    axios.patch
+      .mockResolvedValueOnce(success())
+      .mockResolvedValueOnce(success(2));
+    axios.post
+      .mockRejectedValueOnce({ statusCode: 503 })
+      .mockResolvedValueOnce(success());
+    renderEditor({
+      bulkItems: [
+        { id: "root-1", type: "trace", entity, currentTags: entity.tags },
+        { id: "child", type: "span", entity: child, currentTags: child.tags },
+      ],
+    });
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        expect.stringContaining("Some items may have been updated."),
+        { variant: "error" },
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Add test tag")).not.toBeDisabled(),
+    );
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
+    expect(axios.patch.mock.calls[1][1]).toMatchObject({
+      expected_tag_revision: 1,
+      tags: [{ name: "reviewed", color: "#123456" }],
+    });
+    expect(axios.post.mock.calls[1][1]).toMatchObject({
+      expected_tag_revision: 0,
+      tags: [{ name: "reviewed", color: "#123456" }],
+    });
+  });
+
+  it("uses a newer entity revision even when its tags are deep-equal", async () => {
+    const client = new QueryClient();
+    const popover = (selected) => (
+      <QueryClientProvider client={client}>
+        <AddTagsPopover
+          open
+          anchorEl={document.body}
+          onClose={vi.fn()}
+          entity={selected}
+          currentTags={entity.tags}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(popover(entity));
+    rerender(popover({ ...entity, tag_revision: 1 }));
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() => expect(axios.patch).toHaveBeenCalledTimes(1));
+    expect(axios.patch.mock.calls[0][1].expected_tag_revision).toBe(1);
+  });
+
   it("wires the inline span editor to its physical span target", async () => {
     const client = new QueryClient();
     render(

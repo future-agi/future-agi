@@ -25,15 +25,18 @@ const AddTagsPopover = ({
   currentTags = EMPTY_TAGS,
   onSuccess,
 }) => {
-  const items = Array.isArray(bulkItems) ? bulkItems : [];
+  const items = React.useMemo(
+    () => (Array.isArray(bulkItems) ? bulkItems : EMPTY_TAGS),
+    [bulkItems],
+  );
   const isBulk = items.length > 1;
   const selectedEntity = items.length === 1 ? items[0].entity : entity;
   const selectedTags =
     items.length === 1 ? items[0].currentTags || EMPTY_TAGS : currentTags;
   const saveEntityTags = useSaveEntityTags();
 
-  // The last acknowledged single save of each entity (tagTargetKey ->
-  // result). The owner's entity and tags can be older than it (a drawer
+  // The last acknowledged save of each entity (tagTargetKey -> result).
+  // The owner's entity and tags can be older than it (a drawer
   // refetch or a grid row update lands later), and the popover can be
   // reopened, or moved to another entity and back, before they catch up.
   const acknowledged = React.useRef(new Map());
@@ -64,7 +67,7 @@ const AddTagsPopover = ({
     // another entity; the entity is read through a ref so a new object for
     // the same entity does not reseed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, selectedTags, selectedKey, isBulk]);
+  }, [open, selectedTags, selectedKey, selectedEntity?.tag_revision, isBulk]);
 
   const { mutate: saveTags, isPending } = useMutation({
     // The saved entity travels with the request: the owner can select another
@@ -75,7 +78,10 @@ const AddTagsPopover = ({
         // Backend PATCH replaces tags[], so we compute the full set here.
         return Promise.allSettled(
           items.map((item) => {
-            const merged = normalizeTags(item.currentTags || []);
+            const base = latestTagState(item.entity, acknowledged.current);
+            const merged = normalizeTags(
+              base === item.entity ? item.currentTags || [] : base.tags || [],
+            );
             newTags.forEach((t) => {
               if (!merged.some((e) => e.name === t.name)) merged.push(t);
             });
@@ -83,9 +89,18 @@ const AddTagsPopover = ({
               entity: item.entity,
               type: item.type,
               tags: merged,
+              base,
             });
           }),
         ).then((results) => {
+          results.forEach((result, index) => {
+            if (result.status === "fulfilled") {
+              acknowledged.current.set(
+                tagTargetKey(items[index].entity),
+                result.value,
+              );
+            }
+          });
           const failed = results.find((result) => result.status === "rejected");
           if (failed) throw failed.reason;
           return results;
@@ -98,8 +113,9 @@ const AddTagsPopover = ({
         base,
       });
     },
-    onSuccess: (result, { entity: savedEntity, type }) => {
-      if (!isBulk) {
+    onSuccess: (result, { entity: savedEntity, type, tags: savedTags }) => {
+      if (isBulk) confirmedTags.current = savedTags;
+      else {
         acknowledged.current.set(tagTargetKey(savedEntity), result);
         // Show it only if the popover still edits the entity it was saved for.
         if (
@@ -122,7 +138,7 @@ const AddTagsPopover = ({
       onSuccess?.(result, isBulk ? undefined : { entity: savedEntity, type });
     },
     onError: (error) => {
-      if (!isBulk) setTags(confirmedTags.current);
+      setTags(confirmedTags.current);
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
       enqueueSnackbar(
         `${isBulk ? "Some items may have been updated. " : ""}${tagUpdateErrorMessage(error)}`,
