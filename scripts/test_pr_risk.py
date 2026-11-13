@@ -2674,6 +2674,17 @@ class ControllerTests(unittest.TestCase):
         self.assertIn(f"Head: `{head}`.", body)
         self.assertEqual(self.api.compared[-2:], [(head, BASE), (HEAD, BASE)])
 
+    def test_a_force_push_back_to_an_older_dev_commit_also_gets_the_new_comment(self):
+        # The merge base changes, so the bot cannot tell this from a merge of dev.
+        note, head, start = self.overtake_live_note(merge_dev=False)
+        self.api.force_pushes.append((HEAD, head))
+        self.api.pr["base"]["sha"] = older = "9" * 40
+        self.prepare()
+        self.assertEqual(self.comment_writes(start), [("POST", "issues/42/comments"),
+                                                      ("PATCH", f"issues/comments/{note['id']}")])
+        self.assertEqual(self.behind_again(), [risk.BEHIND_DEV_AGAIN.format(head=head)])
+        self.assertEqual(self.api.compared[-2:], [(head, older), (HEAD, BASE)])
+
     def test_a_note_on_a_head_whose_merge_base_is_unknown_gets_the_new_comment(self):
         # Anyone with write access can edit the note, and GitHub answers 404
         # for a commit it does not know. When in doubt the author is told.

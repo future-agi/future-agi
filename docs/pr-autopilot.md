@@ -498,8 +498,10 @@ pusher. So steps 2 to 5 come before the key is added in step 6.
    head, and the new head has taken in `dev` since that head. This happens
    when the author merges `dev` in and pushes, and `dev` moves again before
    the first run on the new head. The bot compares both heads with the live
-   `dev` tip (GitHub's compare API). If their merge bases differ, the new
-   head has taken in `dev`. A new head that only adds commits keeps the
+   `dev` tip (GitHub's compare API). If their merge bases differ, the bot
+   treats the new head as having taken in `dev`. A force push that moves the
+   branch back to an older `dev` commit also changes the merge base, so it
+   gets the comment too. A new head that only adds commits keeps the
    merge base and gets only the edit, because the author was already told
    about that wait. If the older head's compare fails, a merge base is
    missing, or the note names no head, the bot posts the comment. Anyone

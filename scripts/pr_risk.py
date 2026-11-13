@@ -1728,10 +1728,11 @@ def tell_author_again(api, comments, head, tip, compare):
     note names an older head and `head` has taken in dev since: its merge base
     with the tip (`compare`, for `head`) differs from the noted head's. The
     author merged dev in, and dev moved again before a run compared the new
-    head. A plain push on a behind head keeps the merge base, and the author
-    was told already. Anyone with write access can edit the note, so the head
-    it names decides only this comment. If that head or either merge base is
-    unknown, the comment is posted."""
+    head. A force push back to an older dev commit also changes the merge
+    base and gets the comment. A plain push on a behind head keeps the merge
+    base, and the author was told already. Anyone with write access can edit
+    the note, so the head it names decides only this comment. If that head
+    or either merge base is unknown, the comment is posted."""
     note = standing_note(comments, BEHIND_DEV_MARKER)
     if not note:
         return False
