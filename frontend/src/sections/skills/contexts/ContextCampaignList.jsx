@@ -28,11 +28,11 @@ export default function ContextCampaignList({ query, availability, enabled = fal
               : records.length === 0 ? (!off && <EmptyState title="No repository rollouts yet" description="Rollouts start from a repository inventory. None has been prepared for this workspace yet." />)
                 : <Box sx={{ minWidth: 0 }}>
                   <TableContainer><Table size="small" aria-label="Repository rollouts">
-                    <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Rollout</TableCell><TableCell>Targets</TableCell><TableCell>State</TableCell><TableCell>Review</TableCell></TableRow></TableHead>
-                    <TableBody>{records.map((campaign) => <TableRow hover key={campaign.id} sx={{ height: ROW_HEIGHT.default }}>
-                      <TableCell><Typography variant="s1">{campaign.name}</Typography><Typography component="div" variant="s3" color="text.secondary">Revision {campaign.revision}{campaign.parentCampaignId ? ' · Follows an earlier rollout' : ''}</Typography></TableCell>
-                      <TableCell>{campaign.targetCount}</TableCell><TableCell><StatusBadge status={campaign.status} /></TableCell>
-                      <TableCell><Button size="small" variant="outlined" onClick={() => onOpen(campaign.id)} aria-label={`Review ${campaign.name}, revision ${campaign.revision}`}>{off ? 'View rollout' : 'Review rollout'}</Button></TableCell>
+                    <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Rollout</TableCell><TableCell>Targets</TableCell><TableCell>State</TableCell><TableCell>Review</TableCell></TableRow></TableHead>
+                    <TableBody>{records.map((campaign) => <TableRow hover key={campaign.id} sx={{ height: { xs: 'auto', sm: ROW_HEIGHT.default }, display: { xs: 'grid', sm: 'table-row' }, gridTemplateColumns: 'minmax(0, 1fr) auto', py: { xs: 1, sm: 0 }, '& > td': { borderBottom: { xs: 0, sm: undefined } } }}>
+                      <TableCell sx={{ gridColumn: '1 / -1', overflowWrap: 'anywhere' }}><Typography variant="s1">{campaign.name}</Typography><Typography component="div" variant="s3" color="text.secondary">Revision {campaign.revision}{campaign.parentCampaignId ? ' · Follows an earlier rollout' : ''}</Typography></TableCell>
+                      <TableCell><Typography variant="s1">{campaign.targetCount}<Box component="span" sx={{ display: { xs: 'inline', sm: 'none' } }}> targets</Box></Typography></TableCell><TableCell><StatusBadge status={campaign.status} /></TableCell>
+                      <TableCell sx={{ gridColumn: '1 / -1' }}><Button size="small" variant="outlined" onClick={() => onOpen(campaign.id)} aria-label={`Review ${campaign.name}, revision ${campaign.revision}`}>{off ? 'View rollout' : 'Review rollout'}</Button></TableCell>
                     </TableRow>)}</TableBody>
                   </Table></TableContainer>
                   <DataTablePagination page={page - 1} pageSize={25} total={data.count} onPageChange={(next) => onPageChange(next + 1)} pageSizeOptions={[25]} disabled={query.isFetching} />

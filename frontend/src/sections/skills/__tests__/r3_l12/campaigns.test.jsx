@@ -105,6 +105,13 @@ describe('independent observations and availability', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Repository fingerprints' }));
     expect(screen.getByText(/Planned repository ID 100/)).toBeInTheDocument();
   });
+  it('keeps a zero repository identifier in technical details without exposing it in the summary', () => {
+    render(<ContextCampaignTargetDrawer target={{ ...target, repository: { ...target.repository, repositoryId: 0 } }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
+    expect(screen.getByText('Repository main · project root')).toBeVisible();
+    expect(screen.queryByText('Repository ID 0')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Repository fingerprints' }));
+    expect(screen.getByText('Repository ID 0')).toBeVisible();
+  });
   it('renders remote diff text literally', () => {
     render(<ContextCampaignTargetDrawer target={{ ...target, plan: { ...target.plan, changes: [{ ...target.plan.changes[0], diffPreview: '<img src=x onerror=alert(1)>' }] } }} open onClose={vi.fn()} onDecision={vi.fn()} observations={observations} />);
     expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeInTheDocument();

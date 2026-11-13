@@ -49,7 +49,7 @@ export default function ContextCampaignTargetDrawer({ target, open, onClose, dec
         <TextField fullWidth multiline minRows={2} size="small" label="Review or exclusion reason" value={decision.reason} disabled={!editable} onChange={(event) => onDecision({ ...decision, reason: event.target.value })} inputProps={{ maxLength: 500 }} sx={{ mt: 1 }} />
       </Section>}
       <TechnicalDetails title="Repository fingerprints">
-        <IdentityChip value={target.desiredDigest} label="Release digest" /><Typography variant="s3">Repository ID {target.repository?.repositoryId || 'Not reported'}</Typography>
+        <IdentityChip value={target.desiredDigest} label="Release digest" /><Typography variant="s3">Repository ID {target.repository?.repositoryId ?? 'Not reported'}</Typography>
         <IdentityChip kind="id" label="Release ID" value={target.desiredVersionId} />
         {target.plan && <Stack spacing={1}><Typography variant="s3">Planned repository ID {target.plan.repositoryId}</Typography><IdentityChip label="Base commit" value={target.plan.baseCommit} /><IdentityChip label="Plan" value={target.planDigest} /><IdentityChip label="Previous lock" value={target.plan.previousLockDigest || 'None — cold adoption'} /><IdentityChip label="Materialization" value={target.plan.materializationDigest} /></Stack>}
       </TechnicalDetails>

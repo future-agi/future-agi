@@ -7,6 +7,7 @@ import { createServer } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const output = path.resolve(process.argv[2] || '/tmp/ops-r7-shots');
+const captureOnly = process.env.OPS_CAPTURE_ONLY;
 await fs.mkdir(output, { recursive: true });
 const mocks = `
 import { useEffect, useState } from 'react';
@@ -51,7 +52,7 @@ function App() {
  let content;
  if (screen.startsWith('rollouts')) content = <ContextCampaignList query={{ data: { count: screen === 'rollouts-list' ? 1 : 0, results: screen === 'rollouts-list' ? [campaign] : [] }, refetch: () => {} }} availability={{}} enabled={screen !== 'rollouts-off'} state={params.get('state')} onOpen={() => {}} page={1} onPageChange={() => {}} />;
  else if (screen.startsWith('rollout-')) content = <ContextCampaignReview campaign={campaign} targets={targets} onAuthorize={async () => {}} onStatus={async () => {}} onRollback={async () => {}} selectedTarget={selected} onSelectTarget={setSelected} observations={{ data: {} }} />;
- else if (screen.startsWith('consumers')) content = <ContextConsumersView registrationAction={<Box><Button variant='outlined'>Register application target</Button></Box>} scopeKey='fixture' state={params.get('state') || 'ready'} data={{ results: cohort.map((row) => ({ ...row, resolved: null, installed: null, discovered: null, observationAgeSeconds: 3.447751 })), asOf: '2026-11-13T01:46:04.943460Z', count: 2, page: 1, pageSize: 25 }} versionNumbers={{ 'release-1': 1, 'release-2': 2 }} onWindowChange={() => {}} onPageChange={() => {}} onRetry={() => {}} />;
+ else if (screen.startsWith('consumers')) content = <ContextConsumersView registrationAction={<Box><Button variant='outlined'>Register application target</Button></Box>} scopeKey='fixture' state={params.get('state') || 'ready'} data={{ results: cohort.map((row) => ({ ...row, binding: { ...row.binding, name: screen === 'consumers-long-name' ? row.binding.name.toLowerCase().replaceAll(' ', '-') + '-regional-runtime-with-a-long-deployment-identifier' : row.binding.name }, resolved: null, installed: null, discovered: null, observationAgeSeconds: 3.447751 })), asOf: '2026-11-13T01:46:04.943460Z', count: 2, page: 1, pageSize: 25 }} versionNumbers={{ 'release-1': 1, 'release-2': 2 }} onWindowChange={() => {}} onPageChange={() => {}} onRetry={() => {}} />;
  else content = <J6RecoveryPanel contextId='context' contextName='Support policy' />;
  return <Box sx={{ px: { xs: 2, md: 3 }, py: 2, minWidth: 0 }}><Typography variant='s3' color='text.secondary' sx={{ display: 'block', mb: 1.5 }}>Synthetic UI fixture · no repository writes or production changes</Typography>{content}</Box>;
 }
@@ -80,6 +81,7 @@ try {
   const cases = [['rollouts-off'], ['rollouts-list'], ['rollouts-empty', 'empty'], ['rollouts-loading', 'loading'], ['rollouts-error', 'error'], ['rollout-review'], ['rollout-target-drawer'], ['recovery-review'], ['recovery-await'], ['recovery-verify'], ['recovery-empty', 'empty'], ['recovery-loading', 'loading'], ['recovery-error', 'error'], ['recovery-limit', 'inventory-limit'], ['recovery-candidates'], ['consumers'], ['consumers-drawer'], ['consumers-empty', 'empty'], ['consumers-loading', 'loading'], ['consumers-error', 'error']];
   for (const theme of ['light', 'dark']) {
     for (const [screen, state] of cases) {
+      if (captureOnly && screen !== captureOnly) continue;
       const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
       process.stdout.write(`Capture ${screen} ${theme}\n`);
       page.on('console', (message) => { if (message.type() === 'error') process.stderr.write(`${screen}: ${message.text()}\n`); });
@@ -116,16 +118,32 @@ try {
       await page.close();
     }
   }
-  for (const screen of ['rollouts-off', 'rollout-review', 'recovery-review', 'recovery-candidates', 'consumers', 'consumers-drawer']) {
+  for (const screen of ['rollouts-off', 'rollouts-list', 'rollout-review', 'rollout-target-drawer', 'recovery-review', 'recovery-candidates', 'consumers', 'consumers-long-name', 'consumers-drawer']) {
+    if (captureOnly && screen !== captureOnly) continue;
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
     page.on('pageerror', (error) => { errors.push(error.message); process.stderr.write(`${screen}: ${error.message}\n`); });
     await page.goto(`${origin}/ops-r7?screen=${screen}`);
     await page.getByText('Synthetic UI fixture · no repository writes or production changes').waitFor({ timeout: 60000 });
     if (screen === 'consumers-drawer') await page.getByRole('button', { name: 'Inspect Support application' }).click();
+    if (screen === 'rollout-target-drawer') await page.getByRole('button', { name: 'Review target support-repository-01' }).click();
     if (screen === 'recovery-candidates' && !(await page.getByRole('button', { name: 'Choose v1' }).isVisible())) await page.getByRole('button', { name: 'Change', exact: true }).click();
     await page.evaluate(() => document.fonts.ready);
+    await page.screenshot({ path: path.join(output, `${screen}-390.png`), animations: 'disabled' });
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${screen} mobile overflow`);
-    const name = `${screen}-390.png`; await page.screenshot({ path: path.join(output, name), animations: 'disabled' }); captures.push(name);
+    assert(await page.locator('.MuiTableContainer-root').evaluateAll((containers) => containers.every((container) => container.scrollWidth <= container.clientWidth)), `${screen} mobile table clipping`);
+    if (screen === 'rollout-target-drawer') {
+      const next = await page.getByRole('button', { name: 'Next target needing review' }).boundingBox();
+      assert(next && next.y + next.height <= 900, 'Next target stays in the mobile drawer footer');
+      const close = page.getByRole('button', { name: 'Close target' });
+      assert.equal(await close.locator('svg').count(), 1, 'Target close glyph renders');
+    }
+    captures.push(`${screen}-390.png`);
+    if (screen === 'consumers-long-name') {
+      await page.getByRole('button', { name: 'Inspect support-application-regional-runtime-with-a-long-deployment-identifier', exact: true }).click();
+      await page.screenshot({ path: path.join(output, 'consumers-long-drawer-390.png'), animations: 'disabled' });
+      assert(await page.getByRole('dialog').evaluate((drawer) => drawer.scrollWidth <= drawer.clientWidth), 'Long consumer receipt title stays inside the mobile drawer');
+      captures.push('consumers-long-drawer-390.png');
+    }
       if (screen === 'consumers-drawer') {
         const close = page.getByRole('button', { name: 'Close delivery receipts' });
         assert.equal(await close.locator('svg').count(), 1, 'Receipt close glyph renders on first load');
@@ -139,5 +157,5 @@ try {
   }
   assert.deepEqual(errors, []);
   await fs.writeFile(path.join(output, 'result.json'), JSON.stringify({ synthetic: true, captures, errors }, null, 2));
-  process.stdout.write(`PASS ${captures.length} operations component screenshots; light, dark and mobile; no page overflow.\n`);
+  process.stdout.write(`PASS ${captures.length} operations component screenshots; no page or mobile table overflow.\n`);
 } finally { await browser.close(); await server.close(); }
