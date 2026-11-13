@@ -36,9 +36,11 @@
   }));
 
   /* ---------------------------------------------------------------- data swatches inside demos */
-  $$('[data-fill="data"]').forEach((row) => {
+  $$('[data-fill="data"], [data-fill="dataMono"]').forEach((row) => {
+    const set = row.dataset.fill;
+    const cssName = set.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
     row.innerHTML = [1, 2, 3, 4, 5, 6, 7, 8]
-      .map((i) => `<span class="ds-tag"><span class="sw" style="background:var(--ds-data-${i})"></span>data.${i}</span>`)
+      .map((i) => `<span class="ds-tag"><span class="sw" style="background:var(--ds-${cssName}-${i})"></span>${set}.${i}</span>`)
       .join("");
   });
 
@@ -83,7 +85,7 @@
   const sw = (value) => `<span class="sw"><i style="background:${value}"></i>${esc(value.replace(/rgba\(([^)]+)\)/, (m, p) => "rgba(" + p.replace(/\s/g, "") + ")"))}</span>`;
   const semBody = $("#semanticTable tbody");
   leaves(DS.tokens.color)
-    .filter(([name]) => !name.startsWith("status.") && !name.startsWith("data."))
+    .filter(([name]) => !name.startsWith("status.") && !name.startsWith("data.") && !name.startsWith("dataMono."))
     .forEach(([name, leaf]) => {
       const tr = h("tr");
       tr.innerHTML = `<td><span class="mono">${esc(name)}</span><div class="mono" style="color:var(--ds-fg-tertiary);font-size:11px">--ds-${esc(name.replace(/\./g, "-").replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase())}</div></td>

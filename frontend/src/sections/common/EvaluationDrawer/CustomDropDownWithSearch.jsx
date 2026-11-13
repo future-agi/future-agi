@@ -213,7 +213,7 @@ const CustomDropDownWithSearch = ({
             <ListItemText
               primary={option.label}
               primaryTypographyProps={{
-                fontSize: "13px",
+                fontSize: "12px",
                 fontWeight: 400,
                 color: "text.primary",
                 noWrap: true, // this is important for ellipsis

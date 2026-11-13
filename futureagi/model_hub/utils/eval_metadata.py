@@ -159,8 +159,13 @@ def _read_metadata(read: Callable[[], _T], *, using: str) -> _T:
     raise AssertionError("Unreachable metadata retry state")
 
 
-def read_evaluation_column_types(column_ids: Iterable[str | UUID]) -> dict[str, str]:
+def read_evaluation_column_types(
+    column_ids: Iterable[str | UUID], *, dataset_id: str | UUID | None = None
+) -> dict[str, str]:
     columns = Column.objects.filter(id__in=list(column_ids))
+    if dataset_id is not None:
+        # Only the given dataset's columns; ids from other datasets are ignored.
+        columns = columns.filter(dataset_id=dataset_id)
     # Keep routing on the queryset, not its iterable values. Each attempt builds
     # and materializes a fresh values query inside the retry boundary.
     return _read_metadata(
