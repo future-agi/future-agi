@@ -1,7 +1,9 @@
 """Validate an agent, environment and suite pairing with a run-less certify-only job.
 
 The job certifies the pairing's bundle as a pinned run's miss does, but makes no
-TestExecution and places no call. Only a check that ran fails a pairing: an exit 78 or a
+TestExecution and places no simulated call. It does start a build sandbox and, through the
+harness's qualification, talks to the agent: model turns on the agent's own credentials, with
+the simulator's side metered through the platform gateway. Only a check that ran fails a pairing: an exit 78 or a
 certify that ended without a bundle. Any other ending leaves the pairing pending.
 A newer move of the environment's default agent replaces any move still waiting.
 """
