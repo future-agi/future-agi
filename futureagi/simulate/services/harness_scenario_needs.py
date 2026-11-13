@@ -82,7 +82,7 @@ def case_needs(
         f"harness-scenario-needs:{NEEDS_VERSION}:"
         f"{environment_version.id}:{suite_version.id}:{int(connect_only)}"
     )
-    cached = cache.get(cache_key)
+    cached: list[CaseNeeds] | None = cache.get(cache_key)
     if cached is not None:
         return cached
     found = _compute(environment_version, suite_version, connect_only)
@@ -129,10 +129,10 @@ def _compute(
     found = []
     for key, number, content in members:
         content = content if isinstance(content, Mapping) else {}
-        document = by_token.get(_scenario_token(key)) or by_token.get(
+        matched = by_token.get(_scenario_token(key)) or by_token.get(
             _scenario_token(content.get("name"))
         )
-        found.append(_needs(key, number, document, content, catalogue, connect_only))
+        found.append(_needs(key, number, matched, content, catalogue, connect_only))
     unmatched = sum(1 for one in found if not one.recorded)
     if unmatched:
         logger.warning(
