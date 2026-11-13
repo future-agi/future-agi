@@ -142,6 +142,12 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 	// attempt budget. Selection ends once all distinct providers are excluded.
 	attempt := 0
 	for attempt < f.cfg.MaxAttempts {
+		if err := ctx.Err(); err != nil {
+			if lastErr != nil {
+				return nil, lastErr
+			}
+			return nil, err
+		}
 		// Select a target, excluding already-tried providers.
 		var result *RoutingResult
 		var err error
@@ -154,7 +160,7 @@ func (f *Failover) Execute(ctx context.Context, model string, call FailoverCallF
 			if lastErr != nil {
 				return nil, lastErr // Return the actual provider error, not "no targets"
 			}
-			if len(excluded) > 0 {
+			if len(excluded) > 0 || f.router.TargetCount(model) > 0 {
 				return nil, models.ErrServiceUnavailable(fmt.Sprintf("all providers for model %q are unavailable", model))
 			}
 			return nil, err

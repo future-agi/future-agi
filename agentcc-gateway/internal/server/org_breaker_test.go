@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -37,6 +38,10 @@ func newKeyedUpstream(t *testing.T, failStatus int, failing ...string) (*keyedUp
 		k.failing[key] = true
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		k.mu.Lock()
 		k.calls[key]++
@@ -46,6 +51,19 @@ func newKeyedUpstream(t *testing.T, failStatus int, failing ...string) (*keyedUp
 		if fail {
 			w.WriteHeader(k.failStatus)
 			io.WriteString(w, `{"error":{"message":"synthetic upstream failure","type":"server_error"}}`)
+			return
+		}
+		var request struct {
+			Stream bool `json:"stream"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if request.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, "data: {\"id\":\"synthetic\",\"model\":\"adaptive-sample\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"synthetic response\"}}]}\n\ndata: [DONE]\n\n")
 			return
 		}
 		io.WriteString(w, `{"id":"synthetic-completion","object":"chat.completion","model":"adaptive-sample","choices":[{"index":0,"message":{"role":"assistant","content":"synthetic response"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
