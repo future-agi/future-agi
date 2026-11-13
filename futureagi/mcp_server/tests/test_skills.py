@@ -144,7 +144,7 @@ def test_skills_openapi_has_all_routes_and_errors():
         (
             "/model-hub/skills/",
             {
-                "release-requests/": {"post"},
+                "release-requests/": {"get", "post"},
                 "release-requests/preview/": {"post"},
                 "release-requests/{request_id}/": {"get"},
                 "release-requests/{request_id}/decisions/": {"post"},
@@ -185,32 +185,68 @@ def test_skills_openapi_has_all_routes_and_errors():
             "contexts/{context_id}/test-runs/{run_id}/share/": {"post"},
         }.items()
     }
+    # Application verification (native runs and the authenticated guest channel),
+    # the whole-context Tests surface and release-request inspection/renewal are
+    # a further independent addition. Pinned route by route, like the groups above.
+    native_operations = {
+        "/model-hub/skills/" + suffix: allowed
+        for suffix, allowed in {
+            "contexts/{context_id}/native/preview/": {"post"},
+            "contexts/{context_id}/native/runs/": {"get", "post"},
+            "contexts/{context_id}/native/runs/{evidence_id}/": {"get"},
+            "contexts/{context_id}/native/runs/{evidence_id}/share/": {"post"},
+            "contexts/{context_id}/native/runtime-configuration/": {"get"},
+            "contexts/{context_id}/native/targets/": {"get", "post"},
+            "contexts/{context_id}/native/targets/{binding_id}/": {"put"},
+            "contexts/{context_id}/tests/": {"get", "put"},
+            "native/attempts/{attempt_id}/failure/": {"post"},
+            "native/attempts/{attempt_id}/health/": {"post"},
+            "native/attempts/{attempt_id}/observations/": {"post"},
+            "release-requests/inspection/": {"post"},
+            "release-requests/native-evidence/{evidence_id}/share/": {"post"},
+            "release-requests/options/": {"get"},
+            "release-requests/{request_id}/renewal/": {"get", "post"},
+        }.items()
+    }
     authoring_paths = set(authoring_operations)
     workflow_paths = set(workflow_operations)
+    native_paths = set(native_operations)
     assert len(authoring_paths) == 34
     assert len(workflow_paths) == 22
+    assert len(native_paths) == 15
     assert foundation_paths <= paths.keys()
     assert integration_paths <= paths.keys()
     assert authoring_paths <= paths.keys()
     assert workflow_paths <= paths.keys()
+    assert native_paths <= paths.keys()
     assert foundation_paths.isdisjoint(integration_paths)
     assert authoring_paths.isdisjoint(foundation_paths | integration_paths)
     assert workflow_paths.isdisjoint(
         foundation_paths | integration_paths | authoring_paths
     )
+    assert native_paths.isdisjoint(
+        foundation_paths | integration_paths | authoring_paths | workflow_paths
+    )
     legacy_paths = {
         path: item
         for path, item in paths.items()
         if path
-        not in foundation_paths | integration_paths | authoring_paths | workflow_paths
+        not in foundation_paths
+        | integration_paths
+        | authoring_paths
+        | workflow_paths
+        | native_paths
     }
     assert len(legacy_paths) == 46
-    assert len(paths) == 129
+    assert len(paths) == 144
     methods = {"get", "post", "put", "patch", "delete"}
-    for path, allowed in (authoring_operations | workflow_operations).items():
+    for path, allowed in (
+        authoring_operations | workflow_operations | native_operations
+    ).items():
         assert methods.intersection(paths[path]) == allowed, path
-    assert sum(map(len, authoring_operations.values())) == 38
+    assert sum(map(len, authoring_operations.values())) == 39
     assert sum(map(len, workflow_operations.values())) == 24
+    assert sum(map(len, native_operations.values())) == 19
     assert sum(len(methods.intersection(item)) for item in legacy_paths.values()) == 58
     assert (
         sum(len(methods.intersection(paths[path])) for path in foundation_paths) == 11
