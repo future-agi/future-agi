@@ -405,8 +405,11 @@ error tracker, and also check that a new eval task and an Instant eval run
 produce results: a read that misses a fresh write can finish work with
 nothing to do and raise no error. List and detail pages can show data a few
 seconds old while the replica catches up. Reads that must see a fresh write
-(the eval-task logs, the eval-task engine, the span evaluation scan) stay on
-the primary, so they shed no load.
+stay on the primary, so they shed no load: the eval-task logs, the eval-task
+engine, the span evaluation scan and the experiment eval runner it starts, an
+eval config opened, edited or re-run (and the evaluation that re-run starts),
+the SDK's eval config check, a task's eval list on its detail page, and an
+Instant eval task's questions when the run is read.
 
 ```yaml
 postgres:
