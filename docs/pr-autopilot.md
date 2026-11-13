@@ -459,8 +459,9 @@ follow the header.
       because they run main's workflow file whatever branch they report.
       The merged-PR runs, `pull_request` runs created at or after their PR
       was merged, have the branch it merged into as their ref and are
-      deleted (20 such runs on `dev` for the PRs merged from 14 Oct to
-      13 Nov);
+      deleted (20 such runs on `dev` for the PRs updated from 14 Oct to
+      13 Nov). Such a run can start long after the merge, so the PRs are
+      listed by their last update;
    6. the new release-bot key goes into the environments.
 
    Release jobs that use the key stop working from step 3 to step 6, which
