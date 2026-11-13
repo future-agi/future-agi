@@ -283,7 +283,17 @@ describe("scoped entity tag writes", () => {
     );
   });
 
-  it("tells the drawer after an inline span tag save so the grid refreshes", async () => {
+  it("hands the popover's saved result and entity to its owner", async () => {
+    // The trace grid updates that row from these, instead of a list refresh
+    // that would send the user back to page 1.
+    const onSuccess = vi.fn();
+    renderEditor({ onSuccess });
+    fireEvent.click(screen.getByText("Add test tag"));
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1));
+    expect(onSuccess).toHaveBeenCalledWith(success().data.result, entity);
+  });
+
+  it("tells the drawer after an inline span tag save so the grid updates the row", async () => {
     const onTagsSaved = vi.fn();
     render(
       <QueryClientProvider client={new QueryClient()}>
@@ -305,6 +315,10 @@ describe("scoped entity tag writes", () => {
     fireEvent.click(screen.getByRole("button", { name: "tag" }));
     fireEvent.click(screen.getByText("Add test tag"));
     await waitFor(() => expect(onTagsSaved).toHaveBeenCalledTimes(1));
+    expect(onTagsSaved).toHaveBeenCalledWith(
+      success().data.result,
+      expect.objectContaining({ id: "root-1", tag_target: target }),
+    );
   });
 
   it.each([ChatDetailsBar, CallDetailsBar])(

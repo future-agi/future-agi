@@ -5,7 +5,11 @@ import { useLLMTracingStoreShallow } from "./states";
 import { useParams } from "react-router";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 
-const LLMTracingTraceDetailDrawer = ({ refreshGrid, readOnly = false }) => {
+const LLMTracingTraceDetailDrawer = ({
+  refreshGrid,
+  onTagsSaved,
+  readOnly = false,
+}) => {
   const { observeId } = useParams();
   const [evalFocus, , removeEvalFocus] = useUrlState("evalFocus", false);
   const { traceDetailDrawerOpen, setTraceDetailDrawerOpen, visibleTraces } =
@@ -79,6 +83,7 @@ const LLMTracingTraceDetailDrawer = ({ refreshGrid, readOnly = false }) => {
       hasNext={hasNext}
       initialEvalFocus={evalFocus === true}
       refreshParentGrid={refreshGrid}
+      onTagsSaved={onTagsSaved}
       readOnly={readOnly}
     />
   );
@@ -86,6 +91,8 @@ const LLMTracingTraceDetailDrawer = ({ refreshGrid, readOnly = false }) => {
 
 LLMTracingTraceDetailDrawer.propTypes = {
   refreshGrid: PropTypes.func,
+  // Receives (result, entity) after a tag save in the drawer.
+  onTagsSaved: PropTypes.func,
   readOnly: PropTypes.bool,
 };
 

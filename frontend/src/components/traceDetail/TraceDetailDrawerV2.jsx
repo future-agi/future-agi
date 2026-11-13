@@ -147,6 +147,7 @@ const TraceDetailDrawerV2 = ({
   initialSpanId = null,
   initialEvalFocus = false,
   refreshParentGrid,
+  onTagsSaved,
   readOnly = false,
   sharedToken = null,
 }) => {
@@ -1318,7 +1319,7 @@ const TraceDetailDrawerV2 = ({
                     readOnly={readOnly}
                     onSelectSpan={handleViewSpan}
                     initialEvalFocus={initialEvalFocus}
-                    onTagsSaved={refreshParentGrid}
+                    onTagsSaved={onTagsSaved}
                     drawerOpen={open}
                   />
                 </Box>
@@ -1404,7 +1405,7 @@ const TraceDetailDrawerV2 = ({
                     readOnly={readOnly}
                     onSelectSpan={handleViewSpan}
                     initialEvalFocus={initialEvalFocus}
-                    onTagsSaved={refreshParentGrid}
+                    onTagsSaved={onTagsSaved}
                     drawerOpen={open}
                   />
                 ) : (
@@ -1612,7 +1613,9 @@ const TraceDetailDrawerV2 = ({
                 ? getSpan(selectedSpanData)?.tags || []
                 : data?.trace?.tags || []
             }
-            onSuccess={refreshParentGrid}
+            // The grid updates this entity's row in place (tags and
+            // revision); a full grid refresh would reset it to page 1.
+            onSuccess={onTagsSaved}
           />
         )}
 
@@ -1676,6 +1679,8 @@ TraceDetailDrawerV2.propTypes = {
   initialSpanId: PropTypes.string,
   initialEvalFocus: PropTypes.bool,
   refreshParentGrid: PropTypes.func,
+  // Called with (result, entity) after a tag save in the drawer.
+  onTagsSaved: PropTypes.func,
   readOnly: PropTypes.bool,
   sharedToken: PropTypes.string,
 };

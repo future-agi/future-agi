@@ -5,7 +5,7 @@ import { useParams } from "react-router";
 import { useLLMTracingStoreShallow } from "./states";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 
-const LLMTracingSpanDetailDrawer = ({ refreshGrid }) => {
+const LLMTracingSpanDetailDrawer = ({ refreshGrid, onTagsSaved }) => {
   const { observeId } = useParams();
   const [evalFocus, , removeEvalFocus] = useUrlState("evalFocus", false);
   const { spanDetailDrawerOpen, setSpanDetailDrawerOpen, visibleTraces } =
@@ -72,12 +72,15 @@ const LLMTracingSpanDetailDrawer = ({ refreshGrid }) => {
       hasNext={hasNext}
       initialEvalFocus={evalFocus === true}
       refreshParentGrid={refreshGrid}
+      onTagsSaved={onTagsSaved}
     />
   );
 };
 
 LLMTracingSpanDetailDrawer.propTypes = {
   refreshGrid: PropTypes.func,
+  // Receives (result, entity) after a tag save in the drawer.
+  onTagsSaved: PropTypes.func,
 };
 
 export default LLMTracingSpanDetailDrawer;

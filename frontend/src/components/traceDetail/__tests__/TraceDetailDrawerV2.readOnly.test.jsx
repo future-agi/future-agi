@@ -174,14 +174,21 @@ describe("TraceDetailDrawerV2 read-only", () => {
     expect(mocks.spanPaneProps.mock.lastCall[0].readOnly).toBe(true);
   });
 
-  it("refreshes the parent grid after a tag save in the drawer", () => {
-    // The grid row carries the trace's tag revision. A drawer save must make
-    // the grid refetch it, or the next grid edit is refused as stale (409).
+  it("hands each drawer tag save to the grid without a list refresh", () => {
+    // The grid row carries the trace's tag revision. A drawer save must reach
+    // the grid, or the next grid edit is refused as stale (409). A full grid
+    // refresh would also reset the list to page 1, so it is not used.
     const refreshParentGrid = vi.fn();
-    renderDrawer({ refreshParentGrid });
+    const onTagsSaved = vi.fn();
+    renderDrawer({ refreshParentGrid, onTagsSaved });
 
-    mocks.tagsPopoverProps.mock.lastCall[0].onSuccess();
-    mocks.spanPaneProps.mock.lastCall[0].onTagsSaved();
-    expect(refreshParentGrid).toHaveBeenCalledTimes(2);
+    const result = { id: "trace-1", tags: [], tag_revision: 2 };
+    const entity = { tag_target: { trace_id: "trace-1", span_id: "root" } };
+    mocks.tagsPopoverProps.mock.lastCall[0].onSuccess(result, entity);
+    mocks.spanPaneProps.mock.lastCall[0].onTagsSaved(result, entity);
+    expect(onTagsSaved).toHaveBeenCalledTimes(2);
+    expect(onTagsSaved).toHaveBeenNthCalledWith(1, result, entity);
+    expect(onTagsSaved).toHaveBeenNthCalledWith(2, result, entity);
+    expect(refreshParentGrid).not.toHaveBeenCalled();
   });
 });

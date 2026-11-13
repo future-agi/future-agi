@@ -1176,10 +1176,10 @@ const InlineTagsRow = ({ tags = [], entity, readOnly = false, onSaved }) => {
   const { mutate: saveTags, isPending } = useMutation({
     mutationFn: (newTags) =>
       saveEntityTags({ entity, tags: newTags, type: "span" }),
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
       // The parent grid caches tags and their revision outside React Query.
-      onSaved?.();
+      onSaved?.(result, entity);
     },
     onError: (error) => {
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
