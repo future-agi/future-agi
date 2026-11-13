@@ -1,11 +1,16 @@
 import { Box, IconButton } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/prism-light";
+import python from "react-syntax-highlighter/dist/esm/languages/prism/python";
+import typescript from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
 import Iconify from "src/components/iconify";
 import { copyToClipboard } from "src/utils/utils";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { primaryFont } from "src/theme/typography";
+
+SyntaxHighlighter.registerLanguage("python", python);
+SyntaxHighlighter.registerLanguage("typescript", typescript);
 
 const InstructionCodeCopy = ({ text, language, onCopy }) => {
   const onCopyClick = () => {
@@ -54,7 +59,9 @@ const InstructionCodeCopy = ({ text, language, onCopy }) => {
             background: "transparent",
           },
         }}
-        language={language}
+        language={
+          language === "python" || language === "typescript" ? language : "text"
+        }
       >
         {text}
       </SyntaxHighlighter>
