@@ -25,6 +25,7 @@ from simulate.services.harness_versioning.candidate_sets import (
     supersede_candidates,
     validation_available,
     validation_state,
+    version_id_of,
 )
 from simulate.services.harness_versioning.draft_pieces import (
     DRAFT_PIECES,
@@ -195,8 +196,7 @@ def create_candidates(
 
 def _same_versions(entry: CandidateSet | None, versions: Mapping[str, Any]) -> bool:
     return entry is not None and all(
-        entry[f"{piece}_version_id"] == str(versions[piece].id)
-        for piece in DRAFT_PIECES
+        version_id_of(entry, piece) == str(versions[piece].id) for piece in DRAFT_PIECES
     )
 
 
@@ -233,7 +233,8 @@ def validate_drafts(
         for piece, draft in opened.items():
             if expected_revisions.get(piece) != draft.revision:
                 raise edits_moved(piece)
-        if not validation_available(locked):
+        # A pairing that can be validated pins an agent version.
+        if not validation_available(locked) or locked.agent_version_id is None:
             return UNAVAILABLE, False
         versions = create_candidates(locked, opened, reviewed, user=user)
         started = validation.start_validation(
@@ -269,6 +270,7 @@ def validate_drafts(
         }
         store_set(locked, entry)
         state = validation_state(locked, entry)
+    assert state is not None  # a stored candidate set always has a state
     logger.info(
         "harness_drafts_validated",
         environment_id=str(locked.id),

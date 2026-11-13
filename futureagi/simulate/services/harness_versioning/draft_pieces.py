@@ -41,7 +41,9 @@ def piece_of(version: Any) -> str:
     return "environment" if isinstance(version, HarnessEnvironmentVersion) else "suite"
 
 
-def version_error(code: str, message: str, status_code: int, **details: Any):
+def version_error(
+    code: str, message: str, status_code: int, **details: Any
+) -> HostedHarnessError:
     return HostedHarnessError(code, message, status_code=status_code, details=details)
 
 
@@ -59,7 +61,9 @@ def open_draft(
 
 def is_stale(draft: Any, environment: HostedHarnessJob) -> bool:
     """A draft started from a default that has moved since."""
-    return draft.parent_id != getattr(environment, f"{piece_of(draft)}_version_id")
+    return bool(
+        draft.parent_id != getattr(environment, f"{piece_of(draft)}_version_id")
+    )
 
 
 def piece_side(files: Mapping[str, bytes], piece: str) -> dict[str, bytes]:
@@ -67,7 +71,9 @@ def piece_side(files: Mapping[str, bytes], piece: str) -> dict[str, bytes]:
     return split.environment if piece == "environment" else split.suite
 
 
-def piece_files(environment: HostedHarnessJob, piece: str, version: Any):
+def piece_files(
+    environment: HostedHarnessJob, piece: str, version: Any
+) -> dict[str, bytes]:
     """A version's files; an environment with no version yet, or a backfilled version whose
     archive is gone, reads the default pair's side instead."""
     fallback = str(

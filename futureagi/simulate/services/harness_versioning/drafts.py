@@ -44,6 +44,7 @@ from simulate.services.harness_versioning.candidate_sets import (
     live_set,
     validation_available,
     validation_state,
+    version_id_of,
 )
 from simulate.services.harness_versioning.draft_pieces import (
     DRAFT_PIECES,
@@ -633,12 +634,14 @@ def record_draft(
                 values["documents"]["workspace_sealed"] = workspace_sealed
 
             values["documents"]["provenance"] = record_sources(
-                (draft.documents or {}).get("provenance") if fresh else None,
+                (draft.documents or {}).get("provenance")
+                if fresh and draft is not None
+                else None,
                 piece_files(locked, piece, draft if fresh else default),
                 piece_side(archives.compose(split.environment, split.suite), piece),
                 origin=origin,
                 user=user,
-                revision=draft.revision + 1 if fresh else 1,
+                revision=draft.revision + 1 if fresh and draft is not None else 1,
                 at=timezone.now().isoformat(),
                 message_id=message_id,
             )
@@ -836,12 +839,12 @@ def compose_workspace(
         effective = {}
         refs = {}
         stale = {}
-        drafts = {}
+        drafts: dict[str, Any] = {}
         for piece in DRAFT_PIECES:
             draft = open_draft(locked, piece)
             fresh = draft is not None and not is_stale(draft, locked)
             stale[piece] = draft is not None and not fresh
-            if fresh and piece in overlaid:
+            if fresh and draft is not None and piece in overlaid:
                 drafts[piece] = draft
                 effective[piece] = draft
                 refs[piece] = DraftRef(str(draft.id), draft.revision)
@@ -1498,7 +1501,7 @@ def list_drafts(environment: HostedHarnessJob) -> dict[str, Any]:
     entry = live_set(environment)
     body["validation"] = validation_state(environment, entry)
     body["candidates"] = (
-        {f"{piece}_version_id": entry[f"{piece}_version_id"] for piece in DRAFT_PIECES}
+        {f"{piece}_version_id": version_id_of(entry, piece) for piece in DRAFT_PIECES}
         if entry is not None
         else None
     )

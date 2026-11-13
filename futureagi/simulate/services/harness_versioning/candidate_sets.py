@@ -9,7 +9,7 @@ runnable until Save promotes it.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from django.utils import timezone
 
@@ -60,7 +60,7 @@ def current_defaults(environment: HostedHarnessJob) -> Defaults:
 
 def live_set(environment: HostedHarnessJob) -> CandidateSet | None:
     entry = ((environment.payload or {}).get("metadata") or {}).get(VALIDATION_KEY)
-    return entry if isinstance(entry, dict) else None
+    return cast(CandidateSet, entry) if isinstance(entry, dict) else None
 
 
 def store_set(locked: HostedHarnessJob, entry: CandidateSet | None) -> None:
@@ -77,7 +77,7 @@ def store_set(locked: HostedHarnessJob, entry: CandidateSet | None) -> None:
 
 
 def supersede_candidates(
-    environment: HostedHarnessJob, *, keep: set[str] = frozenset()
+    environment: HostedHarnessJob, *, keep: set[str] | frozenset[str] = frozenset()
 ) -> None:
     """Discard the environment's candidates other than ``keep``."""
     for piece in DRAFT_PIECES:
@@ -98,10 +98,19 @@ def discard_candidates(locked: HostedHarnessJob) -> None:
     store_set(locked, None)
 
 
+def version_id_of(entry: CandidateSet, piece: str) -> str:
+    """The candidate version the set holds for a draft piece."""
+    return (
+        entry["environment_version_id"]
+        if piece == "environment"
+        else entry["suite_version_id"]
+    )
+
+
 def set_versions(environment: HostedHarnessJob, entry: CandidateSet) -> dict[str, Any]:
     return {
         piece: piece_model(piece)._base_manager.get(
-            job=environment, id=entry[f"{piece}_version_id"]
+            job=environment, id=version_id_of(entry, piece)
         )
         for piece in DRAFT_PIECES
     }
@@ -152,7 +161,7 @@ def validation_state(
         "affected_scenarios": [],
         "dropped_scenarios": [],
     }
-    if state == "ready":
+    if state == "ready" and bundle is not None:
         body["dropped_scenarios"] = sorted(
             {
                 str(key)
@@ -162,7 +171,7 @@ def validation_state(
                 for key in warning.get("keys") or []
             }
         )
-    if state == "failed":
+    if state == "failed" and bundle is not None:
         error = bundle.error if isinstance(bundle.error, dict) else {}
         failed = [dict(one) for one in failed_actions(bundle)]
         body["error"] = {

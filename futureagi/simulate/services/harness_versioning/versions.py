@@ -1554,9 +1554,15 @@ def move_default(
         if (current.id if current is not None else None) != expected_default_id:
             raise _conflict(piece, current)
         environment_version = (
-            version if piece == "environment" else locked.environment_version
+            version
+            if isinstance(version, HarnessEnvironmentVersion)
+            else locked.environment_version
         )
-        suite_version = version if piece == "suite" else locked.suite_version
+        suite_version = (
+            version
+            if isinstance(version, HarnessSuiteVersion)
+            else locked.suite_version
+        )
         if suite_version is None:
             raise HostedHarnessError(
                 "version_not_pickable",

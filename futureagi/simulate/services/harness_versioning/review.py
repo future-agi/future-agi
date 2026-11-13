@@ -5,7 +5,7 @@ draft passes before Validate or Save.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal
 
 from simulate.services.harness_versioning import archives
 from simulate.services.harness_versioning.draft_pieces import (
@@ -48,7 +48,9 @@ def any_decision(environment: Any) -> bool:
     )
 
 
-def held_decisions(draft: Any, files: Mapping[str, bytes]) -> dict[str, str]:
+def held_decisions(
+    draft: Any, files: Mapping[str, bytes]
+) -> dict[str, Literal["accepted", "rejected"]]:
     """The decisions on a draft that still hold, by item: each only while its item is as it was when decided."""
     items = item_index(files)
     return {
@@ -194,12 +196,10 @@ def record_decisions(
     from django.db import transaction
 
     with transaction.atomic():
-        current = {
+        opened = {
             piece: open_draft(environment, piece, lock=True) for piece in DRAFT_PIECES
         }
-        current = {
-            piece: draft for piece, draft in current.items() if draft is not None
-        }
+        current = {piece: draft for piece, draft in opened.items() if draft is not None}
         if not current:
             raise version_error("draft_not_found", "No unsaved changes", 404)
         for piece, draft in current.items():
@@ -417,6 +417,7 @@ def apply_review(
     }
     for piece in sorted(pieces):
         draft = open_draft(locked, piece, lock=True)
+        assert draft is not None  # every piece Save writes has its open draft
         kept = {
             "review": (draft.documents or {}).get("review"),
             "review_changes": review_changes(review, piece),
