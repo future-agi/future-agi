@@ -1,12 +1,11 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
   Button,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
+  Drawer,
+  IconButton,
   MenuItem,
   Skeleton,
   Stack,
@@ -18,8 +17,8 @@ import {
   FIX_ACTIVE_STATES,
   useFixRun,
 } from "src/api/simulate-environments/readinessFix";
-import { ClosableDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import ContentSkeleton from "src/components/content-skeleton";
 import {
   VERSION_PIECES,
@@ -47,6 +46,10 @@ const PICKABLE = VERSION_PIECES;
 const offered = (piece, version) =>
   version.isDefault ||
   (piece === "agent" ? version.pickable : version.status === "active");
+
+const PANEL_WIDTH = 480;
+// Opening, closing and collapsing all slide the width over this long.
+const SLIDE_MS = 300;
 
 const BOX_SX = { border: "1px solid", borderColor: "divider", borderRadius: 1 };
 
@@ -121,6 +124,9 @@ SwitchPrompt.propTypes = {
  * Pick the agent, environment and scenario versions a run uses, see what to
  * watch out for, and start it. Only the versions the user changed are sent;
  * the rest run the environment's defaults at submit time.
+ *
+ * A drawer over the right of the page, not a modal, so the builder chat stays
+ * usable beside it. Collapsed, only its edge tab shows.
  */
 export default function RunDialog({
   open,
@@ -129,9 +135,12 @@ export default function RunDialog({
   trials = 1,
   initialPicks,
   onClose,
+  onGoToChat,
   onSubmit,
   submitting = false,
   error = null,
+  collapsed = false,
+  onCollapsedChange,
 }) {
   const versions = useEnvironmentVersions(env?.id, { enabled: open });
   const { data } = versions;
@@ -154,6 +163,20 @@ export default function RunDialog({
   const [readiness, setReadiness] = useState(null);
   // Per piece, the saved version whose switch prompt was kept away.
   const [dismissed, setDismissed] = useState({});
+  const [entered, setEntered] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const closing = useRef(null);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setEntered(true));
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(closing.current);
+    };
+  }, []);
+  const close = () => {
+    setLeaving(true);
+    closing.current = setTimeout(onClose, SLIDE_MS);
+  };
   const fixRun =
     useFixRun(env?.id, { enabled: open && Boolean(readiness?.grouped) }).data ??
     null;
@@ -451,7 +474,7 @@ export default function RunDialog({
             keys={readinessKeys}
             trials={trials}
             onView={setReadiness}
-            env={env}
+            onGoToChat={onGoToChat}
           />
         )}
         {/* The run line and its notes read as one group, tighter than the
@@ -595,33 +618,160 @@ export default function RunDialog({
     );
   };
 
+  const subtitle = RUN_PLAN_COPY.subtitle(
+    env?.name,
+    options.environment.find((one) => one.id === selected.environment)?.label,
+  );
+  const toggleLabel = collapsed ? RUN_PLAN_COPY.expand : RUN_PLAN_COPY.collapse;
+  // Starts at zero width and slides open like expanding; closing slides shut
+  // like collapsing, then unmounts.
+  const narrow = collapsed || !entered || leaving;
+
+  // Persistent and without a backdrop: it sits over the page's right edge and
+  // everything outside it stays clickable.
   return (
-    <ClosableDialog
+    <Drawer
       open={open}
-      onClose={submitting ? undefined : onClose}
-      fullWidth
-      maxWidth="sm"
+      anchor="right"
+      variant="persistent"
+      hideBackdrop
+      ModalProps={{ style: { pointerEvents: "none" } }}
+      sx={{ "& .MuiDrawer-paper": { pointerEvents: "auto" } }}
+      PaperProps={{
+        component: "aside",
+        "aria-label": RUN_PLAN_COPY.title,
+        sx: {
+          height: "100vh",
+          position: "fixed",
+          zIndex: 110,
+          boxShadow: "none",
+          borderRadius: 0,
+          borderLeft: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.paper",
+          display: "flex",
+          overflow: "visible",
+          minWidth: narrow ? 0 : PANEL_WIDTH,
+          maxWidth: narrow ? 0 : PANEL_WIDTH,
+          transition: `min-width ${SLIDE_MS}ms ease-in-out, max-width ${SLIDE_MS}ms ease-in-out`,
+        },
+      }}
     >
-      <DialogTitle sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
-        {RUN_PLAN_COPY.title}
-        <Box
-          component="span"
+      {/* The tab on the drawer's left edge; the only part left when collapsed. */}
+      <CustomTooltip
+        show
+        size="small"
+        arrow
+        placement="left"
+        title={toggleLabel}
+      >
+        <IconButton
+          size="small"
+          aria-label={toggleLabel}
+          aria-expanded={!collapsed}
+          onClick={() => onCollapsedChange?.(!collapsed)}
+          // right: 100% puts its right edge on the paper's padding edge, so it
+          // covers the paper's 1px left border and the two read as one.
           sx={{
-            display: "block",
-            typography: "s3",
-            fontWeight: "fontWeightRegular",
-            color: "text.secondary",
+            position: "absolute",
+            top: "48px",
+            right: "100%",
+            zIndex: 1,
+            width: 28,
+            height: 28,
+            p: 0,
+            bgcolor: "background.paper",
+            border: "1px solid",
+            borderColor: "divider",
+            borderRight: 0,
+            borderRadius: "4px 0 0 4px",
+            "&:hover": { bgcolor: "background.default" },
           }}
         >
-          {RUN_PLAN_COPY.subtitle(
-            env?.name,
-            options.environment.find((one) => one.id === selected.environment)
-              ?.label,
+          <Iconify
+            icon="solar:alt-arrow-right-linear"
+            width={16}
+            sx={{
+              color: "text.disabled",
+              transform: collapsed ? "rotate(180deg)" : "rotate(0deg)",
+              transition: "transform 200ms ease-in-out",
+            }}
+          />
+          {fixActive && collapsed && (
+            <Box
+              data-testid="run-plan-busy"
+              sx={{
+                position: "absolute",
+                top: 2,
+                right: 2,
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                bgcolor: "status.info.solid",
+                border: "1.5px solid",
+                borderColor: "background.paper",
+              }}
+            />
           )}
-        </Box>
-      </DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ pt: 1 }}>
+        </IconButton>
+      </CustomTooltip>
+      {/* Hidden, not unmounted, while collapsed: picks, queries and a fix's
+          polling carry on, and nothing hidden takes focus. Its width stays
+          fixed while the drawer slides, so it is revealed, not reflowed (the
+          part past the screen edge is off-screen). */}
+      <Stack
+        sx={{
+          // The paper's width less its 1px left border.
+          width: PANEL_WIDTH - 1,
+          flexShrink: 0,
+          height: "100%",
+          overflow: "hidden",
+          visibility: collapsed || leaving ? "hidden" : "visible",
+        }}
+      >
+        <Stack
+          direction="row"
+          spacing={0.5}
+          alignItems="flex-start"
+          sx={{ px: 2, pt: 1.5, pb: 1 }}
+        >
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography
+              component="h2"
+              sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}
+            >
+              {RUN_PLAN_COPY.title}
+            </Typography>
+            {subtitle && (
+              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                {subtitle}
+              </Typography>
+            )}
+          </Box>
+          <CustomTooltip
+            show={!submitting}
+            size="small"
+            arrow
+            title={RUN_PLAN_COPY.close}
+          >
+            <IconButton
+              aria-label={RUN_PLAN_COPY.close}
+              onClick={close}
+              disabled={submitting}
+              size="small"
+              sx={{
+                color: "text.subtitle",
+                "&:hover": { color: "text.primary" },
+              }}
+            >
+              <Iconify icon="solar:close-linear" width={16} />
+            </IconButton>
+          </CustomTooltip>
+        </Stack>
+        <Stack
+          spacing={2}
+          sx={{ flex: 1, minHeight: 0, overflowY: "auto", px: 2, py: 1 }}
+        >
           {body()}
           {dialogError && (
             <Alert severity="error" sx={NOTE_SX} data-testid="run-error">
@@ -629,21 +779,31 @@ export default function RunDialog({
             </Alert>
           )}
         </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button color="inherit" onClick={onClose} disabled={submitting}>
-          {COPY.cancel}
-        </Button>
-        <Button
-          variant="contained"
-          onClick={submit}
-          disabled={!canSubmit}
-          startIcon={<Iconify icon="solar:play-bold" width={16} />}
+        <Stack
+          direction="row"
+          spacing={1}
+          justifyContent="flex-end"
+          sx={{
+            px: 2,
+            py: 1.5,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
         >
-          {runLabel}
-        </Button>
-      </DialogActions>
-    </ClosableDialog>
+          <Button color="inherit" onClick={close} disabled={submitting}>
+            {COPY.cancel}
+          </Button>
+          <Button
+            variant="contained"
+            onClick={submit}
+            disabled={!canSubmit}
+            startIcon={<Iconify icon="solar:play-bold" width={16} />}
+          >
+            {runLabel}
+          </Button>
+        </Stack>
+      </Stack>
+    </Drawer>
   );
 }
 
@@ -660,8 +820,13 @@ RunDialog.propTypes = {
   // {agent, environment, suite} → version id, pre-selected (a re-run's versions).
   initialPicks: PropTypes.objectOf(PropTypes.string),
   onClose: PropTypes.func,
+  // Only where the page has no builder chat: takes the user to it.
+  onGoToChat: PropTypes.func,
   // (picks, scenarioIds, resolved {agent, environment, suite} version ids).
   onSubmit: PropTypes.func,
   submitting: PropTypes.bool,
   error: PropTypes.object,
+  // Only the edge tab shows; the body stays mounted.
+  collapsed: PropTypes.bool,
+  onCollapsedChange: PropTypes.func,
 };

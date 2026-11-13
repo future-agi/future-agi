@@ -28,6 +28,11 @@ import {
 } from "src/api/simulate-environments/runs";
 import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
 import { environmentVersionsKey } from "src/api/simulate-environments/versions";
+import {
+  FIX_ACTIVE_STATES,
+  useFixRun,
+} from "src/api/simulate-environments/readinessFix";
+import * as fixDummy from "src/api/simulate-environments/readinessFix.dummy"; // dummy:
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
@@ -130,8 +135,27 @@ export default function EnvironmentWorkspace() {
   const selection = useScenarioSelection();
   const queryClient = useQueryClient();
   const pendingSubmission = useRef(null);
-  // The run awaiting its version picks: { ids, trials, initialPicks }.
+  // The run awaiting its version picks: { ids, trials, initialPicks, collapsed }.
   const [runDialog, setRunDialog] = useState(null);
+  // A fix started from the Run plan talks in the builder chat: lines it hasn't
+  // picked up yet show there as queued, and the chat opens when one starts.
+  let fixOn = Boolean(runDialog);
+  fixOn = fixOn || fixDummy.dummyOn(); // dummy:
+  const fixData = useFixRun(env?.id, { enabled: fixOn }).data;
+  // A disabled query keeps its last data; a closed plan shows none of it.
+  const fixRun = fixOn ? (fixData ?? null) : null;
+  let chatTurns = chat.turns || [];
+  chatTurns = fixDummy.useDummyChat(fixRun, chatTurns); // dummy:
+  chatTurns = [
+    ...chatTurns,
+    ...(fixRun?.queue || []).map((item, i) => ({
+      id: `fix-queued-${i}`,
+      role: "user",
+      text: item.message,
+      queued: true,
+    })),
+  ];
+  const activeFixId = FIX_ACTIVE_STATES.has(fixRun?.state) ? fixRun.id : null;
   const runMutation = useMutation({
     meta: { errorHandled: true },
     // `resolved` is every version the dialog resolved, defaults included; only
@@ -204,14 +228,27 @@ export default function EnvironmentWorkspace() {
     }
     runMutation.mutate({ ids, trials });
   };
+  const executionMatch = useMatch(EXECUTION_PATTERN);
+  // Keyed by the re-run's versions, which it reads only when it mounts.
   const runDialogEl = runDialog && (
     <RunDialog
+      key={JSON.stringify(runDialog.initialPicks ?? null)}
       open
       env={env}
       scenarioIds={runDialog.ids}
       trials={runDialog.trials || 1}
       initialPicks={runDialog.initialPicks}
       onClose={() => setRunDialog(null)}
+      // The run page has no builder chat; the workspace page does.
+      onGoToChat={
+        executionMatch
+          ? () => navigate(paths.dashboard.simulate.environments.detail(env.id))
+          : undefined
+      }
+      collapsed={Boolean(runDialog.collapsed)}
+      onCollapsedChange={(collapsed) =>
+        setRunDialog((open) => open && { ...open, collapsed })
+      }
       onSubmit={(picks, ids, resolved) =>
         runMutation.mutate({ ids, trials: runDialog.trials, picks, resolved })
       }
@@ -267,7 +304,6 @@ export default function EnvironmentWorkspace() {
       </Alert>
     ) : null;
 
-  const executionMatch = useMatch(EXECUTION_PATTERN);
   const improvementMatch = useMatch(IMPROVEMENT_PATTERN);
 
   if (notFound) {
@@ -545,9 +581,10 @@ export default function EnvironmentWorkspace() {
           busy={
             chat.running || chat.inFlight || chat.waiting || chat.nudgePending
           }
+          openKey={activeFixId}
           chat={({ collapse, open, collapseRef }) => (
             <BuilderConsole
-              turns={chat.turns}
+              turns={chatTurns}
               running={chat.running}
               onSend={chat.send}
               onStop={chat.stop}

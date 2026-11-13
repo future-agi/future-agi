@@ -78,9 +78,6 @@ vi.mock("src/api/simulate-environments/readinessFix", () => ({
     reset: resetFix,
   }),
 }));
-vi.mock("../FixChat", () => ({
-  default: () => <div data-testid="fix-chat" />,
-}));
 
 const { default: ReadyToRunSection } = await import("../ReadyToRunSection");
 
@@ -450,9 +447,7 @@ describe("ReadyToRunSection", () => {
 
   it("groups the fixes and sends the ticked builder lines to the chat", async () => {
     report = groupedReport();
-    render(
-      <ReadyToRunSection envId="env-1" picks={picks} env={{ id: "env-1" }} />,
-    );
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
     expect(screen.getByText("Needs you")).toBeVisible();
     expect(screen.getByText("Builder chat can fix")).toBeVisible();
     expect(screen.queryByTestId("fix-chat")).toBeNull();
@@ -467,9 +462,7 @@ describe("ReadyToRunSection", () => {
 
   it("sends nothing once every builder line is unticked", async () => {
     report = groupedReport();
-    render(
-      <ReadyToRunSection envId="env-1" picks={picks} env={{ id: "env-1" }} />,
-    );
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
     await userEvent.click(
       screen.getByRole("checkbox", {
         name: "Fix tools wired to the test world with the builder chat",
@@ -483,9 +476,7 @@ describe("ReadyToRunSection", () => {
   it("adds ticked lines to a running fix instead of holding them", async () => {
     report = groupedReport();
     fixRun = { state: "fixing", rows: [] };
-    render(
-      <ReadyToRunSection envId="env-1" picks={picks} env={{ id: "env-1" }} />,
-    );
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
     await userEvent.click(
       screen.getByRole("checkbox", {
         name: "Select every line the builder chat can fix",
@@ -511,9 +502,7 @@ describe("ReadyToRunSection", () => {
       fix: { type: "recheck", recheck: { scope: "pair", path: "/x/" } },
       fix_group: "recheck",
     });
-    render(
-      <ReadyToRunSection envId="env-1" picks={picks} env={{ id: "env-1" }} />,
-    );
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
     expect(screen.getAllByRole("checkbox")).toHaveLength(2);
     const [, groupButton] = screen.getAllByRole("button", { name: "Re-check" });
     await userEvent.click(groupButton);
@@ -524,29 +513,27 @@ describe("ReadyToRunSection", () => {
     report = groupedReport();
     fixRun = { state: "fixing" };
     const { rerender } = render(
-      <ReadyToRunSection envId="env-1" picks={picks} env={{ id: "env-1" }} />,
+      <ReadyToRunSection envId="env-1" picks={picks} />,
     );
     resetFix.mockClear();
     fixRun = { state: "done" };
-    rerender(
-      <ReadyToRunSection envId="env-1" picks={picks} env={{ id: "env-1" }} />,
-    );
+    rerender(<ReadyToRunSection envId="env-1" picks={picks} />);
     expect(resetFix).toHaveBeenCalled();
   });
 
-  it("shows the chat only while a fix runs", () => {
+  it("points to the builder chat only while a fix runs", () => {
     report = groupedReport();
-    fixRun = { state: "fixing" };
+    fixRun = { state: "fixing", rows: ["tool_routing"] };
     const { unmount } = render(
-      <ReadyToRunSection envId="env-1" picks={picks} env={{ id: "env-1" }} />,
+      <ReadyToRunSection envId="env-1" picks={picks} />,
     );
-    expect(screen.getByTestId("fix-chat")).toBeInTheDocument();
+    expect(screen.getByTestId("fix-chat-note")).toHaveTextContent(
+      "Fixing: Tools wired to the test world · follow it in the builder chat",
+    );
     unmount();
     fixRun = { state: "done" };
-    render(
-      <ReadyToRunSection envId="env-1" picks={picks} env={{ id: "env-1" }} />,
-    );
-    expect(screen.queryByTestId("fix-chat")).toBeNull();
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
+    expect(screen.queryByTestId("fix-chat-note")).toBeNull();
   });
 
   it("holds sending fixes while there are unsaved changes, and says why", () => {
@@ -578,9 +565,7 @@ describe("ReadyToRunSection", () => {
       reason: message ? { code: "x", message } : null,
       waiting_on: state === "waiting_on_other" ? "start" : null,
     });
-    render(
-      <ReadyToRunSection envId="env-1" picks={picks} env={{ id: "env-1" }} />,
-    );
+    render(<ReadyToRunSection envId="env-1" picks={picks} />);
     expect(screen.getByText(text)).toBeVisible();
     if (message) expect(screen.getByText(message)).toBeVisible();
   });

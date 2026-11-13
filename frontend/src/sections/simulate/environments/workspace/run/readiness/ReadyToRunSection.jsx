@@ -44,7 +44,6 @@ import {
 import { AGENT_VERSIONS_COPY } from "../../workspace.constants";
 import { readinessView } from "./readinessView";
 import { READY_TO_RUN_COPY as COPY } from "./readiness.constants";
-import FixChat from "./FixChat";
 import * as fixDummy from "src/api/simulate-environments/readinessFix.dummy"; // dummy:
 
 const lineSx = {
@@ -513,7 +512,7 @@ export default function ReadyToRunSection({
   keys = null,
   trials = 1,
   onView,
-  env = null,
+  onGoToChat,
 }) {
   const readiness = useReadiness(envId, picks, { keys, trials });
   const recheck = useRecheck(envId);
@@ -560,7 +559,7 @@ export default function ReadyToRunSection({
   }, [fixState, resetStart]);
   const { data: drafts } = useDrafts(envId, { enabled: grouped });
   useRereadWhenDefaultsMove(envId, versions.data?.defaults);
-  // The chat shows only while a fix runs; the user answers its questions there.
+  // While a fix runs, the user follows it and answers in the builder chat.
   const chatShown = FIX_ACTIVE_STATES.has(fixRun?.state);
   // Ticks the user changed, by row id. Before a fix, every line starts ticked;
   // while one runs, lines start unticked and are added on purpose.
@@ -842,15 +841,31 @@ export default function ReadyToRunSection({
               }
             >
               {builder.map(renderLine)}
-              <Collapse id="fix-chat-box" in={chatShown} unmountOnExit>
-                <FixChat
-                  env={env}
-                  fixRun={fixRun}
-                  lines={builder
-                    .filter((line) => fixRun?.rows?.includes(line.rowId))
-                    .map((line) => COPY.areas[line.area] || line.area)}
-                />
-              </Collapse>
+              {chatShown && (
+                <Stack
+                  data-testid="fix-chat-note"
+                  direction="row"
+                  spacing={1}
+                  alignItems="center"
+                  sx={{ ...lineSx, bgcolor: "background.neutral" }}
+                >
+                  <Typography
+                    sx={{ typography: "s3", color: "text.secondary", flex: 1 }}
+                  >
+                    {COPY.chatFixing(
+                      builder
+                        .filter((line) => fixRun?.rows?.includes(line.rowId))
+                        .map((line) => COPY.areas[line.area] || line.area),
+                    )}
+                    {!onGoToChat && ` · ${COPY.chatFollow}`}
+                  </Typography>
+                  {onGoToChat && (
+                    <Button size="small" color="inherit" onClick={onGoToChat}>
+                      {COPY.goToChat}
+                    </Button>
+                  )}
+                </Stack>
+              )}
             </GroupCard>
           )}
           {view.groups.recheck.length > 0 && (
@@ -937,6 +952,6 @@ ReadyToRunSection.propTypes = {
   keys: PropTypes.arrayOf(PropTypes.string),
   trials: PropTypes.number,
   onView: PropTypes.func,
-  // The environment record, for the builder chat.
-  env: PropTypes.object,
+  // Set where the page has no builder chat to follow the fix in.
+  onGoToChat: PropTypes.func,
 };

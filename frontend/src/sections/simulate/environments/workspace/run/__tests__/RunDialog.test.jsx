@@ -151,6 +151,37 @@ describe("RunDialog", () => {
     ]);
   });
 
+  it("collapses to its edge tab and keeps the picks mounted", async () => {
+    const user = userEvent.setup();
+    const onCollapsedChange = vi.fn();
+    const props = {
+      open: true,
+      env: ENV,
+      scenarioIds: ["k1"],
+      onClose: vi.fn(),
+      onCollapsedChange,
+    };
+    const { rerender } = render(<RunDialog {...props} />);
+    await pickOption(user, "Environment version", "v1");
+
+    await user.click(screen.getByRole("button", { name: "Collapse run plan" }));
+    expect(onCollapsedChange).toHaveBeenCalledWith(true);
+    rerender(<RunDialog {...props} collapsed />);
+    // Hidden but still mounted.
+    expect(
+      screen.queryByRole("combobox", { name: "Environment version" }),
+    ).toBeNull();
+    expect(screen.getByText("Environment version")).toBeInTheDocument();
+
+    rerender(<RunDialog {...props} collapsed={false} />);
+    expect(
+      screen.getByRole("complementary", { name: "Run plan" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Environment version" }),
+    ).toHaveTextContent("v1");
+  });
+
   it("offers the agent versions that can run, the default pre-selected", async () => {
     const user = userEvent.setup();
     renderDialog();
