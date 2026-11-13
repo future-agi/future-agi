@@ -1,4 +1,4 @@
-"""Complete 33/38-pending-migration A9 intersection regression, without Django.
+"""Complete 36/41-pending-migration A9 intersection regression, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -54,6 +54,9 @@ LATEST = (
     ('tracer','0131_merge_alert_webhook'),
     ('tracer','0132_merge_alert_webhook_and_sql_workbench'),
     ('simulate','0104_evidence_import'),
+    ('simulate','0105_evidence_import_transcript'),
+    ('simulate','0106_evidence_import_dataset'),
+    ('simulate','0107_evidence_import_case_discarded'),
 ) + SQL_ADDITIONS
 FLOOR_ONLY = (
     ('simulate','0099_harness_versioning'),('simulate','0100_agent_fix'),
@@ -63,7 +66,7 @@ FLOOR_ONLY = (
 )
 
 
-BASELINES = ((REVISIONS[1], LATEST, 33), (REVISIONS[0], LATEST + FLOOR_ONLY, 38))
+BASELINES = ((REVISIONS[1], LATEST, 36), (REVISIONS[0], LATEST + FLOOR_ONLY, 41))
 
 
 def added_migration_identities(revision):
@@ -140,12 +143,14 @@ class Operation:
         else:
             # All remaining operations in these COMPLETE plans affect catalog
             # indexes/constraints or carry declarations; no state table rename.
-            assert kind in ('RunPython','RunSQL','AddIndex','AddIndexConcurrently','RemoveIndex','AddConstraint')
+            assert kind in ('RunPython','RunSQL','AddIndex','AddIndexConcurrently','RemoveIndex','AddConstraint',
+                'RemoveConstraint')
 
 
 def operation_types():
     kinds=('CreateModel','AddField','AlterField','RemoveField','RenameField','AddIndex',
-        'AddIndexConcurrently','RemoveIndex','AddConstraint','RunPython','RunSQL','SeparateDatabaseAndState')
+        'AddIndexConcurrently','RemoveIndex','AddConstraint','RemoveConstraint','RunPython','RunSQL',
+        'SeparateDatabaseAndState')
     result={kind:type(kind,(Operation,),{'__module__':'django.db.migrations.operations.fixtures'}) for kind in kinds}
     result['RunPython'].noop=object(); result['RunSQL'].noop=''
     return SimpleNamespace(**result)
