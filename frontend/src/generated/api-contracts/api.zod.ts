@@ -32812,6 +32812,45 @@ export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingRepositoryOne
 
 export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingExpectedReportIntervalSecondsMax = 31536000;
 
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneCodeCommitRegExp =
+  new RegExp("^[a-f0-9]{40,64}$");
+
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneCodeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneEntrypointMax = 255;
+
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneImageDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneRuntimeVersionMax = 100;
+
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOnePackagesItemNameMax = 200;
+
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOnePackagesItemVersionMax = 100;
+
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOnePackagesItemSha256RegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOnePackageLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneModelModelIdMax = 255;
+
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneConnectionRevisionMax = 100;
+
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneToolsDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneRetrievalFixtureDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneStateSchemaMax = 100;
+
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneCheckpointDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneResetEntrypointMax = 255;
+
+export const modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneObservableBoundariesMax = 7;
+
 export const ModelHubSkillsContextsBindingsPartialUpdateBody = zod.object({
   revision: zod
     .number()
@@ -32872,6 +32911,145 @@ export const ModelHubSkillsContextsBindingsPartialUpdateBody = zod.object({
       .max(
         modelHubSkillsContextsBindingsPartialUpdateBodyBindingExpectedReportIntervalSecondsMax,
       ),
+    configuration: zod
+      .union([
+        zod.object({
+          code_commit: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneCodeCommitRegExp,
+            ),
+          code_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneCodeDigestRegExp,
+            ),
+          entrypoint: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneEntrypointMax,
+            ),
+          image_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneImageDigestRegExp,
+            ),
+          runtime_version: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneRuntimeVersionMax,
+            ),
+          packages: zod.array(
+            zod.object({
+              name: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOnePackagesItemNameMax,
+                ),
+              version: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOnePackagesItemVersionMax,
+                ),
+              sha256: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOnePackagesItemSha256RegExp,
+                ),
+            }),
+          ),
+          package_lock_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOnePackageLockDigestRegExp,
+            ),
+          model: zod.object({
+            model_id: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneModelModelIdMax,
+              ),
+            temperature: zod.number(),
+            max_output_tokens: zod
+              .number()
+              .min(1)
+              .max(
+                modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneModelMaxOutputTokensMax,
+              ),
+          }),
+          connection_id: zod.string().uuid(),
+          connection_revision: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneConnectionRevisionMax,
+            ),
+          tools_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneToolsDigestRegExp,
+            ),
+          retrieval_fixture_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneRetrievalFixtureDigestRegExp,
+            ),
+          state_schema: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneStateSchemaMax,
+            ),
+          checkpoint_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneCheckpointDigestRegExp,
+            ),
+          side_effect_policy: zod.enum([
+            "read_only",
+            "fixture_only",
+            "idempotent_approved",
+          ]),
+          reset_entrypoint: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneResetEntrypointMax,
+            ),
+          context_mount: zod.enum(["/fi_context/"]),
+          observable_boundaries: zod
+            .array(
+              zod.enum([
+                "catalog",
+                "child_selection",
+                "root_delivery",
+                "file_delivery",
+                "model_request",
+                "tool_result",
+                "checkpoint",
+              ]),
+            )
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsPartialUpdateBodyBindingConfigurationOneObservableBoundariesMax,
+            ),
+        }),
+        zod.null(),
+      ])
+      .optional(),
   }),
 });
 
@@ -32890,6 +33068,45 @@ export const modelHubSkillsContextsBindingsPartialUpdateResponseResultRepository
 export const modelHubSkillsContextsBindingsPartialUpdateResponseResultRepositoryOneProjectScopeMax = 255;
 
 export const modelHubSkillsContextsBindingsPartialUpdateResponseResultExpectedReportIntervalSecondsMax = 31536000;
+
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneCodeCommitRegExp =
+  new RegExp("^[a-f0-9]{40,64}$");
+
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneCodeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneEntrypointMax = 255;
+
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneImageDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneRuntimeVersionMax = 100;
+
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOnePackagesItemNameMax = 200;
+
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOnePackagesItemVersionMax = 100;
+
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOnePackagesItemSha256RegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOnePackageLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneModelModelIdMax = 255;
+
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneConnectionRevisionMax = 100;
+
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneToolsDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneRetrievalFixtureDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneStateSchemaMax = 100;
+
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneCheckpointDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneResetEntrypointMax = 255;
+
+export const modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneObservableBoundariesMax = 7;
 
 export const ModelHubSkillsContextsBindingsPartialUpdateResponse = zod.object({
   status: zod.boolean(),
@@ -32949,10 +33166,150 @@ export const ModelHubSkillsContextsBindingsPartialUpdateResponse = zod.object({
       .max(
         modelHubSkillsContextsBindingsPartialUpdateResponseResultExpectedReportIntervalSecondsMax,
       ),
+    configuration_digest: zod.string(),
     id: zod.string().uuid(),
     context_id: zod.string().uuid(),
     revision: zod.number().min(1),
     retired_at: zod.string().datetime({ offset: true }).nullable(),
+    configuration: zod
+      .union([
+        zod.object({
+          code_commit: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneCodeCommitRegExp,
+            ),
+          code_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneCodeDigestRegExp,
+            ),
+          entrypoint: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneEntrypointMax,
+            ),
+          image_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneImageDigestRegExp,
+            ),
+          runtime_version: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneRuntimeVersionMax,
+            ),
+          packages: zod.array(
+            zod.object({
+              name: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOnePackagesItemNameMax,
+                ),
+              version: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOnePackagesItemVersionMax,
+                ),
+              sha256: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOnePackagesItemSha256RegExp,
+                ),
+            }),
+          ),
+          package_lock_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOnePackageLockDigestRegExp,
+            ),
+          model: zod.object({
+            model_id: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneModelModelIdMax,
+              ),
+            temperature: zod.number(),
+            max_output_tokens: zod
+              .number()
+              .min(1)
+              .max(
+                modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneModelMaxOutputTokensMax,
+              ),
+          }),
+          connection_id: zod.string().uuid(),
+          connection_revision: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneConnectionRevisionMax,
+            ),
+          tools_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneToolsDigestRegExp,
+            ),
+          retrieval_fixture_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneRetrievalFixtureDigestRegExp,
+            ),
+          state_schema: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneStateSchemaMax,
+            ),
+          checkpoint_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneCheckpointDigestRegExp,
+            ),
+          side_effect_policy: zod.enum([
+            "read_only",
+            "fixture_only",
+            "idempotent_approved",
+          ]),
+          reset_entrypoint: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneResetEntrypointMax,
+            ),
+          context_mount: zod.enum(["/fi_context/"]),
+          observable_boundaries: zod
+            .array(
+              zod.enum([
+                "catalog",
+                "child_selection",
+                "root_delivery",
+                "file_delivery",
+                "model_request",
+                "tool_result",
+                "checkpoint",
+              ]),
+            )
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsPartialUpdateResponseResultConfigurationOneObservableBoundariesMax,
+            ),
+        }),
+        zod.null(),
+      ])
+      .optional(),
   }),
 });
 
@@ -34630,6 +34987,45 @@ export const modelHubSkillsContextsBindingsListResponseResultResultsItemReposito
 
 export const modelHubSkillsContextsBindingsListResponseResultResultsItemExpectedReportIntervalSecondsMax = 31536000;
 
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneCodeCommitRegExp =
+  new RegExp("^[a-f0-9]{40,64}$");
+
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneCodeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneEntrypointMax = 255;
+
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneImageDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneRuntimeVersionMax = 100;
+
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOnePackagesItemNameMax = 200;
+
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOnePackagesItemVersionMax = 100;
+
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOnePackagesItemSha256RegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOnePackageLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneModelModelIdMax = 255;
+
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneConnectionRevisionMax = 100;
+
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneToolsDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneRetrievalFixtureDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneStateSchemaMax = 100;
+
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneCheckpointDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneResetEntrypointMax = 255;
+
+export const modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneObservableBoundariesMax = 7;
+
 export const modelHubSkillsContextsBindingsListResponseResultCountMin = 0;
 
 export const modelHubSkillsContextsBindingsListResponseResultTotalPagesMin = 0;
@@ -34698,10 +35094,150 @@ export const ModelHubSkillsContextsBindingsListResponse = zod.object({
           .max(
             modelHubSkillsContextsBindingsListResponseResultResultsItemExpectedReportIntervalSecondsMax,
           ),
+        configuration_digest: zod.string(),
         id: zod.string().uuid(),
         context_id: zod.string().uuid(),
         revision: zod.number().min(1),
         retired_at: zod.string().datetime({ offset: true }).nullable(),
+        configuration: zod
+          .union([
+            zod.object({
+              code_commit: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneCodeCommitRegExp,
+                ),
+              code_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneCodeDigestRegExp,
+                ),
+              entrypoint: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneEntrypointMax,
+                ),
+              image_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneImageDigestRegExp,
+                ),
+              runtime_version: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneRuntimeVersionMax,
+                ),
+              packages: zod.array(
+                zod.object({
+                  name: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOnePackagesItemNameMax,
+                    ),
+                  version: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOnePackagesItemVersionMax,
+                    ),
+                  sha256: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOnePackagesItemSha256RegExp,
+                    ),
+                }),
+              ),
+              package_lock_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOnePackageLockDigestRegExp,
+                ),
+              model: zod.object({
+                model_id: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneModelModelIdMax,
+                  ),
+                temperature: zod.number(),
+                max_output_tokens: zod
+                  .number()
+                  .min(1)
+                  .max(
+                    modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneModelMaxOutputTokensMax,
+                  ),
+              }),
+              connection_id: zod.string().uuid(),
+              connection_revision: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneConnectionRevisionMax,
+                ),
+              tools_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneToolsDigestRegExp,
+                ),
+              retrieval_fixture_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneRetrievalFixtureDigestRegExp,
+                ),
+              state_schema: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneStateSchemaMax,
+                ),
+              checkpoint_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneCheckpointDigestRegExp,
+                ),
+              side_effect_policy: zod.enum([
+                "read_only",
+                "fixture_only",
+                "idempotent_approved",
+              ]),
+              reset_entrypoint: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneResetEntrypointMax,
+                ),
+              context_mount: zod.enum(["/fi_context/"]),
+              observable_boundaries: zod
+                .array(
+                  zod.enum([
+                    "catalog",
+                    "child_selection",
+                    "root_delivery",
+                    "file_delivery",
+                    "model_request",
+                    "tool_result",
+                    "checkpoint",
+                  ]),
+                )
+                .min(1)
+                .max(
+                  modelHubSkillsContextsBindingsListResponseResultResultsItemConfigurationOneObservableBoundariesMax,
+                ),
+            }),
+            zod.null(),
+          ])
+          .optional(),
       }),
     ),
     count: zod
@@ -34734,6 +35270,45 @@ export const modelHubSkillsContextsBindingsCreateBodyRepositoryOneDefaultBranchM
 export const modelHubSkillsContextsBindingsCreateBodyRepositoryOneProjectScopeMax = 255;
 
 export const modelHubSkillsContextsBindingsCreateBodyExpectedReportIntervalSecondsMax = 31536000;
+
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOneCodeCommitRegExp =
+  new RegExp("^[a-f0-9]{40,64}$");
+
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOneCodeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOneEntrypointMax = 255;
+
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOneImageDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOneRuntimeVersionMax = 100;
+
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOnePackagesItemNameMax = 200;
+
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOnePackagesItemVersionMax = 100;
+
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOnePackagesItemSha256RegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOnePackageLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOneModelModelIdMax = 255;
+
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOneModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOneConnectionRevisionMax = 100;
+
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOneToolsDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOneRetrievalFixtureDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOneStateSchemaMax = 100;
+
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOneCheckpointDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOneResetEntrypointMax = 255;
+
+export const modelHubSkillsContextsBindingsCreateBodyConfigurationOneObservableBoundariesMax = 7;
 
 export const ModelHubSkillsContextsBindingsCreateBody = zod.object({
   name: zod
@@ -34787,6 +35362,145 @@ export const ModelHubSkillsContextsBindingsCreateBody = zod.object({
     .max(
       modelHubSkillsContextsBindingsCreateBodyExpectedReportIntervalSecondsMax,
     ),
+  configuration: zod
+    .union([
+      zod.object({
+        code_commit: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsBindingsCreateBodyConfigurationOneCodeCommitRegExp,
+          ),
+        code_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsBindingsCreateBodyConfigurationOneCodeDigestRegExp,
+          ),
+        entrypoint: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsContextsBindingsCreateBodyConfigurationOneEntrypointMax,
+          ),
+        image_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsBindingsCreateBodyConfigurationOneImageDigestRegExp,
+          ),
+        runtime_version: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsContextsBindingsCreateBodyConfigurationOneRuntimeVersionMax,
+          ),
+        packages: zod.array(
+          zod.object({
+            name: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsBindingsCreateBodyConfigurationOnePackagesItemNameMax,
+              ),
+            version: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsBindingsCreateBodyConfigurationOnePackagesItemVersionMax,
+              ),
+            sha256: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsBindingsCreateBodyConfigurationOnePackagesItemSha256RegExp,
+              ),
+          }),
+        ),
+        package_lock_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsBindingsCreateBodyConfigurationOnePackageLockDigestRegExp,
+          ),
+        model: zod.object({
+          model_id: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsCreateBodyConfigurationOneModelModelIdMax,
+            ),
+          temperature: zod.number(),
+          max_output_tokens: zod
+            .number()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsCreateBodyConfigurationOneModelMaxOutputTokensMax,
+            ),
+        }),
+        connection_id: zod.string().uuid(),
+        connection_revision: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsContextsBindingsCreateBodyConfigurationOneConnectionRevisionMax,
+          ),
+        tools_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsBindingsCreateBodyConfigurationOneToolsDigestRegExp,
+          ),
+        retrieval_fixture_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsBindingsCreateBodyConfigurationOneRetrievalFixtureDigestRegExp,
+          ),
+        state_schema: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsContextsBindingsCreateBodyConfigurationOneStateSchemaMax,
+          ),
+        checkpoint_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsBindingsCreateBodyConfigurationOneCheckpointDigestRegExp,
+          ),
+        side_effect_policy: zod.enum([
+          "read_only",
+          "fixture_only",
+          "idempotent_approved",
+        ]),
+        reset_entrypoint: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsContextsBindingsCreateBodyConfigurationOneResetEntrypointMax,
+          ),
+        context_mount: zod.enum(["/fi_context/"]),
+        observable_boundaries: zod
+          .array(
+            zod.enum([
+              "catalog",
+              "child_selection",
+              "root_delivery",
+              "file_delivery",
+              "model_request",
+              "tool_result",
+              "checkpoint",
+            ]),
+          )
+          .min(1)
+          .max(
+            modelHubSkillsContextsBindingsCreateBodyConfigurationOneObservableBoundariesMax,
+          ),
+      }),
+      zod.null(),
+    ])
+    .optional(),
 });
 
 export const modelHubSkillsContextsBindingsCreateResponseResultNameMax = 120;
@@ -34804,6 +35518,45 @@ export const modelHubSkillsContextsBindingsCreateResponseResultRepositoryOneDefa
 export const modelHubSkillsContextsBindingsCreateResponseResultRepositoryOneProjectScopeMax = 255;
 
 export const modelHubSkillsContextsBindingsCreateResponseResultExpectedReportIntervalSecondsMax = 31536000;
+
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneCodeCommitRegExp =
+  new RegExp("^[a-f0-9]{40,64}$");
+
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneCodeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneEntrypointMax = 255;
+
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneImageDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneRuntimeVersionMax = 100;
+
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOnePackagesItemNameMax = 200;
+
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOnePackagesItemVersionMax = 100;
+
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOnePackagesItemSha256RegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOnePackageLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneModelModelIdMax = 255;
+
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneConnectionRevisionMax = 100;
+
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneToolsDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneRetrievalFixtureDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneStateSchemaMax = 100;
+
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneCheckpointDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneResetEntrypointMax = 255;
+
+export const modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneObservableBoundariesMax = 7;
 
 export const ModelHubSkillsContextsBindingsCreateResponse = zod.object({
   status: zod.boolean(),
@@ -34861,10 +35614,150 @@ export const ModelHubSkillsContextsBindingsCreateResponse = zod.object({
       .max(
         modelHubSkillsContextsBindingsCreateResponseResultExpectedReportIntervalSecondsMax,
       ),
+    configuration_digest: zod.string(),
     id: zod.string().uuid(),
     context_id: zod.string().uuid(),
     revision: zod.number().min(1),
     retired_at: zod.string().datetime({ offset: true }).nullable(),
+    configuration: zod
+      .union([
+        zod.object({
+          code_commit: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneCodeCommitRegExp,
+            ),
+          code_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneCodeDigestRegExp,
+            ),
+          entrypoint: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneEntrypointMax,
+            ),
+          image_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneImageDigestRegExp,
+            ),
+          runtime_version: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneRuntimeVersionMax,
+            ),
+          packages: zod.array(
+            zod.object({
+              name: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsBindingsCreateResponseResultConfigurationOnePackagesItemNameMax,
+                ),
+              version: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsBindingsCreateResponseResultConfigurationOnePackagesItemVersionMax,
+                ),
+              sha256: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsBindingsCreateResponseResultConfigurationOnePackagesItemSha256RegExp,
+                ),
+            }),
+          ),
+          package_lock_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsCreateResponseResultConfigurationOnePackageLockDigestRegExp,
+            ),
+          model: zod.object({
+            model_id: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneModelModelIdMax,
+              ),
+            temperature: zod.number(),
+            max_output_tokens: zod
+              .number()
+              .min(1)
+              .max(
+                modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneModelMaxOutputTokensMax,
+              ),
+          }),
+          connection_id: zod.string().uuid(),
+          connection_revision: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneConnectionRevisionMax,
+            ),
+          tools_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneToolsDigestRegExp,
+            ),
+          retrieval_fixture_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneRetrievalFixtureDigestRegExp,
+            ),
+          state_schema: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneStateSchemaMax,
+            ),
+          checkpoint_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneCheckpointDigestRegExp,
+            ),
+          side_effect_policy: zod.enum([
+            "read_only",
+            "fixture_only",
+            "idempotent_approved",
+          ]),
+          reset_entrypoint: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneResetEntrypointMax,
+            ),
+          context_mount: zod.enum(["/fi_context/"]),
+          observable_boundaries: zod
+            .array(
+              zod.enum([
+                "catalog",
+                "child_selection",
+                "root_delivery",
+                "file_delivery",
+                "model_request",
+                "tool_result",
+                "checkpoint",
+              ]),
+            )
+            .min(1)
+            .max(
+              modelHubSkillsContextsBindingsCreateResponseResultConfigurationOneObservableBoundariesMax,
+            ),
+        }),
+        zod.null(),
+      ])
+      .optional(),
   }),
 });
 
@@ -35399,6 +36292,45 @@ export const modelHubSkillsContextsConsumersListResponseResultResultsItemBinding
 
 export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingExpectedReportIntervalSecondsMax = 31536000;
 
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneCodeCommitRegExp =
+  new RegExp("^[a-f0-9]{40,64}$");
+
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneCodeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneEntrypointMax = 255;
+
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneImageDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneRuntimeVersionMax = 100;
+
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOnePackagesItemNameMax = 200;
+
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOnePackagesItemVersionMax = 100;
+
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOnePackagesItemSha256RegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOnePackageLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneModelModelIdMax = 255;
+
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneConnectionRevisionMax = 100;
+
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneToolsDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneRetrievalFixtureDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneStateSchemaMax = 100;
+
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneCheckpointDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneResetEntrypointMax = 255;
+
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneObservableBoundariesMax = 7;
+
 export const modelHubSkillsContextsConsumersListResponseResultResultsItemDesiredOneDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
 
@@ -35417,6 +36349,14 @@ export const modelHubSkillsContextsConsumersListResponseResultResultsItemDiscove
 export const modelHubSkillsContextsConsumersListResponseResultResultsItemLoadedOneDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
 export const modelHubSkillsContextsConsumersListResponseResultResultsItemLoadedOneSequenceMin = 0;
+
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemLatestFailureOneDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemLatestFailureOneSequenceMin = 0;
+
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemLatestFailureOneDiagnosticCodesItemMax = 64;
+
+export const modelHubSkillsContextsConsumersListResponseResultResultsItemLatestFailureOneDiagnosticCodesMax = 20;
 
 export const modelHubSkillsContextsConsumersListResponseResultCountMin = 0;
 
@@ -35489,10 +36429,150 @@ export const ModelHubSkillsContextsConsumersListResponse = zod.object({
             .max(
               modelHubSkillsContextsConsumersListResponseResultResultsItemBindingExpectedReportIntervalSecondsMax,
             ),
+          configuration_digest: zod.string(),
           id: zod.string().uuid(),
           context_id: zod.string().uuid(),
           revision: zod.number().min(1),
           retired_at: zod.string().datetime({ offset: true }).nullable(),
+          configuration: zod
+            .union([
+              zod.object({
+                code_commit: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneCodeCommitRegExp,
+                  ),
+                code_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneCodeDigestRegExp,
+                  ),
+                entrypoint: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneEntrypointMax,
+                  ),
+                image_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneImageDigestRegExp,
+                  ),
+                runtime_version: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneRuntimeVersionMax,
+                  ),
+                packages: zod.array(
+                  zod.object({
+                    name: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOnePackagesItemNameMax,
+                      ),
+                    version: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOnePackagesItemVersionMax,
+                      ),
+                    sha256: zod
+                      .string()
+                      .min(1)
+                      .regex(
+                        modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOnePackagesItemSha256RegExp,
+                      ),
+                  }),
+                ),
+                package_lock_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOnePackageLockDigestRegExp,
+                  ),
+                model: zod.object({
+                  model_id: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneModelModelIdMax,
+                    ),
+                  temperature: zod.number(),
+                  max_output_tokens: zod
+                    .number()
+                    .min(1)
+                    .max(
+                      modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneModelMaxOutputTokensMax,
+                    ),
+                }),
+                connection_id: zod.string().uuid(),
+                connection_revision: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneConnectionRevisionMax,
+                  ),
+                tools_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneToolsDigestRegExp,
+                  ),
+                retrieval_fixture_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneRetrievalFixtureDigestRegExp,
+                  ),
+                state_schema: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneStateSchemaMax,
+                  ),
+                checkpoint_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneCheckpointDigestRegExp,
+                  ),
+                side_effect_policy: zod.enum([
+                  "read_only",
+                  "fixture_only",
+                  "idempotent_approved",
+                ]),
+                reset_entrypoint: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneResetEntrypointMax,
+                  ),
+                context_mount: zod.enum(["/fi_context/"]),
+                observable_boundaries: zod
+                  .array(
+                    zod.enum([
+                      "catalog",
+                      "child_selection",
+                      "root_delivery",
+                      "file_delivery",
+                      "model_request",
+                      "tool_result",
+                      "checkpoint",
+                    ]),
+                  )
+                  .min(1)
+                  .max(
+                    modelHubSkillsContextsConsumersListResponseResultResultsItemBindingConfigurationOneObservableBoundariesMax,
+                  ),
+              }),
+              zod.null(),
+            ])
+            .optional(),
         }),
         desired: zod.union([
           zod.object({
@@ -35598,6 +36678,41 @@ export const ModelHubSkillsContextsConsumersListResponse = zod.object({
         states: zod.array(zod.string().min(1)),
         next_action_code: zod.string().min(1),
         observations_complete: zod.boolean(),
+        latest_failure: zod.union([
+          zod.object({
+            version_id: zod.string().uuid(),
+            digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsConsumersListResponseResultResultsItemLatestFailureOneDigestRegExp,
+              ),
+            observed_at: zod.string().datetime({ offset: true }),
+            received_at: zod.string().datetime({ offset: true }),
+            origin: zod.enum(["supported_adapter", "client_reported"]),
+            instance_id: zod.string().uuid(),
+            sequence: zod
+              .number()
+              .min(
+                modelHubSkillsContextsConsumersListResponseResultResultsItemLatestFailureOneSequenceMin,
+              ),
+            session_id: zod.string().uuid().nullable(),
+            diagnostic_codes: zod
+              .array(
+                zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsContextsConsumersListResponseResultResultsItemLatestFailureOneDiagnosticCodesItemMax,
+                  ),
+              )
+              .max(
+                modelHubSkillsContextsConsumersListResponseResultResultsItemLatestFailureOneDiagnosticCodesMax,
+              ),
+            trace_ref: zod.object({}).passthrough().nullable(),
+          }),
+          zod.null(),
+        ]),
       }),
     ),
     count: zod
@@ -36715,6 +37830,883 @@ export const ModelHubSkillsContextsDraftStartCreateResponse = zod.object({
       ),
     head_acknowledged: zod.boolean(),
     review_fingerprint: zod.string(),
+  }),
+});
+
+export const ModelHubSkillsContextsNativePreviewCreateParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsNativePreviewCreateBodyCaseIdsMax = 20;
+
+export const modelHubSkillsContextsNativePreviewCreateBodyHistoricalCaseIdsDefault =
+  [];
+export const modelHubSkillsContextsNativePreviewCreateBodyHistoricalCaseIdsMax = 20;
+
+export const ModelHubSkillsContextsNativePreviewCreateBody = zod.object({
+  binding_id: zod.string().uuid(),
+  binding_revision: zod.number().min(1),
+  candidate_version: zod.number().min(1),
+  baselines: zod.record(zod.string(), zod.number().min(1)),
+  case_ids: zod
+    .array(zod.string().uuid())
+    .min(1)
+    .max(modelHubSkillsContextsNativePreviewCreateBodyCaseIdsMax),
+  repetitions: zod.union([zod.literal(1), zod.literal(3)]),
+  historical_case_ids: zod
+    .array(zod.string().uuid())
+    .max(modelHubSkillsContextsNativePreviewCreateBodyHistoricalCaseIdsMax)
+    .default(
+      modelHubSkillsContextsNativePreviewCreateBodyHistoricalCaseIdsDefault,
+    ),
+});
+
+export const modelHubSkillsContextsNativePreviewCreateResponseResultExecutionFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsNativePreviewCreateResponseResultTargetConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsNativePreviewCreateResponseResultArmsItemDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativePreviewCreateResponseResultArmsItemCatalogMembersMin = 0;
+
+export const ModelHubSkillsContextsNativePreviewCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    execution_fingerprint: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsNativePreviewCreateResponseResultExecutionFingerprintRegExp,
+      ),
+    runtime: zod.object({
+      available: zod.boolean(),
+      runtime: zod.string().min(1).nullable(),
+      evidence_class: zod.string().min(1).nullable(),
+    }),
+    target: zod.object({
+      binding_id: zod.string().uuid(),
+      name: zod.string().min(1),
+      revision: zod.number().min(1),
+      selector: zod.object({}).passthrough(),
+      qualified: zod.boolean(),
+      configuration_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsNativePreviewCreateResponseResultTargetConfigurationDigestRegExp,
+        )
+        .nullable(),
+      configuration: zod.object({}).passthrough().nullable(),
+    }),
+    arms: zod.array(
+      zod.object({
+        variant: zod.string().min(1),
+        version: zod.number().min(1),
+        version_id: zod.string().uuid(),
+        digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsNativePreviewCreateResponseResultArmsItemDigestRegExp,
+          ),
+        catalog_members: zod
+          .number()
+          .min(
+            modelHubSkillsContextsNativePreviewCreateResponseResultArmsItemCatalogMembersMin,
+          )
+          .optional(),
+      }),
+    ),
+    cases: zod.array(
+      zod.object({
+        id: zod.string().uuid(),
+        title: zod.string().min(1),
+        historical: zod.boolean(),
+        expected_skill: zod.string().min(1).nullable(),
+        expected_action: zod.string().min(1).nullable(),
+      }),
+    ),
+    cells: zod.number().min(1),
+    ceiling_usd: zod.string().min(1),
+    reproducible: zod.boolean(),
+    reproduction: zod.enum(["ready", "not_reproduced"]),
+    missing_inputs: zod.array(
+      zod.object({
+        case_id: zod.string().uuid(),
+        input: zod.string().min(1),
+        detail: zod.string().min(1),
+      }),
+    ),
+  }),
+});
+
+export const ModelHubSkillsContextsNativeRunsListParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsNativeRunsListResponseResultResultsItemCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsNativeRunsListResponseResultResultsItemExecutionFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsNativeRunsListResponseResultResultsItemConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeRunsListResponseResultResultsItemAnnotationRevisionMin = 0;
+
+export const modelHubSkillsContextsNativeRunsListResponseResultResultsItemArmsItemDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeRunsListResponseResultResultsItemArmsItemCatalogMembersMin = 0;
+
+export const modelHubSkillsContextsNativeRunsListResponseResultResultsItemPlannedMin = 0;
+
+export const modelHubSkillsContextsNativeRunsListResponseResultResultsItemReceivedMin = 0;
+
+export const ModelHubSkillsContextsNativeRunsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    results: zod.array(
+      zod.object({
+        id: zod.string().uuid(),
+        job_id: zod.string().uuid(),
+        status: zod.string().min(1),
+        failure: zod.string().min(1).nullable(),
+        created_at: zod.string().datetime({ offset: true }),
+        visibility: zod.string().min(1),
+        candidate_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsNativeRunsListResponseResultResultsItemCandidateDigestRegExp,
+          ),
+        execution_fingerprint: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsNativeRunsListResponseResultResultsItemExecutionFingerprintRegExp,
+          ),
+        configuration_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsNativeRunsListResponseResultResultsItemConfigurationDigestRegExp,
+          ),
+        annotation_revision: zod
+          .number()
+          .min(
+            modelHubSkillsContextsNativeRunsListResponseResultResultsItemAnnotationRevisionMin,
+          ),
+        application_binding_id: zod.string().uuid().nullable(),
+        arms: zod.array(
+          zod.object({
+            variant: zod.string().min(1),
+            version: zod.number().min(1),
+            version_id: zod.string().uuid(),
+            digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsNativeRunsListResponseResultResultsItemArmsItemDigestRegExp,
+              ),
+            catalog_members: zod
+              .number()
+              .min(
+                modelHubSkillsContextsNativeRunsListResponseResultResultsItemArmsItemCatalogMembersMin,
+              )
+              .optional(),
+          }),
+        ),
+        planned: zod
+          .number()
+          .min(
+            modelHubSkillsContextsNativeRunsListResponseResultResultsItemPlannedMin,
+          ),
+        received: zod
+          .number()
+          .min(
+            modelHubSkillsContextsNativeRunsListResponseResultResultsItemReceivedMin,
+          ),
+      }),
+    ),
+  }),
+});
+
+export const ModelHubSkillsContextsNativeRunsCreateParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsNativeRunsCreateBodyCaseIdsMax = 20;
+
+export const modelHubSkillsContextsNativeRunsCreateBodyHistoricalCaseIdsDefault =
+  [];
+export const modelHubSkillsContextsNativeRunsCreateBodyHistoricalCaseIdsMax = 20;
+
+export const modelHubSkillsContextsNativeRunsCreateBodyExecutionFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsNativeRunsCreateBody = zod.object({
+  binding_id: zod.string().uuid(),
+  binding_revision: zod.number().min(1),
+  candidate_version: zod.number().min(1),
+  baselines: zod.record(zod.string(), zod.number().min(1)),
+  case_ids: zod
+    .array(zod.string().uuid())
+    .min(1)
+    .max(modelHubSkillsContextsNativeRunsCreateBodyCaseIdsMax),
+  repetitions: zod.union([zod.literal(1), zod.literal(3)]),
+  historical_case_ids: zod
+    .array(zod.string().uuid())
+    .max(modelHubSkillsContextsNativeRunsCreateBodyHistoricalCaseIdsMax)
+    .default(
+      modelHubSkillsContextsNativeRunsCreateBodyHistoricalCaseIdsDefault,
+    ),
+  execution_fingerprint: zod
+    .string()
+    .min(1)
+    .regex(
+      modelHubSkillsContextsNativeRunsCreateBodyExecutionFingerprintRegExp,
+    ),
+  acknowledge_spend: zod.boolean(),
+});
+
+export const ModelHubSkillsContextsNativeRunsReadParams = zod.object({
+  context_id: zod.string().uuid(),
+  evidence_id: zod.string(),
+});
+
+export const modelHubSkillsContextsNativeRunsReadResponseResultCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsNativeRunsReadResponseResultExecutionFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsNativeRunsReadResponseResultConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeRunsReadResponseResultAnnotationRevisionMin = 0;
+
+export const modelHubSkillsContextsNativeRunsReadResponseResultArmsItemDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeRunsReadResponseResultArmsItemCatalogMembersMin = 0;
+
+export const modelHubSkillsContextsNativeRunsReadResponseResultPlannedMin = 0;
+
+export const modelHubSkillsContextsNativeRunsReadResponseResultReceivedMin = 0;
+
+export const ModelHubSkillsContextsNativeRunsReadResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid(),
+    job_id: zod.string().uuid(),
+    status: zod.string().min(1),
+    failure: zod.string().min(1).nullable(),
+    created_at: zod.string().datetime({ offset: true }),
+    visibility: zod.string().min(1),
+    candidate_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsNativeRunsReadResponseResultCandidateDigestRegExp,
+      ),
+    execution_fingerprint: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsNativeRunsReadResponseResultExecutionFingerprintRegExp,
+      ),
+    configuration_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsNativeRunsReadResponseResultConfigurationDigestRegExp,
+      ),
+    annotation_revision: zod
+      .number()
+      .min(
+        modelHubSkillsContextsNativeRunsReadResponseResultAnnotationRevisionMin,
+      ),
+    application_binding_id: zod.string().uuid().nullable(),
+    arms: zod.array(
+      zod.object({
+        variant: zod.string().min(1),
+        version: zod.number().min(1),
+        version_id: zod.string().uuid(),
+        digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsNativeRunsReadResponseResultArmsItemDigestRegExp,
+          ),
+        catalog_members: zod
+          .number()
+          .min(
+            modelHubSkillsContextsNativeRunsReadResponseResultArmsItemCatalogMembersMin,
+          )
+          .optional(),
+      }),
+    ),
+    planned: zod
+      .number()
+      .min(modelHubSkillsContextsNativeRunsReadResponseResultPlannedMin),
+    received: zod
+      .number()
+      .min(modelHubSkillsContextsNativeRunsReadResponseResultReceivedMin),
+    result: zod.object({}).passthrough().optional(),
+    decision: zod.object({}).passthrough().optional(),
+    runtime: zod.object({}).passthrough().nullish(),
+    cases: zod.object({}).passthrough().optional(),
+    cells: zod.object({}).passthrough().optional(),
+  }),
+});
+
+export const ModelHubSkillsContextsNativeRunsShareCreateParams = zod.object({
+  context_id: zod.string().uuid(),
+  evidence_id: zod.string(),
+});
+
+export const ModelHubSkillsContextsNativeRunsShareCreateBody = zod.object({
+  acknowledge_snapshot_sharing: zod.boolean(),
+});
+
+export const modelHubSkillsContextsNativeRunsShareCreateResponseResultCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsNativeRunsShareCreateResponseResultExecutionFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsNativeRunsShareCreateResponseResultConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeRunsShareCreateResponseResultAnnotationRevisionMin = 0;
+
+export const modelHubSkillsContextsNativeRunsShareCreateResponseResultArmsItemDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeRunsShareCreateResponseResultArmsItemCatalogMembersMin = 0;
+
+export const modelHubSkillsContextsNativeRunsShareCreateResponseResultPlannedMin = 0;
+
+export const modelHubSkillsContextsNativeRunsShareCreateResponseResultReceivedMin = 0;
+
+export const ModelHubSkillsContextsNativeRunsShareCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid(),
+    job_id: zod.string().uuid(),
+    status: zod.string().min(1),
+    failure: zod.string().min(1).nullable(),
+    created_at: zod.string().datetime({ offset: true }),
+    visibility: zod.string().min(1),
+    candidate_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsNativeRunsShareCreateResponseResultCandidateDigestRegExp,
+      ),
+    execution_fingerprint: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsNativeRunsShareCreateResponseResultExecutionFingerprintRegExp,
+      ),
+    configuration_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsNativeRunsShareCreateResponseResultConfigurationDigestRegExp,
+      ),
+    annotation_revision: zod
+      .number()
+      .min(
+        modelHubSkillsContextsNativeRunsShareCreateResponseResultAnnotationRevisionMin,
+      ),
+    application_binding_id: zod.string().uuid().nullable(),
+    arms: zod.array(
+      zod.object({
+        variant: zod.string().min(1),
+        version: zod.number().min(1),
+        version_id: zod.string().uuid(),
+        digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsNativeRunsShareCreateResponseResultArmsItemDigestRegExp,
+          ),
+        catalog_members: zod
+          .number()
+          .min(
+            modelHubSkillsContextsNativeRunsShareCreateResponseResultArmsItemCatalogMembersMin,
+          )
+          .optional(),
+      }),
+    ),
+    planned: zod
+      .number()
+      .min(modelHubSkillsContextsNativeRunsShareCreateResponseResultPlannedMin),
+    received: zod
+      .number()
+      .min(
+        modelHubSkillsContextsNativeRunsShareCreateResponseResultReceivedMin,
+      ),
+  }),
+});
+
+export const ModelHubSkillsContextsNativeRuntimeConfigurationListParams =
+  zod.object({
+    context_id: zod.string().uuid(),
+  });
+
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneCodeCommitRegExp =
+  new RegExp("^[a-f0-9]{40,64}$");
+
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneCodeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneEntrypointMax = 255;
+
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneImageDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneRuntimeVersionMax = 100;
+
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOnePackagesItemNameMax = 200;
+
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOnePackagesItemVersionMax = 100;
+
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOnePackagesItemSha256RegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOnePackageLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneModelModelIdMax = 255;
+
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneConnectionRevisionMax = 100;
+
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneToolsDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneRetrievalFixtureDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneStateSchemaMax = 100;
+
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneCheckpointDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneResetEntrypointMax = 255;
+
+export const modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneObservableBoundariesMax = 7;
+
+export const ModelHubSkillsContextsNativeRuntimeConfigurationListResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      configuration: zod.union([
+        zod.object({
+          code_commit: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneCodeCommitRegExp,
+            ),
+          code_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneCodeDigestRegExp,
+            ),
+          entrypoint: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneEntrypointMax,
+            ),
+          image_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneImageDigestRegExp,
+            ),
+          runtime_version: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneRuntimeVersionMax,
+            ),
+          packages: zod.array(
+            zod.object({
+              name: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOnePackagesItemNameMax,
+                ),
+              version: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOnePackagesItemVersionMax,
+                ),
+              sha256: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOnePackagesItemSha256RegExp,
+                ),
+            }),
+          ),
+          package_lock_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOnePackageLockDigestRegExp,
+            ),
+          model: zod.object({
+            model_id: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneModelModelIdMax,
+              ),
+            temperature: zod.number(),
+            max_output_tokens: zod
+              .number()
+              .min(1)
+              .max(
+                modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneModelMaxOutputTokensMax,
+              ),
+          }),
+          connection_id: zod.string().uuid(),
+          connection_revision: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneConnectionRevisionMax,
+            ),
+          tools_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneToolsDigestRegExp,
+            ),
+          retrieval_fixture_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneRetrievalFixtureDigestRegExp,
+            ),
+          state_schema: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneStateSchemaMax,
+            ),
+          checkpoint_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneCheckpointDigestRegExp,
+            ),
+          side_effect_policy: zod.enum([
+            "read_only",
+            "fixture_only",
+            "idempotent_approved",
+          ]),
+          reset_entrypoint: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneResetEntrypointMax,
+            ),
+          context_mount: zod.enum(["/fi_context/"]),
+          observable_boundaries: zod
+            .array(
+              zod.enum([
+                "catalog",
+                "child_selection",
+                "root_delivery",
+                "file_delivery",
+                "model_request",
+                "tool_result",
+                "checkpoint",
+              ]),
+            )
+            .min(1)
+            .max(
+              modelHubSkillsContextsNativeRuntimeConfigurationListResponseResultConfigurationOneObservableBoundariesMax,
+            ),
+        }),
+        zod.null(),
+      ]),
+    }),
+  });
+
+export const ModelHubSkillsContextsNativeTargetsListParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsNativeTargetsListResponseResultTargetsItemConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsNativeTargetsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    runtime: zod.object({
+      available: zod.boolean(),
+      runtime: zod.string().min(1).nullable(),
+      evidence_class: zod.string().min(1).nullable(),
+    }),
+    targets: zod.array(
+      zod.object({
+        binding_id: zod.string().uuid(),
+        name: zod.string().min(1),
+        revision: zod.number().min(1),
+        selector: zod.object({}).passthrough(),
+        qualified: zod.boolean(),
+        configuration_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsContextsNativeTargetsListResponseResultTargetsItemConfigurationDigestRegExp,
+          )
+          .nullable(),
+        configuration: zod.object({}).passthrough().nullable(),
+      }),
+    ),
+  }),
+});
+
+export const ModelHubSkillsContextsNativeTargetsCreateParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const ModelHubSkillsContextsNativeTargetsCreateBody = zod.object({
+  version: zod.number().min(1),
+});
+
+export const modelHubSkillsContextsNativeTargetsCreateResponseResultConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsNativeTargetsCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    binding_id: zod.string().uuid(),
+    name: zod.string().min(1),
+    revision: zod.number().min(1),
+    selector: zod.object({}).passthrough(),
+    qualified: zod.boolean(),
+    configuration_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsNativeTargetsCreateResponseResultConfigurationDigestRegExp,
+      )
+      .nullable(),
+    configuration: zod.object({}).passthrough().nullable(),
+  }),
+});
+
+export const ModelHubSkillsContextsNativeTargetsUpdateParams = zod.object({
+  context_id: zod.string().uuid(),
+  binding_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneCodeCommitRegExp =
+  new RegExp("^[a-f0-9]{40,64}$");
+
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneCodeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneEntrypointMax = 255;
+
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneImageDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneRuntimeVersionMax = 100;
+
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOnePackagesItemNameMax = 200;
+
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOnePackagesItemVersionMax = 100;
+
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOnePackagesItemSha256RegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOnePackageLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneModelModelIdMax = 255;
+
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneConnectionRevisionMax = 100;
+
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneToolsDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneRetrievalFixtureDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneStateSchemaMax = 100;
+
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneCheckpointDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneResetEntrypointMax = 255;
+
+export const modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneObservableBoundariesMax = 7;
+
+export const ModelHubSkillsContextsNativeTargetsUpdateBody = zod.object({
+  revision: zod.number().min(1),
+  configuration: zod.union([
+    zod.object({
+      code_commit: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneCodeCommitRegExp,
+        ),
+      code_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneCodeDigestRegExp,
+        ),
+      entrypoint: zod
+        .string()
+        .min(1)
+        .max(
+          modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneEntrypointMax,
+        ),
+      image_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneImageDigestRegExp,
+        ),
+      runtime_version: zod
+        .string()
+        .min(1)
+        .max(
+          modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneRuntimeVersionMax,
+        ),
+      packages: zod.array(
+        zod.object({
+          name: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOnePackagesItemNameMax,
+            ),
+          version: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOnePackagesItemVersionMax,
+            ),
+          sha256: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOnePackagesItemSha256RegExp,
+            ),
+        }),
+      ),
+      package_lock_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOnePackageLockDigestRegExp,
+        ),
+      model: zod.object({
+        model_id: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneModelModelIdMax,
+          ),
+        temperature: zod.number(),
+        max_output_tokens: zod
+          .number()
+          .min(1)
+          .max(
+            modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneModelMaxOutputTokensMax,
+          ),
+      }),
+      connection_id: zod.string().uuid(),
+      connection_revision: zod
+        .string()
+        .min(1)
+        .max(
+          modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneConnectionRevisionMax,
+        ),
+      tools_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneToolsDigestRegExp,
+        ),
+      retrieval_fixture_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneRetrievalFixtureDigestRegExp,
+        ),
+      state_schema: zod
+        .string()
+        .min(1)
+        .max(
+          modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneStateSchemaMax,
+        ),
+      checkpoint_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneCheckpointDigestRegExp,
+        ),
+      side_effect_policy: zod.enum([
+        "read_only",
+        "fixture_only",
+        "idempotent_approved",
+      ]),
+      reset_entrypoint: zod
+        .string()
+        .min(1)
+        .max(
+          modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneResetEntrypointMax,
+        ),
+      context_mount: zod.enum(["/fi_context/"]),
+      observable_boundaries: zod
+        .array(
+          zod.enum([
+            "catalog",
+            "child_selection",
+            "root_delivery",
+            "file_delivery",
+            "model_request",
+            "tool_result",
+            "checkpoint",
+          ]),
+        )
+        .min(1)
+        .max(
+          modelHubSkillsContextsNativeTargetsUpdateBodyConfigurationOneObservableBoundariesMax,
+        ),
+    }),
+    zod.null(),
+  ]),
+});
+
+export const modelHubSkillsContextsNativeTargetsUpdateResponseResultConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsNativeTargetsUpdateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    binding_id: zod.string().uuid(),
+    name: zod.string().min(1),
+    revision: zod.number().min(1),
+    selector: zod.object({}).passthrough(),
+    qualified: zod.boolean(),
+    configuration_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsContextsNativeTargetsUpdateResponseResultConfigurationDigestRegExp,
+      )
+      .nullable(),
+    configuration: zod.object({}).passthrough().nullable(),
   }),
 });
 
@@ -39045,6 +41037,416 @@ export const ModelHubSkillsContextsTestRunsShareCreateResponse = zod.object({
   }),
 });
 
+export const ModelHubSkillsContextsTestsListParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsTestsListResponseResultDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsTestsListResponseResultCasesItemTitleMax = 120;
+
+export const modelHubSkillsContextsTestsListResponseResultCasesItemChecksItemConfigTextMax = 2000;
+
+export const modelHubSkillsContextsTestsListResponseResultCasesItemChecksItemConfigPointerMax = 2000;
+
+export const modelHubSkillsContextsTestsListResponseResultCasesItemChecksItemConfigPathMax = 255;
+
+export const modelHubSkillsContextsTestsListResponseResultCasesItemChecksItemConfigRequirementMax = 2000;
+
+export const modelHubSkillsContextsTestsListResponseResultCasesItemSourceHashesRegExpOne =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsTestsListResponseResultCasesItemSourceSourceFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsTestsListResponseResultCasesItemSourceSanitizedDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsTestsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    revision: zod.number(),
+    digest: zod
+      .string()
+      .min(1)
+      .regex(modelHubSkillsContextsTestsListResponseResultDigestRegExp)
+      .nullable(),
+    cases: zod.array(
+      zod.object({
+        id: zod.string().uuid(),
+        title: zod
+          .string()
+          .min(1)
+          .max(modelHubSkillsContextsTestsListResponseResultCasesItemTitleMax),
+        source_group_id: zod.string().min(1),
+        prompt: zod.string().min(1),
+        fixtures: zod.array(
+          zod.object({
+            id: zod.string().uuid(),
+            name: zod.string().min(1),
+            text: zod.string(),
+          }),
+        ),
+        expected_trigger: zod.boolean().nullable(),
+        checks: zod.array(
+          zod.object({
+            id: zod.string().uuid(),
+            kind: zod.enum([
+              "contains",
+              "not_contains",
+              "json_valid",
+              "json_equals",
+              "json_schema",
+              "file_delivered",
+              "semantic",
+            ]),
+            critical: zod.boolean(),
+            config: zod.object({
+              text: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsTestsListResponseResultCasesItemChecksItemConfigTextMax,
+                )
+                .optional(),
+              case_sensitive: zod.boolean().optional(),
+              pointer: zod
+                .string()
+                .max(
+                  modelHubSkillsContextsTestsListResponseResultCasesItemChecksItemConfigPointerMax,
+                )
+                .optional(),
+              value: zod
+                .object({})
+                .passthrough()
+                .optional()
+                .describe("Any valid JSON value."),
+              schema: zod.object({}).passthrough().optional(),
+              path: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsTestsListResponseResultCasesItemChecksItemConfigPathMax,
+                )
+                .optional(),
+              complete: zod.boolean().optional(),
+              requirement: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsTestsListResponseResultCasesItemChecksItemConfigRequirementMax,
+                )
+                .optional(),
+            }),
+          }),
+        ),
+        reviewed: zod.boolean(),
+        reviewed_by: zod.union([
+          zod.object({
+            id: zod.string().uuid(),
+            name: zod.string(),
+          }),
+          zod.null(),
+        ]),
+        reviewed_at: zod.string().datetime({ offset: true }).nullable(),
+        origin: zod.enum(["manual", "template", "assist"]),
+        exposed_to_assist: zod.boolean(),
+        source: zod
+          .object({
+            provider: zod.enum(["dataset"]),
+            dataset_id: zod.string().uuid(),
+            row_id: zod.string().uuid(),
+            revision: zod.string().min(1),
+            prompt_column_id: zod.string().uuid(),
+            fixture_column_ids: zod.array(zod.string().uuid()),
+            hashes: zod.record(
+              zod.string(),
+              zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsTestsListResponseResultCasesItemSourceHashesRegExpOne,
+                ),
+            ),
+            source_fingerprint: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsTestsListResponseResultCasesItemSourceSourceFingerprintRegExp,
+              ),
+            sanitized_digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsTestsListResponseResultCasesItemSourceSanitizedDigestRegExp,
+              ),
+            replay_scope: zod.enum(["text_only"]),
+          })
+          .optional(),
+      }),
+    ),
+    updated_at: zod.string().datetime({ offset: true }).nullable(),
+    updated_by: zod.union([
+      zod.object({
+        id: zod.string().uuid(),
+        name: zod.string(),
+      }),
+      zod.null(),
+    ]),
+    visibility: zod.enum(["workspace"]),
+  }),
+});
+
+export const ModelHubSkillsContextsTestsUpdateParams = zod.object({
+  context_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsContextsTestsUpdateBodyRevisionMin = 0;
+
+export const modelHubSkillsContextsTestsUpdateBodyCasesItemTitleMax = 120;
+
+export const modelHubSkillsContextsTestsUpdateBodyCasesItemChecksItemConfigTextMax = 2000;
+
+export const modelHubSkillsContextsTestsUpdateBodyCasesItemChecksItemConfigPointerMax = 2000;
+
+export const modelHubSkillsContextsTestsUpdateBodyCasesItemChecksItemConfigPathMax = 255;
+
+export const modelHubSkillsContextsTestsUpdateBodyCasesItemChecksItemConfigRequirementMax = 2000;
+
+export const ModelHubSkillsContextsTestsUpdateBody = zod.object({
+  revision: zod.number().min(modelHubSkillsContextsTestsUpdateBodyRevisionMin),
+  cases: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      title: zod
+        .string()
+        .min(1)
+        .max(modelHubSkillsContextsTestsUpdateBodyCasesItemTitleMax),
+      source_group_id: zod.string().min(1),
+      prompt: zod.string().min(1),
+      fixtures: zod.array(
+        zod.object({
+          id: zod.string().uuid(),
+          name: zod.string().min(1),
+          text: zod.string(),
+        }),
+      ),
+      expected_trigger: zod.boolean().nullable(),
+      checks: zod.array(
+        zod.object({
+          id: zod.string().uuid(),
+          kind: zod.enum([
+            "contains",
+            "not_contains",
+            "json_valid",
+            "json_equals",
+            "json_schema",
+            "file_delivered",
+            "semantic",
+          ]),
+          critical: zod.boolean(),
+          config: zod.object({
+            text: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsTestsUpdateBodyCasesItemChecksItemConfigTextMax,
+              )
+              .optional(),
+            case_sensitive: zod.boolean().optional(),
+            pointer: zod
+              .string()
+              .max(
+                modelHubSkillsContextsTestsUpdateBodyCasesItemChecksItemConfigPointerMax,
+              )
+              .optional(),
+            value: zod
+              .object({})
+              .passthrough()
+              .optional()
+              .describe("Any valid JSON value."),
+            schema: zod.object({}).passthrough().optional(),
+            path: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsTestsUpdateBodyCasesItemChecksItemConfigPathMax,
+              )
+              .optional(),
+            complete: zod.boolean().optional(),
+            requirement: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsContextsTestsUpdateBodyCasesItemChecksItemConfigRequirementMax,
+              )
+              .optional(),
+          }),
+        }),
+      ),
+      reviewed: zod.boolean(),
+    }),
+  ),
+});
+
+export const modelHubSkillsContextsTestsUpdateResponseResultDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsContextsTestsUpdateResponseResultCasesItemTitleMax = 120;
+
+export const modelHubSkillsContextsTestsUpdateResponseResultCasesItemChecksItemConfigTextMax = 2000;
+
+export const modelHubSkillsContextsTestsUpdateResponseResultCasesItemChecksItemConfigPointerMax = 2000;
+
+export const modelHubSkillsContextsTestsUpdateResponseResultCasesItemChecksItemConfigPathMax = 255;
+
+export const modelHubSkillsContextsTestsUpdateResponseResultCasesItemChecksItemConfigRequirementMax = 2000;
+
+export const modelHubSkillsContextsTestsUpdateResponseResultCasesItemSourceHashesRegExpOne =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsTestsUpdateResponseResultCasesItemSourceSourceFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsContextsTestsUpdateResponseResultCasesItemSourceSanitizedDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsContextsTestsUpdateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    revision: zod.number(),
+    digest: zod
+      .string()
+      .min(1)
+      .regex(modelHubSkillsContextsTestsUpdateResponseResultDigestRegExp)
+      .nullable(),
+    cases: zod.array(
+      zod.object({
+        id: zod.string().uuid(),
+        title: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsContextsTestsUpdateResponseResultCasesItemTitleMax,
+          ),
+        source_group_id: zod.string().min(1),
+        prompt: zod.string().min(1),
+        fixtures: zod.array(
+          zod.object({
+            id: zod.string().uuid(),
+            name: zod.string().min(1),
+            text: zod.string(),
+          }),
+        ),
+        expected_trigger: zod.boolean().nullable(),
+        checks: zod.array(
+          zod.object({
+            id: zod.string().uuid(),
+            kind: zod.enum([
+              "contains",
+              "not_contains",
+              "json_valid",
+              "json_equals",
+              "json_schema",
+              "file_delivered",
+              "semantic",
+            ]),
+            critical: zod.boolean(),
+            config: zod.object({
+              text: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsTestsUpdateResponseResultCasesItemChecksItemConfigTextMax,
+                )
+                .optional(),
+              case_sensitive: zod.boolean().optional(),
+              pointer: zod
+                .string()
+                .max(
+                  modelHubSkillsContextsTestsUpdateResponseResultCasesItemChecksItemConfigPointerMax,
+                )
+                .optional(),
+              value: zod
+                .object({})
+                .passthrough()
+                .optional()
+                .describe("Any valid JSON value."),
+              schema: zod.object({}).passthrough().optional(),
+              path: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsTestsUpdateResponseResultCasesItemChecksItemConfigPathMax,
+                )
+                .optional(),
+              complete: zod.boolean().optional(),
+              requirement: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsContextsTestsUpdateResponseResultCasesItemChecksItemConfigRequirementMax,
+                )
+                .optional(),
+            }),
+          }),
+        ),
+        reviewed: zod.boolean(),
+        reviewed_by: zod.union([
+          zod.object({
+            id: zod.string().uuid(),
+            name: zod.string(),
+          }),
+          zod.null(),
+        ]),
+        reviewed_at: zod.string().datetime({ offset: true }).nullable(),
+        origin: zod.enum(["manual", "template", "assist"]),
+        exposed_to_assist: zod.boolean(),
+        source: zod
+          .object({
+            provider: zod.enum(["dataset"]),
+            dataset_id: zod.string().uuid(),
+            row_id: zod.string().uuid(),
+            revision: zod.string().min(1),
+            prompt_column_id: zod.string().uuid(),
+            fixture_column_ids: zod.array(zod.string().uuid()),
+            hashes: zod.record(
+              zod.string(),
+              zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsContextsTestsUpdateResponseResultCasesItemSourceHashesRegExpOne,
+                ),
+            ),
+            source_fingerprint: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsTestsUpdateResponseResultCasesItemSourceSourceFingerprintRegExp,
+              ),
+            sanitized_digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsContextsTestsUpdateResponseResultCasesItemSourceSanitizedDigestRegExp,
+              ),
+            replay_scope: zod.enum(["text_only"]),
+          })
+          .optional(),
+      }),
+    ),
+    updated_at: zod.string().datetime({ offset: true }).nullable(),
+    updated_by: zod.union([
+      zod.object({
+        id: zod.string().uuid(),
+        name: zod.string(),
+      }),
+      zod.null(),
+    ]),
+    visibility: zod.enum(["workspace"]),
+  }),
+});
+
 export const ModelHubSkillsContextsVersionsListParams = zod.object({
   context_id: zod.string().uuid(),
 });
@@ -39745,44 +42147,44 @@ export const modelHubSkillsEvidenceReadResponseResultConfigurationSchemaMax = 1;
 export const modelHubSkillsEvidenceReadResponseResultConfigurationDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
 
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeCodeCommitRegExp =
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneCodeCommitRegExp =
   new RegExp("^[a-f0-9]{40,64}$");
 
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeCodeDigestRegExp =
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneCodeDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeEntrypointMax = 255;
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneEntrypointMax = 255;
 
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeImageDigestRegExp =
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneImageDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeRuntimeVersionMax = 100;
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneRuntimeVersionMax = 100;
 
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativePackagesItemNameMax = 200;
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOnePackagesItemNameMax = 200;
 
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativePackagesItemVersionMax = 100;
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOnePackagesItemVersionMax = 100;
 
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativePackagesItemSha256RegExp =
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOnePackagesItemSha256RegExp =
   new RegExp("^[a-f0-9]{64}$");
 
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativePackageLockDigestRegExp =
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOnePackageLockDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeModelModelIdMax = 255;
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneModelModelIdMax = 255;
 
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeModelMaxOutputTokensMax = 8192;
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneModelMaxOutputTokensMax = 8192;
 
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeConnectionRevisionMax = 100;
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneConnectionRevisionMax = 100;
 
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeToolsDigestRegExp =
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneToolsDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
 
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeRetrievalFixtureDigestRegExp =
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneRetrievalFixtureDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeStateSchemaMax = 100;
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneStateSchemaMax = 100;
 
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeCheckpointDigestRegExp =
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneCheckpointDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeResetEntrypointMax = 255;
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneResetEntrypointMax = 255;
 
-export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeObservableBoundariesMax = 7;
+export const modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneObservableBoundariesMax = 7;
 
 export const modelHubSkillsEvidenceReadResponseResultConfigurationTextModelModelIdMax = 255;
 
@@ -39841,140 +42243,143 @@ export const ModelHubSkillsEvidenceReadResponse = zod.object({
           modelHubSkillsEvidenceReadResponseResultConfigurationDigestRegExp,
         ),
       native: zod
-        .object({
-          code_commit: zod
-            .string()
-            .min(1)
-            .regex(
-              modelHubSkillsEvidenceReadResponseResultConfigurationNativeCodeCommitRegExp,
-            ),
-          code_digest: zod
-            .string()
-            .min(1)
-            .regex(
-              modelHubSkillsEvidenceReadResponseResultConfigurationNativeCodeDigestRegExp,
-            ),
-          entrypoint: zod
-            .string()
-            .min(1)
-            .max(
-              modelHubSkillsEvidenceReadResponseResultConfigurationNativeEntrypointMax,
-            ),
-          image_digest: zod
-            .string()
-            .min(1)
-            .regex(
-              modelHubSkillsEvidenceReadResponseResultConfigurationNativeImageDigestRegExp,
-            ),
-          runtime_version: zod
-            .string()
-            .min(1)
-            .max(
-              modelHubSkillsEvidenceReadResponseResultConfigurationNativeRuntimeVersionMax,
-            ),
-          packages: zod.array(
-            zod.object({
-              name: zod
-                .string()
-                .min(1)
-                .max(
-                  modelHubSkillsEvidenceReadResponseResultConfigurationNativePackagesItemNameMax,
-                ),
-              version: zod
-                .string()
-                .min(1)
-                .max(
-                  modelHubSkillsEvidenceReadResponseResultConfigurationNativePackagesItemVersionMax,
-                ),
-              sha256: zod
-                .string()
-                .min(1)
-                .regex(
-                  modelHubSkillsEvidenceReadResponseResultConfigurationNativePackagesItemSha256RegExp,
-                ),
-            }),
-          ),
-          package_lock_digest: zod
-            .string()
-            .min(1)
-            .regex(
-              modelHubSkillsEvidenceReadResponseResultConfigurationNativePackageLockDigestRegExp,
-            ),
-          model: zod.object({
-            model_id: zod
+        .union([
+          zod.object({
+            code_commit: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneCodeCommitRegExp,
+              ),
+            code_digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneCodeDigestRegExp,
+              ),
+            entrypoint: zod
               .string()
               .min(1)
               .max(
-                modelHubSkillsEvidenceReadResponseResultConfigurationNativeModelModelIdMax,
+                modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneEntrypointMax,
               ),
-            temperature: zod.number(),
-            max_output_tokens: zod
-              .number()
+            image_digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneImageDigestRegExp,
+              ),
+            runtime_version: zod
+              .string()
               .min(1)
               .max(
-                modelHubSkillsEvidenceReadResponseResultConfigurationNativeModelMaxOutputTokensMax,
+                modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneRuntimeVersionMax,
+              ),
+            packages: zod.array(
+              zod.object({
+                name: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsEvidenceReadResponseResultConfigurationNativeOnePackagesItemNameMax,
+                  ),
+                version: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsEvidenceReadResponseResultConfigurationNativeOnePackagesItemVersionMax,
+                  ),
+                sha256: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsEvidenceReadResponseResultConfigurationNativeOnePackagesItemSha256RegExp,
+                  ),
+              }),
+            ),
+            package_lock_digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsEvidenceReadResponseResultConfigurationNativeOnePackageLockDigestRegExp,
+              ),
+            model: zod.object({
+              model_id: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneModelModelIdMax,
+                ),
+              temperature: zod.number(),
+              max_output_tokens: zod
+                .number()
+                .min(1)
+                .max(
+                  modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneModelMaxOutputTokensMax,
+                ),
+            }),
+            connection_id: zod.string().uuid(),
+            connection_revision: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneConnectionRevisionMax,
+              ),
+            tools_digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneToolsDigestRegExp,
+              ),
+            retrieval_fixture_digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneRetrievalFixtureDigestRegExp,
+              ),
+            state_schema: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneStateSchemaMax,
+              ),
+            checkpoint_digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneCheckpointDigestRegExp,
+              ),
+            side_effect_policy: zod.enum([
+              "read_only",
+              "fixture_only",
+              "idempotent_approved",
+            ]),
+            reset_entrypoint: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneResetEntrypointMax,
+              ),
+            context_mount: zod.enum(["/fi_context/"]),
+            observable_boundaries: zod
+              .array(
+                zod.enum([
+                  "catalog",
+                  "child_selection",
+                  "root_delivery",
+                  "file_delivery",
+                  "model_request",
+                  "tool_result",
+                  "checkpoint",
+                ]),
+              )
+              .min(1)
+              .max(
+                modelHubSkillsEvidenceReadResponseResultConfigurationNativeOneObservableBoundariesMax,
               ),
           }),
-          connection_id: zod.string().uuid(),
-          connection_revision: zod
-            .string()
-            .min(1)
-            .max(
-              modelHubSkillsEvidenceReadResponseResultConfigurationNativeConnectionRevisionMax,
-            ),
-          tools_digest: zod
-            .string()
-            .min(1)
-            .regex(
-              modelHubSkillsEvidenceReadResponseResultConfigurationNativeToolsDigestRegExp,
-            ),
-          retrieval_fixture_digest: zod
-            .string()
-            .min(1)
-            .regex(
-              modelHubSkillsEvidenceReadResponseResultConfigurationNativeRetrievalFixtureDigestRegExp,
-            ),
-          state_schema: zod
-            .string()
-            .min(1)
-            .max(
-              modelHubSkillsEvidenceReadResponseResultConfigurationNativeStateSchemaMax,
-            ),
-          checkpoint_digest: zod
-            .string()
-            .min(1)
-            .regex(
-              modelHubSkillsEvidenceReadResponseResultConfigurationNativeCheckpointDigestRegExp,
-            ),
-          side_effect_policy: zod.enum([
-            "read_only",
-            "fixture_only",
-            "idempotent_approved",
-          ]),
-          reset_entrypoint: zod
-            .string()
-            .min(1)
-            .max(
-              modelHubSkillsEvidenceReadResponseResultConfigurationNativeResetEntrypointMax,
-            ),
-          context_mount: zod.enum(["/fi_context/"]),
-          observable_boundaries: zod
-            .array(
-              zod.enum([
-                "catalog",
-                "child_selection",
-                "root_delivery",
-                "file_delivery",
-                "model_request",
-                "tool_result",
-                "checkpoint",
-              ]),
-            )
-            .min(1)
-            .max(
-              modelHubSkillsEvidenceReadResponseResultConfigurationNativeObservableBoundariesMax,
-            ),
-        })
+          zod.null(),
+        ])
         .optional(),
       text: zod
         .object({
@@ -41673,6 +44078,53 @@ export const ModelHubSkillsIntakeReviewCreateResponse = zod.object({
   }),
 });
 
+export const ModelHubSkillsNativeAttemptsFailureCreateParams = zod.object({
+  attempt_id: zod.string(),
+});
+
+export const ModelHubSkillsNativeAttemptsFailureCreateBody = zod.object({
+  reason: zod.string().nullish(),
+});
+
+export const ModelHubSkillsNativeAttemptsHealthCreateParams = zod.object({
+  attempt_id: zod.string(),
+});
+
+export const ModelHubSkillsNativeAttemptsHealthCreateBody = zod.object({
+  protocol: zod.string().min(1),
+  adapter_module: zod.string().min(1),
+  configuration_digest: zod.string().min(1),
+  execution_fingerprint: zod.string().min(1),
+  code_digest: zod.string().min(1),
+  image_digest: zod.string().min(1),
+  packages: zod.object({}).passthrough(),
+  checkpoint_digest: zod.string().min(1),
+  read_only_source: zod.boolean(),
+  read_only_context: zod.boolean(),
+  separate_writable_state: zod.boolean(),
+  controlled_paid_egress: zod.boolean(),
+});
+
+export const ModelHubSkillsNativeAttemptsObservationsCreateParams = zod.object({
+  attempt_id: zod.string(),
+});
+
+export const modelHubSkillsNativeAttemptsObservationsCreateBodyRepeatIndexMin = 0;
+
+export const ModelHubSkillsNativeAttemptsObservationsCreateBody = zod.object({
+  schema: zod.number(),
+  protocol: zod.string().min(1),
+  execution_fingerprint: zod.string().min(1),
+  case_id: zod.string().min(1),
+  variant: zod.string().min(1),
+  repeat_index: zod
+    .number()
+    .min(modelHubSkillsNativeAttemptsObservationsCreateBodyRepeatIndexMin),
+  application: zod.record(zod.string(), zod.string().nullable()),
+  business: zod.record(zod.string(), zod.string().nullable()),
+  observation_digest: zod.string().min(1),
+});
+
 export const modelHubSkillsPublishCreateBodyExpectedDigestRegExp = new RegExp(
   "^sha256:[0-9a-f]{64}$",
 );
@@ -41803,6 +44255,67 @@ export const ModelHubSkillsPublishCreateResponse = zod.object({
   }),
 });
 
+export const modelHubSkillsReleaseRequestsListQueryPageDefault = 1;
+
+export const modelHubSkillsReleaseRequestsListQueryPageSizeDefault = 25;
+export const modelHubSkillsReleaseRequestsListQueryPageSizeMax = 100;
+
+export const ModelHubSkillsReleaseRequestsListQueryParams = zod.object({
+  page: zod
+    .number()
+    .min(1)
+    .default(modelHubSkillsReleaseRequestsListQueryPageDefault),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(modelHubSkillsReleaseRequestsListQueryPageSizeMax)
+    .default(modelHubSkillsReleaseRequestsListQueryPageSizeDefault),
+  status: zod
+    .enum([
+      "pending",
+      "approved",
+      "changes_requested",
+      "released",
+      "superseded",
+    ])
+    .optional(),
+});
+
+export const modelHubSkillsReleaseRequestsListResponseResultCountMin = 0;
+
+export const modelHubSkillsReleaseRequestsListResponseResultTotalPagesMin = 0;
+
+export const modelHubSkillsReleaseRequestsListResponseResultUnreadCountMin = 0;
+
+export const ModelHubSkillsReleaseRequestsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    count: zod
+      .number()
+      .min(modelHubSkillsReleaseRequestsListResponseResultCountMin),
+    page: zod.number().min(1),
+    page_size: zod.number().min(1),
+    total_pages: zod
+      .number()
+      .min(modelHubSkillsReleaseRequestsListResponseResultTotalPagesMin),
+    results: zod.array(
+      zod.object({
+        revision: zod.number().min(1),
+        id: zod.string().uuid(),
+        status: zod.string().min(1),
+        subject_id: zod.string().uuid(),
+        subject_kind: zod.enum(["skill", "agent_context"]),
+        name: zod.string().min(1),
+        author_id: zod.string().uuid(),
+        unread: zod.boolean(),
+      }),
+    ),
+    unread_count: zod
+      .number()
+      .min(modelHubSkillsReleaseRequestsListResponseResultUnreadCountMin),
+  }),
+});
+
 export const modelHubSkillsReleaseRequestsCreateBodyPacketSchemaMax = 1;
 
 export const modelHubSkillsReleaseRequestsCreateBodyPacketCandidateDigestRegExp =
@@ -41835,44 +44348,44 @@ export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurat
 export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
 
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeCodeCommitRegExp =
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneCodeCommitRegExp =
   new RegExp("^[a-f0-9]{40,64}$");
 
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeCodeDigestRegExp =
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneCodeDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeEntrypointMax = 255;
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneEntrypointMax = 255;
 
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeImageDigestRegExp =
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneImageDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeRuntimeVersionMax = 100;
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneRuntimeVersionMax = 100;
 
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackagesItemNameMax = 200;
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOnePackagesItemNameMax = 200;
 
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackagesItemVersionMax = 100;
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOnePackagesItemVersionMax = 100;
 
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackagesItemSha256RegExp =
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOnePackagesItemSha256RegExp =
   new RegExp("^[a-f0-9]{64}$");
 
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackageLockDigestRegExp =
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOnePackageLockDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeModelModelIdMax = 255;
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneModelModelIdMax = 255;
 
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeModelMaxOutputTokensMax = 8192;
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneModelMaxOutputTokensMax = 8192;
 
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeConnectionRevisionMax = 100;
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneConnectionRevisionMax = 100;
 
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeToolsDigestRegExp =
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneToolsDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
 
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeRetrievalFixtureDigestRegExp =
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneRetrievalFixtureDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeStateSchemaMax = 100;
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneStateSchemaMax = 100;
 
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeCheckpointDigestRegExp =
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneCheckpointDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeResetEntrypointMax = 255;
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneResetEntrypointMax = 255;
 
-export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeObservableBoundariesMax = 7;
+export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneObservableBoundariesMax = 7;
 
 export const modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationTextModelModelIdMax = 255;
 
@@ -42014,140 +44527,143 @@ export const ModelHubSkillsReleaseRequestsCreateBody = zod.object({
               modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationDigestRegExp,
             ),
           native: zod
-            .object({
-              code_commit: zod
-                .string()
-                .min(1)
-                .regex(
-                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeCodeCommitRegExp,
-                ),
-              code_digest: zod
-                .string()
-                .min(1)
-                .regex(
-                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeCodeDigestRegExp,
-                ),
-              entrypoint: zod
-                .string()
-                .min(1)
-                .max(
-                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeEntrypointMax,
-                ),
-              image_digest: zod
-                .string()
-                .min(1)
-                .regex(
-                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeImageDigestRegExp,
-                ),
-              runtime_version: zod
-                .string()
-                .min(1)
-                .max(
-                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeRuntimeVersionMax,
-                ),
-              packages: zod.array(
-                zod.object({
-                  name: zod
-                    .string()
-                    .min(1)
-                    .max(
-                      modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackagesItemNameMax,
-                    ),
-                  version: zod
-                    .string()
-                    .min(1)
-                    .max(
-                      modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackagesItemVersionMax,
-                    ),
-                  sha256: zod
-                    .string()
-                    .min(1)
-                    .regex(
-                      modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackagesItemSha256RegExp,
-                    ),
-                }),
-              ),
-              package_lock_digest: zod
-                .string()
-                .min(1)
-                .regex(
-                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativePackageLockDigestRegExp,
-                ),
-              model: zod.object({
-                model_id: zod
+            .union([
+              zod.object({
+                code_commit: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneCodeCommitRegExp,
+                  ),
+                code_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneCodeDigestRegExp,
+                  ),
+                entrypoint: zod
                   .string()
                   .min(1)
                   .max(
-                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeModelModelIdMax,
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneEntrypointMax,
                   ),
-                temperature: zod.number(),
-                max_output_tokens: zod
-                  .number()
+                image_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneImageDigestRegExp,
+                  ),
+                runtime_version: zod
+                  .string()
                   .min(1)
                   .max(
-                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeModelMaxOutputTokensMax,
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneRuntimeVersionMax,
+                  ),
+                packages: zod.array(
+                  zod.object({
+                    name: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOnePackagesItemNameMax,
+                      ),
+                    version: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOnePackagesItemVersionMax,
+                      ),
+                    sha256: zod
+                      .string()
+                      .min(1)
+                      .regex(
+                        modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOnePackagesItemSha256RegExp,
+                      ),
+                  }),
+                ),
+                package_lock_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOnePackageLockDigestRegExp,
+                  ),
+                model: zod.object({
+                  model_id: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneModelModelIdMax,
+                    ),
+                  temperature: zod.number(),
+                  max_output_tokens: zod
+                    .number()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneModelMaxOutputTokensMax,
+                    ),
+                }),
+                connection_id: zod.string().uuid(),
+                connection_revision: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneConnectionRevisionMax,
+                  ),
+                tools_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneToolsDigestRegExp,
+                  ),
+                retrieval_fixture_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneRetrievalFixtureDigestRegExp,
+                  ),
+                state_schema: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneStateSchemaMax,
+                  ),
+                checkpoint_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneCheckpointDigestRegExp,
+                  ),
+                side_effect_policy: zod.enum([
+                  "read_only",
+                  "fixture_only",
+                  "idempotent_approved",
+                ]),
+                reset_entrypoint: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneResetEntrypointMax,
+                  ),
+                context_mount: zod.enum(["/fi_context/"]),
+                observable_boundaries: zod
+                  .array(
+                    zod.enum([
+                      "catalog",
+                      "child_selection",
+                      "root_delivery",
+                      "file_delivery",
+                      "model_request",
+                      "tool_result",
+                      "checkpoint",
+                    ]),
+                  )
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeOneObservableBoundariesMax,
                   ),
               }),
-              connection_id: zod.string().uuid(),
-              connection_revision: zod
-                .string()
-                .min(1)
-                .max(
-                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeConnectionRevisionMax,
-                ),
-              tools_digest: zod
-                .string()
-                .min(1)
-                .regex(
-                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeToolsDigestRegExp,
-                ),
-              retrieval_fixture_digest: zod
-                .string()
-                .min(1)
-                .regex(
-                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeRetrievalFixtureDigestRegExp,
-                ),
-              state_schema: zod
-                .string()
-                .min(1)
-                .max(
-                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeStateSchemaMax,
-                ),
-              checkpoint_digest: zod
-                .string()
-                .min(1)
-                .regex(
-                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeCheckpointDigestRegExp,
-                ),
-              side_effect_policy: zod.enum([
-                "read_only",
-                "fixture_only",
-                "idempotent_approved",
-              ]),
-              reset_entrypoint: zod
-                .string()
-                .min(1)
-                .max(
-                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeResetEntrypointMax,
-                ),
-              context_mount: zod.enum(["/fi_context/"]),
-              observable_boundaries: zod
-                .array(
-                  zod.enum([
-                    "catalog",
-                    "child_selection",
-                    "root_delivery",
-                    "file_delivery",
-                    "model_request",
-                    "tool_result",
-                    "checkpoint",
-                  ]),
-                )
-                .min(1)
-                .max(
-                  modelHubSkillsReleaseRequestsCreateBodyPacketEvidenceItemConfigurationNativeObservableBoundariesMax,
-                ),
-            })
+              zod.null(),
+            ])
             .optional(),
           text: zod
             .object({
@@ -42258,6 +44774,1082 @@ export const ModelHubSkillsReleaseRequestsCreateResponse = zod.object({
     revision: zod.number().min(1),
     id: zod.string().uuid(),
     status: zod.string().min(1),
+  }),
+});
+
+export const modelHubSkillsReleaseRequestsInspectionCreateBodyTargetOneEnvironmentIdMax = 200;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateBodyTargetOneRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateBodyTargetOneConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsInspectionCreateBodyEvidenceItemAnnotationRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateBodyEvidenceDefault =
+  [];
+export const modelHubSkillsReleaseRequestsInspectionCreateBodyExternalPipelineOneUrlMax = 2000;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateBodyExternalPipelineOneConfigurationIdentityMax = 255;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateBodyExternalPipelineOneDecisionMax = 2000;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateBodyExpectedFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsInspectionCreateBodyLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+
+export const ModelHubSkillsReleaseRequestsInspectionCreateBody = zod.object({
+  resource_id: zod.string().uuid(),
+  kind: zod.enum(["skill", "agent_context"]),
+  candidate_version_id: zod.string().uuid(),
+  target: zod
+    .union([
+      zod.object({
+        binding_id: zod.string().uuid().nullable(),
+        environment_id: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsInspectionCreateBodyTargetOneEnvironmentIdMax,
+          )
+          .nullable(),
+        revision: zod
+          .number()
+          .min(
+            modelHubSkillsReleaseRequestsInspectionCreateBodyTargetOneRevisionMin,
+          ),
+        configuration_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReleaseRequestsInspectionCreateBodyTargetOneConfigurationDigestRegExp,
+          ),
+      }),
+      zod.null(),
+    ])
+    .optional(),
+  evidence: zod
+    .array(
+      zod.object({
+        source_id: zod.string().uuid(),
+        annotation_revision: zod
+          .number()
+          .min(
+            modelHubSkillsReleaseRequestsInspectionCreateBodyEvidenceItemAnnotationRevisionMin,
+          ),
+        source: zod.enum(["skills_text", "simulation_native"]),
+      }),
+    )
+    .default(modelHubSkillsReleaseRequestsInspectionCreateBodyEvidenceDefault),
+  external_pipeline: zod
+    .union([
+      zod.object({
+        url: zod
+          .string()
+          .url()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsInspectionCreateBodyExternalPipelineOneUrlMax,
+          ),
+        configuration_identity: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsInspectionCreateBodyExternalPipelineOneConfigurationIdentityMax,
+          ),
+        decision: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsInspectionCreateBodyExternalPipelineOneDecisionMax,
+          ),
+        trust: zod.enum(["operator_recorded_unimported"]),
+        recorded_by: zod.string().uuid(),
+      }),
+      zod.null(),
+    ])
+    .optional(),
+  expected_fingerprint: zod
+    .string()
+    .min(1)
+    .regex(
+      modelHubSkillsReleaseRequestsInspectionCreateBodyExpectedFingerprintRegExp,
+    ),
+  label: zod
+    .string()
+    .min(1)
+    .regex(modelHubSkillsReleaseRequestsInspectionCreateBodyLabelRegExp),
+});
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultCapabilitiesFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemAnnotationRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemDisagreementsMin = 0;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemCannotAssessMin = 0;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemPlannedMin = 0;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemGradedMin = 0;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemIncompleteMin = 0;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemRegressionsMin = 0;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneCodeCommitRegExp =
+  new RegExp("^[a-f0-9]{40,64}$");
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneCodeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneEntrypointMax = 255;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneImageDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneRuntimeVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOnePackagesItemNameMax = 200;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOnePackagesItemVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOnePackagesItemSha256RegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOnePackageLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneModelModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneConnectionRevisionMax = 100;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneToolsDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneRetrievalFixtureDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneStateSchemaMax = 100;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneCheckpointDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneResetEntrypointMax = 255;
+
+export const modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneObservableBoundariesMax = 7;
+
+export const ModelHubSkillsReleaseRequestsInspectionCreateResponse = zod.object(
+  {
+    status: zod.boolean(),
+    result: zod.object({
+      fingerprint: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsReleaseRequestsInspectionCreateResponseResultFingerprintRegExp,
+        ),
+      capabilities: zod.object({
+        before_digest: zod.string().min(1),
+        after_digest: zod.string().min(1),
+        changes: zod.array(
+          zod.object({
+            path: zod.string().min(1),
+            category: zod.string().min(1),
+            name: zod.string().min(1).nullable(),
+            change: zod.enum(["added", "removed", "modified"]),
+            before: zod.string().min(1).nullable(),
+            after: zod.string().min(1).nullable(),
+          }),
+        ),
+        scope: zod.string().min(1),
+        notice: zod.string().min(1),
+        fingerprint: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReleaseRequestsInspectionCreateResponseResultCapabilitiesFingerprintRegExp,
+          ),
+      }),
+      summaries: zod.array(
+        zod.object({
+          source_id: zod.string().uuid(),
+          annotation_revision: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemAnnotationRevisionMin,
+            ),
+          disagreements: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemDisagreementsMin,
+            ),
+          cannot_assess: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemCannotAssessMin,
+            ),
+          planned: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemPlannedMin,
+            )
+            .nullable(),
+          graded: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemGradedMin,
+            )
+            .nullable(),
+          incomplete: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemIncompleteMin,
+            )
+            .nullable(),
+          regressions: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultSummariesItemRegressionsMin,
+            )
+            .nullable(),
+          answer: zod.string().min(1),
+          selection: zod.string().min(1),
+          delivery: zod.string().min(1),
+          tools: zod.string().min(1),
+          availability: zod.enum(["available", "unavailable"]),
+          source: zod.enum(["skills_text", "simulation_native"]),
+        }),
+      ),
+      target_configuration: zod.union([
+        zod.object({
+          code_commit: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneCodeCommitRegExp,
+            ),
+          code_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneCodeDigestRegExp,
+            ),
+          entrypoint: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneEntrypointMax,
+            ),
+          image_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneImageDigestRegExp,
+            ),
+          runtime_version: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneRuntimeVersionMax,
+            ),
+          packages: zod.array(
+            zod.object({
+              name: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOnePackagesItemNameMax,
+                ),
+              version: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOnePackagesItemVersionMax,
+                ),
+              sha256: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOnePackagesItemSha256RegExp,
+                ),
+            }),
+          ),
+          package_lock_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOnePackageLockDigestRegExp,
+            ),
+          model: zod.object({
+            model_id: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneModelModelIdMax,
+              ),
+            temperature: zod.number(),
+            max_output_tokens: zod
+              .number()
+              .min(1)
+              .max(
+                modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneModelMaxOutputTokensMax,
+              ),
+          }),
+          connection_id: zod.string().uuid(),
+          connection_revision: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneConnectionRevisionMax,
+            ),
+          tools_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneToolsDigestRegExp,
+            ),
+          retrieval_fixture_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneRetrievalFixtureDigestRegExp,
+            ),
+          state_schema: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneStateSchemaMax,
+            ),
+          checkpoint_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneCheckpointDigestRegExp,
+            ),
+          side_effect_policy: zod.enum([
+            "read_only",
+            "fixture_only",
+            "idempotent_approved",
+          ]),
+          reset_entrypoint: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneResetEntrypointMax,
+            ),
+          context_mount: zod.enum(["/fi_context/"]),
+          observable_boundaries: zod
+            .array(
+              zod.enum([
+                "catalog",
+                "child_selection",
+                "root_delivery",
+                "file_delivery",
+                "model_request",
+                "tool_result",
+                "checkpoint",
+              ]),
+            )
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsInspectionCreateResponseResultTargetConfigurationOneObservableBoundariesMax,
+            ),
+        }),
+        zod.null(),
+      ]),
+    }),
+  },
+);
+
+export const ModelHubSkillsReleaseRequestsNativeEvidenceShareCreateParams =
+  zod.object({
+    evidence_id: zod.string(),
+  });
+
+export const ModelHubSkillsReleaseRequestsNativeEvidenceShareCreateBody =
+  zod.object({
+    acknowledge_snapshot_sharing: zod.boolean(),
+  });
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultExecutionFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneCodeCommitRegExp =
+  new RegExp("^[a-f0-9]{40,64}$");
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneCodeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneEntrypointMax = 255;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneImageDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneRuntimeVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOnePackagesItemNameMax = 200;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOnePackagesItemVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOnePackagesItemSha256RegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOnePackageLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneModelModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneConnectionRevisionMax = 100;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneToolsDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneRetrievalFixtureDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneStateSchemaMax = 100;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneCheckpointDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneResetEntrypointMax = 255;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneObservableBoundariesMax = 7;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationTextModelModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationTextModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationTextJudgeModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationTextJudgeMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationTextHarnessVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationTextAdapterVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationTextEvaluatorVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultAnnotationRevisionMin = 0;
+
+export const ModelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      schema: zod
+        .number()
+        .min(1)
+        .max(
+          modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultSchemaMax,
+        ),
+      source_id: zod.string().uuid(),
+      subject_kind: zod.enum(["skill", "agent_context"]),
+      subject_id: zod.string().uuid(),
+      candidate_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultCandidateDigestRegExp,
+        ),
+      execution_fingerprint: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultExecutionFingerprintRegExp,
+        ),
+      status: zod.enum([
+        "completed",
+        "failed",
+        "cancelled",
+        "timed_out",
+        "interrupted",
+      ]),
+      visibility: zod.enum(["private", "workspace"]),
+      payload_expires_at: zod.string().datetime({ offset: true }),
+      configuration: zod.object({
+        schema: zod
+          .number()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationSchemaMax,
+          ),
+        digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationDigestRegExp,
+          ),
+        native: zod
+          .union([
+            zod.object({
+              code_commit: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneCodeCommitRegExp,
+                ),
+              code_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneCodeDigestRegExp,
+                ),
+              entrypoint: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneEntrypointMax,
+                ),
+              image_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneImageDigestRegExp,
+                ),
+              runtime_version: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneRuntimeVersionMax,
+                ),
+              packages: zod.array(
+                zod.object({
+                  name: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOnePackagesItemNameMax,
+                    ),
+                  version: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOnePackagesItemVersionMax,
+                    ),
+                  sha256: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOnePackagesItemSha256RegExp,
+                    ),
+                }),
+              ),
+              package_lock_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOnePackageLockDigestRegExp,
+                ),
+              model: zod.object({
+                model_id: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneModelModelIdMax,
+                  ),
+                temperature: zod.number(),
+                max_output_tokens: zod
+                  .number()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneModelMaxOutputTokensMax,
+                  ),
+              }),
+              connection_id: zod.string().uuid(),
+              connection_revision: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneConnectionRevisionMax,
+                ),
+              tools_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneToolsDigestRegExp,
+                ),
+              retrieval_fixture_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneRetrievalFixtureDigestRegExp,
+                ),
+              state_schema: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneStateSchemaMax,
+                ),
+              checkpoint_digest: zod
+                .string()
+                .min(1)
+                .regex(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneCheckpointDigestRegExp,
+                ),
+              side_effect_policy: zod.enum([
+                "read_only",
+                "fixture_only",
+                "idempotent_approved",
+              ]),
+              reset_entrypoint: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneResetEntrypointMax,
+                ),
+              context_mount: zod.enum(["/fi_context/"]),
+              observable_boundaries: zod
+                .array(
+                  zod.enum([
+                    "catalog",
+                    "child_selection",
+                    "root_delivery",
+                    "file_delivery",
+                    "model_request",
+                    "tool_result",
+                    "checkpoint",
+                  ]),
+                )
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationNativeOneObservableBoundariesMax,
+                ),
+            }),
+            zod.null(),
+          ])
+          .optional(),
+        text: zod
+          .object({
+            model: zod.object({
+              model_id: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationTextModelModelIdMax,
+                ),
+              temperature: zod.number(),
+              max_output_tokens: zod
+                .number()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationTextModelMaxOutputTokensMax,
+                ),
+            }),
+            judge: zod.object({
+              model_id: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationTextJudgeModelIdMax,
+                ),
+              temperature: zod.number(),
+              max_output_tokens: zod
+                .number()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationTextJudgeMaxOutputTokensMax,
+                ),
+            }),
+            harness_version: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationTextHarnessVersionMax,
+              ),
+            adapter_version: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationTextAdapterVersionMax,
+              ),
+            evaluator_version: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultConfigurationTextEvaluatorVersionMax,
+              ),
+          })
+          .optional(),
+      }),
+      annotation_revision: zod
+        .number()
+        .min(
+          modelHubSkillsReleaseRequestsNativeEvidenceShareCreateResponseResultAnnotationRevisionMin,
+        ),
+      source: zod.enum(["skills_text", "simulation_native"]),
+    }),
+  });
+
+export const ModelHubSkillsReleaseRequestsOptionsListQueryParams = zod.object({
+  resource_id: zod.string().uuid(),
+  kind: zod.enum(["skill", "agent_context"]),
+  candidate_version_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultTargetsItemTargetOneEnvironmentIdMax = 200;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultTargetsItemTargetOneRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultTargetsItemTargetOneConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemExecutionFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneCodeCommitRegExp =
+  new RegExp("^[a-f0-9]{40,64}$");
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneCodeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneEntrypointMax = 255;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneImageDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneRuntimeVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOnePackagesItemNameMax = 200;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOnePackagesItemVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOnePackagesItemSha256RegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOnePackageLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneModelModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneConnectionRevisionMax = 100;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneToolsDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneRetrievalFixtureDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneStateSchemaMax = 100;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneCheckpointDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneResetEntrypointMax = 255;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneObservableBoundariesMax = 7;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationTextModelModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationTextModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationTextJudgeModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationTextJudgeMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationTextHarnessVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationTextAdapterVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationTextEvaluatorVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemAnnotationRevisionMin = 0;
+
+export const ModelHubSkillsReleaseRequestsOptionsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    recipients: zod.array(
+      zod.object({
+        id: zod.string().uuid(),
+        name: zod.string().min(1),
+      }),
+    ),
+    targets: zod.array(
+      zod.object({
+        name: zod.string().min(1),
+        target: zod.union([
+          zod.object({
+            binding_id: zod.string().uuid().nullable(),
+            environment_id: zod
+              .string()
+              .min(1)
+              .max(
+                modelHubSkillsReleaseRequestsOptionsListResponseResultTargetsItemTargetOneEnvironmentIdMax,
+              )
+              .nullable(),
+            revision: zod
+              .number()
+              .min(
+                modelHubSkillsReleaseRequestsOptionsListResponseResultTargetsItemTargetOneRevisionMin,
+              ),
+            configuration_digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsReleaseRequestsOptionsListResponseResultTargetsItemTargetOneConfigurationDigestRegExp,
+              ),
+          }),
+          zod.null(),
+        ]),
+      }),
+    ),
+    evidence: zod.array(
+      zod.object({
+        schema: zod
+          .number()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemSchemaMax,
+          ),
+        source_id: zod.string().uuid(),
+        subject_kind: zod.enum(["skill", "agent_context"]),
+        subject_id: zod.string().uuid(),
+        candidate_digest: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemCandidateDigestRegExp,
+          ),
+        execution_fingerprint: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemExecutionFingerprintRegExp,
+          ),
+        status: zod.enum([
+          "completed",
+          "failed",
+          "cancelled",
+          "timed_out",
+          "interrupted",
+        ]),
+        visibility: zod.enum(["private", "workspace"]),
+        payload_expires_at: zod.string().datetime({ offset: true }),
+        configuration: zod.object({
+          schema: zod
+            .number()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationSchemaMax,
+            ),
+          digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationDigestRegExp,
+            ),
+          native: zod
+            .union([
+              zod.object({
+                code_commit: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneCodeCommitRegExp,
+                  ),
+                code_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneCodeDigestRegExp,
+                  ),
+                entrypoint: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneEntrypointMax,
+                  ),
+                image_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneImageDigestRegExp,
+                  ),
+                runtime_version: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneRuntimeVersionMax,
+                  ),
+                packages: zod.array(
+                  zod.object({
+                    name: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOnePackagesItemNameMax,
+                      ),
+                    version: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOnePackagesItemVersionMax,
+                      ),
+                    sha256: zod
+                      .string()
+                      .min(1)
+                      .regex(
+                        modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOnePackagesItemSha256RegExp,
+                      ),
+                  }),
+                ),
+                package_lock_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOnePackageLockDigestRegExp,
+                  ),
+                model: zod.object({
+                  model_id: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneModelModelIdMax,
+                    ),
+                  temperature: zod.number(),
+                  max_output_tokens: zod
+                    .number()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneModelMaxOutputTokensMax,
+                    ),
+                }),
+                connection_id: zod.string().uuid(),
+                connection_revision: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneConnectionRevisionMax,
+                  ),
+                tools_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneToolsDigestRegExp,
+                  ),
+                retrieval_fixture_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneRetrievalFixtureDigestRegExp,
+                  ),
+                state_schema: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneStateSchemaMax,
+                  ),
+                checkpoint_digest: zod
+                  .string()
+                  .min(1)
+                  .regex(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneCheckpointDigestRegExp,
+                  ),
+                side_effect_policy: zod.enum([
+                  "read_only",
+                  "fixture_only",
+                  "idempotent_approved",
+                ]),
+                reset_entrypoint: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneResetEntrypointMax,
+                  ),
+                context_mount: zod.enum(["/fi_context/"]),
+                observable_boundaries: zod
+                  .array(
+                    zod.enum([
+                      "catalog",
+                      "child_selection",
+                      "root_delivery",
+                      "file_delivery",
+                      "model_request",
+                      "tool_result",
+                      "checkpoint",
+                    ]),
+                  )
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationNativeOneObservableBoundariesMax,
+                  ),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          text: zod
+            .object({
+              model: zod.object({
+                model_id: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationTextModelModelIdMax,
+                  ),
+                temperature: zod.number(),
+                max_output_tokens: zod
+                  .number()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationTextModelMaxOutputTokensMax,
+                  ),
+              }),
+              judge: zod.object({
+                model_id: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationTextJudgeModelIdMax,
+                  ),
+                temperature: zod.number(),
+                max_output_tokens: zod
+                  .number()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationTextJudgeMaxOutputTokensMax,
+                  ),
+              }),
+              harness_version: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationTextHarnessVersionMax,
+                ),
+              adapter_version: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationTextAdapterVersionMax,
+                ),
+              evaluator_version: zod
+                .string()
+                .min(1)
+                .max(
+                  modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemConfigurationTextEvaluatorVersionMax,
+                ),
+            })
+            .optional(),
+        }),
+        annotation_revision: zod
+          .number()
+          .min(
+            modelHubSkillsReleaseRequestsOptionsListResponseResultEvidenceItemAnnotationRevisionMin,
+          ),
+        source: zod.enum(["skills_text", "simulation_native"]),
+      }),
+    ),
   }),
 });
 
@@ -42388,44 +45980,44 @@ export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvide
 export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
 
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeCodeCommitRegExp =
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneCodeCommitRegExp =
   new RegExp("^[a-f0-9]{40,64}$");
 
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeCodeDigestRegExp =
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneCodeDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeEntrypointMax = 255;
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneEntrypointMax = 255;
 
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeImageDigestRegExp =
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneImageDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeRuntimeVersionMax = 100;
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneRuntimeVersionMax = 100;
 
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackagesItemNameMax = 200;
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemNameMax = 200;
 
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackagesItemVersionMax = 100;
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemVersionMax = 100;
 
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackagesItemSha256RegExp =
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemSha256RegExp =
   new RegExp("^[a-f0-9]{64}$");
 
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackageLockDigestRegExp =
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOnePackageLockDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeModelModelIdMax = 255;
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneModelModelIdMax = 255;
 
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeModelMaxOutputTokensMax = 8192;
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneModelMaxOutputTokensMax = 8192;
 
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeConnectionRevisionMax = 100;
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneConnectionRevisionMax = 100;
 
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeToolsDigestRegExp =
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneToolsDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
 
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeRetrievalFixtureDigestRegExp =
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneRetrievalFixtureDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeStateSchemaMax = 100;
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneStateSchemaMax = 100;
 
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeCheckpointDigestRegExp =
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneCheckpointDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeResetEntrypointMax = 255;
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneResetEntrypointMax = 255;
 
-export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeObservableBoundariesMax = 7;
+export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneObservableBoundariesMax = 7;
 
 export const modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationTextModelModelIdMax = 255;
 
@@ -42567,140 +46159,143 @@ export const ModelHubSkillsReleaseRequestsPreviewCreateResponse = zod.object({
                 modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationDigestRegExp,
               ),
             native: zod
-              .object({
-                code_commit: zod
-                  .string()
-                  .min(1)
-                  .regex(
-                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeCodeCommitRegExp,
-                  ),
-                code_digest: zod
-                  .string()
-                  .min(1)
-                  .regex(
-                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeCodeDigestRegExp,
-                  ),
-                entrypoint: zod
-                  .string()
-                  .min(1)
-                  .max(
-                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeEntrypointMax,
-                  ),
-                image_digest: zod
-                  .string()
-                  .min(1)
-                  .regex(
-                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeImageDigestRegExp,
-                  ),
-                runtime_version: zod
-                  .string()
-                  .min(1)
-                  .max(
-                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeRuntimeVersionMax,
-                  ),
-                packages: zod.array(
-                  zod.object({
-                    name: zod
-                      .string()
-                      .min(1)
-                      .max(
-                        modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackagesItemNameMax,
-                      ),
-                    version: zod
-                      .string()
-                      .min(1)
-                      .max(
-                        modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackagesItemVersionMax,
-                      ),
-                    sha256: zod
-                      .string()
-                      .min(1)
-                      .regex(
-                        modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackagesItemSha256RegExp,
-                      ),
-                  }),
-                ),
-                package_lock_digest: zod
-                  .string()
-                  .min(1)
-                  .regex(
-                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativePackageLockDigestRegExp,
-                  ),
-                model: zod.object({
-                  model_id: zod
+              .union([
+                zod.object({
+                  code_commit: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneCodeCommitRegExp,
+                    ),
+                  code_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneCodeDigestRegExp,
+                    ),
+                  entrypoint: zod
                     .string()
                     .min(1)
                     .max(
-                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeModelModelIdMax,
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneEntrypointMax,
                     ),
-                  temperature: zod.number(),
-                  max_output_tokens: zod
-                    .number()
+                  image_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneImageDigestRegExp,
+                    ),
+                  runtime_version: zod
+                    .string()
                     .min(1)
                     .max(
-                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeModelMaxOutputTokensMax,
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneRuntimeVersionMax,
+                    ),
+                  packages: zod.array(
+                    zod.object({
+                      name: zod
+                        .string()
+                        .min(1)
+                        .max(
+                          modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemNameMax,
+                        ),
+                      version: zod
+                        .string()
+                        .min(1)
+                        .max(
+                          modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemVersionMax,
+                        ),
+                      sha256: zod
+                        .string()
+                        .min(1)
+                        .regex(
+                          modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemSha256RegExp,
+                        ),
+                    }),
+                  ),
+                  package_lock_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOnePackageLockDigestRegExp,
+                    ),
+                  model: zod.object({
+                    model_id: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneModelModelIdMax,
+                      ),
+                    temperature: zod.number(),
+                    max_output_tokens: zod
+                      .number()
+                      .min(1)
+                      .max(
+                        modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneModelMaxOutputTokensMax,
+                      ),
+                  }),
+                  connection_id: zod.string().uuid(),
+                  connection_revision: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneConnectionRevisionMax,
+                    ),
+                  tools_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneToolsDigestRegExp,
+                    ),
+                  retrieval_fixture_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneRetrievalFixtureDigestRegExp,
+                    ),
+                  state_schema: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneStateSchemaMax,
+                    ),
+                  checkpoint_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneCheckpointDigestRegExp,
+                    ),
+                  side_effect_policy: zod.enum([
+                    "read_only",
+                    "fixture_only",
+                    "idempotent_approved",
+                  ]),
+                  reset_entrypoint: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneResetEntrypointMax,
+                    ),
+                  context_mount: zod.enum(["/fi_context/"]),
+                  observable_boundaries: zod
+                    .array(
+                      zod.enum([
+                        "catalog",
+                        "child_selection",
+                        "root_delivery",
+                        "file_delivery",
+                        "model_request",
+                        "tool_result",
+                        "checkpoint",
+                      ]),
+                    )
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeOneObservableBoundariesMax,
                     ),
                 }),
-                connection_id: zod.string().uuid(),
-                connection_revision: zod
-                  .string()
-                  .min(1)
-                  .max(
-                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeConnectionRevisionMax,
-                  ),
-                tools_digest: zod
-                  .string()
-                  .min(1)
-                  .regex(
-                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeToolsDigestRegExp,
-                  ),
-                retrieval_fixture_digest: zod
-                  .string()
-                  .min(1)
-                  .regex(
-                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeRetrievalFixtureDigestRegExp,
-                  ),
-                state_schema: zod
-                  .string()
-                  .min(1)
-                  .max(
-                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeStateSchemaMax,
-                  ),
-                checkpoint_digest: zod
-                  .string()
-                  .min(1)
-                  .regex(
-                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeCheckpointDigestRegExp,
-                  ),
-                side_effect_policy: zod.enum([
-                  "read_only",
-                  "fixture_only",
-                  "idempotent_approved",
-                ]),
-                reset_entrypoint: zod
-                  .string()
-                  .min(1)
-                  .max(
-                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeResetEntrypointMax,
-                  ),
-                context_mount: zod.enum(["/fi_context/"]),
-                observable_boundaries: zod
-                  .array(
-                    zod.enum([
-                      "catalog",
-                      "child_selection",
-                      "root_delivery",
-                      "file_delivery",
-                      "model_request",
-                      "tool_result",
-                      "checkpoint",
-                    ]),
-                  )
-                  .min(1)
-                  .max(
-                    modelHubSkillsReleaseRequestsPreviewCreateResponseResultPacketEvidenceItemConfigurationNativeObservableBoundariesMax,
-                  ),
-              })
+                zod.null(),
+              ])
               .optional(),
             text: zod
               .object({
@@ -42835,44 +46430,44 @@ export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemCo
 export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
 
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeCodeCommitRegExp =
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneCodeCommitRegExp =
   new RegExp("^[a-f0-9]{40,64}$");
 
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeCodeDigestRegExp =
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneCodeDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeEntrypointMax = 255;
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneEntrypointMax = 255;
 
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeImageDigestRegExp =
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneImageDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeRuntimeVersionMax = 100;
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneRuntimeVersionMax = 100;
 
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackagesItemNameMax = 200;
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemNameMax = 200;
 
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackagesItemVersionMax = 100;
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemVersionMax = 100;
 
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackagesItemSha256RegExp =
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemSha256RegExp =
   new RegExp("^[a-f0-9]{64}$");
 
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackageLockDigestRegExp =
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOnePackageLockDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeModelModelIdMax = 255;
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneModelModelIdMax = 255;
 
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeModelMaxOutputTokensMax = 8192;
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneModelMaxOutputTokensMax = 8192;
 
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeConnectionRevisionMax = 100;
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneConnectionRevisionMax = 100;
 
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeToolsDigestRegExp =
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneToolsDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
 
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeRetrievalFixtureDigestRegExp =
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneRetrievalFixtureDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeStateSchemaMax = 100;
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneStateSchemaMax = 100;
 
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeCheckpointDigestRegExp =
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneCheckpointDigestRegExp =
   new RegExp("^sha256:[a-f0-9]{64}$");
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeResetEntrypointMax = 255;
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneResetEntrypointMax = 255;
 
-export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeObservableBoundariesMax = 7;
+export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneObservableBoundariesMax = 7;
 
 export const modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationTextModelModelIdMax = 255;
 
@@ -43015,140 +46610,143 @@ export const ModelHubSkillsReleaseRequestsReadResponse = zod.object({
                 modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationDigestRegExp,
               ),
             native: zod
-              .object({
-                code_commit: zod
-                  .string()
-                  .min(1)
-                  .regex(
-                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeCodeCommitRegExp,
-                  ),
-                code_digest: zod
-                  .string()
-                  .min(1)
-                  .regex(
-                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeCodeDigestRegExp,
-                  ),
-                entrypoint: zod
-                  .string()
-                  .min(1)
-                  .max(
-                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeEntrypointMax,
-                  ),
-                image_digest: zod
-                  .string()
-                  .min(1)
-                  .regex(
-                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeImageDigestRegExp,
-                  ),
-                runtime_version: zod
-                  .string()
-                  .min(1)
-                  .max(
-                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeRuntimeVersionMax,
-                  ),
-                packages: zod.array(
-                  zod.object({
-                    name: zod
-                      .string()
-                      .min(1)
-                      .max(
-                        modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackagesItemNameMax,
-                      ),
-                    version: zod
-                      .string()
-                      .min(1)
-                      .max(
-                        modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackagesItemVersionMax,
-                      ),
-                    sha256: zod
-                      .string()
-                      .min(1)
-                      .regex(
-                        modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackagesItemSha256RegExp,
-                      ),
-                  }),
-                ),
-                package_lock_digest: zod
-                  .string()
-                  .min(1)
-                  .regex(
-                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativePackageLockDigestRegExp,
-                  ),
-                model: zod.object({
-                  model_id: zod
+              .union([
+                zod.object({
+                  code_commit: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneCodeCommitRegExp,
+                    ),
+                  code_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneCodeDigestRegExp,
+                    ),
+                  entrypoint: zod
                     .string()
                     .min(1)
                     .max(
-                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeModelModelIdMax,
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneEntrypointMax,
                     ),
-                  temperature: zod.number(),
-                  max_output_tokens: zod
-                    .number()
+                  image_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneImageDigestRegExp,
+                    ),
+                  runtime_version: zod
+                    .string()
                     .min(1)
                     .max(
-                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeModelMaxOutputTokensMax,
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneRuntimeVersionMax,
+                    ),
+                  packages: zod.array(
+                    zod.object({
+                      name: zod
+                        .string()
+                        .min(1)
+                        .max(
+                          modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemNameMax,
+                        ),
+                      version: zod
+                        .string()
+                        .min(1)
+                        .max(
+                          modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemVersionMax,
+                        ),
+                      sha256: zod
+                        .string()
+                        .min(1)
+                        .regex(
+                          modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemSha256RegExp,
+                        ),
+                    }),
+                  ),
+                  package_lock_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOnePackageLockDigestRegExp,
+                    ),
+                  model: zod.object({
+                    model_id: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneModelModelIdMax,
+                      ),
+                    temperature: zod.number(),
+                    max_output_tokens: zod
+                      .number()
+                      .min(1)
+                      .max(
+                        modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneModelMaxOutputTokensMax,
+                      ),
+                  }),
+                  connection_id: zod.string().uuid(),
+                  connection_revision: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneConnectionRevisionMax,
+                    ),
+                  tools_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneToolsDigestRegExp,
+                    ),
+                  retrieval_fixture_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneRetrievalFixtureDigestRegExp,
+                    ),
+                  state_schema: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneStateSchemaMax,
+                    ),
+                  checkpoint_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneCheckpointDigestRegExp,
+                    ),
+                  side_effect_policy: zod.enum([
+                    "read_only",
+                    "fixture_only",
+                    "idempotent_approved",
+                  ]),
+                  reset_entrypoint: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneResetEntrypointMax,
+                    ),
+                  context_mount: zod.enum(["/fi_context/"]),
+                  observable_boundaries: zod
+                    .array(
+                      zod.enum([
+                        "catalog",
+                        "child_selection",
+                        "root_delivery",
+                        "file_delivery",
+                        "model_request",
+                        "tool_result",
+                        "checkpoint",
+                      ]),
+                    )
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeOneObservableBoundariesMax,
                     ),
                 }),
-                connection_id: zod.string().uuid(),
-                connection_revision: zod
-                  .string()
-                  .min(1)
-                  .max(
-                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeConnectionRevisionMax,
-                  ),
-                tools_digest: zod
-                  .string()
-                  .min(1)
-                  .regex(
-                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeToolsDigestRegExp,
-                  ),
-                retrieval_fixture_digest: zod
-                  .string()
-                  .min(1)
-                  .regex(
-                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeRetrievalFixtureDigestRegExp,
-                  ),
-                state_schema: zod
-                  .string()
-                  .min(1)
-                  .max(
-                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeStateSchemaMax,
-                  ),
-                checkpoint_digest: zod
-                  .string()
-                  .min(1)
-                  .regex(
-                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeCheckpointDigestRegExp,
-                  ),
-                side_effect_policy: zod.enum([
-                  "read_only",
-                  "fixture_only",
-                  "idempotent_approved",
-                ]),
-                reset_entrypoint: zod
-                  .string()
-                  .min(1)
-                  .max(
-                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeResetEntrypointMax,
-                  ),
-                context_mount: zod.enum(["/fi_context/"]),
-                observable_boundaries: zod
-                  .array(
-                    zod.enum([
-                      "catalog",
-                      "child_selection",
-                      "root_delivery",
-                      "file_delivery",
-                      "model_request",
-                      "tool_result",
-                      "checkpoint",
-                    ]),
-                  )
-                  .min(1)
-                  .max(
-                    modelHubSkillsReleaseRequestsReadResponseResultPacketEvidenceItemConfigurationNativeObservableBoundariesMax,
-                  ),
-              })
+                zod.null(),
+              ])
               .optional(),
             text: zod
               .object({
@@ -43483,6 +47081,538 @@ export const ModelHubSkillsReleaseRequestsReceiptListResponse = zod.object({
   }),
 });
 
+export const ModelHubSkillsReleaseRequestsRenewalListParams = zod.object({
+  request_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketTransitionExpectedReleaseRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketTransitionExpectedSecurityRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketTransitionExpectedImpactFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketTransitionLabelRegExp =
+  new RegExp("^[a-z0-9][a-z0-9-]{0,39}$");
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketTargetOneEnvironmentIdMax = 200;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketTargetOneRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketTargetOneConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemCandidateDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemExecutionFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationSchemaMax = 1;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneCodeCommitRegExp =
+  new RegExp("^[a-f0-9]{40,64}$");
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneCodeDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneEntrypointMax = 255;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneImageDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneRuntimeVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemNameMax = 200;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemSha256RegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOnePackageLockDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneModelModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneConnectionRevisionMax = 100;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneToolsDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneRetrievalFixtureDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneStateSchemaMax = 100;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneCheckpointDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneResetEntrypointMax = 255;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneObservableBoundariesMax = 7;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationTextModelModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationTextModelMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationTextJudgeModelIdMax = 255;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationTextJudgeMaxOutputTokensMax = 8192;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationTextHarnessVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationTextAdapterVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationTextEvaluatorVersionMax = 100;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemAnnotationRevisionMin = 0;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketExternalPipelineOneUrlMax = 2000;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketExternalPipelineOneConfigurationIdentityMax = 255;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPacketExternalPipelineOneDecisionMax = 2000;
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultPreviousFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const modelHubSkillsReleaseRequestsRenewalListResponseResultChangesItemItemMax = 255;
+
+export const ModelHubSkillsReleaseRequestsRenewalListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    packet: zod.object({
+      schema: zod
+        .number()
+        .min(1)
+        .max(
+          modelHubSkillsReleaseRequestsRenewalListResponseResultPacketSchemaMax,
+        ),
+      subject_kind: zod.enum(["skill", "agent_context"]),
+      subject_id: zod.string().uuid(),
+      candidate_version_id: zod.string().uuid(),
+      candidate_digest: zod
+        .string()
+        .min(1)
+        .regex(
+          modelHubSkillsReleaseRequestsRenewalListResponseResultPacketCandidateDigestRegExp,
+        ),
+      transition: zod.object({
+        expected_version: zod.number().min(1).nullable(),
+        version: zod.number().min(1),
+        expected_release_revision: zod
+          .number()
+          .min(
+            modelHubSkillsReleaseRequestsRenewalListResponseResultPacketTransitionExpectedReleaseRevisionMin,
+          ),
+        expected_security_revision: zod
+          .number()
+          .min(
+            modelHubSkillsReleaseRequestsRenewalListResponseResultPacketTransitionExpectedSecurityRevisionMin,
+          ),
+        expected_impact_fingerprint: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReleaseRequestsRenewalListResponseResultPacketTransitionExpectedImpactFingerprintRegExp,
+          ),
+        label: zod
+          .string()
+          .min(1)
+          .regex(
+            modelHubSkillsReleaseRequestsRenewalListResponseResultPacketTransitionLabelRegExp,
+          ),
+      }),
+      target: zod.union([
+        zod.object({
+          binding_id: zod.string().uuid().nullable(),
+          environment_id: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsRenewalListResponseResultPacketTargetOneEnvironmentIdMax,
+            )
+            .nullable(),
+          revision: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsRenewalListResponseResultPacketTargetOneRevisionMin,
+            ),
+          configuration_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsRenewalListResponseResultPacketTargetOneConfigurationDigestRegExp,
+            ),
+        }),
+        zod.null(),
+      ]),
+      evidence: zod.array(
+        zod.object({
+          schema: zod
+            .number()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemSchemaMax,
+            ),
+          source_id: zod.string().uuid(),
+          subject_kind: zod.enum(["skill", "agent_context"]),
+          subject_id: zod.string().uuid(),
+          candidate_digest: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemCandidateDigestRegExp,
+            ),
+          execution_fingerprint: zod
+            .string()
+            .min(1)
+            .regex(
+              modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemExecutionFingerprintRegExp,
+            ),
+          status: zod.enum([
+            "completed",
+            "failed",
+            "cancelled",
+            "timed_out",
+            "interrupted",
+          ]),
+          visibility: zod.enum(["private", "workspace"]),
+          payload_expires_at: zod.string().datetime({ offset: true }),
+          configuration: zod.object({
+            schema: zod
+              .number()
+              .min(1)
+              .max(
+                modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationSchemaMax,
+              ),
+            digest: zod
+              .string()
+              .min(1)
+              .regex(
+                modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationDigestRegExp,
+              ),
+            native: zod
+              .union([
+                zod.object({
+                  code_commit: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneCodeCommitRegExp,
+                    ),
+                  code_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneCodeDigestRegExp,
+                    ),
+                  entrypoint: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneEntrypointMax,
+                    ),
+                  image_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneImageDigestRegExp,
+                    ),
+                  runtime_version: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneRuntimeVersionMax,
+                    ),
+                  packages: zod.array(
+                    zod.object({
+                      name: zod
+                        .string()
+                        .min(1)
+                        .max(
+                          modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemNameMax,
+                        ),
+                      version: zod
+                        .string()
+                        .min(1)
+                        .max(
+                          modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemVersionMax,
+                        ),
+                      sha256: zod
+                        .string()
+                        .min(1)
+                        .regex(
+                          modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOnePackagesItemSha256RegExp,
+                        ),
+                    }),
+                  ),
+                  package_lock_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOnePackageLockDigestRegExp,
+                    ),
+                  model: zod.object({
+                    model_id: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneModelModelIdMax,
+                      ),
+                    temperature: zod.number(),
+                    max_output_tokens: zod
+                      .number()
+                      .min(1)
+                      .max(
+                        modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneModelMaxOutputTokensMax,
+                      ),
+                  }),
+                  connection_id: zod.string().uuid(),
+                  connection_revision: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneConnectionRevisionMax,
+                    ),
+                  tools_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneToolsDigestRegExp,
+                    ),
+                  retrieval_fixture_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneRetrievalFixtureDigestRegExp,
+                    ),
+                  state_schema: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneStateSchemaMax,
+                    ),
+                  checkpoint_digest: zod
+                    .string()
+                    .min(1)
+                    .regex(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneCheckpointDigestRegExp,
+                    ),
+                  side_effect_policy: zod.enum([
+                    "read_only",
+                    "fixture_only",
+                    "idempotent_approved",
+                  ]),
+                  reset_entrypoint: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneResetEntrypointMax,
+                    ),
+                  context_mount: zod.enum(["/fi_context/"]),
+                  observable_boundaries: zod
+                    .array(
+                      zod.enum([
+                        "catalog",
+                        "child_selection",
+                        "root_delivery",
+                        "file_delivery",
+                        "model_request",
+                        "tool_result",
+                        "checkpoint",
+                      ]),
+                    )
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationNativeOneObservableBoundariesMax,
+                    ),
+                }),
+                zod.null(),
+              ])
+              .optional(),
+            text: zod
+              .object({
+                model: zod.object({
+                  model_id: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationTextModelModelIdMax,
+                    ),
+                  temperature: zod.number(),
+                  max_output_tokens: zod
+                    .number()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationTextModelMaxOutputTokensMax,
+                    ),
+                }),
+                judge: zod.object({
+                  model_id: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationTextJudgeModelIdMax,
+                    ),
+                  temperature: zod.number(),
+                  max_output_tokens: zod
+                    .number()
+                    .min(1)
+                    .max(
+                      modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationTextJudgeMaxOutputTokensMax,
+                    ),
+                }),
+                harness_version: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationTextHarnessVersionMax,
+                  ),
+                adapter_version: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationTextAdapterVersionMax,
+                  ),
+                evaluator_version: zod
+                  .string()
+                  .min(1)
+                  .max(
+                    modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemConfigurationTextEvaluatorVersionMax,
+                  ),
+              })
+              .optional(),
+          }),
+          annotation_revision: zod
+            .number()
+            .min(
+              modelHubSkillsReleaseRequestsRenewalListResponseResultPacketEvidenceItemAnnotationRevisionMin,
+            ),
+          source: zod.enum(["skills_text", "simulation_native"]),
+        }),
+      ),
+      external_pipeline: zod.union([
+        zod.object({
+          url: zod
+            .string()
+            .url()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsRenewalListResponseResultPacketExternalPipelineOneUrlMax,
+            ),
+          configuration_identity: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsRenewalListResponseResultPacketExternalPipelineOneConfigurationIdentityMax,
+            ),
+          decision: zod
+            .string()
+            .min(1)
+            .max(
+              modelHubSkillsReleaseRequestsRenewalListResponseResultPacketExternalPipelineOneDecisionMax,
+            ),
+          trust: zod.enum(["operator_recorded_unimported"]),
+          recorded_by: zod.string().uuid(),
+        }),
+        zod.null(),
+      ]),
+    }),
+    fingerprint: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsReleaseRequestsRenewalListResponseResultFingerprintRegExp,
+      ),
+    request_id: zod.string().uuid(),
+    revision: zod.number().min(1),
+    status: zod.string().min(1),
+    subject_id: zod.string().uuid(),
+    previous_fingerprint: zod
+      .string()
+      .min(1)
+      .regex(
+        modelHubSkillsReleaseRequestsRenewalListResponseResultPreviousFingerprintRegExp,
+      ),
+    changes: zod.array(
+      zod.object({
+        item: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsRenewalListResponseResultChangesItemItemMax,
+          ),
+        before: zod.object({}).passthrough().nullable(),
+        after: zod.object({}).passthrough().nullable(),
+      }),
+    ),
+    removed_evidence: zod.array(
+      zod.object({
+        source_id: zod.string().uuid(),
+        reason: zod.enum(["evidence_expired", "resource_not_found"]),
+        source: zod.string().min(1),
+      }),
+    ),
+  }),
+});
+
+export const ModelHubSkillsReleaseRequestsRenewalCreateParams = zod.object({
+  request_id: zod.string().uuid(),
+});
+
+export const modelHubSkillsReleaseRequestsRenewalCreateBodyExpectedFingerprintRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const ModelHubSkillsReleaseRequestsRenewalCreateBody = zod.object({
+  revision: zod.number().min(1),
+  expected_fingerprint: zod
+    .string()
+    .min(1)
+    .regex(
+      modelHubSkillsReleaseRequestsRenewalCreateBodyExpectedFingerprintRegExp,
+    ),
+});
+
+export const modelHubSkillsReleaseRequestsRenewalCreateResponseResultChangesItemItemMax = 255;
+
+export const ModelHubSkillsReleaseRequestsRenewalCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    revision: zod.number().min(1),
+    id: zod.string().uuid(),
+    status: zod.string().min(1),
+    renewed_by: zod.string().uuid(),
+    from_revision: zod.number().min(1),
+    changes: zod.array(
+      zod.object({
+        item: zod
+          .string()
+          .min(1)
+          .max(
+            modelHubSkillsReleaseRequestsRenewalCreateResponseResultChangesItemItemMax,
+          ),
+        before: zod.object({}).passthrough().nullable(),
+        after: zod.object({}).passthrough().nullable(),
+      }),
+    ),
+    removed_evidence: zod.array(
+      zod.object({
+        source_id: zod.string().uuid(),
+        reason: zod.enum(["evidence_expired", "resource_not_found"]),
+        source: zod.string().min(1),
+      }),
+    ),
+  }),
+});
+
 /**
  * Resolve an immutable skill manifest. Returns ETag: "<digest>". Send If-None-Match with that value for HTTP 304; a missing label never falls back. Optional file_offset/file_limit page the file inventory; follow next_file_offset with the returned version pinned. MCP defaults to 25 files per page and omits frontmatter and file contents; read SKILL.md in chunks for the original metadata.
  */
@@ -43570,7 +47700,13 @@ export const ModelHubSkillsReviewInboxListQueryParams = zod.object({
     .max(modelHubSkillsReviewInboxListQueryPageSizeMax)
     .default(modelHubSkillsReviewInboxListQueryPageSizeDefault),
   status: zod
-    .enum(["pending", "approved", "changes_requested", "released"])
+    .enum([
+      "pending",
+      "approved",
+      "changes_requested",
+      "released",
+      "superseded",
+    ])
     .optional(),
 });
 
@@ -43611,6 +47747,7 @@ export const ModelHubSkillsReviewInboxListResponse = zod.object({
           ),
         candidate_version_id: zod.string().uuid(),
         updated_at: zod.string().datetime({ offset: true }),
+        renewal_required: zod.boolean(),
       }),
     ),
     unread_count: zod

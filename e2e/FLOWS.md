@@ -2552,6 +2552,73 @@
 - 14 exact supported drafts exist, no version or production label was published, and the unsupported member was not staged
 - the lost-response retry has the same request/key and exactly one receipt per supported member
 
+### SKILLS-E2E-011 — preserve a personal draft before replacing a diverged retained source
+
+**Goal:** Review a second source revision against a diverged Hub leaf and preserve the personal draft before explicitly replacing it, without moving production
+
+**Spec:** `flows/skills/j1-second-update.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. import a synthetic versioned exchange through retained migration and publish v1
+2. publish a Hub-only edit as v2, then save a distinct personal draft
+3. preview source revision two and inspect Base/Source/Hub with replacement blocked by the personal draft
+4. download the personal draft and preserve/suspend it through the migration handoff, recovering a lost response
+5. preview again and explicitly replace the same mapped destination; independently inspect retained checkpoint bytes and unchanged publication/labels
+6. publish the reviewed replacement, then download exact ZIP and mapping receipts for viewed v2 and v3 separately
+
+**Backend state verified:**
+
+- source revision two maps to the original identity and reports Hub divergence with the personal draft still unchanged
+- the downloaded draft and the single owner-private checkpoint contain the exact personal bytes; suspension retry reuses the original request and key
+- the replacement draft has exact source-v2 bytes, one destination identity, exactly two published versions and no production or staging labels
+- downloaded viewed-version ZIPs equal Hub-v2 and source-v2 bytes respectively; each receipt binds the same immutable version/digest and correct derived or identical source relation
+
+### SKILLS-E2E-012 — review, import and publish a retained set in one decision, link it and export it
+
+**Goal:** Trial a private library as one reviewed decision with the unsupported member explicitly left out, then link the published set into a context and leave with one export
+
+**Spec:** `flows/skills/j1-reviewed-set.spec.ts:25`
+
+**Tags:** —
+
+**User steps:**
+
+1. preview a versioned exchange with three supported members and a private ZIP whose only member contains a binary, in one import session
+2. acknowledge the left-out member, confirm rights once and import and publish the three items in one decision while the first import response is lost; acknowledge the held publication warnings explicitly
+3. create an agent context from the published set; the pinned links are proposed and previewed, then explicitly accepted
+4. publish the context, then export every linked skill with its mapping receipt from the Use tab in one download
+
+**Backend state verified:**
+
+- exactly one receipt per supported member and none for the blocked member; the lost response was replayed with the same body and operation key
+- each supported member has exactly one published version whose digest equals its source bytes and no release label
+- the context version links exactly the three skills pinned at v1
+- each nested export archive is byte-identical to the single-version export and its mapping receipt binds the same immutable version
+
+### SKILLS-E2E-013 — preview one inventory packet, publish the reviewed set and its proposed context in one review
+
+**Goal:** Trial a private library from one local-inventory packet: review every member once, publish the supported set and the proposed agent context without leaving the review, then issue the pilot credential for the exact version
+
+**Spec:** `flows/skills/j1-packet-context.spec.ts:27`
+
+**Tags:** —
+
+**User steps:**
+
+1. choose one inventory packet holding a versioned exchange and a private folder with a binary member; both sources are previewed into one reviewed set
+2. acknowledge the left-out member, confirm rights once and import and publish the three supported items in one decision
+3. preview the prefilled agent context: a private draft shows the exact pinned versions and compiled candidate, nothing linked yet
+4. accept that exact candidate and publish it, then issue a pilot credential bound to the returned version and revoke it
+
+**Backend state verified:**
+
+- both retained plans come from the packet, the folder members keep their immutable source identities and the blocked member gets no receipt
+- before acceptance the context draft has no links; after publication version 1 links exactly the three skills pinned at v1 and its digest is the previewed candidate
+- the pilot credential is consume-only and bound to that one context version
+
 ### SKILLS-E2E-020 — preserve unrelated personal work before editing historical v4
 
 **Goal:** An incident responder starts a repair from recorded v4 while latest is unrelated v6, without losing another personal draft or changing publication
@@ -2574,22 +2641,69 @@
 - the public draft read contains exact historical v4 owned bytes and base version, not unrelated v6 bytes
 - the public context read keeps latest at v6 and does not move any release label
 
+### SKILLS-E2E-021 — captured span identity and inputs reach context Tests without reconstruction
+
+**Goal:** An incident responder carries an observed failure into a reviewed context case without retyping physical identities or captured request/tool text
+
+**Spec:** `flows/skills/j2-captured-source.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a synthetic failure in Observe
+2. open the review in the context the span was delivered from, with every supported segment preselected
+3. review selected request and tool result; confirm expected behavior and workspace sharing
+4. inspect the saved case on the published context Tests section
+
+**Backend state verified:**
+
+- PostgreSQL retains the exact physical span and recorded context identity while purging preview text after acceptance
+- the public context suite preserves request and tool chronology even when selected in reverse; excludes system and assistant text; the leaf suite route still refuses the context
+
+### SKILLS-E2E-022 — verify a context repair on the real application and hold false repairs
+
+**Goal:** An incident responder proves a context repair on the actual application with matched native runs, and the product holds a text-only success and a routing near-miss
+
+**Spec:** `flows/skills/j2-native-verification.spec.ts:38`
+
+**Tags:** —
+
+**User steps:**
+
+1. pin the runtime-measured application configuration as the context target
+2. review the captured failure with its required skill and business action, then plan a matched run with the carried v4 reference
+3. run the application with candidate, reference and production contexts and read selection, delivery, tool and answer outcomes per cell
+4. append a human disagreement beside the automatic grade
+
+**Backend state verified:**
+
+- the native runtime proved read-only source and context mounts and closed paid egress in its authenticated health
+- the model fixture ledger shows each arm received different root bytes while every arm saw the same fifteen-member catalog
+- the independent business ledger shows one applied action per cell and the original failure declined
+- an application whose answer text passes while its business tool fails is held
+- an overbroad routing repair that sends a dispute to the refund skill is held
+- a case without its business state fixture is Not reproduced and nothing launches
+
 ### SKILLS-E2E-030 — retain accepted child versions while upstream advances during parent review
 
 **Goal:** An author explicitly accepts a shared policy update into two followers while a third context keeps its deliberate pin, then publishes immutable parents without silently promoting them
 
-**Spec:** `flows/skills/j3-accepted-dependency.spec.ts:13`
+**Spec:** `flows/skills/j3-accepted-dependency.spec.ts:14`
 
 **Tags:** —
 
 **User steps:**
 
 1. prepare three published contexts over fifteen synthetic skills, two followers and one deliberate v7 pin
-2. publish shared policy v8 and open each follower from its exact viewed release
-3. preview and explicitly accept the selected child update in the real context editor
-4. advance upstream to v9, edit the standing root, and verify the accepted v8 lock survives autosave
-5. review and publish each parent independently without moving production
-6. inspect both immutable parent descriptors and the unchanged pinned context
+2. publish shared policy v8 and inspect authorized dependents and deliberate pins in light and dark UI
+3. open each follower from its exact viewed release, preview and explicitly accept the selected child update
+4. hold an actual root autosave request in flight, advance upstream to v9, release that unchanged request, and verify accepted v8 and later purpose edits survive
+5. test each complete saved draft against its historical parent and inspect actual model-boundary child delivery
+6. review and publish each parent independently without moving production
+7. inspect both immutable parent descriptors and the unchanged pinned context
+8. request and independently approve each exact parent label move through the UI
+9. resume each pre-move runtime thread and start a clean one, then inspect delivered releases in the Consumers tab
 
 **Backend state verified:**
 
@@ -2598,6 +2712,10 @@
 - root autosave advances revision while retaining accepted v8 after upstream reaches v9
 - published descriptors and dependency projections agree on all fifteen identities, both followers retain v8 and the deliberate pin retains v7
 - parent publication creates no label events or production assignment
+- dependent inventory contains exactly the three authorized parent identities and identifies the deliberate pin
+- whole-context jobs preserve the saved compiled digest, deliver v8 to candidate and v7 to reference at the model boundary, and never deliver v9
+- each label move requires an independently approved parent request and records the authorized reviewer in PostgreSQL
+- a resumed runtime thread keeps its original session and v1 identity after production moves, a clean follower thread receives v2, and the pinned binding stays on v1
 
 ### SKILLS-E2E-040 — an assigned reviewer releases an exact packet and reopens its durable receipt
 
@@ -2609,18 +2727,50 @@
 
 **User steps:**
 
-1. seed a baseline, immutable candidate and assigned packet through public APIs as prerequisites only
+1. seed baseline and candidate bytes, then compose and assign an exact packet through the author UI
 2. discover the request through Skills Reviews without a test-provided deep link
 3. inspect the loaded candidate diff and acknowledge the exact packet
-4. approve as the independent reviewer and deliberately execute the authorized transition
-5. reload and read the durable pre-move currentness and post-move event receipt
+4. approve, observe a stale-execution refusal after policy ABA, then explicitly renew and independently reapprove the packet
+5. deliberately execute the authorized transition after renewed review
+6. reload and read the durable pre-move currentness and post-move event receipt
 
 **Backend state verified:**
 
 - only the assigned reviewer sees the request and the production label remains on the baseline before release
+- the exact before and candidate capability inspection is bound to the submitted packet fingerprint
 - the independent reviewer decision binds to the submitted packet fingerprint and revision
+- policy ABA refuses the old approval without a release event before explicit renewal
 - exactly one release event moves production to the candidate as the authorized reviewer
 - the durable receipt preserves the pre-move release revision separately from the post-move event
+
+### SKILLS-E2E-041 — an approved context packet is refused after each race and released only after explicit reviewer renewal
+
+**Goal:** An assigned reviewer cannot release an approval that a safety, target, annotation, role or retention race made stale, renews it explicitly with the exact changes shown, and releases only the renewed and re-approved packet
+
+**Spec:** `flows/skills/j4-race-renewal.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a released context, a published candidate and two shared text results
+2. the workspace owner registers the application target from its manifest file in the context Consumers tab
+3. seed the exact author packet assigned to the reviewer and the owner
+4. discover the request in Skills Reviews and approve it
+5. after each race, attempt the release, see the refusal open the exact changes, then either renew and approve separately or approve the renewed revision in one inspected decision
+6. after a transient role loss, attempt the release and see the refusal
+7. release the final renewed packet and reopen the durable receipt
+
+**Backend state verified:**
+
+- a safety quarantine A-B-A refuses the old approval with no label event
+- a target configuration A-B-A refuses the old approval with no label event
+- a late annotation refuses the old approval with no label event
+- the target registered in the UI stores the exact manifest and its server-derived digest
+- a demoted approver cannot release and an assigned, still-authorized releaser cannot use the demoted approval
+- an expired attached result refuses the old approval and renewal removes only that result
+- each renewal creates a pending revision whose fingerprint matches the inspected renewal and needs a new decision
+- exactly one release event moves production to the candidate as the assigned reviewer, bound to the last renewed packet
 
 ### SKILLS-E2E-050 — inventory forty selected checkouts and retain the campaign qualification boundary
 
@@ -2641,6 +2791,213 @@
 - independent filesystem hashes and selected IDs equal the complete inventory; local policy remains byte-identical and no hook runs
 - the independent public capability remains disabled and the campaign list remains empty; no rollout is authorized
 
+### SKILLS-E2E-051 — execute forty fixed campaign targets and reconcile an unknown PR without losing local instructions
+
+**Goal:** Authorize exact repository patches, retain intentional exclusions, and reconcile unknown Git outcomes without duplicating PRs or claiming delivery
+
+**Spec:** `flows/skills/j5-campaign-executor.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. publish a synthetic context and bind all forty selected repositories including pins and local exceptions
+2. submit preimage-bound plans retaining real no-lock local instructions and explicitly review every disposition
+3. execute deterministic PRs against the repository fake Git server, pause, and reconcile the unknown response
+4. inspect fixed targets and independent delivery observations, then review a non-executable reverse plan
+
+**Backend state verified:**
+
+- Postgres and the public API retain exactly forty targets and all seven explicit exclusions
+- the independent Git fixture contains exactly one PR for each of thirty-three included targets with exact authorized trees
+- the unknown target reconciles without another Git write; installed and delivered remain unobserved
+- one-sided mutations of membership, local policy and PR multiplicity are rejected
+- a PR head moved or reviewed bytes changed before merge-reviewed is refused with no merge write; a rerun reconciles the merged PR without another write
+
+### SKILLS-E2E-052 — SDK plans preserve local policy through cold adoption, a second rollout and reviewed reverse application
+
+**Goal:** Use real SDK materialization plans for all included repositories, merge exact patches, install separately, then update and reverse without deleting local instructions
+
+**Spec:** `flows/skills/j5-sdk-campaign-lifecycle.spec.ts:20`
+
+**Tags:** —
+
+**User steps:**
+
+1. inventory forty selected no-lock repositories; adopt the four deliberate pins at their pinned release in the cold round, then hold them; exclude two local modifications and one unavailable target
+2. export and authorize real SDK plans, create deterministic PRs and reconcile the unknown response
+3. review and merge each PR, apply its preimage-bound plan and independently compare installed files against the merged Git tree
+4. publish a second immutable version and repeat the configured rollout without advancing held pins or excluded repositories
+5. reject dirty managed bytes and changed preimages, then review and apply reverse plans to the original release
+
+**Backend state verified:**
+
+- all three campaigns retain forty exact targets and explicit exclusion reasons in API and Postgres
+- each included repository has exactly one PR per campaign and a distinct merge commit; Git trees equal SDK-installed files
+- original local-only and nested instructions remain byte-identical and adopted local segments survive all three operations
+- each held pin keeps its one adoption PR, its pinned-release lock and its adopted managed bytes in every later round
+- dirty-managed and stale-preimage controls fail before Git writes; reported delivery remains unobserved
+
+### SKILLS-E2E-053 — registered campaign driver refuses installation-only delivery without losing local policy
+
+**Goal:** Use the actual registered driver for real SDK campaign plans and distinguish verified installations from unobserved native load
+
+**Spec:** `flows/skills/j5-driver-lifecycle.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. inventory forty no-lock repositories and measure explicit ownership, pin and exception reviews
+2. plan every fixed target with one command; review one proven-identical managed group plus every exception individually
+3. freeze exact targets, review plans and authorize every exposed repository with stage-local evidence
+4. create deterministic PRs, reconcile the lost response and verify merge and filesystem installations independently
+5. open Repository rollouts from Skills navigation and review each rollout's fixed forty targets
+6. refuse a completed load stage, then exercise second-update and reverse mechanisms as explicitly partial evidence
+
+**Backend state verified:**
+
+- public API and independent Postgres preserve forty exact targets per round
+- all registered decision stages contain current per-item reviews bound to their stage receipts
+- driver observes local files and deterministic Git PRs rather than product toasts
+- installation-only, omitted-target and changed-local-policy controls cannot become successful complete-job observations
+- review grouping admits only byte-identical managed deltas whose local bytes are proven preserved; mutated members fall out
+- pins are installed at their pinned release, then held; a pin lock advanced past that release is counted from the filesystem and fails pins-retained
+
+### SKILLS-E2E-054 — registered campaign driver observes actual pinned native load without losing local policy
+
+**Goal:** Use the actual registered driver for real SDK campaign plans and distinguish verified installations from unobserved native load
+
+**Spec:** `flows/skills/j5-driver-lifecycle.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. inventory forty no-lock repositories and measure explicit ownership, pin and exception reviews
+2. plan every fixed target with one command; review one proven-identical managed group plus every exception individually
+3. freeze exact targets, review plans and authorize every exposed repository with stage-local evidence
+4. create deterministic PRs, reconcile the lost response and verify merge and filesystem installations independently
+5. open Repository rollouts from Skills navigation and review each rollout's fixed forty targets
+6. observe exact root instructions in the actual pinned Codex request after cold install, second update and reverse
+
+**Backend state verified:**
+
+- public API and independent Postgres preserve forty exact targets per round
+- all registered decision stages contain current per-item reviews bound to their stage receipts
+- driver observes local files and deterministic Git PRs rather than product toasts
+- installation-only, omitted-target and changed-local-policy controls cannot become successful complete-job observations
+- review grouping admits only byte-identical managed deltas whose local bytes are proven preserved; mutated members fall out
+- pins are installed at their pinned release, then held; a pin lock advanced past that release is counted from the filesystem and fails pins-retained
+
+### SKILLS-E2E-055 — registered campaign driver reaches the configured precondition separately, then rolls out and recovers without losing local policy
+
+**Goal:** Use the actual registered driver for real SDK campaign plans and distinguish verified installations from unobserved native load
+
+**Spec:** `flows/skills/j5-driver-lifecycle.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. reach the configured precondition through public interfaces on a separate setup ledger and verify it before measuring
+2. plan every fixed target with one command; review one proven-identical managed group plus every exception individually
+3. freeze exact targets, review plans and authorize every exposed repository with stage-local evidence
+4. create deterministic PRs, reconcile the lost response and verify merge and filesystem installations independently
+5. open Repository rollouts from Skills navigation and review each rollout's fixed forty targets
+6. observe exact root instructions in the actual pinned Codex request after cold install, second update and reverse
+
+**Backend state verified:**
+
+- public API and independent Postgres preserve forty exact targets per round
+- all registered decision stages contain current per-item reviews bound to their stage receipts
+- driver observes local files and deterministic Git PRs rather than product toasts
+- installation-only, omitted-target and changed-local-policy controls cannot become successful complete-job observations
+- review grouping admits only byte-identical managed deltas whose local bytes are proven preserved; mutated members fall out
+- pins are installed at their pinned release, then held; a pin lock advanced past that release is counted from the filesystem and fails pins-retained
+
+### SKILLS-E2E-056 — registered J5 measurements run through the protected CLI without fabricated counts or campaign writes
+
+**Goal:** Run cold adoption, recurring rollout and recovery as three separate preregistered complete-job measurements
+
+**Spec:** `flows/skills/j5-registered-measurements.spec.ts:12`
+
+**Tags:** —
+
+**User steps:**
+
+1. preregister each measurement with its declarative initial condition, fixture-derived expectations and real provenance
+2. run the registered J5 driver through the benchmark CLI for each measurement
+3. retain each result and confirm the protected Checkpoint P gate before any campaign write
+
+**Backend state verified:**
+
+- independent Postgres shows no campaign created by any refused measurement
+- refused results keep null counts, null ratios and the explicit Checkpoint P reason
+
+### SKILLS-E2E-057 — registered J5 cold adoption measurement completes through the protected CLI with real counts and a blocked claim
+
+**Goal:** Measure J5 cold adoption as its own preregistered complete-job run before Checkpoint P without a supported claim
+
+**Spec:** `flows/skills/j5-registered-measurements.spec.ts:69`
+
+**Tags:** —
+
+**User steps:**
+
+1. preregister the measurement with the explicit pre-Checkpoint-P opt-in, fixture-derived expectations and real provenance
+2. run the registered J5 driver through the benchmark CLI on the forty-repository synthetic fixture and fake Git server
+3. retain the report and its append-only ledger and compare it against the retained ledger file
+
+**Backend state verified:**
+
+- every non-external preregistered check passes from independent API, Postgres, Git, filesystem or model-boundary evidence
+- real-GitHub conformance is reported external_open and never observed from the fake
+- independent Postgres shows every campaign the run created is settled or cancelled after teardown
+- the comparison command refuses the report, and a mutated retained ledger event fails hash-chain verification
+
+### SKILLS-E2E-058 — registered J5 recurring rollout measurement completes through the protected CLI with real counts and a blocked claim
+
+**Goal:** Measure J5 recurring rollout as its own preregistered complete-job run before Checkpoint P without a supported claim
+
+**Spec:** `flows/skills/j5-registered-measurements.spec.ts:69`
+
+**Tags:** —
+
+**User steps:**
+
+1. preregister the measurement with the explicit pre-Checkpoint-P opt-in, fixture-derived expectations and real provenance
+2. run the registered J5 driver through the benchmark CLI on the forty-repository synthetic fixture and fake Git server
+3. retain the report and its append-only ledger and compare it against the retained ledger file
+
+**Backend state verified:**
+
+- every non-external preregistered check passes from independent API, Postgres, Git, filesystem or model-boundary evidence
+- real-GitHub conformance is reported external_open and never observed from the fake
+- independent Postgres shows every campaign the run created is settled or cancelled after teardown
+- the comparison command refuses the report, and a mutated retained ledger event fails hash-chain verification
+
+### SKILLS-E2E-059 — registered J5 recovery measurement completes through the protected CLI with real counts and a blocked claim
+
+**Goal:** Measure J5 recovery as its own preregistered complete-job run before Checkpoint P without a supported claim
+
+**Spec:** `flows/skills/j5-registered-measurements.spec.ts:69`
+
+**Tags:** —
+
+**User steps:**
+
+1. preregister the measurement with the explicit pre-Checkpoint-P opt-in, fixture-derived expectations and real provenance
+2. run the registered J5 driver through the benchmark CLI on the forty-repository synthetic fixture and fake Git server
+3. retain the report and its append-only ledger and compare it against the retained ledger file
+
+**Backend state verified:**
+
+- every non-external preregistered check passes from independent API, Postgres, Git, filesystem or model-boundary evidence
+- real-GitHub conformance is reported external_open and never observed from the fake
+- independent Postgres shows every campaign the run created is settled or cancelled after teardown
+- the comparison command refuses the report, and a mutated retained ledger event fails hash-chain verification
+
 ### SKILLS-E2E-060 — distinguish reported delivery from incomplete and unknown recovery cohorts
 
 **Goal:** Inspect declared recovery consumers without mistaking one successful reporter for a completely recovered cohort
@@ -2658,3 +3015,79 @@
 **Backend state verified:**
 
 - the scoped persisted receipt identities and stages yield exactly one matching pin and three unknown bindings in the public consumer summary
+
+### SKILLS-E2E-061 — recover a persisted refund checkpoint through the real registry without a second business request
+
+**Goal:** Resume an eligible original application thread after a registry outage without replaying its completed refund, and keep an unobserved consumer unknown
+
+**Spec:** `flows/skills/j6-application-recovery.spec.ts:16`
+
+**Tags:** —
+
+**User steps:**
+
+1. prepare a published fifteen-skill synthetic context and two declared application bindings through public APIs
+2. run the installed application CLI against real session and file APIs and interrupt registry access after a business result
+3. reopen the durable application database and resume the same session with no duplicate business request
+4. explicitly prepare and run a separately reviewed clean task with no inherited messages or automatic refund replay
+5. inspect original session identity, independent model-boundary digests and persisted receipts
+6. report observed root delivery, revoke the original credential and inspect the consumer UI without a false target match
+
+**Backend state verified:**
+
+- independent business SQLite has one applied refund and one request before and after recovery
+- application SQLite contains the refund receipt before checkpoint advancement; resume retains the complete closure and original session
+- four original-thread provider requests and one explicitly reconstructed clean-thread request match independent model-boundary hashes; the complete catalog has fifteen members
+- Postgres retains the original session and real immutable version identity; a never-observed binding stays unknown
+- public access rejects the revoked credential and the UI no longer describes its historical delivery as matching the current target
+
+### SKILLS-E2E-062 — review a lower-number rollback with a retained retired child, reject a quarantined alternative and an ABA-stale packet
+
+**Goal:** Choose and review an eligible historical context, reject an unsafe alternative and stale pointer authority, then deliberately roll back without declaring application recovery
+
+**Spec:** `flows/skills/j6-reviewed-rollback.spec.ts:11`
+
+**Tags:** —
+
+**User steps:**
+
+1. publish three immutable synthetic context releases containing the same retained child through public authoring APIs
+2. retire the source child and quarantine the alternative, checking the complete historical closure remains readable
+3. approve a rollback packet and exercise a real ABA sequence through independent author and reviewer APIs
+4. reject execution of the stale packet with no extra label event
+5. open a fresh request from the reviewer inbox, inspect its exact closure and deliberately move production to the lower-number release
+6. inspect the durable receipt and confirm the unobserved declared consumer remains unknown
+
+**Backend state verified:**
+
+- Postgres retains the archived child identity and the exact historical dependency rather than substituting the current source
+- quarantined alternative cannot be reviewed for release and stale ABA execution cannot create a label event
+- one exact lower-number event matches the independently read durable receipt, while the latest immutable version remains unchanged
+- public consumer accounting does not convert a pointer-only rollback into observed application recovery
+
+### SKILLS-E2E-063 — recover an incident through the declared eight-fault matrix without false recovery or duplicate business effects
+
+**Goal:** Choose an eligible earlier release for a retained incident, roll back with protection, restore the checked-in lock, resume or reconstruct each application thread and see recovered, unknown and lost consumers stay distinct
+
+**Spec:** `flows/skills/j6-incident-recovery.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. prepare a retained refund incident, three release identities, a retired child and a quarantined alternative through public APIs and the packaged application
+2. open the retained incident link on the recovery view, where the newest eligible release older than the failing one is preselected, and review its complete closure
+3. request a lower-number rollback from the preselected reviewer (whoever last moved production), let another releaser move production away and back, see the approved stale packet refused and superseded by the fresh request, then approve and execute that fresh rollback from its exact review link
+4. issue a replacement credential and restore the lock of the last reviewed commit with one verified command without losing local work
+5. run the application through a registry outage after a persisted refund and resume the same session and checkpoint
+6. plan every registered thread with one command, review that plan once and apply exactly it: resume the paused thread, close the expired one and start reviewed clean threads without replaying the refund
+7. reconcile the apply output with the business ledger, recheck the original case once from the same reviewed plan and inspect the declared cohort
+
+**Backend state verified:**
+
+- Postgres has exactly one lower-number label event, none for the stale ABA packet, and the approved stale request is superseded
+- the independent business ledger holds one applied refund and one request per order with no duplicate
+- an apply with any digest other than the reviewed plan is refused and sends no business request
+- the resumed thread keeps its original session identity and the receipt precedes the checkpoint advance
+- the retired child delivers its exact retained bytes and the quarantined alternative is refused
+- the expired-credential session is denied by the public access check and the lost-mapping and never-observed consumers stay unknown

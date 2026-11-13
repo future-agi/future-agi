@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1255,
+  endpointCount: 1270,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -812,6 +812,23 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/skills/contexts/{context_id}/draft/head-review/": ["post"],
       "/model-hub/skills/contexts/{context_id}/draft/publish/": ["post"],
       "/model-hub/skills/contexts/{context_id}/draft/start/": ["post"],
+      "/model-hub/skills/contexts/{context_id}/native/preview/": ["post"],
+      "/model-hub/skills/contexts/{context_id}/native/runs/": ["get", "post"],
+      "/model-hub/skills/contexts/{context_id}/native/runs/{evidence_id}/": [
+        "get",
+      ],
+      "/model-hub/skills/contexts/{context_id}/native/runs/{evidence_id}/share/":
+        ["post"],
+      "/model-hub/skills/contexts/{context_id}/native/runtime-configuration/": [
+        "get",
+      ],
+      "/model-hub/skills/contexts/{context_id}/native/targets/": [
+        "get",
+        "post",
+      ],
+      "/model-hub/skills/contexts/{context_id}/native/targets/{binding_id}/": [
+        "put",
+      ],
       "/model-hub/skills/contexts/{context_id}/release-state/": ["get"],
       "/model-hub/skills/contexts/{context_id}/release/review/": ["post"],
       "/model-hub/skills/contexts/{context_id}/test-runs/": ["get", "post"],
@@ -831,6 +848,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/skills/contexts/{context_id}/test-runs/{run_id}/share/": [
         "post",
       ],
+      "/model-hub/skills/contexts/{context_id}/tests/": ["get", "put"],
       "/model-hub/skills/contexts/{context_id}/versions/": ["get"],
       "/model-hub/skills/contexts/{context_id}/versions/{number}/": ["get"],
       "/model-hub/skills/contexts/{context_id}/versions/{number}/inspection/": [
@@ -870,13 +888,24 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/skills/intake/{plan_id}/receipts/": ["get"],
       "/model-hub/skills/intake/{plan_id}/reconcile/": ["post"],
       "/model-hub/skills/intake/{plan_id}/review/": ["post"],
+      "/model-hub/skills/native/attempts/{attempt_id}/failure/": ["post"],
+      "/model-hub/skills/native/attempts/{attempt_id}/health/": ["post"],
+      "/model-hub/skills/native/attempts/{attempt_id}/observations/": ["post"],
       "/model-hub/skills/publish/": ["post"],
-      "/model-hub/skills/release-requests/": ["post"],
+      "/model-hub/skills/release-requests/": ["get", "post"],
+      "/model-hub/skills/release-requests/inspection/": ["post"],
+      "/model-hub/skills/release-requests/native-evidence/{evidence_id}/share/":
+        ["post"],
+      "/model-hub/skills/release-requests/options/": ["get"],
       "/model-hub/skills/release-requests/preview/": ["post"],
       "/model-hub/skills/release-requests/{request_id}/": ["get"],
       "/model-hub/skills/release-requests/{request_id}/decisions/": ["post"],
       "/model-hub/skills/release-requests/{request_id}/execute/": ["post"],
       "/model-hub/skills/release-requests/{request_id}/receipt/": ["get"],
+      "/model-hub/skills/release-requests/{request_id}/renewal/": [
+        "get",
+        "post",
+      ],
       "/model-hub/skills/resolve/": ["get"],
       "/model-hub/skills/review-inbox/": ["get"],
       "/model-hub/skills/review-inbox/{request_id}/seen/": ["post"],
@@ -2349,6 +2378,19 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/skills/contexts/{context_id}/draft/head-review/": ["post"],
   "/model-hub/skills/contexts/{context_id}/draft/publish/": ["post"],
   "/model-hub/skills/contexts/{context_id}/draft/start/": ["post"],
+  "/model-hub/skills/contexts/{context_id}/native/preview/": ["post"],
+  "/model-hub/skills/contexts/{context_id}/native/runs/": ["get", "post"],
+  "/model-hub/skills/contexts/{context_id}/native/runs/{evidence_id}/": ["get"],
+  "/model-hub/skills/contexts/{context_id}/native/runs/{evidence_id}/share/": [
+    "post",
+  ],
+  "/model-hub/skills/contexts/{context_id}/native/runtime-configuration/": [
+    "get",
+  ],
+  "/model-hub/skills/contexts/{context_id}/native/targets/": ["get", "post"],
+  "/model-hub/skills/contexts/{context_id}/native/targets/{binding_id}/": [
+    "put",
+  ],
   "/model-hub/skills/contexts/{context_id}/release-state/": ["get"],
   "/model-hub/skills/contexts/{context_id}/release/review/": ["post"],
   "/model-hub/skills/contexts/{context_id}/test-runs/": ["get", "post"],
@@ -2364,6 +2406,7 @@ export const API_SURFACE_PATHS = Object.freeze({
     "get",
   ],
   "/model-hub/skills/contexts/{context_id}/test-runs/{run_id}/share/": ["post"],
+  "/model-hub/skills/contexts/{context_id}/tests/": ["get", "put"],
   "/model-hub/skills/contexts/{context_id}/versions/": ["get"],
   "/model-hub/skills/contexts/{context_id}/versions/{number}/": ["get"],
   "/model-hub/skills/contexts/{context_id}/versions/{number}/inspection/": [
@@ -2402,13 +2445,22 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/skills/intake/{plan_id}/receipts/": ["get"],
   "/model-hub/skills/intake/{plan_id}/reconcile/": ["post"],
   "/model-hub/skills/intake/{plan_id}/review/": ["post"],
+  "/model-hub/skills/native/attempts/{attempt_id}/failure/": ["post"],
+  "/model-hub/skills/native/attempts/{attempt_id}/health/": ["post"],
+  "/model-hub/skills/native/attempts/{attempt_id}/observations/": ["post"],
   "/model-hub/skills/publish/": ["post"],
-  "/model-hub/skills/release-requests/": ["post"],
+  "/model-hub/skills/release-requests/": ["get", "post"],
+  "/model-hub/skills/release-requests/inspection/": ["post"],
+  "/model-hub/skills/release-requests/native-evidence/{evidence_id}/share/": [
+    "post",
+  ],
+  "/model-hub/skills/release-requests/options/": ["get"],
   "/model-hub/skills/release-requests/preview/": ["post"],
   "/model-hub/skills/release-requests/{request_id}/": ["get"],
   "/model-hub/skills/release-requests/{request_id}/decisions/": ["post"],
   "/model-hub/skills/release-requests/{request_id}/execute/": ["post"],
   "/model-hub/skills/release-requests/{request_id}/receipt/": ["get"],
+  "/model-hub/skills/release-requests/{request_id}/renewal/": ["get", "post"],
   "/model-hub/skills/resolve/": ["get"],
   "/model-hub/skills/review-inbox/": ["get"],
   "/model-hub/skills/review-inbox/{request_id}/seen/": ["post"],
