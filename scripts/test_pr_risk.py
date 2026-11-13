@@ -906,6 +906,23 @@ class EvidenceTests(unittest.TestCase):
             )
         )
 
+    def test_skipped_required_run_does_not_overrule_a_real_result(self):
+        required = {"Python Types Pass": 15368}
+        success = check("Python Types Pass", id=1)
+        skipped = check("Python Types Pass", id=2, conclusion="skipped")
+        self.assertTrue(risk.required_checks_pass(required, [success, skipped], [], HEAD))
+        self.assertFalse(risk.required_checks_pass(required, [skipped], [], HEAD))
+
+        failure = check("Python Types Pass", id=2, conclusion="failure")
+        newest_skipped = check("Python Types Pass", id=3, conclusion="skipped")
+        self.assertFalse(
+            risk.required_checks_pass(required, [success, failure, newest_skipped], [], HEAD)
+        )
+        pending = check("Python Types Pass", id=2, status="in_progress", conclusion=None)
+        self.assertFalse(
+            risk.required_checks_pass(required, [success, pending, newest_skipped], [], HEAD)
+        )
+
     def test_unverifiable_legacy_status_is_not_a_pass(self):
         self.assertFalse(
             risk.required_checks_pass(
@@ -1133,7 +1150,12 @@ class EvidenceTests(unittest.TestCase):
         low = set().union(*(samples(glob) for glob in policy["low_globs"]))
         gaps = [path for path in low if risk.classify([file(path)], policy)["tier"] != "low"]
         configured = {entry["workflow"]: entry for entry in policy["post_merge_workflows"]}
+        not_dispatched = {
+            entry["workflow"]: entry
+            for entry in policy.get("post_merge_not_dispatched", [])
+        }
         seen = set()
+        seen_not_dispatched = set()
         for name, workflow in workflows.items():
             on = workflow.get(True, workflow.get("on"))
             if isinstance(on, str):
@@ -1154,6 +1176,21 @@ class EvidenceTests(unittest.TestCase):
             elif {"tags", "tags-ignore"} & set(push):
                 continue  # tag pushes only
             started = {sample for sample in low if risk.matches(sample, push.get("paths") or ["**"])}
+            if name in not_dispatched:
+                seen_not_dispatched.add(name)
+                reason = not_dispatched[name].get("reason")
+                if not isinstance(reason, str) or not reason.strip():
+                    gaps.append(f"{name}: not-dispatched entry needs a reason")
+                # mypy excludes tests/, so a LOW Python file elsewhere could
+                # change the result of the run this exemption skips.
+                if name == "python-types.yml" and any(
+                    sample.endswith((".py", ".pyi")) and "tests" not in sample.split("/")
+                    for sample in low
+                ):
+                    gaps.append(
+                        "python-types.yml: LOW Python paths outside tests/ require reviewing the exemption"
+                    )
+                continue
             if name not in configured:
                 if started:
                     gaps.append(f"{name}: a LOW merge would start it, but it is not dispatched")
@@ -1171,18 +1208,71 @@ class EvidenceTests(unittest.TestCase):
             ):
                 gaps.append(f"{name}: dispatch inputs do not fit the workflow")
         gaps += [f"{name}: not a dev push workflow" for name in set(configured) - seen]
+        gaps += [
+            f"{name}: not a dev push workflow"
+            for name in set(not_dispatched) - seen_not_dispatched
+        ]
         return gaps
 
     def test_post_merge_dispatches_cover_every_dev_push_workflow_a_low_merge_starts(self):
         # A merge by GITHUB_TOKEN starts no push workflow. Every dev push
         # workflow that a person's merge of a LOW file would start must be
-        # dispatched under the same paths; the rest must match no LOW path.
+        # dispatched under the same paths or listed, with a reason, as not
+        # dispatched; the rest must match no LOW path.
         try:
             import yaml  # noqa: F401
         except ImportError:
             self.skipTest("PyYAML is not installed")
         workflows = self.repository_workflows()
         self.assertEqual(self.post_merge_gaps(POLICY, workflows), [])
+        not_dispatched = next(
+            entry for entry in POLICY["post_merge_not_dispatched"]
+            if entry["workflow"] == "python-types.yml"
+        )
+        self.assertTrue(not_dispatched["reason"])
+
+        # Removing the exemption restores the drift failure.
+        unlisted = copy.deepcopy(POLICY)
+        unlisted.pop("post_merge_not_dispatched")
+        self.assertTrue(any(
+            "python-types.yml: a LOW merge would start it, but it is not dispatched" in gap
+            for gap in self.post_merge_gaps(unlisted, workflows)
+        ))
+
+        # The exemption must not survive if the workflow stops pushing to dev.
+        no_dev_push = copy.deepcopy(workflows)
+        no_dev_push["python-types.yml"] = {"on": {"push": {"branches": ["main"]}}}
+        self.assertIn(
+            "python-types.yml: not a dev push workflow",
+            self.post_merge_gaps(POLICY, no_dev_push),
+        )
+
+        # A wider LOW allowlist must force a review of the mypy exemption,
+        # unless the new Python paths are under a tests/ directory.
+        for glob, flagged in (
+            ("futureagi/*.py", True),
+            ("futureagi/**/*.pyi", True),
+            ("futureagi/agentic_eval/tests/test_*.py", False),
+        ):
+            wider = copy.deepcopy(POLICY)
+            wider["low_globs"].append(glob)
+            with self.subTest(glob=glob):
+                self.assertEqual(any(
+                    "python-types.yml: LOW Python paths outside tests/" in gap
+                    for gap in self.post_merge_gaps(wider, workflows)
+                ), flagged)
+
+        # An exemption without an explanation is not a valid policy entry.
+        unexplained = copy.deepcopy(POLICY)
+        next(
+            entry for entry in unexplained["post_merge_not_dispatched"]
+            if entry["workflow"] == "python-types.yml"
+        )["reason"] = " "
+        self.assertTrue(any(
+            "python-types.yml: not-dispatched entry needs a reason" in gap
+            for gap in self.post_merge_gaps(unexplained, workflows)
+        ))
+
         names = {entry["workflow"] for entry in POLICY["post_merge_workflows"]}
         self.assertLessEqual({"sdk-compatibility.yml", "standalone-ci.yml", "update-ci.yml"}, names)
         # Each way to fall out of step is caught.

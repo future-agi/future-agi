@@ -81,7 +81,7 @@ creates it, with no rules, the first time the `approve-and-merge` job runs.
 | Actions event policy for `pull_request_target` | None today: in GitHub's 9 Nov 2026 brownout, all 57 `pull_request_target` runs in this repository ended in `startup_failure` | From 2 Dec 2026 GitHub blocks `pull_request_target` in public repositories unless an Actions event policy, at repository or organisation level, allows it. The policy must allow it for `.github/workflows/low-risk-pr-autopilot.yml`. If the policy for `admission.yml` and `labeler.yml` names workflow files, it must name this file too. It must be in place before this workflow reaches `main` and before 2 Dec 2026; the 16 Nov 16:00–18:00 UTC brownout applies as well. Without it, every PR event into `dev` creates a run that fails at startup, even with `PR_AUTOPILOT` off, and only the sweep classifies and dispatches PRs (see below) |
 | `dev` protection / active org and repository branch rules | Read, never changed by this code | No new ruleset is needed for required checks. `dev` does not require up-to-date branches today (classic protection, strict off), and the autopilot does not need it to: it checks itself that the PR head contains the live `dev` tip (item 1 of [Trust boundary and merge decision](#trust-boundary-and-merge-decision)). So people's PRs into `dev` keep merging without an "Update branch" and a CI re-run after each merge. Do not add a strict rule for the autopilot's sake. A strict rule covers every PR into `dev`: after each merge, every other open PR would need an update and a new CI run, including the E2E job (66 to 89 minutes on `dev`) for PRs that touch the app. An active `pull_request` rule must dismiss stale approvals on push; the controller refuses without it. dev's organisation rule has it on today (read-only check, 12 Nov). Also require approval of the most recent push in a repository ruleset (owner step 3 below); the controller does not check this one. Merge queues and required-workflow rules on `dev` stop the autopilot |
 | Repository setting "Always suggest updating pull request branches" (`allow_update_branch`) | Off (read-only check, 12 Nov 2026) | An owner choice; leave it off unless the owner decides otherwise. GitHub shows the "Update branch" button only when the base branch requires up-to-date branches or this setting is on. Neither holds today, so PRs into `dev` have no such button: on 12 Nov `viewerCanUpdateBranch` was false, for an admin viewer, on all 40 most recently updated open PRs into `dev`. The autopilot does not need the button. When a LOW PR's head does not contain the live `dev` tip, the bot posts a behind-dev note, and the author merges `dev` into the branch locally and pushes. Turning the setting on changes two things, because it applies to the whole repository. First, release PRs into `main`, which sit behind `main` by design, get the button, and one click by a person hands that release to a person (`docs/release-autopilot.md`, "Who pushed"). Second, every writer sees the button on LOW PRs into `dev`, and one click by anyone not on the trusted-author list sends that PR to a person for good (see below) |
-| Required status checks | Policy minimum: `Backend Tests Pass`, `E2E Tests Pass` and `Python Lint Pass`, unioned with all active classic/ruleset requirements | Keep required checks meaningful and green on the PR head; missing, skipped, neutral, pending, stale or failing checks cannot satisfy the bot |
+| Required status checks | Policy minimum: `Backend Tests Pass`, `E2E Tests Pass` and `Python Lint Pass`, unioned with all active classic/ruleset requirements | Keep required checks meaningful and green on the PR head; missing, neutral, pending, stale or failing checks cannot satisfy the bot, and neither can a check whose only runs were skipped. Skipped runs are ignored and the newest run that did not skip decides. Before a check is made required on `dev`, its job must use `if: always()` and fail when a job it needs failed (see below) |
 | Merge commits | The policy's only merge method | Keep merge commits enabled; this matches nine of the ten recent first-parent `dev` commits inspected at `a75af77f6` |
 | Workflow on the default branch | No PR-event runs and no sweep until this workflow is on `main` | PR events (`pull_request_target`) and the schedule both run `main`'s copy of this workflow. Land it on `dev` through human review and include it in the normal `dev` → `main` release; do not change the default branch. `main`'s copy checks out `dev`'s controller and policy, so a controller change on `dev` applies to those runs at once. A workflow change on `dev` (step names, environment variables, triggers) reaches them only with the next `dev` → `main` release. The classify, label and sweep paths therefore must keep working with the previous release's workflow copy; only dispatch runs on `dev` use `dev`'s copy |
 
@@ -193,9 +193,23 @@ checks, so a check an administrator adds later is respected too.
   changed. A PR whose last run predates that workflow has no such check, so
   the autopilot waits until a push or a title or body edit runs it. The
   workflow has no push trigger, so a merge needs no dispatch of it.
-- When a head carries several runs of one check, the newest wins. On PR 3780
-  on 12 Nov a lint run cancelled by its concurrency group reported failure
-  and a newer run reported success; the autopilot counts the success.
+- When a head carries several runs of one check, the newest run that did
+  not skip wins. On PR 3780 on 12 Nov a lint run cancelled by its
+  concurrency group reported failure and a newer run reported success; the
+  autopilot counts the success. A newer failed, cancelled or unfinished run
+  still overrules an older success.
+- Skipped runs are ignored, because a summary job skipped by its own `if:`
+  still adds a check run, and GitHub counts a skipped required check as
+  passing. "Python Types Pass" (`python-types.yml`, not required today)
+  skips on an ordinary title or body edit. On PR 3973 on 13 Nov its head
+  carried a success and, 10 seconds later, a skipped run. A head whose only
+  runs of a required check were skipped waits, with no note on the PR.
+- So a skip must never stand in for a failed dependency. Before a check is
+  made required on `dev`, its job must use `if: always()` and fail when a
+  job it needs failed. The summary jobs of the three required checks and of
+  "Python Types Pass" do both. Without `if: always()`, a failed dependency
+  skips the summary job, and an older success on the same head would count.
+  Such a check must stay optional until its job is changed.
 
 The label instructions describe the medium/high human policy; this workflow
 does not replace repository rules that enforce the number of human
@@ -1003,10 +1017,21 @@ A dispatch is not always the same as a push run:
 The other `dev` push workflows that accept a dispatch are not dispatched:
 AgentCC Gateway CI, API Contracts, Collector and compose CI, Helm chart CI,
 Images CI and Update PostgreSQL probe. None of their push filters matches a
-LOW path, so a person's merge of a LOW file would not start them either. Every
-`dev` push workflow accepts `workflow_dispatch`. A test reads every workflow
-file and fails if a `dev` push workflow that a LOW merge would start is not
-dispatched under the same paths, or if a dispatch's inputs do not fit the
+LOW path, so a person's merge of a LOW file would not start them either.
+
+Python types (`python-types.yml`) is the one `dev` push workflow that a LOW
+merge would start but that is not dispatched. It has no `workflow_dispatch`
+trigger. It is listed, with this reason, in `post_merge_not_dispatched`: its
+mypy run excludes `tests/` (`[tool.mypy]` in `futureagi/pyproject.toml`), and
+every LOW Python glob is under a `tests/` directory, so no LOW merge can
+change its result.
+
+A test reads every workflow file and fails if a `dev` push workflow that a
+LOW merge would start is neither dispatched under the same paths nor listed
+in `post_merge_not_dispatched` with a reason, or if a dispatch's inputs do
+not fit the workflow. It also fails if a LOW Python path falls outside a
+`tests/` directory, so a wider LOW allowlist forces a review of the Python
+types exemption, and if a listed workflow is no longer a `dev` push
 workflow. It counts every push trigger form that can run on `dev`, and reports
 `branches-ignore`, `paths-ignore` and negated branch patterns as not modelled.
 Widening the LOW allowlist can therefore require new entries. The test runs in

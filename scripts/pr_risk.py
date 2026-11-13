@@ -375,14 +375,21 @@ def review_verdict(raw, head, base):
 
 
 def required_checks_pass(requirements, checks, statuses, head):
-    """Newest result wins. Neutral/skipped and wrong-app results never count."""
+    """Newest non-skipped result wins; neutral and wrong-app results never count."""
     if not requirements:
         return False
     for name, app_id in requirements.items():
         runs = [c for c in checks if c.get("name") == name]
         contexts = [s for s in statuses if s.get("context") == name]
         if runs:
-            latest = max(runs, key=lambda c: c["id"])
+            # A summary job skipped by its own if: still adds a check run, for
+            # example python-types.yml on a title or body edit. GitHub counts
+            # a skipped required check as passing. Judge the newest run that
+            # did not skip, so an edit cannot hide an earlier result.
+            actual_runs = [c for c in runs if c.get("conclusion") != "skipped"]
+            if not actual_runs:
+                return False
+            latest = max(actual_runs, key=lambda c: c["id"])
             app = latest.get("app") or {}
             if (
                 latest.get("head_sha") != head
