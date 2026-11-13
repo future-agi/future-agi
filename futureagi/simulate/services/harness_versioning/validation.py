@@ -476,9 +476,9 @@ def start_validation(
             return Validation(CHECK_UNAVAILABLE, bundle, purpose)
         if bundle.state == HarnessAssembledBundle.State.FAILED:
             assembly.reset_failed(bundle)
-        job = live_validation(bundle.id)
-        if job is not None and (move is None or _carry_move(job, move)):
-            return Validation("validating", bundle, purpose, job)
+        live = live_validation(bundle.id)
+        if live is not None and (move is None or _carry_move(live, move)):
+            return Validation("validating", bundle, purpose, live)
         job = _create_job(
             locked,
             runtime,

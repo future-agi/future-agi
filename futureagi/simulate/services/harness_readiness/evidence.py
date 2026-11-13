@@ -237,7 +237,7 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
         )
     version = _certified_version(pairing.environment_version)
     data = _build_certification(version) if version is not None else None
-    if data is None:
+    if version is None or data is None:
         return Evidence("none", {}, [], [], None)
     certificate = data.get("certificate")
     checks = certificate.get("checks") if isinstance(certificate, Mapping) else None

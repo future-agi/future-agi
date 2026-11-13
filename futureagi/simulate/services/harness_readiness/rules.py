@@ -179,7 +179,7 @@ def rows(
                 found = Reading(
                     found.finding,
                     found.reason_code,
-                    found.reason + "; failed its probe: " + ", ".join(names),
+                    f"{found.reason}; failed its probe: " + ", ".join(names),
                     found.targets + targets("action", names, "failed"),
                 )
             status, _, _ = _status(found)
@@ -383,7 +383,7 @@ def _stale_reason(
             "Checked with the agent version the environment was built with",
         )
     now = _label(pairing.environment_version.version_number)
-    if stale == "environment_version":
+    if stale == "environment_version" and evidence.made_for is not None:
         was = _label(evidence.made_for.version_number)
         return (
             "environment_changed",

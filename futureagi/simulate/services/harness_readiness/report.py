@@ -273,7 +273,7 @@ def readiness_report(
     """
     bundle = bundle or pair_bundle(pairing)
     key = _report_key(pairing, bundle)
-    cached = cache.get(key)
+    cached: ReadinessReport | None = cache.get(key)
     if cached is not None:
         return cached
     report = _computed_report(pairing, bundle)
