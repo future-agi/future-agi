@@ -24,20 +24,24 @@ config:
         import re
 
         # Explicit schemes retain malformed/private candidates for refusal rather
-        # than treating them as link-free prose. Bare domains need alphabetic TLDs.
+        # than treating them as link-free prose: any "<scheme>://" (RFC 3986
+        # scheme characters, so ftp://, ws:// and typos such as htp:// too) and
+        # scheme-relative "//host". Bare domains need alphabetic TLDs.
         pattern = (
-            r"(?<![\w@.+-])https?://[^\s<>\"']*|"
+            r"(?<![\w@.+-])[A-Za-z][A-Za-z0-9+.-]*://[^\s<>\"']*|"
+            r"(?<![\w@.+/:-])//[A-Za-z0-9\[][^\s<>\"']*|"
             r"(?<![\w@.+/:-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+"
             r"[A-Za-z]{2,}(?![\w-]|\.[A-Za-z0-9])(?::[0-9]+)?(?:[/?#][^\s<>\"']*)?"
         )
         result = []
+        checked = 0
         for match in re.finditer(pattern, str(text), re.IGNORECASE):
             candidate = match.group().rstrip(".,;!?:")
             while candidate.endswith(")") and candidate.count(")") > candidate.count("("):
                 candidate = candidate[:-1]
             while candidate.endswith("]") and candidate.count("]") > candidate.count("["):
                 candidate = candidate[:-1]
-            explicit = candidate.lower().startswith(("http://", "https://"))
+            explicit = re.match(r"[a-z][a-z0-9+.-]*://|//", candidate, re.IGNORECASE)
             if not explicit:
                 # A suffix after punctuation in an email is still part of the email.
                 prefix = re.split(r"\s", str(text)[:match.start()])[-1]
@@ -55,9 +59,15 @@ config:
                     continue
                 candidate = "http://" + candidate
             result.append(candidate)
-            if len(result) > 20:
+            # Only http(s) links are requested; the others are never valid.
+            checked += _web_link(candidate)
+            if checked > 20:
                 raise ValueError("Too many links to validate")
         return result
+
+
+    def _web_link(url):
+        return url.lower().startswith(("http://", "https://"))
 
 
     def _link_status(url, deadline):
@@ -202,6 +212,8 @@ config:
             links = _links(kwargs.get("text", output or ""))
             if not links:
                 return {"score": 1.0, "reason": "No links found in output, so none are invalid"}
+            if not all(_web_link(link) for link in links):
+                return {"score": 0.0, "reason": "Found invalid links (not http or https)"}
             deadline = time.monotonic() + 5
             for link in links:
                 status = _link_status(link, deadline)

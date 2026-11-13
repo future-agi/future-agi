@@ -232,6 +232,84 @@ class LinkAcceptance(unittest.TestCase):
                         namespace["_link_status"].call_args.args[0], expected
                     )
 
+    def test_other_scheme_and_scheme_relative_links_are_not_valid(self):
+        for text in (
+            "Download ftp://allowed.example/report.zip",
+            "Connect to ws://allowed.example/socket",
+            "Copy sftp://allowed.example/upload",
+            "See //allowed.example/docs",
+            "Open htp://allowed.example/docs",
+            "Use file:///etc/hosts",
+        ):
+            for name in NAMES:
+                evaluate = load(name)
+                check = mock.Mock(return_value=200)
+                with (
+                    self.subTest(text=text, name=name),
+                    mock.patch.dict(evaluate.__globals__, {"_link_status": check}),
+                    mock.patch("socket.getaddrinfo") as resolved,
+                ):
+                    result = evaluate(None, text, None, None)
+                    self.assertEqual(result["score"], 0.0)
+                    self.assertIn("not http or https", result["reason"])
+                    check.assert_not_called()
+                    resolved.assert_not_called()
+
+    def test_other_scheme_link_beside_a_valid_https_link(self):
+        text = "Mirror ftp://allowed.example/a.zip or https://allowed.example/a"
+        expected = {"contains_valid_link": 1.0, "no_invalid_links": 0.0}
+        for name in NAMES:
+            evaluate = load(name)
+            check = mock.Mock(return_value=200)
+            with (
+                self.subTest(name=name),
+                mock.patch.dict(evaluate.__globals__, {"_link_status": check}),
+            ):
+                self.assertEqual(
+                    evaluate(None, text, None, None)["score"], expected[name]
+                )
+                if name == "contains_valid_link":
+                    self.assertEqual(
+                        check.call_args.args[0], "https://allowed.example/a"
+                    )
+
+    def test_double_slashes_in_prose_are_not_links(self):
+        for text in (
+            "a // comment",
+            "path/to//file",
+            "10 // 3",
+        ):
+            for name, score in zip(NAMES, (0.0, 1.0), strict=True):
+                evaluate = load(name)
+                check = mock.Mock(return_value=200)
+                with (
+                    self.subTest(text=text, name=name),
+                    mock.patch.dict(evaluate.__globals__, {"_link_status": check}),
+                ):
+                    result = evaluate(None, text, None, None)
+                    self.assertEqual(result["score"], score)
+                    check.assert_not_called()
+
+    def test_link_matching_stays_fast_on_long_input(self):
+        inputs = (
+            "a" * 1_000_000,
+            "a+" * 500_000,
+            "ftp:" * 250_000,
+            "/" * 1_000_000,
+            "a." * 500_000,
+            "x://" * 250_000,
+        )
+        for name in NAMES:
+            links = load(name).__globals__["_links"]
+            for text in inputs:
+                with self.subTest(name=name, text=text[:8]):
+                    started = time.monotonic()
+                    try:
+                        links(text)
+                    except ValueError:
+                        pass
+                    self.assertLess(time.monotonic() - started, 10)
+
     def test_private_mixed_and_special_addresses_refused(self):
         for address in (
             "127.0.0.1",
