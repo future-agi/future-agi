@@ -12,7 +12,11 @@ try:
     )
 except ImportError:
     ExplanationAgent = _ee_stub("ExplanationAgent")
-from model_hub.models.choices import EvalExplanationSummaryStatus, SourceChoices
+from model_hub.models.choices import (
+    CellStatus,
+    EvalExplanationSummaryStatus,
+    SourceChoices,
+)
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import UserEvalMetric
 from tfc.temporal import temporal_activity
@@ -29,7 +33,12 @@ def get_eval_reasons(
 ) -> dict[str, dict[str, Any]]:
     """
     Returns:
-        Dict[str, dict[str, Any]] mapping eval name to all its reason texts and values
+        Dict[str, dict[str, Any]] mapping eval name to its reason texts
+        (``eval_reasons``, present only when a reason column exists), all its
+        cell values (``eval_values``), the values of its finished grades
+        (``graded_values``) and, when the evaluation's metric is found, its
+        template details and whether it is configured to write reasons
+        (``writes_reasons``).
     """
 
     # Build base queryset for reason columns in the dataset
@@ -112,18 +121,24 @@ def get_eval_reasons(
             uem_to_eval_name_map[str(user_eval_metric_id)] = eval_name
             user_eval_metric_ids.append(user_eval_metric_id)
 
-        # Fetch cell values for this evaluation column
-        values_qs = (
+        # Fetch cell values and statuses for this evaluation column
+        cells_qs = (
             Cell.objects.filter(dataset_id=dataset_id, column_id=column.id)
             .order_by("row__order")
-            .values_list("value", flat=True)
+            .values_list("value", "status")
         )
+        cells = list(cells_qs)
 
-        # Include all values (including nulls) while preserving order
-        values: list[Any] = list(values_qs)
         if eval_name not in results:
             results[eval_name] = {}
-        results[eval_name]["eval_values"] = values
+        # Include all values (including nulls) while preserving order
+        results[eval_name]["eval_values"] = [value for value, _ in cells]
+        # Only finished grades are samples that should have a reason. RUNNING
+        # cells are run-start placeholders (or a queued re-run's stale values)
+        # and ERROR cells carry a stop or failure message.
+        results[eval_name]["graded_values"] = [
+            value for value, status in cells if status == CellStatus.PASS.value
+        ]
 
     if len(user_eval_metric_ids) > 0:
         user_eval_metrics = UserEvalMetric.objects.filter(
@@ -138,6 +153,9 @@ def get_eval_reasons(
                 result["user_eval_metric_id"] = str(uem.id)
                 result["eval_template_id_criteria"] = uem.template.criteria
                 result["eval_template_name"] = uem.template.name
+                # Dataset evaluations write reason cells only when
+                # config.reason_column is set, mirroring the runner's gate.
+                result["writes_reasons"] = bool((uem.config or {}).get("reason_column"))
                 results[eval_name] = result
 
     return results
@@ -179,11 +197,17 @@ def get_explanation_summary(dataset_id: str) -> None:
         cluster_dict_by_eval = {}
 
         for reason_name, reason_data in reasons.items():
-            if "eval_reasons" not in reason_data:
+            # Without a metric to say otherwise, assume reasons were expected.
+            writes_reasons = reason_data.get("writes_reasons", True)
+            if "eval_reasons" not in reason_data or (
+                not writes_reasons and not reason_data["eval_reasons"]
+            ):
                 # Dataset evaluations only write reasons when configured to
                 # (config.reason_column), and a running evaluation creates its
                 # reason column with the first finished row. With no reason
                 # column there is nothing to summarise and nothing was lost.
+                # StartEvalsProcess creates the reason column even when
+                # reasons are off; an empty one of those counts as none.
                 logger.info(
                     "explanation_summary_skipped",
                     reason="no_reason_column",
@@ -200,7 +224,11 @@ def get_explanation_summary(dataset_id: str) -> None:
                 explanation=reason,
                 eval_name=reason_data.get("eval_template_name"),
                 eval_criteria=reason_data.get("eval_template_id_criteria"),
-                eval_values=reason_data.get("eval_values"),
+                # Only finished grades count as samples that lost their reason,
+                # and an evaluation that does not write reasons cannot lose any.
+                eval_values=(
+                    reason_data.get("graded_values") if writes_reasons else None
+                ),
             )
 
             if not explanation_summary:

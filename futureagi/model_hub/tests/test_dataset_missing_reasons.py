@@ -1,8 +1,9 @@
 """Missing dataset reasons stay actionable after ORM collection filters blanks.
 
 Only graded samples that should carry reasons count towards the ERROR: the
-placeholders of a running evaluation and evaluations without a reason column
-did not lose anything and stay INFO.
+placeholders of a running evaluation, the stop or failure markers of a stopped
+or crashed one, and evaluations not configured to write reasons did not lose
+anything and stay INFO.
 """
 
 import json
@@ -19,10 +20,12 @@ from model_hub.models.choices import (
     EvalExplanationSummaryStatus,
     OwnerChoices,
     SourceChoices,
+    StatusType,
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 from model_hub.utils import eval_reasons
+from model_hub.utils.eval_cell_status import mark_eval_cells_stopped
 from model_hub.views.eval_runner import bulk_update_or_create_cells
 
 pytestmark = [pytest.mark.integration, pytest.mark.requires_ee]
@@ -475,3 +478,252 @@ def test_agent_keeps_error_for_falsy_graded_values(isolated_models):
     assert len(errors) == 1, records
     assert errors[0]["log_level"] == "error"
     assert errors[0]["input_count"] == 6
+
+
+# --------------------------------------------------------------------------
+# Stopped or crashed runs, and evaluations that never write reasons.
+# --------------------------------------------------------------------------
+
+STOP_MARKER = "Evaluation stopped by user"  # StopUserEvalView's reason
+CRASH_MARKER = "Synthetic runner failure: connection reset"  # str(e)[:500]
+
+
+def _start_run(dataset, rows, eval_col, reason_col, *, finished_rows, reasons=None):
+    """Write the runner's RUNNING run-start placeholders, then finish the first
+    `finished_rows` rows; only the first `reasons` of them keep a reason."""
+    bulk_update_or_create_cells(
+        [row.id for row in rows],
+        eval_col.id,
+        dataset.id,
+        {
+            "value_infos": json.dumps({}),
+            "value": "",
+            "status": CellStatus.RUNNING.value,
+        },
+    )
+    reasons = finished_rows if reasons is None else reasons
+    for row in rows[:finished_rows]:
+        _grade(
+            dataset,
+            row,
+            eval_col,
+            reason_col if row.order < reasons else None,
+            f"Synthetic reason {row.order}",
+        )
+
+
+def _assert_stopped_cells(eval_col, finished_rows, marker):
+    cells = list(Cell.objects.filter(column=eval_col).values("value", "status"))
+    assert len(cells) == GATE_ROWS
+    stopped = [c for c in cells if c["status"] == CellStatus.ERROR.value]
+    assert len(stopped) == GATE_ROWS - finished_rows
+    # The markers are non-blank values, so only their status sets them apart.
+    assert {c["value"] for c in stopped} == {marker}
+
+
+def _assert_insufficient_samples(records, input_count):
+    assert not _error_records(records), records
+    skips = [r for r in records if r.get("reason") == "insufficient_samples"]
+    assert len(skips) == 1, records
+    assert skips[0]["log_level"] == "info"
+    assert skips[0]["input_count"] == input_count
+
+
+@pytest.mark.parametrize("finished_rows", [0, 3])
+@pytest.mark.parametrize(
+    "marker", [STOP_MARKER, CRASH_MARKER], ids=["user-stop", "runner-crash"]
+)
+def test_stopped_or_crashed_run_markers_are_not_missing_reasons(
+    marker, finished_rows, user, workspace, isolated_models
+):
+    dataset, rows = _dataset_with_rows(user, workspace)
+    # The reason column exists from the start, as AddUserEvalView(run=true)
+    # creates it, so a stop before the first finished row leaves it empty.
+    metric, eval_col, reason_col = _dataset_eval(
+        user, workspace, dataset, name="synthetic-stopped", reason_column=True
+    )
+    _start_run(dataset, rows, eval_col, reason_col, finished_rows=finished_rows)
+
+    # The helper StopUserEvalView and a crashing runner both call.
+    assert mark_eval_cells_stopped(metric, reason=marker) == (GATE_ROWS - finished_rows)
+    _assert_stopped_cells(eval_col, finished_rows, marker)
+
+    records = _run_summary(dataset)
+
+    assert dataset.eval_reason_status == EvalExplanationSummaryStatus.COMPLETED
+    assert dataset.eval_reasons == {}
+    _assert_insufficient_samples(records, finished_rows)
+    # Every cell is collected, but only the finished grades count as graded.
+    collected = eval_reasons.get_eval_reasons(dataset_id=str(dataset.pk))[
+        "synthetic-stopped"
+    ]
+    assert len(collected["eval_values"]) == GATE_ROWS
+    assert collected["graded_values"] == ["1.0"] * finished_rows
+    assert len(collected["eval_reasons"]) == finished_rows
+
+
+def test_stop_endpoint_markers_are_not_missing_reasons(
+    auth_client, user, workspace, isolated_models
+):
+    dataset, rows = _dataset_with_rows(user, workspace)
+    metric, eval_col, reason_col = _dataset_eval(
+        user, workspace, dataset, name="synthetic-http-stop", reason_column=True
+    )
+    metric.status = StatusType.RUNNING.value
+    metric.save(update_fields=["status"])
+    _start_run(dataset, rows, eval_col, reason_col, finished_rows=3)
+
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/stop_user_eval/{metric.id}/",
+        {},
+        format="json",
+    )
+
+    assert response.status_code == 200, response.content
+    metric.refresh_from_db()
+    assert metric.status == StatusType.ERROR.value
+    _assert_stopped_cells(eval_col, 3, STOP_MARKER)
+    records = _run_summary(dataset)
+    assert dataset.eval_reason_status == EvalExplanationSummaryStatus.COMPLETED
+    _assert_insufficient_samples(records, 3)
+
+
+def test_stopped_run_that_lost_finished_reasons_remains_error(
+    user, workspace, isolated_models
+):
+    dataset, rows = _dataset_with_rows(user, workspace)
+    metric, eval_col, reason_col = _dataset_eval(
+        user, workspace, dataset, name="synthetic-stopped-lost", reason_column=True
+    )
+    # Ten rows finished but only three kept their reason before the stop.
+    _start_run(dataset, rows, eval_col, reason_col, finished_rows=10, reasons=3)
+    mark_eval_cells_stopped(metric, reason=STOP_MARKER)
+
+    records = _run_summary(dataset)
+
+    errors = [
+        r for r in records if r.get("event") == "explanation_summary_missing_reasons"
+    ]
+    assert len(errors) == 1, records
+    assert errors[0]["log_level"] == "error"
+    assert errors[0]["input_count"] == 10
+    assert errors[0]["usable_count"] == 3
+
+
+def _add_user_eval(auth_client, dataset, template, *, name, run):
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/add_user_eval/",
+        {
+            "name": name,
+            "template_id": str(template.id),
+            "config": {"mapping": {}, "config": {}, "reason_column": False},
+            "run": run,
+        },
+        format="json",
+    )
+    assert response.status_code == 200, response.content
+    metric = UserEvalMetric.objects.get(dataset=dataset, name=name, deleted=False)
+    assert metric.config.get("reason_column") is False, metric.config
+    return metric
+
+
+def test_start_evals_process_reasonless_eval_is_skipped_at_info(
+    auth_client, user, workspace, isolated_models
+):
+    dataset, rows = _dataset_with_rows(user, workspace)
+    template = EvalTemplate.no_workspace_objects.create(
+        name="synthetic-template-reasonless",
+        organization=user.organization,
+        workspace=workspace,
+        owner=OwnerChoices.USER.value,
+        config={"output": "score"},
+        criteria="Synthetic criteria",
+    )
+    name = "synthetic-reasonless"
+    metric = _add_user_eval(auth_client, dataset, template, name=name, run=False)
+
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/start_evals_process/",
+        {"user_eval_ids": [str(metric.id)]},
+        format="json",
+    )
+
+    assert response.status_code == 200, response.content
+    eval_col = Column.objects.get(
+        dataset=dataset,
+        source=SourceChoices.EVALUATION.value,
+        source_id=str(metric.id),
+        deleted=False,
+    )
+    # StartEvalsProcess pairs a reason column even though reasons are off.
+    reason_col = Column.objects.get(
+        dataset=dataset, source=SourceChoices.EVALUATION_REASON.value
+    )
+    assert reason_col.source_id == f"{eval_col.id}-sourceid-{metric.id}"
+    # The runner only writes reason cells when config.reason_column is set.
+    for row in rows:
+        _grade(dataset, row, eval_col)
+    collected = eval_reasons.get_eval_reasons(dataset_id=str(dataset.pk))[name]
+    assert collected["eval_reasons"] == []
+    assert len(collected["eval_values"]) == GATE_ROWS
+
+    records = _run_summary(dataset)
+
+    assert dataset.eval_reason_status == EvalExplanationSummaryStatus.COMPLETED
+    assert dataset.eval_reasons == {}
+    assert not _error_records(records), records
+    skips = [r for r in records if r.get("event") == "explanation_summary_skipped"]
+    assert [r["reason"] for r in skips] == ["no_reason_column"], records
+    assert skips[0]["log_level"] == "info"
+    assert skips[0]["user_eval_metric_id"] == str(metric.id)
+
+
+def _add_reason_column(dataset, metric, eval_col):
+    return Column.objects.create(
+        name=f"{metric.name}-reason",
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.EVALUATION_REASON.value,
+        source_id=f"{eval_col.id}-sourceid-{metric.id}",
+        dataset=dataset,
+    )
+
+
+def test_reasonless_eval_with_a_few_stale_reasons_is_not_error(
+    user, workspace, isolated_models
+):
+    dataset, rows = _dataset_with_rows(user, workspace)
+    metric, eval_col, _ = _dataset_eval(
+        user, workspace, dataset, name="synthetic-stale", reason_column=False
+    )
+    reason_col = _add_reason_column(dataset, metric, eval_col)
+    # Reasons left over from before reasons were turned off.
+    for row in rows:
+        _grade(dataset, row, eval_col, reason_col if row.order < 3 else None)
+
+    records = _run_summary(dataset)
+
+    assert dataset.eval_reason_status == EvalExplanationSummaryStatus.COMPLETED
+    _assert_insufficient_samples(records, 3)
+
+
+def test_reasons_on_with_empty_reason_column_remains_error(
+    user, workspace, isolated_models
+):
+    dataset, rows = _dataset_with_rows(user, workspace)
+    _, eval_col, reason_col = _dataset_eval(
+        user, workspace, dataset, name="synthetic-lost-all", reason_column=True
+    )
+    # Every row finished but no reason cell was ever written.
+    for row in rows:
+        _grade(dataset, row, eval_col)
+    assert not Cell.objects.filter(column=reason_col).exists()
+
+    records = _run_summary(dataset)
+
+    errors = [
+        r for r in records if r.get("event") == "explanation_summary_missing_reasons"
+    ]
+    assert len(errors) == 1, records
+    assert errors[0]["log_level"] == "error"
+    assert errors[0]["input_count"] == GATE_ROWS
+    assert errors[0]["usable_count"] == 0
