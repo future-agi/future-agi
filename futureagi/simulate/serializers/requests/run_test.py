@@ -26,7 +26,7 @@ class RunTestFilterSerializer(StrictInputSerializer):
 
     search = serializers.CharField(required=False, allow_blank=True, default="")
     simulation_type = serializers.ChoiceField(
-        choices=RunTest.SourceTypes.choices,
+        choices=[("", ""), *RunTest.SourceTypes.choices],
         required=False,
         allow_blank=True,
         default="",

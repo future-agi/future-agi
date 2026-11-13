@@ -23,7 +23,7 @@ COMPOSE=(docker compose --env-file "$ENV_FILE"
 # the harness never recreates failed jobs.
 SERVICES=(frontend backend worker worker-exact-aggregation worker-sql-workbench
   postgres clickhouse redis minio
-  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack
+  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack mock-google
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
 # E2E_STACK=standalone: the same suite against the Standalone setup
 # (docker-compose.yml: one `app` container plus Postgres and ClickHouse) on the
@@ -33,7 +33,7 @@ if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
   COMPOSE=(docker compose --env-file "$ENV_FILE"
     -f "$ROOT/docker-compose.yml" -f "$ROOT/e2e/stack/docker-compose.standalone-e2e.yml"
     -p futureagi-e2e-standalone)
-  SERVICES=(app postgres clickhouse mock-llm)
+  SERVICES=(app postgres clickhouse mock-llm mock-google)
 fi
 
 # Telemetry registration from an E2E stack always goes to loopback, whatever
