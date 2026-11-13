@@ -132,10 +132,38 @@ const backgroundEnvironment = {
   AGENTCC_INTERNAL_URL: 'http://agentcc-gateway:8080',
   AGENTCC_GATEWAY_INTERNAL_URL: 'http://agentcc-gateway:8080', MODEL_SERVING_URL: 'http://mock-llm:8080',
   ENV_TYPE: 'local', EE_LICENSE_KEY: '', NO_STARTUP_DB_MUTATIONS: 'true', OTEL_ENABLED: 'false',
-  FUTURE_AGI_TELEMETRY_DISABLED: 'true', TEMPORAL_HOST: 'temporal:7233', TEMPORAL_NAMESPACE: 'default',
+  FUTURE_AGI_TELEMETRY_DISABLED: 'true', FUTURE_AGI_TELEMETRY_URL: 'http://127.0.0.1:9',
+  TEMPORAL_HOST: 'temporal:7233', TEMPORAL_NAMESPACE: 'default',
   DJANGO_SETTINGS_MODULE: 'tfc.settings.e2e', MAILGUN_API_KEY: '',
   TEMPORAL_ALL_QUEUES: 'true', TEMPORAL_EXCLUDED_QUEUES: 'simulation_runner',
 };
+
+for (const evalBackground of [false, true]) {
+  for (const service of ['backend', 'worker', 'app']) {
+    test(`managed mock pins telemetry to loopback for ${service} (background=${evalBackground})`, () => {
+      const env = service === 'app' ? composedStandaloneEnvironment() : { ...backgroundEnvironment };
+      const validate = (values: Record<string, string>) => service === 'app'
+        ? validateStandaloneAppEnvironment(values, evalBackground)
+        : validateMockEnvironment(service, values, evalBackground);
+      expect(env.FUTURE_AGI_TELEMETRY_URL).toBe('http://127.0.0.1:9');
+      validate(env);
+      for (const value of [undefined, '', 'https://telemetry.invalid', 'http://127.0.0.1:9000']) {
+        const changed: Record<string, string> = { ...env };
+        if (value === undefined) delete changed.FUTURE_AGI_TELEMETRY_URL;
+        else changed.FUTURE_AGI_TELEMETRY_URL = value;
+        expect(() => validate(changed)).toThrow(`required ${service} FUTURE_AGI_TELEMETRY_URL mismatch`);
+      }
+    });
+  }
+}
+
+for (const file of ['e2e.env', 'standalone-e2e.env']) {
+  test(`managed mock stack env pins telemetry including the registration ping (${file})`, () => {
+    const env = readFileSync(new URL(`../stack/${file}`, import.meta.url), 'utf8');
+    expect(env.match(/^FUTURE_AGI_TELEMETRY_DISABLED=.*$/gm)).toEqual(['FUTURE_AGI_TELEMETRY_DISABLED=true']);
+    expect(env.match(/^FUTURE_AGI_TELEMETRY_URL=.*$/gm)).toEqual(['FUTURE_AGI_TELEMETRY_URL=http://127.0.0.1:9']);
+  });
+}
 
 test('managed mock allows only exact local Slack fixtures on application services', () => {
   const slack = {
@@ -495,7 +523,11 @@ function fakeStack(stack: 'standalone' | 'distributed') {
     Id: String(i + 1).repeat(64), Image: `sha256:${String(i + 1).repeat(64)}`,
     State: { Running: true, StartedAt: '2999-01-01T00:00:00Z' },
     Config: { Labels: { 'com.docker.compose.service': c.service, 'com.docker.compose.project': project },
-      Env: Object.entries(c.env ?? {}).map(([key, value]) => `${key}=${value}`), Cmd: c.cmd ?? [], Entrypoint: c.entrypoint ?? [] },
+      // Keep shared application telemetry defaults separate from service-specific fixtures.
+      Env: Object.entries({
+        ...(['backend', 'worker'].includes(c.service) ? { FUTURE_AGI_TELEMETRY_URL: 'http://127.0.0.1:9' } : {}),
+        ...c.env,
+      }).map(([key, value]) => `${key}=${value}`), Cmd: c.cmd ?? [], Entrypoint: c.entrypoint ?? [] },
     HostConfig: { ExtraHosts: c.extraHosts ?? null },
     Mounts: [
       ...(c.mounts ?? []).map(([Source, Destination]) => ({ Type: 'bind', Source, Destination, RW: false })),

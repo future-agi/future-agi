@@ -3,7 +3,7 @@ import os
 import time
 
 from django.conf import settings
-from jinja2 import Environment
+from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core.utils.json_utils import extract_dict_from_string
@@ -56,7 +56,7 @@ class CustomPromptEvaluator(LLM):
         self._few_shot_examples = kwargs.get("few_shot_examples")
         # Configure Jinja2 environment with explicit {{ }} delimiters (Handlebars-compatible)
         # PreserveUndefined keeps undefined variables as {{ variable }} instead of raising errors
-        self.env = Environment(
+        self.env = SandboxedEnvironment(
             variable_start_string="{{",
             variable_end_string="}}",
             undefined=PreserveUndefined,
