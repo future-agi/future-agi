@@ -921,6 +921,10 @@ class BulkAnnotationView(APIView):
             # Update existing Score
             existing_obj = existing_key_map[duplicate_key]
             existing_obj.value = value_fields
+            # The span loaded from the primary above: the save's queue
+            # step reads score.observation_span, and a lazy load would go
+            # to a replica that may not have a span exported moments ago.
+            existing_obj.observation_span = span
             warning = {
                 "record_index": idx,
                 "span_id": str(span.id),

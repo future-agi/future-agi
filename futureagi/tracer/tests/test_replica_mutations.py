@@ -344,6 +344,56 @@ def test_bulk_annotation_annotates_span_created_after_freeze(
     )
 
 
+def test_bulk_annotation_updates_annotation_of_span_created_after_freeze(
+    lagging_replica,  # noqa: F811
+    auth_client,
+    project,
+    annotation_label,
+    user,
+):
+    """A second annotation of the same (span, label) updates the first. The
+    update path must not lazy-load the span from the replica either."""
+    trace_id = _bulk_trace(auth_client, project)
+    lagging_replica.freeze()
+    span_id = _create_span(auth_client, project, trace_id)
+    assert not ObservationSpan.objects.filter(pk=span_id).exists()
+
+    def annotate(value):
+        return auth_client.post(
+            "/tracer/bulk-annotation/",
+            {
+                "records": [
+                    {
+                        "observation_span_id": span_id,
+                        "annotations": [
+                            {
+                                "annotation_label_id": str(annotation_label.id),
+                                "value": value,
+                            }
+                        ],
+                    }
+                ]
+            },
+            format="json",
+        )
+
+    first = annotate("accepted")
+    second = annotate("revised")
+
+    assert first.status_code == 200, first.data
+    assert second.status_code == 200, second.data
+    result = second.data["result"]
+    assert result["errors"] is None
+    assert (result["annotations_created"], result["annotations_updated"]) == (0, 1)
+    score = Score.no_workspace_objects.using("default").get(
+        observation_span_id=span_id,
+        label=annotation_label,
+        annotator=user,
+        deleted=False,
+    )
+    assert score.value == {"text": "revised"}
+
+
 def test_c73_session_delete_includes_unreplicated_trace_membership(
     lagging_replica,  # noqa: F811
     auth_client,
