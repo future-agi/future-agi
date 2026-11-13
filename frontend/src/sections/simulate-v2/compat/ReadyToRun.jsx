@@ -23,6 +23,15 @@ const namesOf = (ids, titleOf) => {
   return `${names.slice(0, 3).join(", ")} and ${names.length - 3} more`;
 };
 
+/* "Add a, b and 3 more to the agent" → "Add 5 tools to the agent": the names
+   are on the row's hover. */
+const shortFix = (label) => {
+  const m = /^Add (.+?) and (\d+) more (to .+)$/.exec(label || "");
+  if (!m) return label;
+  const n = m[1].split(",").length + Number(m[2]);
+  return `Add ${n} tools ${m[3]}`;
+};
+
 export default function ReadyToRun({
   report,
   scenarios,
@@ -30,7 +39,6 @@ export default function ReadyToRun({
   onFix,
   onCheck,
   checking = false,
-  excluded = 0,
   /* What a fix made in place needs (see InlineFix); without it every fix
      opens the agent. */
   fixKit = null,
@@ -45,13 +53,15 @@ export default function ReadyToRun({
     : "Hosting";
   const areas = readinessOf(report, scenarios, evalCount);
   const titleOf = (id) => scenarios.find((s) => s.id === id)?.title || null;
-  const { requested, eligible, blocked } = report.scope;
   /* A row that isn't checked carries the check itself. */
   const rowCheck =
     !!onCheck &&
     !checking &&
     areas.some((a) => a.status === "unchecked" && !a.waits);
   const blockers = areas.filter((a) => a.status === "blocked").length;
+  /* The scenarios this run skips; a row counts only the ones it skips, so
+     the rows and the run plan's count line agree (12 Nov review). */
+  const skippedIds = new Set((report.scope?.blocked || []).map((b) => b.id));
   /* A stated limit of where the agent runs (Partial on tools, reset, stop or
      evidence) has nothing to fix: it isn't a row to act on but one quiet
      line under the ready ones, so the results are read right. */
@@ -94,27 +104,27 @@ export default function ReadyToRun({
     state === "validating"
       ? {
           dot: "running",
-          text: `Checking ${pair}. Runs of this pairing wait until it finishes — at most ${PAIR_CHECK_LIMIT_MIN} minutes.`,
+          text: `Checking ${pair} · up to ${PAIR_CHECK_LIMIT_MIN} min`,
         }
       : state === "failed"
         ? {
             dot: "failed",
-            text: `The last check (${ago(val.at)}) failed on ${val.reason}. Runs of this pairing are refused until a check passes.`,
+            text: `Last check failed ${ago(val.at)}: ${val.reason}`,
           }
         : state === "timed_out"
           ? {
               dot: "failed",
-              text: `The last check (${ago(val.at)}) didn't finish within ${PAIR_CHECK_LIMIT_MIN} minutes, so it failed. Runs of this pairing are refused until a check passes.`,
+              text: `Last check timed out ${ago(val.at)} (over ${PAIR_CHECK_LIMIT_MIN} min)`,
             }
           : state === "unavailable"
             ? {
                 dot: "cancelled",
-                text: `Check unavailable ${ago(val.at)}: ${String(val.reason || "").replace(/^./, (c) => c.toLowerCase())}. It doesn't count against this pairing, and runs aren't held.`,
+                text: `Check unavailable ${ago(val.at)} on our side · runs aren't held`,
               }
             : state === "stale"
               ? {
                   dot: "needs_input",
-                  text: `${report.staleWhy}. Re-check before trusting a run.`,
+                  text: `${report.staleWhy} · re-check`,
                 }
               : null;
   return (
@@ -138,16 +148,11 @@ export default function ReadyToRun({
             minWidth: 0,
           }}
         >
-          {[
-            `${eligible} of ${requested} eligible`,
-            `${blocked.length} blocked`,
-            excluded ? `${excluded} excluded` : null,
-            blockers
-              ? `${blockers} blocker${blockers === 1 ? "" : "s"} to fix`
-              : "no blocker",
-          ]
-            .filter(Boolean)
-            .join(" · ")}
+          {/* The check's state only — how many scenarios run is said once,
+              under the attempts (12 Nov review: two counts disagreed). */}
+          {blockers
+            ? `${blockers} blocker${blockers === 1 ? "" : "s"} to fix`
+            : "No blocker"}
         </Typography>
         {(val || checking) && onCheck && !rowCheck && (
           <Button
@@ -190,7 +195,8 @@ export default function ReadyToRun({
           every ready area folded into one quiet line. */}
       {open.map((a) => {
         const st = READY_STATUS[a.status];
-        const names = a.affected.length ? namesOf(a.affected, titleOf) : "";
+        const skips = a.affected.filter((id) => skippedIds.has(id));
+        const names = skips.length ? namesOf(skips, titleOf) : "";
         /* A blocker carries its fix (T06). Not checked isn't a blocker — its
            cases still run — and its action is the pair's check, run here
            (Karthik's Re-check). A Partial row is a stated limit: no action. */
@@ -209,7 +215,10 @@ export default function ReadyToRun({
               placement="top-start"
               title={
                 <Box sx={{ whiteSpace: "pre-line" }}>
-                  {[a.detail, names && `Affects ${a.affected.length}: ${names}`]
+                  {[
+                    a.detail,
+                    names && `Skipped in this run (${skips.length}): ${names}`,
+                  ]
                     .filter(Boolean)
                     .join("\n")}
                 </Box>
@@ -217,7 +226,7 @@ export default function ReadyToRun({
             >
               <Stack
                 direction="row"
-                alignItems="center"
+                alignItems="flex-start"
                 spacing={1}
                 sx={{
                   px: 1.5,
@@ -226,51 +235,67 @@ export default function ReadyToRun({
                   borderColor: "divider",
                 }}
               >
-                <StatusDot
-                  status={checking ? "running" : st.dot}
-                  size={6}
-                  live={checking}
-                  hollow={!checking && a.status === "unchecked"}
-                />
-                <Typography
-                  noWrap
-                  sx={{ typography: "s2", flexShrink: 0, maxWidth: "45%" }}
-                >
-                  {a.label}
-                </Typography>
-                <Typography
-                  noWrap
-                  sx={{
-                    typography: "s3",
-                    color: "text.tertiary",
-                    flex: 1,
-                    minWidth: 0,
-                  }}
-                >
-                  {checking
-                    ? "Checking…"
-                    : a.status === "unchecked"
-                      ? "Not checked yet"
-                      : `${String(a.detail || "")
-                          .split(/\s+—\s+|(?<=\.)\s/)[0]
-                          .replace(
-                            /\.$/,
-                            "",
-                          )}${a.affected.length ? ` · ${a.affected.length} affected` : ""}`}
-                </Typography>
-                {kind === "link" && onFix && (
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    onClick={() => onFix(a.fixRow)}
-                    endIcon={
-                      <Iconify icon="solar:arrow-right-linear" width={12} />
-                    }
-                    sx={{ py: 0, minWidth: 0, flexShrink: 0 }}
+                <Box sx={{ pt: "7px", flexShrink: 0, display: "flex" }}>
+                  <StatusDot
+                    status={checking ? "running" : st.dot}
+                    size={6}
+                    live={checking}
+                    hollow={!checking && a.status === "unchecked"}
+                  />
+                </Box>
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography
+                    sx={{
+                      typography: "s2",
+                      lineHeight: "22px",
+                    }}
                   >
-                    {fixLabelOf(a.fixRow) || "Open the connection"}
-                  </Button>
-                )}
+                    {a.label}
+                    <Box
+                      component="span"
+                      sx={{ typography: "s3", color: "text.tertiary", ml: 1 }}
+                    >
+                      {checking
+                        ? "Checking…"
+                        : a.status === "unchecked"
+                          ? "Not checked yet"
+                          : /* With a fix that says what's wrong, the reason is
+                             on hover only (13 Nov: fewer words). */
+                            [
+                              kind === "link"
+                                ? null
+                                : String(a.detail || "")
+                                    .split(/\s+—\s+|(?<=\.)\s/)[0]
+                                    .replace(/\.$/, ""),
+                              skips.length ? `${skips.length} skipped` : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                    </Box>
+                  </Typography>
+                  {kind === "link" && onFix && (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => onFix(a.fixRow)}
+                      endIcon={
+                        <Iconify icon="solar:arrow-right-linear" width={12} />
+                      }
+                      sx={{
+                        py: 0.25,
+                        mt: 0.5,
+                        minWidth: 0,
+                        whiteSpace: "normal",
+                        textAlign: "left",
+                        lineHeight: "18px",
+                        display: "flex",
+                        width: "fit-content",
+                      }}
+                    >
+                      {shortFix(fixLabelOf(a.fixRow)) || "Open the connection"}
+                    </Button>
+                  )}
+                </Box>
                 {kind === "check" && (
                   <Button
                     size="small"
@@ -332,7 +357,7 @@ export default function ReadyToRun({
             >
               {checking
                 ? "Checking…"
-                : `Also covered by that check: ${waiting.map((a) => a.label.toLowerCase()).join(", ")}`}
+                : `${waiting.length} more wait on this check`}
             </Typography>
           </Stack>
         </Tooltip>
@@ -360,12 +385,11 @@ export default function ReadyToRun({
               live={checking}
             />
             <Typography
-              noWrap
               sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
             >
               {open.length
-                ? `${ready.length} more ready — ${ready.map((a) => a.label.toLowerCase()).join(", ")}`
-                : `All ${ready.length} ready — ${ready.map((a) => a.label.toLowerCase()).join(", ")}`}
+                ? `${ready.length} more ready`
+                : `All ${ready.length} ready`}
             </Typography>
           </Stack>
         </Tooltip>
@@ -377,7 +401,7 @@ export default function ReadyToRun({
           title={
             <Box sx={{ whiteSpace: "pre-line" }}>
               {[
-                ...limits.map((a) => `${a.label}: ${a.detail}`),
+                ...limits.map((a) => `${a.label}: ${limitPhrase(a)}`),
                 ...(voiceReplies
                   ? [`${voiceReplies.label}: ${voiceReplies.detail}`]
                   : []),
@@ -410,12 +434,10 @@ export default function ReadyToRun({
             <Typography
               sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
             >
-              {`${limitBy === "Hosting" ? "Runs outside our sandbox" : `Runs on ${limitBy}`}: ${[
-                ...(voiceReplies
-                  ? ["replies aren't checked before the run"]
-                  : []),
-                ...limits.map(limitPhrase),
-              ].join(" · ")}`}
+              {(() => {
+                const n = limits.length + (voiceReplies ? 1 : 0);
+                return `${limitBy === "Hosting" ? "Runs outside our sandbox" : `Runs on ${limitBy}`} · ${n} known limit${n === 1 ? "" : "s"}`;
+              })()}
             </Typography>
           </Stack>
         </Tooltip>
@@ -442,7 +464,6 @@ ReadyToRun.propTypes = {
   onFix: PropTypes.func,
   onCheck: PropTypes.func,
   checking: PropTypes.bool,
-  excluded: PropTypes.number,
   fixKit: PropTypes.object,
   children: PropTypes.node,
 };

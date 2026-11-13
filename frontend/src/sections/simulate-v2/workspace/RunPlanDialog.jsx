@@ -5,9 +5,7 @@ import {
   Button,
   Chip,
   Collapse,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
+  IconButton,
   ToggleButton,
   ToggleButtonGroup,
   InputAdornment,
@@ -19,8 +17,6 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useSimStore } from "../store";
-import { candidateSourceOf, takesSnapshot } from "../_mock/candidateSource";
-import CandidateSourcePicker from "../run/CandidateSourcePicker";
 import { monthStart, monthUsage, simMeters } from "../_mock/usageLedger";
 import { FREE_TIER, RATE_PLAN } from "../_mock/rates";
 import { currentUser } from "../_mock/scenarioProvenance";
@@ -48,14 +44,13 @@ import { currentEnvVersion } from "../_mock/versions";
 import ReadyToRun from "../compat/ReadyToRun";
 import { SHOW_RUN_COST } from "../_mock/costFlags";
 import { evalSlotsLeft } from "../_mock/evals";
-import { waitingWordOf } from "../_mock/compatibility";
 import { platformPreviewOf } from "../_mock/platformPreview";
 import { assistantsFor } from "../_mock/connectAgent";
 import { delegationEvidenceOf } from "../_mock/handoffs";
 import { membersOf } from "../_mock/improvementPolicy";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { paths } from "src/routes/paths";
-import ClosableDialog from "../components/ClosableDialog";
+import SideDrawer from "../components/SideDrawer";
 import { startsFromCode } from "../_mock/connectionCheck";
 
 /* Pre-run cost and spending cap for simulations: hidden for now. */
@@ -216,7 +211,8 @@ export default function RunPlanDialog({
   const shownCount = suite ? suite.ids.length : scenarioCount;
   /* Ready to run is for exactly what would run: the picked agent, its picked
      version and the picked suite (the pair, and its cases). */
-  const pickedKey = agentKey || agentChoices.find((a) => a.current)?.key || null;
+  const pickedKey =
+    agentKey || agentChoices.find((a) => a.current)?.key || null;
   const reportFor = (version) =>
     compatOf
       ? compatOf(pickedKey, { version, ids: suite ? suite.ids : null })
@@ -238,11 +234,6 @@ export default function RunPlanDialog({
   const participantsEvidence = participants.length
     ? delegationEvidenceOf(envState?.agent)
     : null;
-  /* A code agent can be tested from a commit or an uploaded archive instead
-     of a version — one candidate, so only with one version picked. */
-  const [candidate, setCandidate] = useState(null);
-  const snapshotPick =
-    !otherAgent && takesSnapshot(envState?.agent) && versions.length === 1;
   const [cap, setCap] = useState(null);
   const [capTouched, setCapTouched] = useState(false);
   const [alertAt, setAlertAt] = useState(WORKSPACE_POLICY.alertAt);
@@ -290,7 +281,6 @@ export default function RunPlanDialog({
     setAgentKey(initialAgentKey);
     setSuiteId("all");
     setAddEvalIds([]);
-    setCandidate(null);
     setCapTouched(false);
     setAlertAt(WORKSPACE_POLICY.alertAt);
     setShowBreakdown(false);
@@ -406,18 +396,18 @@ export default function RunPlanDialog({
     ? null
     : checkingCompat
       ? {
-          title: "Waiting for this pairing's check",
-          line: "Runs start once it finishes.",
+          title: "Waiting for the check",
+          line: "Runs start when it finishes.",
         }
       : pairFailed
         ? {
-            title: "Refused — this pairing's last check failed",
-            line: "Fix what it found and re-check.",
+            title: "Can't start until a check passes",
+            line: "Fix the red row, then Re-check.",
           }
         : allHeld
           ? {
-              title: "No run — every selected case is held back",
-              line: "Fix it, or select cases it doesn't hold back.",
+              title: "Every selected scenario waits on a fix",
+              line: "Fix it, or pick other scenarios.",
             }
           : null;
   const canStart = check.canStart && !pairHold;
@@ -443,1177 +433,1187 @@ export default function RunPlanDialog({
   };
 
   return (
-    <ClosableDialog
-      open={open}
-      onClose={onClose}
-      maxWidth={false}
-      fullWidth
-      PaperProps={{ sx: { maxWidth: 560 } }}
-    >
-      <DialogTitle sx={{ pb: 0.5 }}>
-        <Typography sx={{ typography: "m2", fontWeight: 600 }}>
-          Run plan
-        </Typography>
-        {/* From a ready world, its exact release and pack are on hover. */}
-        <Typography
-          noWrap
-          title={(() => {
-            const entry = catalogueOfEnv(env);
-            if (!entry) return undefined;
-            const pack =
-              { starter: "Starter pack", full: "Full world" }[env?.pack] ||
-              (env?.pack ? "A named pack" : null);
-            return [
-              `${entry.id} · ${entry.task}`,
-              `release ${envReleaseOf(env, entry)}`,
-              pack,
-            ]
-              .filter(Boolean)
-              .join(" · ");
-          })()}
-          sx={{ typography: "s2", color: "text.tertiary" }}
+    /* A side drawer (13 Nov): the environment stays in view beside the plan. */
+    <SideDrawer open={open} onClose={onClose} width={{ xs: "100%", md: 560 }}>
+      <Stack sx={{ height: "100%" }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1.5}
+          sx={{ px: 2.5, py: 2, borderBottom: 1, borderColor: "divider" }}
         >
-          {[
-            env?.name || "Environment",
-            voice ? "Voice" : "Text",
-            `environment ${currentEnvVersion(env, envState)?.label || "v1"}`,
-            runLocation
-              ? runLocation === "hosted"
-                ? "hosted"
-                : "on your machine"
-              : null,
-            alsoCount
-              ? `plus ${alsoCount} other environment${alsoCount === 1 ? "" : "s"}`
-              : null,
-          ]
-            .filter(Boolean)
-            .join(" · ")}
-        </Typography>
-      </DialogTitle>
-
-      <DialogContent>
-        <Stack spacing={2} sx={{ pt: 1 }}>
-          {scopeLead && (
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {scopeLead}
+          <Box flex={1} minWidth={0}>
+            <Typography sx={{ typography: "m2", fontWeight: 600 }}>
+              Run plan
             </Typography>
-          )}
-          {/* ── the agent first: everything below is for this agent on
-              this environment (compatibility belongs to the pair) ── */}
-          {agentChoices.length > 1 && (
-            <Stack direction="row" spacing={1.5} alignItems="center">
-              <Typography
-                sx={{
-                  typography: "s2",
-                  color: "text.secondary",
-                  width: 88,
-                  flexShrink: 0,
-                }}
-              >
-                Agent
-              </Typography>
-              <Box sx={{ typography: "s2", minWidth: 0 }}>
-                    {agentChoices.length > 1 ? (
-                      <TextField
-                        select
-                        size="small"
-                        value={
-                          agentKey ||
-                          agentChoices.find((a) => a.current)?.key ||
-                          ""
-                        }
-                        onChange={(e) => setAgentKey(e.target.value)}
-                        SelectProps={{
-                          renderValue: (k) =>
-                            agentChoices.find((a) => a.key === k)?.name || "",
-                        }}
-                        inputProps={{ "aria-label": "Agent" }}
-                        sx={{ minWidth: 220, ...fieldSx }}
-                      >
-                        {agentChoices.map((a) => (
-                          <MenuItem key={a.key} value={a.key} sx={{ gap: 1 }}>
-                            <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
-                              {a.name}
-                            </Box>
-                            <Box
-                              component="span"
-                              sx={{ typography: "s3", color: "text.tertiary" }}
-                            >
-                              {a.current ? "this environment's" : a.version}
-                            </Box>
-                          </MenuItem>
-                        ))}
-                      </TextField>
-                    ) : (
-                      agentChoices[0]?.name || envState?.agent?.name || "—"
-                    )}
-              </Box>
-            </Stack>
-          )}
-
-          {/* ── Ready to run (plan T06): this agent version on this
-              environment, before anything starts — six areas, each blocker
-              with its scenarios and fix ── */}
-          {compat && multi && (
-            <Stack direction="row" spacing={1.5} alignItems="center">
-              <Typography
-                sx={{
-                  typography: "s2",
-                  color: "text.secondary",
-                  width: 88,
-                  flexShrink: 0,
-                }}
-              >
-                Version
-              </Typography>
-              <ToggleButtonGroup
-                exclusive
-                size="small"
-                value={shownVersion}
-                onChange={(_, v) => v && setViewVersion(v)}
-                aria-label="Ready to run for version"
-              >
-                {versionReports.map(({ v, report }) => {
-                  const held = report?.scope?.blocked?.length || 0;
-                  return (
-                    <ToggleButton key={v} value={v}>
-                      {held
-                        ? `${v} · ${report.scope.runnable} of ${report.scope.requested}`
-                        : `${v} · all ready`}
-                    </ToggleButton>
-                  );
-                })}
-              </ToggleButtonGroup>
-            </Stack>
-          )}
-          {compat && (
-            <ReadyToRun
-              report={compat}
-              scenarios={envState?.scenarios || []}
-              evalCount={(evals || []).length}
-              onFix={(row) => onRepairCompat?.(row, pickedKey)}
-              fixKit={fixKitOf ? fixKitOf(pickedKey) : null}
-              onCheck={
-                onCheckCompat && canCheckCompat?.(pickedKey)
-                  ? () => onCheckCompat(pickedKey)
-                  : undefined
-              }
-              checking={checkingCompat}
-              excluded={breakdown?.excluded || 0}
-            >
-              {allHeld && !pairFailed && (
-                <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                  {`No run: every selected case is held back (${leftOut}). Fix it, or select cases it doesn't hold back.`}
-                </Typography>
-              )}
-            </ReadyToRun>
-          )}
-
-          {/* ── run setup: agent · environment · suite, read together ── */}
-          {(agentChoices.length > 1 || suites.length > 0 || envLabel) && (
-            <Box
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: "8px",
-                px: 1.5,
-                py: 1,
-              }}
-            >
-              {[
-                ...(participants.length
-                  ? [
-                      {
-                        k: "Participants",
-                        v: `Coordinator + ${participants.length - 1} worker${participants.length === 2 ? "" : "s"} · ${participants.map((m) => m.name).join(", ")}`,
-                        note:
-                          participantsEvidence?.source === "instrumented"
-                            ? "Each worker's tools are enforced by the runtime; hand-offs are observed in this run."
-                            : "Workers' tools: Not enforced. Hand-offs aren't observed — only the overall result counts.",
-                      },
-                    ]
-                  : []),
-                /* Environment and suite on one line: the version that runs,
-                   then which of its scenarios. */
-                {
-                  k: "Environment",
-                  v: (
-                    <Stack
-                      direction="row"
-                      alignItems="center"
-                      spacing={0.5}
-                      useFlexGap
-                      flexWrap="wrap"
-                    >
-                      <Box component="span">
-                        {`${env?.name || "This environment"}${envLabel ? ` · ${envLabel}, saved` : ""} ·`}
-                      </Box>
-                      {suites.length ? (
-                        <TextField
-                          select
-                          size="small"
-                          value={suiteId}
-                          onChange={(e) => setSuiteId(e.target.value)}
-                          inputProps={{ "aria-label": "Suite" }}
-                          sx={{ minWidth: 180, ...fieldSx }}
-                        >
-                          <MenuItem value="all">
-                            {`This scope · ${scenarioCount}`}
-                          </MenuItem>
-                          {suites.map((x) => (
-                            <MenuItem key={x.id} value={x.id}>
-                              {`${x.name} · v${x.version || 1} · ${x.ids.length}`}
-                            </MenuItem>
-                          ))}
-                        </TextField>
-                      ) : (
-                        <Box component="span">
-                          {`this scope · ${scenarioCount}`}
-                        </Box>
-                      )}
-                    </Stack>
-                  ),
-                  note: suite
-                    ? "A suite is frozen when the run starts: later edits to it don't change this run."
-                    : null,
-                },
-                /* What scores this run: the added evaluations, then the
-                   suggested ones — picked here, never added by default. */
-                {
-                  k: "Evaluations",
-                  v: (
-                    <Stack spacing={0.5} sx={{ py: 0.25, minWidth: 0 }}>
-                      <Stack direction="row" alignItems="center">
-                        <Box component="span">
-                          {(evals || []).length
-                            ? (evals || []).map((e) => e.name).join(", ")
-                            : "None added"}
-                        </Box>
-                        <Tooltip
-                          arrow
-                          title={
-                            pickable.length
-                              ? "Suggested evaluations score a run only if you pick them. Picked ones are added to this environment's evaluations when the run starts. The scenarios' own checks always run."
-                              : "The scenarios' own checks always run. Add evaluations on the Evaluations step."
-                          }
-                        >
-                          <Box
-                            component="span"
-                            sx={{ display: "inline-flex", ml: 0.75 }}
-                          >
-                            <Iconify
-                              icon="solar:info-circle-linear"
-                              width={14}
-                              sx={{ color: "text.disabled" }}
-                            />
-                          </Box>
-                        </Tooltip>
-                      </Stack>
-                      {pickable.length > 0 && (
-                        <Stack
-                          direction="row"
-                          alignItems="center"
-                          gap={0.75}
-                          flexWrap="wrap"
-                        >
-                          <Box component="span" sx={{ color: "text.tertiary" }}>
-                            Suggested
-                          </Box>
-                          {pickable.map((e) => {
-                            const on = addEvalIds.includes(e.id);
-                            const full = !on && addEvalIds.length >= evalRoom;
-                            return (
-                              <Tooltip
-                                key={e.id}
-                                arrow
-                                title={
-                                  full
-                                    ? "No room for more evaluations on this environment."
-                                    : e.blurb || e.description || ""
-                                }
-                              >
-                                <span>
-                                  <Chip
-                                    size="small"
-                                    label={e.name}
-                                    disabled={full}
-                                    onClick={() => toggleEval(e.id)}
-                                    icon={
-                                      <Iconify
-                                        icon={
-                                          on
-                                            ? "solar:check-read-linear"
-                                            : "solar:add-circle-linear"
-                                        }
-                                        width={12}
-                                      />
-                                    }
-                                    variant={on ? "filled" : "outlined"}
-                                    sx={{
-                                      height: 20,
-                                      borderRadius: "4px",
-                                      typography: "s3",
-                                      fontWeight: 500,
-                                      ...(on
-                                        ? {
-                                            bgcolor: "action.selected",
-                                            color: "text.primary",
-                                          }
-                                        : { color: "text.secondary" }),
-                                      "& .MuiChip-icon": {
-                                        ml: "6px",
-                                        mr: "-2px",
-                                        color: "inherit",
-                                      },
-                                      "& .MuiChip-label": { px: "6px" },
-                                    }}
-                                  />
-                                </span>
-                              </Tooltip>
-                            );
-                          })}
-                        </Stack>
-                      )}
-                    </Stack>
-                  ),
-                  note: null,
-                },
-              ].map((row) => (
-                <Stack
-                  key={row.k}
-                  direction="row"
-                  spacing={1.5}
-                  alignItems="flex-start"
-                  sx={{ py: 0.5 }}
-                >
-                  <Typography
-                    sx={{
-                      typography: "s2",
-                      color: "text.secondary",
-                      width: 88,
-                      flexShrink: 0,
-                      pt: "5px",
-                    }}
-                  >
-                    {row.k}
-                  </Typography>
-                  <Box sx={{ minWidth: 0, flex: 1 }}>
-                    <Box
-                      sx={{
-                        typography: "s2",
-                        color: "text.primary",
-                        minHeight: 28,
-                        display: "flex",
-                        alignItems: "center",
-                      }}
-                    >
-                      {row.v}
-                      {/* One line per row; what it means is on hover. */}
-                      {row.note && (
-                        <Tooltip arrow title={row.note}>
-                          <Box
-                            component="span"
-                            sx={{ display: "inline-flex", ml: 0.75 }}
-                          >
-                            <Iconify
-                              icon="solar:info-circle-linear"
-                              width={14}
-                              sx={{ color: "text.disabled" }}
-                            />
-                          </Box>
-                        </Tooltip>
-                      )}
-                    </Box>
-                  </Box>
-                </Stack>
-              ))}
-            </Box>
-          )}
-
-          {/* ── what runs: one sentence, its numbers editable in place ── */}
-          <Stack
-            direction="row"
-            alignItems="center"
-            flexWrap="wrap"
-            gap={1}
-            sx={{ typography: "s1", color: "text.secondary" }}
-          >
-            <Tooltip arrow title={scopeNote || ""}>
-              <Box component="span" sx={{ color: "text.primary" }}>
-                {`${runCount} scenario${runCount === 1 ? "" : "s"}`}
-              </Box>
-            </Tooltip>
-            <span>×</span>
-            <TextField
-              size="small"
-              type="number"
-              value={attempts}
-              onChange={(e) => setAttempts(e.target.value)}
-              inputProps={{
-                min: 1,
-                max: 20,
-                "aria-label": "Attempts per scenario",
-                style: { textAlign: "right" },
-              }}
-              sx={{ width: 64, ...fieldSx }}
-            />
-            <span>{`attempt${Number(attempts) === 1 ? "" : "s"} on agent`}</span>
-            {otherAgent ? (
-              <Box component="span" sx={{ color: "text.primary" }}>
-                {otherAgent.version}
-              </Box>
-            ) : (
-              <TextField
-                select
-                size="small"
-                value={versions}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  const picked = Array.isArray(v) ? v : [v];
-                  /* "More versions…" opens the older ones; it's not a pick. */
-                  if (picked.includes(MORE)) {
-                    setMoreVersions(true);
-                    return;
-                  }
-                  if (picked.length >= 1 && picked.length <= MAX_VERSIONS)
-                    setVersions(picked);
-                }}
-                SelectProps={{
-                  multiple: true,
-                  renderValue: (sel) => sel.join(", "),
-                }}
-                inputProps={{ "aria-label": "Agent versions" }}
-                sx={{ minWidth: 88, ...fieldSx }}
-              >
-                {versionOptions
-                  .filter(
-                    (o) =>
-                      moreVersions || !o.more || versions.includes(o.label),
-                  )
-                  .map((o) => (
-                    <MenuItem
-                      key={o.label}
-                      value={o.label}
-                      disabled={
-                        !versions.includes(o.label) &&
-                        versions.length >= MAX_VERSIONS
-                      }
-                      sx={{ gap: 1 }}
-                    >
-                      <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
-                        {o.name}
-                      </Box>
-                      {o.tag && (
-                        <Box
-                          component="span"
-                          sx={{
-                            typography: "s3",
-                            color:
-                              o.tag === "draft"
-                                ? "status.warning.fg"
-                                : "text.tertiary",
-                          }}
-                        >
-                          {o.tag}
-                        </Box>
-                      )}
-                    </MenuItem>
-                  ))}
-                {!moreVersions && versionOptions.some((o) => o.more) && (
-                  <MenuItem value={MORE}>
-                    <Box component="span" sx={{ color: "text.secondary" }}>
-                      {`More versions (${versionOptions.filter((o) => o.more).length})…`}
-                    </Box>
-                  </MenuItem>
-                )}
-              </TextField>
-            )}
-            <Box
-              component="span"
-              sx={{
-                color: "text.primary",
-                fontWeight: 600,
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-              {`= ${estimate.trials} ${unit}${estimate.trials === 1 ? "" : "s"}`}
-            </Box>
-          </Stack>
-
-          {/* ── what's in and out (TH-8880): selected · will run · held back,
-              recorded as not run; what holds them back on hover. ── */}
-          {blockedN > 0 && !pairFailed && !allHeld && (
-            <Tooltip
-              arrow
-              placement="top-start"
-              title={`Held back and recorded as not run — ${leftOut}. ${compat.scope.runnable} evaluated of ${compat.scope.requested} requested.`}
-            >
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: "text.tertiary",
-                  mt: -1,
-                  fontVariantNumeric: "tabular-nums",
-                  alignSelf: "flex-start",
-                }}
-              >
-                {[
-                  `${compat.scope.requested} selected`,
-                  `${compat.scope.runnable} will run`,
-                  `${blockedN} held back (${compat.scope.blocked[0]?.by.join(", ").toLowerCase()}), recorded as not run`,
-                  compat.scope.untested.length
-                    ? `${compat.scope.untested.length} ${waitingWordOf(compat)}`
-                    : null,
-                  breakdown?.excluded ? `${breakdown.excluded} excluded` : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </Typography>
-            </Tooltip>
-          )}
-          {/* ── what's in and out, counted before any ID is resolved ── */}
-          {breakdown && !suite && !blockedN && (
+            {/* From a ready world, its exact release and pack are on hover. */}
             <Typography
-              title={[
-                breakdown.stale
-                  ? `${breakdown.stale} stale — they run but count toward no decision.`
-                  : null,
-                breakdown.blocked
-                  ? `${breakdown.blocked} blocked${breakdown.blockedWhy ? ` — ${breakdown.blockedWhy}` : "."}`
-                  : null,
-                breakdown.excluded
-                  ? `${breakdown.excluded} excluded — ${breakdown.excludedWhy}.`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join("\n")}
-              sx={{
-                typography: "s3",
-                color: "text.tertiary",
-                mt: -1,
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-              {/* The count reads in one line; why each isn't counted is on hover. */}
-              {(() => {
-                const out = [
-                  breakdown.stale ? `${breakdown.stale} stale` : null,
-                  breakdown.blocked ? `${breakdown.blocked} blocked` : null,
-                  breakdown.excluded ? `${breakdown.excluded} excluded` : null,
-                ].filter(Boolean);
-                const sitOut =
-                  (breakdown.stale || 0) +
-                  (breakdown.blocked || 0) +
-                  (breakdown.excluded || 0);
+              noWrap
+              title={(() => {
+                const entry = catalogueOfEnv(env);
+                if (!entry) return undefined;
+                const pack =
+                  { starter: "Starter pack", full: "Full world" }[env?.pack] ||
+                  (env?.pack ? "A named pack" : null);
                 return [
-                  `${breakdown.eligible} tested of ${breakdown.eligible + sitOut} requested`,
-                  sitOut ? `not counted: ${out.join(", ")}` : null,
+                  `${entry.id} · ${entry.task}`,
+                  `release ${envReleaseOf(env, entry)}`,
+                  pack,
                 ]
                   .filter(Boolean)
                   .join(" · ");
               })()}
+              sx={{ typography: "s2", color: "text.tertiary" }}
+            >
+              {[
+                env?.name || "Environment",
+                voice ? "Voice" : "Text",
+                `environment ${currentEnvVersion(env, envState)?.label || "v1"}`,
+                runLocation
+                  ? runLocation === "hosted"
+                    ? "hosted"
+                    : "on your machine"
+                  : null,
+                alsoCount
+                  ? `plus ${alsoCount} other environment${alsoCount === 1 ? "" : "s"}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
             </Typography>
-          )}
+          </Box>
+          <IconButton size="small" onClick={onClose} aria-label="Close">
+            <Iconify icon="solar:close-linear" width={16} />
+          </IconButton>
+        </Stack>
 
-          {/* ── a platform agent: what runs for real during this run, named ── */}
-          {(() => {
-            const v = envState?.agent?.values || {};
-            if (!v.provider || !v.agentId) return null;
-            const a = assistantsFor(v.provider).find(
-              (x) => x.id === v.agentId,
-            ) || { id: v.agentId, name: envState?.agent?.name };
-            const live = (
-              platformPreviewOf(v.provider, a, { voice })?.tools || []
-            ).filter((t) => t.handling === "live");
-            if (!live.length) return null;
-            return (
-              <Tooltip
-                arrow
-                title={`${live.map((t) => `${t.name}: ${t.line}`).join(" · ")}. Your own tools are redirected to the test world.`}
-              >
+        <Box sx={{ px: 2.5, py: 2, flex: 1, minHeight: 0, overflowY: "auto" }}>
+          <Stack spacing={2}>
+            {scopeLead && (
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                {scopeLead}
+              </Typography>
+            )}
+            {/* ── the agent first: everything below is for this agent on
+              this environment (compatibility belongs to the pair) ── */}
+            {
+              <Stack direction="row" spacing={1} alignItems="center">
                 <Typography
                   sx={{
-                    typography: "s3",
+                    typography: "s2",
                     color: "text.secondary",
-                    mt: -1,
-                    alignSelf: "flex-start",
+                    width: 88,
+                    flexShrink: 0,
                   }}
                 >
-                  {`Runs for real: ${live.map((t) => t.name).join(", ")}`}
+                  Agent
                 </Typography>
-              </Tooltip>
-            );
-          })()}
-
-          {snapshotPick && (
-            <CandidateSourcePicker
-              agent={envState?.agent}
-              agentVersion={versions[0]}
-              current={candidateSourceOf(candidate, envState?.agent)}
-              onPick={setCandidate}
-              offer="Or test a commit or uploaded code instead"
-              sx={{ px: 0, py: 0, borderTop: "none", mt: -1 }}
-            />
-          )}
-
-          {/* ── seed and limits: one line; each one on request ── */}
-          <Box>
-            <Stack direction="row" alignItems="center" spacing={1.5}>
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {seedable ? "Seed and limits" : "Limits"}
-              </Typography>
-              <Typography
-                noWrap
-                sx={{
-                  typography: "s3",
-                  color: "text.tertiary",
-                  flex: 1,
-                  minWidth: 0,
-                  textAlign: "right",
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {limitsLine(limits, {
-                  voice,
-                  /* A seed only where the agent can take one (runs.md). */
-                  seed: !seedable
-                    ? null
-                    : seedFrom
-                      ? `seed of ${seedFrom}`
-                      : "new seed",
-                })}
-              </Typography>
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={() => setShowLimits((v) => !v)}
-                aria-expanded={showLimits}
-                endIcon={
-                  <Iconify
-                    icon={
-                      showLimits
-                        ? "solar:alt-arrow-up-linear"
-                        : "solar:alt-arrow-down-linear"
-                    }
-                    width={14}
-                  />
-                }
-                sx={{ flexShrink: 0 }}
-              >
-                {showLimits ? "Hide limits" : "Change limits"}
-              </Button>
-            </Stack>
-            <Collapse in={showLimits}>
-              <Box sx={{ mt: 0.5 }}>
-                {seedable && (
-                  <Row
-                    label="Seed"
-                    detail={
-                      seedFrom
-                        ? `The same draws as ${seedFrom}, so its scenarios meet the same callers and data`
-                        : "Fixed when the run starts and saved with it — a re-run can reuse it"
-                    }
-                    value={seedFrom ? `Same as ${seedFrom}` : "New"}
-                    muted
-                  />
-                )}
-                <Row
-                  label={voice ? "Longest call" : "Per-trial timeout"}
-                  detail={`A ${unit} still going then stops and fails as timed out`}
-                >
-                  <TextField
-                    select
-                    size="small"
-                    value={limits.trialTimeout}
-                    onChange={(e) =>
-                      setLimits((l) => ({
-                        ...l,
-                        trialTimeout: Number(e.target.value),
-                      }))
-                    }
-                    inputProps={{ "aria-label": "Per-trial timeout" }}
-                    sx={{ width: 120, ...fieldSx }}
-                  >
-                    {TRIAL_TIMEOUTS.map((m) => (
-                      <MenuItem key={m} value={m}>
-                        {minutesLabel(m)}
-                      </MenuItem>
-                    ))}
-                  </TextField>
-                </Row>
-                <Row
-                  label="Whole-run deadline"
-                  detail={`No new ${unit}s start after it; evidence is kept`}
-                >
-                  <TextField
-                    select
-                    size="small"
-                    value={limits.runDeadline}
-                    onChange={(e) =>
-                      setLimits((l) => ({
-                        ...l,
-                        runDeadline: Number(e.target.value),
-                      }))
-                    }
-                    inputProps={{ "aria-label": "Whole-run deadline" }}
-                    sx={{ width: 120, ...fieldSx }}
-                  >
-                    {RUN_DEADLINES.map((m) => (
-                      <MenuItem key={m} value={m}>
-                        {minutesLabel(m)}
-                      </MenuItem>
-                    ))}
-                  </TextField>
-                </Row>
-                <Row
-                  label="Turn limit"
-                  detail="The environment's limit — change it in Settings"
-                  value={`${limits.turnLimit} turns`}
-                  muted
-                />
-                {limits.stepLimit ? (
-                  <Row
-                    label="Tool-step limit"
-                    detail="Tool calls one trial may make before it stops"
-                  >
+                <Box sx={{ typography: "s2", minWidth: 0 }}>
+                  {agentChoices.length > 1 ? (
                     <TextField
                       select
                       size="small"
-                      value={limits.stepLimit}
-                      onChange={(e) =>
-                        setLimits((l) => ({
-                          ...l,
-                          stepLimit: Number(e.target.value),
-                        }))
+                      value={
+                        agentKey ||
+                        agentChoices.find((a) => a.current)?.key ||
+                        ""
                       }
-                      inputProps={{ "aria-label": "Tool-step limit" }}
-                      sx={{ width: 120, ...fieldSx }}
+                      onChange={(e) => setAgentKey(e.target.value)}
+                      SelectProps={{
+                        renderValue: (k) =>
+                          agentChoices.find((a) => a.key === k)?.name || "",
+                      }}
+                      inputProps={{ "aria-label": "Agent" }}
+                      sx={{ minWidth: 220, ...fieldSx }}
                     >
-                      {STEP_LIMITS.map((m) => (
-                        <MenuItem key={m} value={m}>
-                          {`${m} steps`}
+                      {agentChoices.map((a) => (
+                        <MenuItem key={a.key} value={a.key} sx={{ gap: 1 }}>
+                          <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
+                            {a.name}
+                          </Box>
+                          <Box
+                            component="span"
+                            sx={{ typography: "s3", color: "text.tertiary" }}
+                          >
+                            {a.current ? "this environment's" : a.version}
+                          </Box>
                         </MenuItem>
                       ))}
                     </TextField>
-                  </Row>
+                  ) : (
+                    agentChoices[0]?.name || envState?.agent?.name || "—"
+                  )}
+                </Box>
+                {/* The version beside the agent (12 Nov review): what runs is
+                  said once, at the top. */}
+                {otherAgent ? (
+                  <Box component="span" sx={{ color: "text.primary" }}>
+                    {otherAgent.version}
+                  </Box>
                 ) : (
-                  <Row
-                    label="Tool-step limit"
-                    detail={`${envState?.agent?.name || "This agent"} runs its tools on its own platform, so steps can't be stopped from here`}
-                    value="Not enforced"
-                    muted
-                  />
+                  <TextField
+                    select
+                    size="small"
+                    value={versions}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      const picked = Array.isArray(v) ? v : [v];
+                      /* "More versions…" opens the older ones; it's not a pick. */
+                      if (picked.includes(MORE)) {
+                        setMoreVersions(true);
+                        return;
+                      }
+                      if (picked.length >= 1 && picked.length <= MAX_VERSIONS)
+                        setVersions(picked);
+                    }}
+                    SelectProps={{
+                      multiple: true,
+                      renderValue: (sel) => sel.join(", "),
+                    }}
+                    inputProps={{ "aria-label": "Agent versions" }}
+                    sx={{ minWidth: 88, ...fieldSx }}
+                  >
+                    {versionOptions
+                      .filter(
+                        (o) =>
+                          moreVersions || !o.more || versions.includes(o.label),
+                      )
+                      .map((o) => (
+                        <MenuItem
+                          key={o.label}
+                          value={o.label}
+                          disabled={
+                            !versions.includes(o.label) &&
+                            versions.length >= MAX_VERSIONS
+                          }
+                          sx={{ gap: 1 }}
+                        >
+                          <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
+                            {o.name}
+                          </Box>
+                          {o.tag && (
+                            <Box
+                              component="span"
+                              sx={{
+                                typography: "s3",
+                                color:
+                                  o.tag === "draft"
+                                    ? "status.warning.fg"
+                                    : "text.tertiary",
+                              }}
+                            >
+                              {o.tag}
+                            </Box>
+                          )}
+                        </MenuItem>
+                      ))}
+                    {!moreVersions && versionOptions.some((o) => o.more) && (
+                      <MenuItem value={MORE}>
+                        <Box component="span" sx={{ color: "text.secondary" }}>
+                          {`More versions (${versionOptions.filter((o) => o.more).length})…`}
+                        </Box>
+                      </MenuItem>
+                    )}
+                  </TextField>
                 )}
-              </Box>
-            </Collapse>
-          </Box>
+              </Stack>
+            }
 
-          {/* Simulation runs show no pre-run estimate or cap (clarified plan,
-             30 Oct); improvements keep their limits. */}
-          {SHOW_RUN_COST && (
-            <>
-              {/* ── what it costs: one number; the breakdown on request ── */}
-              <Box>
-                <Stack
-                  direction="row"
-                  alignItems="baseline"
-                  justifyContent="space-between"
-                  gap={2}
+            {/* ── Ready to run (plan T06): this agent version on this
+              environment, before anything starts — six areas, each blocker
+              with its scenarios and fix ── */}
+            {compat && multi && (
+              <Stack direction="row" spacing={1.5} alignItems="center">
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    color: "text.secondary",
+                    width: 88,
+                    flexShrink: 0,
+                  }}
                 >
+                  Version
+                </Typography>
+                <ToggleButtonGroup
+                  exclusive
+                  size="small"
+                  value={shownVersion}
+                  onChange={(_, v) => v && setViewVersion(v)}
+                  aria-label="Ready to run for version"
+                >
+                  {versionReports.map(({ v, report }) => {
+                    const held = report?.scope?.blocked?.length || 0;
+                    return (
+                      <ToggleButton key={v} value={v}>
+                        {held
+                          ? `${v} · ${report.scope.runnable} of ${report.scope.requested}`
+                          : `${v} · all ready`}
+                      </ToggleButton>
+                    );
+                  })}
+                </ToggleButtonGroup>
+              </Stack>
+            )}
+            {compat && (
+              <ReadyToRun
+                report={compat}
+                scenarios={envState?.scenarios || []}
+                evalCount={(evals || []).length}
+                onFix={(row) => onRepairCompat?.(row, pickedKey)}
+                fixKit={fixKitOf ? fixKitOf(pickedKey) : null}
+                onCheck={
+                  onCheckCompat && canCheckCompat?.(pickedKey)
+                    ? () => onCheckCompat(pickedKey)
+                    : undefined
+                }
+                checking={checkingCompat}
+              >
+                {allHeld && !pairFailed && (
                   <Typography
                     sx={{ typography: "s2", color: "text.secondary" }}
                   >
-                    Estimated cost
-                  </Typography>
-                  <Typography
-                    sx={{
-                      typography: "m3",
-                      fontWeight: 600,
-                      fontVariantNumeric: "tabular-nums",
-                    }}
-                  >
-                    {estimate.platform.unknown
-                      ? "Can't estimate"
-                      : `≈ ${rangeLabel(estimate.platform.low, estimate.platform.high)}`}
-                  </Typography>
-                </Stack>
-                {external && (
-                  <Typography
-                    noWrap
-                    sx={{
-                      typography: "s3",
-                      color: "text.tertiary",
-                      textAlign: "right",
-                    }}
-                  >
-                    {`+ ${external.label.toLowerCase().startsWith("your") ? external.label.replace(/^Your/, "your") : external.label} on your own account: ${usdRange(external.low, external.high)}`}
+                    {`Every selected scenario waits on a fix (${leftOut}).`}
                   </Typography>
                 )}
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={() => setShowBreakdown((v) => !v)}
-                  aria-expanded={showBreakdown}
-                  endIcon={
-                    <Iconify
-                      icon={
-                        showBreakdown
-                          ? "solar:alt-arrow-up-linear"
-                          : "solar:alt-arrow-down-linear"
-                      }
-                      width={14}
-                    />
-                  }
-                  sx={{ px: 0.5, ml: -0.5, mt: 0.25 }}
-                >
-                  {showBreakdown ? "Hide breakdown" : "Show breakdown"}
-                </Button>
-                <Collapse in={showBreakdown}>
-                  <Box sx={{ mt: 0.5 }}>
-                    {estimate.lines.map((l) => (
-                      <Row
-                        key={l.id}
-                        label={l.label}
-                        detail={l.detail}
-                        value={lineValue(l)}
-                        muted={l.status !== "priced"}
-                      />
-                    ))}
-                    {estimate.external.map((x) => (
-                      <Row
-                        key={x.id}
-                        label={`${x.label} (not in the total)`}
-                        detail={x.source}
-                        value={usdRange(x.low, x.high)}
-                        muted
-                      />
-                    ))}
-                    {/* A multi-agent app: each worker's own model calls, in the
-                    estimate as unknown — never zero. */}
-                    {membersOf(envState?.agent).length > 1 &&
-                      membersOf(envState?.agent).map((m) => (
-                        <Row
-                          key={`member-${m.id}`}
-                          label={`${m.name} (not in the total)`}
-                          detail={`${m.model || "its model"} on your account · shares this run's limit`}
-                          value="Unknown"
-                          muted
-                        />
-                      ))}
-                    <Row
-                      label="Warn me at"
-                      detail="Continue, lower the limit or stop"
-                    >
-                      <TextField
-                        select
-                        size="small"
-                        value={alertAt}
-                        onChange={(e) => setAlertAt(Number(e.target.value))}
-                        inputProps={{ "aria-label": "Warning threshold" }}
-                        sx={{ width: 160, ...fieldSx }}
-                      >
-                        {ALERTS.map((a) => (
-                          <MenuItem
-                            key={a}
-                            value={a}
-                          >{`${Math.round(a * 100)}% of the limit`}</MenuItem>
-                        ))}
-                      </TextField>
-                    </Row>
-                  </Box>
-                  <Typography
-                    sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
-                  >
-                    {`${estimate.rateLine} · ${freeLine}`}
-                  </Typography>
-                </Collapse>
-              </Box>
+              </ReadyToRun>
+            )}
 
-              {/* ── where it stops ── */}
-              <Box>
-                <Stack
-                  direction="row"
-                  alignItems="center"
-                  justifyContent="space-between"
-                  gap={2}
-                >
-                  <Stack direction="row" alignItems="center" gap={0.5}>
+            {/* ── run setup: agent · environment · suite, read together ── */}
+            {(agentChoices.length > 1 || suites.length > 0 || envLabel) && (
+              <Box
+                sx={{
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: "8px",
+                  px: 1.5,
+                  py: 1,
+                }}
+              >
+                {[
+                  ...(participants.length
+                    ? [
+                        {
+                          k: "Participants",
+                          v: `${participants[0]?.name || "Coordinator"} + ${participants.length - 1} worker${participants.length === 2 ? "" : "s"}`,
+                          note: `${participants.map((m) => m.name).join(", ")}. ${
+                            participantsEvidence?.source === "instrumented"
+                              ? "Hand-offs are observed in this run."
+                              : "Hand-offs aren't observed; only the overall result counts."
+                          }`,
+                        },
+                      ]
+                    : []),
+                  /* Environment and suite on one line: the version that runs,
+                   then which of its scenarios. */
+                  {
+                    k: "Environment",
+                    v: (
+                      <Stack
+                        direction="row"
+                        alignItems="center"
+                        spacing={0.5}
+                        useFlexGap
+                        flexWrap="wrap"
+                      >
+                        <Box component="span">
+                          {`${envLabel || currentEnvVersion(env, envState)?.label || "v1"} ·`}
+                        </Box>
+                        {suites.length ? (
+                          <TextField
+                            select
+                            size="small"
+                            value={suiteId}
+                            onChange={(e) => setSuiteId(e.target.value)}
+                            inputProps={{ "aria-label": "Suite" }}
+                            sx={{ minWidth: 180, ...fieldSx }}
+                          >
+                            <MenuItem value="all">
+                              {`All · ${scenarioCount}`}
+                            </MenuItem>
+                            {suites.map((x) => (
+                              <MenuItem key={x.id} value={x.id}>
+                                {`${x.name} · v${x.version || 1} · ${x.ids.length}`}
+                              </MenuItem>
+                            ))}
+                          </TextField>
+                        ) : (
+                          <Box component="span">
+                            {`${scenarioCount} scenarios`}
+                          </Box>
+                        )}
+                      </Stack>
+                    ),
+                    note: suite
+                      ? "A suite is frozen when the run starts: later edits to it don't change this run."
+                      : null,
+                  },
+                  /* What scores this run: the added evaluations, then the
+                   suggested ones — picked here, never added by default. */
+                  {
+                    k: "Evaluations",
+                    v: (
+                      <Stack spacing={0.5} sx={{ py: 0.25, minWidth: 0 }}>
+                        <Stack direction="row" alignItems="center">
+                          <Box component="span">
+                            {(evals || []).length
+                              ? (evals || []).map((e) => e.name).join(", ")
+                              : "None added"}
+                          </Box>
+                          <Tooltip
+                            arrow
+                            title={
+                              pickable.length
+                                ? "Suggested evaluations score a run only if you pick them. Picked ones are added to this environment's evaluations when the run starts. The scenarios' own checks always run."
+                                : "The scenarios' own checks always run. Add evaluations on the Evaluations step."
+                            }
+                          >
+                            <Box
+                              component="span"
+                              sx={{ display: "inline-flex", ml: 0.75 }}
+                            >
+                              <Iconify
+                                icon="solar:info-circle-linear"
+                                width={14}
+                                sx={{ color: "text.disabled" }}
+                              />
+                            </Box>
+                          </Tooltip>
+                        </Stack>
+                        {pickable.length > 0 && (
+                          <Stack
+                            direction="row"
+                            alignItems="center"
+                            gap={0.75}
+                            flexWrap="wrap"
+                          >
+                            <Box
+                              component="span"
+                              sx={{ color: "text.tertiary" }}
+                            >
+                              Suggested
+                            </Box>
+                            {pickable.map((e) => {
+                              const on = addEvalIds.includes(e.id);
+                              const full = !on && addEvalIds.length >= evalRoom;
+                              return (
+                                <Tooltip
+                                  key={e.id}
+                                  arrow
+                                  title={
+                                    full
+                                      ? "No room for more evaluations on this environment."
+                                      : e.blurb || e.description || ""
+                                  }
+                                >
+                                  <span>
+                                    <Chip
+                                      size="small"
+                                      label={e.name}
+                                      disabled={full}
+                                      onClick={() => toggleEval(e.id)}
+                                      icon={
+                                        <Iconify
+                                          icon={
+                                            on
+                                              ? "solar:check-read-linear"
+                                              : "solar:add-circle-linear"
+                                          }
+                                          width={12}
+                                        />
+                                      }
+                                      variant={on ? "filled" : "outlined"}
+                                      sx={{
+                                        height: 20,
+                                        borderRadius: "4px",
+                                        typography: "s3",
+                                        fontWeight: 500,
+                                        ...(on
+                                          ? {
+                                              bgcolor: "action.selected",
+                                              color: "text.primary",
+                                            }
+                                          : { color: "text.secondary" }),
+                                        "& .MuiChip-icon": {
+                                          ml: "6px",
+                                          mr: "-2px",
+                                          color: "inherit",
+                                        },
+                                        "& .MuiChip-label": { px: "6px" },
+                                      }}
+                                    />
+                                  </span>
+                                </Tooltip>
+                              );
+                            })}
+                          </Stack>
+                        )}
+                      </Stack>
+                    ),
+                    note: null,
+                  },
+                ].map((row) => (
+                  <Stack
+                    key={row.k}
+                    direction="row"
+                    spacing={1.5}
+                    alignItems="flex-start"
+                    sx={{ py: 0.5 }}
+                  >
                     <Typography
-                      sx={{ typography: "s2", color: "text.secondary" }}
+                      sx={{
+                        typography: "s2",
+                        color: "text.secondary",
+                        width: 88,
+                        flexShrink: 0,
+                        pt: "5px",
+                      }}
                     >
-                      Stop at
+                      {row.k}
                     </Typography>
-                    <Tooltip
-                      arrow
-                      title={`At the limit no new ${unit}s start; running ones finish (up to ~${overrun.toLocaleString()} credits more). Warning at ${Math.round(alertAt * 100)}%.${versions.length > 1 ? ` Shared by the ${versions.length} versions — each run holds ${Math.floor((effectiveCap || 0) / versions.length).toLocaleString()}.` : ""}${alsoCount ? ` Shared by the ${alsoCount + 1} environments — each run holds ${Math.floor((effectiveCap || 0) / (alsoCount + 1)).toLocaleString()}.` : ""}`}
-                    >
-                      <Iconify
-                        icon="solar:info-circle-linear"
-                        width={14}
-                        sx={{ color: "text.tertiary" }}
-                      />
-                    </Tooltip>
+                    <Box sx={{ minWidth: 0, flex: 1 }}>
+                      <Box
+                        sx={{
+                          typography: "s2",
+                          color: "text.primary",
+                          minHeight: 28,
+                          display: "flex",
+                          alignItems: "center",
+                        }}
+                      >
+                        {row.v}
+                        {/* One line per row; what it means is on hover. */}
+                        {row.note && (
+                          <Tooltip arrow title={row.note}>
+                            <Box
+                              component="span"
+                              sx={{ display: "inline-flex", ml: 0.75 }}
+                            >
+                              <Iconify
+                                icon="solar:info-circle-linear"
+                                width={14}
+                                sx={{ color: "text.disabled" }}
+                              />
+                            </Box>
+                          </Tooltip>
+                        )}
+                      </Box>
+                    </Box>
                   </Stack>
-                  <TextField
-                    size="small"
-                    type="number"
-                    value={effectiveCap ?? ""}
-                    onChange={(e) => {
-                      setCapTouched(true);
-                      setCap(
-                        e.target.value === "" ? null : Number(e.target.value),
-                      );
+                ))}
+              </Box>
+            )}
+
+            {/* ── what runs: one sentence, its numbers editable in place ── */}
+            {!pairFailed && (
+              <Stack
+                direction="row"
+                alignItems="center"
+                flexWrap="wrap"
+                gap={1}
+                sx={{ typography: "s1", color: "text.secondary" }}
+              >
+                <Tooltip arrow title={scopeNote || ""}>
+                  <Box component="span" sx={{ color: "text.primary" }}>
+                    {`${runCount} scenario${runCount === 1 ? "" : "s"}`}
+                  </Box>
+                </Tooltip>
+                <span>×</span>
+                <TextField
+                  size="small"
+                  type="number"
+                  value={attempts}
+                  onChange={(e) => setAttempts(e.target.value)}
+                  inputProps={{
+                    min: 1,
+                    max: 20,
+                    "aria-label": "Attempts per scenario",
+                    style: { textAlign: "right" },
+                  }}
+                  sx={{ width: 64, ...fieldSx }}
+                />
+                <span>{`attempt${Number(attempts) === 1 ? "" : "s"} each`}</span>
+                <Box
+                  component="span"
+                  sx={{
+                    color: "text.primary",
+                    fontWeight: 600,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {`= ${estimate.trials} ${unit}${estimate.trials === 1 ? "" : "s"}`}
+                </Box>
+              </Stack>
+            )}
+
+            {/* ── what's in and out, in one line that adds up (12 Nov
+              review): will run of the total, then each group left out in
+              plain words; why each is left out on hover. Stale cases run,
+              so they're a note on the run count, not a group of their own. */}
+            {!pairFailed &&
+              !allHeld &&
+              (compat || breakdown) &&
+              (() => {
+                const fromSuite = suite ? null : breakdown;
+                const out = [
+                  blockedN > 0 && {
+                    n: blockedN,
+                    text: "wait on fixes",
+                    why: `Held back and recorded as not run — ${leftOut}.`,
+                  },
+                  fromSuite?.blocked > 0 && {
+                    n: fromSuite.blocked,
+                    text: `not in ${currentEnvVersion(env, envState)?.label || "this version"}`,
+                    why: fromSuite.blockedWhy || "",
+                  },
+                  fromSuite?.excluded > 0 && {
+                    n: fromSuite.excluded,
+                    text: "excluded",
+                    why: fromSuite.excludedWhy || "",
+                  },
+                ].filter(Boolean);
+                const total = runCount + out.reduce((t, o) => t + o.n, 0);
+                const stale = fromSuite?.stale || 0;
+                const line = [
+                  out.length
+                    ? `${runCount} of ${total} run`
+                    : `All ${runCount} run`,
+                  ...out.map((o) => `${o.n} ${o.text}`),
+                  stale ? `${stale} stale` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+                const tip = [
+                  ...out.map(
+                    (o) => `${o.n} ${o.text}${o.why ? ` — ${o.why}` : ""}`,
+                  ),
+                  stale
+                    ? `${stale} stale — they run but count toward no decision.`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join("\n");
+                return (
+                  <Tooltip
+                    arrow
+                    placement="top-start"
+                    title={
+                      tip ? (
+                        <Box sx={{ whiteSpace: "pre-line" }}>{tip}</Box>
+                      ) : (
+                        ""
+                      )
+                    }
+                  >
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.tertiary",
+                        mt: -1,
+                        fontVariantNumeric: "tabular-nums",
+                        alignSelf: "flex-start",
+                      }}
+                    >
+                      {line}
+                    </Typography>
+                  </Tooltip>
+                );
+              })()}
+
+            {/* ── a platform agent: what runs for real during this run, named ── */}
+            {(() => {
+              const v = envState?.agent?.values || {};
+              if (!v.provider || !v.agentId) return null;
+              const a = assistantsFor(v.provider).find(
+                (x) => x.id === v.agentId,
+              ) || { id: v.agentId, name: envState?.agent?.name };
+              const live = (
+                platformPreviewOf(v.provider, a, { voice })?.tools || []
+              ).filter((t) => t.handling === "live");
+              if (!live.length) return null;
+              return (
+                <Tooltip
+                  arrow
+                  title={`${live.map((t) => `${t.name}: ${t.line}`).join(" · ")}. Your own tools are redirected to the test world.`}
+                >
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: "text.secondary",
+                      mt: -1,
+                      alignSelf: "flex-start",
                     }}
-                    error={effectiveCap > WORKSPACE_POLICY.maxRunCredits}
-                    InputProps={{
-                      endAdornment: (
-                        <InputAdornment position="end">credits</InputAdornment>
-                      ),
-                    }}
-                    inputProps={{
-                      min: 1,
-                      "aria-label": "Run spending limit in credits",
-                      style: { textAlign: "right" },
-                    }}
-                    sx={{ width: 168, ...fieldSx }}
-                  />
-                </Stack>
+                  >
+                    {`Runs for real: ${live.map((t) => t.name).join(", ")}`}
+                  </Typography>
+                </Tooltip>
+              );
+            })()}
+
+            {/* ── seed and limits: one line; each one on request ── */}
+            <Box>
+              <Stack direction="row" alignItems="center" spacing={1.5}>
+                <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                  {seedable ? "Seed and limits" : "Limits"}
+                </Typography>
                 <Typography
                   noWrap
                   sx={{
                     typography: "s3",
                     color: "text.tertiary",
-                    mt: 0.5,
+                    flex: 1,
+                    minWidth: 0,
                     textAlign: "right",
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  {[
-                    `Up to ${WORKSPACE_POLICY.maxRunCredits.toLocaleString()} per run`,
-                    check.allowance.limit == null
+                  {limitsLine(limits, {
+                    voice,
+                    /* A seed only where the agent can take one (runs.md). */
+                    seed: !seedable
                       ? null
-                      : `${check.allowance.left.toLocaleString()} left this month${ledger.heldRuns ? ` (${ledger.held.toLocaleString()} held by ${ledger.heldRuns} running)` : ""}`,
-                    check.project.limit == null
-                      ? null
-                      : `${check.project.name} ${check.projectLeft.toLocaleString()} left`,
-                    check.user.limit == null
-                      ? null
-                      : `You ${check.user.left.toLocaleString()} left`,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
+                      : seedFrom
+                        ? `seed of ${seedFrom}`
+                        : "new seed",
+                  })}
                 </Typography>
-                {check.notes.map((n) => (
-                  <Typography
-                    key={n}
-                    sx={{
-                      typography: "s3",
-                      color: "status.warning.fg",
-                      mt: 0.5,
-                      textAlign: "right",
-                    }}
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setShowLimits((v) => !v)}
+                  aria-expanded={showLimits}
+                  startIcon={
+                    showLimits ? null : (
+                      <Iconify icon="solar:pen-linear" width={14} />
+                    )
+                  }
+                  sx={{ flexShrink: 0 }}
+                >
+                  {showLimits ? "Done" : "Edit"}
+                </Button>
+              </Stack>
+              <Collapse in={showLimits}>
+                <Box sx={{ mt: 0.5 }}>
+                  {seedable && (
+                    <Row
+                      label="Seed"
+                      detail={
+                        seedFrom
+                          ? `The same draws as ${seedFrom}, so its scenarios meet the same callers and data`
+                          : "Fixed when the run starts and saved with it — a re-run can reuse it"
+                      }
+                      value={seedFrom ? `Same as ${seedFrom}` : "New"}
+                      muted
+                    />
+                  )}
+                  <Row
+                    label={voice ? "Longest call" : "Per-trial timeout"}
+                    detail={`A ${unit} still going then stops and fails as timed out`}
                   >
-                    {n}
-                  </Typography>
-                ))}
-                {/* Over the admin's per-run limit even at its most: say what fits. */}
-                {overPolicy && (
+                    <TextField
+                      select
+                      size="small"
+                      value={limits.trialTimeout}
+                      onChange={(e) =>
+                        setLimits((l) => ({
+                          ...l,
+                          trialTimeout: Number(e.target.value),
+                        }))
+                      }
+                      inputProps={{ "aria-label": "Per-trial timeout" }}
+                      sx={{ width: 120, ...fieldSx }}
+                    >
+                      {TRIAL_TIMEOUTS.map((m) => (
+                        <MenuItem key={m} value={m}>
+                          {minutesLabel(m)}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  </Row>
+                  <Row
+                    label="Whole-run deadline"
+                    detail={`No new ${unit}s start after it; evidence is kept`}
+                  >
+                    <TextField
+                      select
+                      size="small"
+                      value={limits.runDeadline}
+                      onChange={(e) =>
+                        setLimits((l) => ({
+                          ...l,
+                          runDeadline: Number(e.target.value),
+                        }))
+                      }
+                      inputProps={{ "aria-label": "Whole-run deadline" }}
+                      sx={{ width: 120, ...fieldSx }}
+                    >
+                      {RUN_DEADLINES.map((m) => (
+                        <MenuItem key={m} value={m}>
+                          {minutesLabel(m)}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  </Row>
+                  <Row
+                    label="Turn limit"
+                    detail="The environment's limit — change it in Settings"
+                    value={`${limits.turnLimit} turns`}
+                    muted
+                  />
+                  {limits.stepLimit ? (
+                    <Row
+                      label="Tool-step limit"
+                      detail="Tool calls one trial may make before it stops"
+                    >
+                      <TextField
+                        select
+                        size="small"
+                        value={limits.stepLimit}
+                        onChange={(e) =>
+                          setLimits((l) => ({
+                            ...l,
+                            stepLimit: Number(e.target.value),
+                          }))
+                        }
+                        inputProps={{ "aria-label": "Tool-step limit" }}
+                        sx={{ width: 120, ...fieldSx }}
+                      >
+                        {STEP_LIMITS.map((m) => (
+                          <MenuItem key={m} value={m}>
+                            {`${m} steps`}
+                          </MenuItem>
+                        ))}
+                      </TextField>
+                    </Row>
+                  ) : (
+                    <Row
+                      label="Tool-step limit"
+                      detail={`${envState?.agent?.name || "This agent"} runs its tools on its own platform, so steps can't be stopped from here`}
+                      value="Not enforced"
+                      muted
+                    />
+                  )}
+                </Box>
+              </Collapse>
+            </Box>
+
+            {/* Simulation runs show no pre-run estimate or cap (clarified plan,
+             30 Oct); improvements keep their limits. */}
+            {SHOW_RUN_COST && (
+              <>
+                {/* ── what it costs: one number; the breakdown on request ── */}
+                <Box>
                   <Stack
                     direction="row"
-                    justifyContent="flex-end"
-                    alignItems="center"
-                    gap={1}
-                    sx={{ mt: 0.5 }}
+                    alignItems="baseline"
+                    justifyContent="space-between"
+                    gap={2}
                   >
                     <Typography
-                      sx={{ typography: "s3", color: "text.secondary" }}
+                      sx={{ typography: "s2", color: "text.secondary" }}
                     >
-                      {fitAttempts >= 1
-                        ? `${fitAttempts} attempt${fitAttempts === 1 ? "" : "s"} fit${fitAttempts === 1 ? "s" : ""} under ${fmtCredits(WORKSPACE_POLICY.maxRunCredits)}, or ask an admin to raise the per-run limit.`
-                        : "Pick fewer scenarios, or ask an admin to raise the per-run limit."}
+                      Estimated cost
                     </Typography>
-                    {fitAttempts >= 1 && (
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        onClick={() => setAttempts(fitAttempts)}
-                        sx={{
-                          color: "text.primary",
-                          borderColor: "divider",
-                          flexShrink: 0,
-                        }}
-                      >
-                        {`Use ${fitAttempts}`}
-                      </Button>
-                    )}
+                    <Typography
+                      sx={{
+                        typography: "m3",
+                        fontWeight: 600,
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {estimate.platform.unknown
+                        ? "Can't estimate"
+                        : `≈ ${rangeLabel(estimate.platform.low, estimate.platform.high)}`}
+                    </Typography>
                   </Stack>
-                )}
-              </Box>
-            </>
-          )}
+                  {external && (
+                    <Typography
+                      noWrap
+                      sx={{
+                        typography: "s3",
+                        color: "text.tertiary",
+                        textAlign: "right",
+                      }}
+                    >
+                      {`+ ${external.label.toLowerCase().startsWith("your") ? external.label.replace(/^Your/, "your") : external.label} on your own account: ${usdRange(external.low, external.high)}`}
+                    </Typography>
+                  )}
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => setShowBreakdown((v) => !v)}
+                    aria-expanded={showBreakdown}
+                    endIcon={
+                      <Iconify
+                        icon={
+                          showBreakdown
+                            ? "solar:alt-arrow-up-linear"
+                            : "solar:alt-arrow-down-linear"
+                        }
+                        width={14}
+                      />
+                    }
+                    sx={{ px: 0.5, ml: -0.5, mt: 0.25 }}
+                  >
+                    {showBreakdown ? "Hide breakdown" : "Show breakdown"}
+                  </Button>
+                  <Collapse in={showBreakdown}>
+                    <Box sx={{ mt: 0.5 }}>
+                      {estimate.lines.map((l) => (
+                        <Row
+                          key={l.id}
+                          label={l.label}
+                          detail={l.detail}
+                          value={lineValue(l)}
+                          muted={l.status !== "priced"}
+                        />
+                      ))}
+                      {estimate.external.map((x) => (
+                        <Row
+                          key={x.id}
+                          label={`${x.label} (not in the total)`}
+                          detail={x.source}
+                          value={usdRange(x.low, x.high)}
+                          muted
+                        />
+                      ))}
+                      {/* A multi-agent app: each worker's own model calls, in the
+                    estimate as unknown — never zero. */}
+                      {membersOf(envState?.agent).length > 1 &&
+                        membersOf(envState?.agent).map((m) => (
+                          <Row
+                            key={`member-${m.id}`}
+                            label={`${m.name} (not in the total)`}
+                            detail={`${m.model || "its model"} on your account · shares this run's limit`}
+                            value="Unknown"
+                            muted
+                          />
+                        ))}
+                      <Row
+                        label="Warn me at"
+                        detail="Continue, lower the limit or stop"
+                      >
+                        <TextField
+                          select
+                          size="small"
+                          value={alertAt}
+                          onChange={(e) => setAlertAt(Number(e.target.value))}
+                          inputProps={{ "aria-label": "Warning threshold" }}
+                          sx={{ width: 160, ...fieldSx }}
+                        >
+                          {ALERTS.map((a) => (
+                            <MenuItem
+                              key={a}
+                              value={a}
+                            >{`${Math.round(a * 100)}% of the limit`}</MenuItem>
+                          ))}
+                        </TextField>
+                      </Row>
+                    </Box>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
+                    >
+                      {`${estimate.rateLine} · ${freeLine}`}
+                    </Typography>
+                  </Collapse>
+                </Box>
 
-          {check.holds.length > 0 && (
-            <Box
-              role="alert"
-              sx={{
-                border: "1px solid",
-                borderColor: "status.danger.border",
-                bgcolor: "status.danger.bg",
-                borderRadius: "8px",
-                px: 1.5,
-                py: 1,
-              }}
-            >
-              {check.holds.map((h) => (
-                <Box key={h.id} sx={{ "& + &": { mt: 0.75 } }}>
+                {/* ── where it stops ── */}
+                <Box>
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    justifyContent="space-between"
+                    gap={2}
+                  >
+                    <Stack direction="row" alignItems="center" gap={0.5}>
+                      <Typography
+                        sx={{ typography: "s2", color: "text.secondary" }}
+                      >
+                        Stop at
+                      </Typography>
+                      <Tooltip
+                        arrow
+                        title={`At the limit no new ${unit}s start; running ones finish (up to ~${overrun.toLocaleString()} credits more). Warning at ${Math.round(alertAt * 100)}%.${versions.length > 1 ? ` Shared by the ${versions.length} versions — each run holds ${Math.floor((effectiveCap || 0) / versions.length).toLocaleString()}.` : ""}${alsoCount ? ` Shared by the ${alsoCount + 1} environments — each run holds ${Math.floor((effectiveCap || 0) / (alsoCount + 1)).toLocaleString()}.` : ""}`}
+                      >
+                        <Iconify
+                          icon="solar:info-circle-linear"
+                          width={14}
+                          sx={{ color: "text.tertiary" }}
+                        />
+                      </Tooltip>
+                    </Stack>
+                    <TextField
+                      size="small"
+                      type="number"
+                      value={effectiveCap ?? ""}
+                      onChange={(e) => {
+                        setCapTouched(true);
+                        setCap(
+                          e.target.value === "" ? null : Number(e.target.value),
+                        );
+                      }}
+                      error={effectiveCap > WORKSPACE_POLICY.maxRunCredits}
+                      InputProps={{
+                        endAdornment: (
+                          <InputAdornment position="end">
+                            credits
+                          </InputAdornment>
+                        ),
+                      }}
+                      inputProps={{
+                        min: 1,
+                        "aria-label": "Run spending limit in credits",
+                        style: { textAlign: "right" },
+                      }}
+                      sx={{ width: 168, ...fieldSx }}
+                    />
+                  </Stack>
                   <Typography
+                    noWrap
                     sx={{
-                      typography: "s2",
-                      fontWeight: 600,
-                      color: "status.danger.fg",
+                      typography: "s3",
+                      color: "text.tertiary",
+                      mt: 0.5,
+                      textAlign: "right",
+                      fontVariantNumeric: "tabular-nums",
                     }}
                   >
-                    {h.title}
+                    {[
+                      `Up to ${WORKSPACE_POLICY.maxRunCredits.toLocaleString()} per run`,
+                      check.allowance.limit == null
+                        ? null
+                        : `${check.allowance.left.toLocaleString()} left this month${ledger.heldRuns ? ` (${ledger.held.toLocaleString()} held by ${ledger.heldRuns} running)` : ""}`,
+                      check.project.limit == null
+                        ? null
+                        : `${check.project.name} ${check.projectLeft.toLocaleString()} left`,
+                      check.user.limit == null
+                        ? null
+                        : `You ${check.user.left.toLocaleString()} left`,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </Typography>
-                  <Typography
-                    sx={{ typography: "s3", color: "text.secondary" }}
-                  >
-                    {h.line}
-                  </Typography>
+                  {check.notes.map((n) => (
+                    <Typography
+                      key={n}
+                      sx={{
+                        typography: "s3",
+                        color: "status.warning.fg",
+                        mt: 0.5,
+                        textAlign: "right",
+                      }}
+                    >
+                      {n}
+                    </Typography>
+                  ))}
+                  {/* Over the admin's per-run limit even at its most: say what fits. */}
+                  {overPolicy && (
+                    <Stack
+                      direction="row"
+                      justifyContent="flex-end"
+                      alignItems="center"
+                      gap={1}
+                      sx={{ mt: 0.5 }}
+                    >
+                      <Typography
+                        sx={{ typography: "s3", color: "text.secondary" }}
+                      >
+                        {fitAttempts >= 1
+                          ? `${fitAttempts} attempt${fitAttempts === 1 ? "" : "s"} fit${fitAttempts === 1 ? "s" : ""} under ${fmtCredits(WORKSPACE_POLICY.maxRunCredits)}, or ask an admin to raise the per-run limit.`
+                          : "Pick fewer scenarios, or ask an admin to raise the per-run limit."}
+                      </Typography>
+                      {fitAttempts >= 1 && (
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() => setAttempts(fitAttempts)}
+                          sx={{
+                            color: "text.primary",
+                            borderColor: "divider",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {`Use ${fitAttempts}`}
+                        </Button>
+                      )}
+                    </Stack>
+                  )}
                 </Box>
-              ))}
-            </Box>
-          )}
-        </Stack>
-      </DialogContent>
+              </>
+            )}
 
-      {(submit === "rejected" || submit === "timeout") && (
+            {(pairFailed ? [pairHold] : check.holds).length > 0 && (
+              <Box
+                role="alert"
+                sx={{
+                  border: "1px solid",
+                  borderColor: "status.danger.border",
+                  bgcolor: "status.danger.bg",
+                  borderRadius: "8px",
+                  px: 1.5,
+                  py: 1,
+                }}
+              >
+                {(pairFailed ? [{ id: "pair", ...pairHold }] : check.holds).map(
+                  (h) => (
+                    <Box key={h.id} sx={{ "& + &": { mt: 0.75 } }}>
+                      <Typography
+                        sx={{
+                          typography: "s2",
+                          fontWeight: 600,
+                          color: "status.danger.fg",
+                        }}
+                      >
+                        {h.title}
+                      </Typography>
+                      <Typography
+                        sx={{ typography: "s3", color: "text.secondary" }}
+                      >
+                        {h.line}
+                      </Typography>
+                    </Box>
+                  ),
+                )}
+              </Box>
+            )}
+          </Stack>
+        </Box>
+
+        {(submit === "rejected" || submit === "timeout") && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
+            sx={{
+              mx: 2.5,
+              mb: 1,
+              px: 1.5,
+              py: 1,
+              border: "1px solid",
+              borderColor:
+                submit === "rejected"
+                  ? "status.danger.border"
+                  : "status.warning.border",
+              borderRadius: "8px",
+            }}
+          >
+            <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+              {submit === "rejected"
+                ? "No run created — the world service is unavailable. Nothing was charged; your choices are kept."
+                : "We couldn't confirm the run started. It may exist, so Start stays off — find it first."}
+            </Typography>
+            {submit === "timeout" && env?.id && (
+              <Button
+                size="small"
+                variant="outlined"
+                sx={{ flexShrink: 0 }}
+                onClick={() => {
+                  onClose();
+                  navigate(
+                    paths.dashboard.simulate.environmentStep(env.id, "runs"),
+                  );
+                }}
+              >
+                Find submitted run
+              </Button>
+            )}
+          </Stack>
+        )}
         <Stack
           direction="row"
-          alignItems="center"
-          spacing={1.5}
-          sx={{
-            mx: 3,
-            mb: 1,
-            px: 1.5,
-            py: 1,
-            border: "1px solid",
-            borderColor:
-              submit === "rejected"
-                ? "status.danger.border"
-                : "status.warning.border",
-            borderRadius: "8px",
-          }}
+          justifyContent="flex-end"
+          spacing={1}
+          sx={{ px: 2.5, py: 1.5, borderTop: 1, borderColor: "divider" }}
         >
-          <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
-            {submit === "rejected"
-              ? "No run created — the world service is unavailable. Nothing was charged; your choices are kept."
-              : "We couldn't confirm the run started. It may exist, so Start stays off — find it first."}
-          </Typography>
-          {submit === "timeout" && env?.id && (
-            <Button
-              size="small"
-              variant="outlined"
-              sx={{ flexShrink: 0 }}
-              onClick={() => {
-                onClose();
-                navigate(
-                  paths.dashboard.simulate.environmentStep(env.id, "runs"),
-                );
-              }}
-            >
-              Find submitted run
-            </Button>
-          )}
-        </Stack>
-      )}
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
-          Cancel
-        </Button>
-        <Tooltip
-          arrow
-          title={
-            canStart
-              ? SHOW_RUN_COST
-                ? `${estimate.trials} ${unit}s · stops at ${fmtCredits(effectiveCap)}`
-                : `${estimate.trials} ${unit}s`
-              : pairHold?.title || check.holds[0]?.title || ""
-          }
-        >
-          <span>
-            <Button
-              size="small"
-              variant="contained"
-              disabled={
-                !canStart ||
-                submit === "sending" ||
-                submit === "timeout"
-              }
-              startIcon={<Iconify icon="solar:play-bold" width={14} />}
-              onClick={() => {
-                if (submitDemo === "rejected" || submitDemo === "timeout") {
-                  setSubmit("sending");
-                  setTimeout(() => setSubmit(submitDemo), 900);
-                  return;
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={onClose}
+            sx={{ color: "text.primary", borderColor: "divider" }}
+          >
+            Cancel
+          </Button>
+          <Tooltip
+            arrow
+            title={
+              canStart
+                ? SHOW_RUN_COST
+                  ? `${estimate.trials} ${unit}s · stops at ${fmtCredits(effectiveCap)}`
+                  : `${estimate.trials} ${unit}s`
+                : pairHold?.title || check.holds[0]?.title || ""
+            }
+          >
+            <span>
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                disabled={
+                  !canStart || submit === "sending" || submit === "timeout"
                 }
-                onStart({
-                  attempts: Number(attempts),
-                  versions: otherAgent ? [otherAgent.version] : versions,
-                  withAgent: otherAgent
-                    ? {
-                        key: otherAgent.key,
-                        name: otherAgent.name,
-                        version: otherAgent.version,
-                      }
-                    : null,
-                  suiteIds: suite ? suite.ids : null,
-                  addEvals: pickable.filter((e) => addEvalIds.includes(e.id)),
-                  candidate: snapshotPick ? candidate : null,
-                  /* No cap is applied while pre-run cost is Later (costFlags). */
-                  cap: SHOW_RUN_COST ? effectiveCap : null,
-                  alertAt,
-                  estimate,
-                  limits,
-                  /* Comparing versions: each version's run holds back its
-                     own blocked cases. */
-                  versionSubsets: multi
-                    ? Object.fromEntries(
-                        versionReports
-                          .filter((x) => x.report?.scope?.blocked?.length)
-                          .map(({ v, report }) => [
-                            v,
-                            {
-                              ids: report.scope.eligibleIds,
-                              requested: report.scope.requested,
-                              blocked: report.scope.blocked.map((b) => b.id),
-                            },
-                          ]),
-                      )
-                    : null,
-                  compatSubset:
-                    !multi && blockedN > 0
+                startIcon={<Iconify icon="solar:play-bold" width={14} />}
+                onClick={() => {
+                  if (submitDemo === "rejected" || submitDemo === "timeout") {
+                    setSubmit("sending");
+                    setTimeout(() => setSubmit(submitDemo), 900);
+                    return;
+                  }
+                  onStart({
+                    attempts: Number(attempts),
+                    versions: otherAgent ? [otherAgent.version] : versions,
+                    withAgent: otherAgent
                       ? {
-                          ids: compat.scope.eligibleIds,
-                          requested: compat.scope.requested,
-                          blocked: compat.scope.blocked.map((b) => b.id),
+                          key: otherAgent.key,
+                          name: otherAgent.name,
+                          version: otherAgent.version,
                         }
                       : null,
-                });
-              }}
-            >
-              {submit === "sending"
-                ? "Starting…"
-                : submit === "rejected"
-                  ? "Try again"
-                  : !multi && blockedN > 0 && compat.scope.runnable && !pairFailed
-                    ? `Run ${compat.scope.runnable} of ${compat.scope.requested}`
+                    suiteIds: suite ? suite.ids : null,
+                    addEvals: pickable.filter((e) => addEvalIds.includes(e.id)),
+                    candidate: null,
+                    /* No cap is applied while pre-run cost is Later (costFlags). */
+                    cap: SHOW_RUN_COST ? effectiveCap : null,
+                    alertAt,
+                    estimate,
+                    limits,
+                    /* Comparing versions: each version's run holds back its
+                     own blocked cases. */
+                    versionSubsets: multi
+                      ? Object.fromEntries(
+                          versionReports
+                            .filter((x) => x.report?.scope?.blocked?.length)
+                            .map(({ v, report }) => [
+                              v,
+                              {
+                                ids: report.scope.eligibleIds,
+                                requested: report.scope.requested,
+                                blocked: report.scope.blocked.map((b) => b.id),
+                              },
+                            ]),
+                        )
+                      : null,
+                    compatSubset:
+                      !multi && blockedN > 0
+                        ? {
+                            ids: compat.scope.eligibleIds,
+                            requested: compat.scope.requested,
+                            blocked: compat.scope.blocked.map((b) => b.id),
+                          }
+                        : null,
+                  });
+                }}
+              >
+                {submit === "sending"
+                  ? "Starting…"
+                  : submit === "rejected"
+                    ? "Try again"
                     : "Start run"}
-            </Button>
-          </span>
-        </Tooltip>
-      </DialogActions>
-    </ClosableDialog>
+              </Button>
+            </span>
+          </Tooltip>
+        </Stack>
+      </Stack>
+    </SideDrawer>
   );
 }
 

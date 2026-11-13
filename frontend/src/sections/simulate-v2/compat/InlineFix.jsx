@@ -17,9 +17,11 @@ export default function InlineFix({ kind, row, kit, onClose }) {
       <Button size="small" color="inherit" onClick={onClose}>
         Cancel
       </Button>
+      {/* Outlined: the run plan's Start run stays the one primary (12 Nov
+          review). */}
       <Button
         size="small"
-        variant="contained"
+        variant="outlined"
         disabled={disabled}
         onClick={() => {
           run();
@@ -58,7 +60,6 @@ export default function InlineFix({ kind, row, kit, onClose }) {
             />
           </Stack>
           {row.suggestion?.why && <Box>{row.suggestion.why}</Box>}
-          {would && <Box>{`After the fix: ${would}`}</Box>}
           {actions(
             "Apply and re-check",
             () => kit.applyRepair(row.fixId, value),
@@ -69,18 +70,14 @@ export default function InlineFix({ kind, row, kit, onClose }) {
       {kind === "tools" && (
         <>
           <Box>
-            {`${row.fixLabel || "Point the tools at the test world"}. During runs its calls go to the test world, not production. ${would ? `After the fix: ${would}` : ""}`}
+            {`${row.fixLabel || "Point the tools at the test world"}, so runs never reach production.`}
           </Box>
-          {actions("Point at the test world and re-check", () =>
-            kit.applyRepair(row.fixId),
-          )}
+          {actions("Apply and re-check", () => kit.applyRepair(row.fixId))}
         </>
       )}
       {kind === "release" && (
         <>
-          <Box>
-            {`${row.detail} They run here, on this environment — no cost to you.`}
-          </Box>
+          <Box>{`${row.detail} Free to run.`}</Box>
           {actions(
             kit.releaseRunning ? "Running checks…" : "Run release checks",
             kit.runReleaseChecks,
@@ -90,7 +87,7 @@ export default function InlineFix({ kind, row, kit, onClose }) {
       )}
       {kind === "rebuild" && (
         <>
-          <Box>{`${row.detail} ${would || ""}`}</Box>
+          <Box>{row.detail}</Box>
           {actions("Rebuild environment", kit.rebuild)}
         </>
       )}
