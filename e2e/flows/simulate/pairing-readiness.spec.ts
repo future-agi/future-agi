@@ -21,7 +21,7 @@ const MEASURED = {
   reset: 'supported',
   cancel: 'untested',
 };
-const COUNTS = { blocked: 1, stale: 0, untested: 10, partial: 0, unavailable: 0, supported: 5 };
+const COUNTS = { blocked: 1, stale: 0, untested: 9, partial: 0, unavailable: 1, supported: 5 };
 
 interface Ref { id: string; label: string }
 interface Row { id: string; status: string; measured: boolean; reason_code: string | null;
