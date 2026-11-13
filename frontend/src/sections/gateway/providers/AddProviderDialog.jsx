@@ -1256,7 +1256,6 @@ const AddProviderDialog = ({
             <Autocomplete
               multiple
               freeSolo
-              autoSelect
               disableCloseOnSelect
               size="small"
               sx={{
