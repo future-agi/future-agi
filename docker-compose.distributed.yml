@@ -893,6 +893,9 @@ services:
       FI_AUTH_REDIS_ADDR: redis:6379
       # Billing usage events: only Future AGI Cloud drains usage:events.
       USAGE_EVENTS_ENABLED: ${USAGE_EVENTS_ENABLED:-false}
+      # Attachments: the same switch the backend reads from .env, so LiveKit
+      # calls map to Voice exactly when the backend serves their recordings.
+      FI_ATTACHMENTS_ENABLED: ${FI_ATTACHMENTS_ENABLED:-false}
       FI_GRPC_ADDR: ":4317"
       # OTLP/HTTP receiver — needed by browser SDKs + lightweight clients.
       # `FI_HTTP_ADDR=disable` turns the listener off if you front the

@@ -1,4 +1,4 @@
-"""Complete 32/37-pending-migration A9 intersection regression, without Django.
+"""Complete 35/40-pending-migration A9 intersection regression, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -27,6 +27,9 @@ SQL_ADDITIONS = (
     ('tracer','0122_sql_payload_expiry_index'),
     ('tracer','0130_merge_20261104_0940'),
     ('tracer','0131_merge_sql_workbench_and_observationspan_internal_type'),
+    # RunSQL trigger fences: opaque, so the reviewed UPDATE_SAFETY declaration
+    # (human reviewer + review link) is what scopes it, like the rows above.
+    ('tracer','0133_attachment_fences'),
 )
 LATEST = (
     ('accounts','0029_demotracepublication_demoseedrequest'),
@@ -48,6 +51,8 @@ LATEST = (
     ('tracer','0128_instantevalrow_source_session_ids'),
     ('tracer','0129_project_analysis_source_generation_db_default'),
     ('tracer','0130_observationspan_internal_type'),
+    ('tracer','0132_attachment_control_records'),
+    ('tracer','0134_attachment_binding_claims'),
     ('simulate','0102_agent_fix_engine_notes'),
     ('simulate','0103_harness_job_verify_of'),
     ('tracer','0098_useralertmonitor_webhook_url'),
@@ -62,7 +67,7 @@ FLOOR_ONLY = (
 )
 
 
-BASELINES = ((REVISIONS[1], LATEST, 32), (REVISIONS[0], LATEST + FLOOR_ONLY, 37))
+BASELINES = ((REVISIONS[1], LATEST, 35), (REVISIONS[0], LATEST + FLOOR_ONLY, 40))
 
 
 def added_migration_identities(revision):

@@ -304,10 +304,15 @@ def test_legacy_reseed_works_before_publication_table_exists(signup):
             )
         assert DemoTracePublication.objects.count() == 2
     finally:
-        # Back to the latest accounts migration, not to 0030: a later one must not
-        # stay unapplied for the rest of the test session.
+        # Back to every app's latest migration, not to 0030 or only accounts'
+        # leaf: migrating accounts to 0028 also unapplied every later accounts
+        # migration and every migration in other apps that depends on one
+        # (tracer 0132_attachment_control_records depends on accounts 0031).
+        # None may stay unapplied for the rest of the test session.
         executor = MigrationExecutor(connection)
-        executor.migrate(executor.loader.graph.leaf_nodes("accounts"))
+        executor.migrate(executor.loader.graph.leaf_nodes())
+        executor = MigrationExecutor(connection)
+        assert executor.migration_plan(executor.loader.graph.leaf_nodes()) == []
 
 
 @pytest.mark.django_db(transaction=True)

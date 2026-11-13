@@ -116,6 +116,13 @@ func (s *Server) prepareExportAttempt(ctx context.Context, decode exportDecoder,
 	if err := ctx.Err(); err != nil {
 		return preparedExport{}, err
 	}
+	// Stage only pending associations. Reconciliation requires persisted live
+	// parents; a later admission/insert failure can never release media.
+	if out.ingestionHold == "" {
+		if err := s.stageAttachmentBindings(ctx, req.Traces()); err != nil {
+			return preparedExport{}, &rejection{reason: "attachments", kind: rejectBusy, retryAfter: "5", msg: "attachment binding unavailable"}
+		}
+	}
 	if rej := s.pricePreparedExport(ctx, req.Traces(), held); rej != nil {
 		return preparedExport{}, rej
 	}

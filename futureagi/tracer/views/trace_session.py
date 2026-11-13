@@ -817,12 +817,13 @@ def _soft_delete_trace_session_tree(trace_sessions):
         return
 
     session_ids = [session.id for session in sessions]
-    trace_ids = list(
+    deleted_traces = list(
         Trace.no_workspace_objects.filter(
             session_id__in=session_ids,
             deleted=False,
-        ).values_list("id", flat=True)
+        ).only("id", "project_id")
     )
+    trace_ids = [trace.id for trace in deleted_traces]
 
     if trace_ids:
         ObservationSpan.no_workspace_objects.filter(
@@ -839,6 +840,12 @@ def _soft_delete_trace_session_tree(trace_sessions):
             id__in=trace_ids,
             deleted=False,
         ).update(deleted=True, deleted_at=now)
+        from tracer.services.attachments.retention import (
+            tombstone_deleted_traces,
+        )
+
+        # Tombstone the traces' attachment occurrences; the erase drain removes bytes.
+        tombstone_deleted_traces(deleted_traces)
 
     soft_delete_eval_results(
         EvalLogger.no_workspace_objects.filter(

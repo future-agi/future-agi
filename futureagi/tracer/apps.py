@@ -9,6 +9,7 @@ class SdkConfig(AppConfig):
         # Import all model modules so Django discovers them.
         # Required for cross-app FK resolution (model_hub → tracer).
         from tracer.models import (
+            attachment,  # noqa: F401
             custom_eval_config,  # noqa: F401
             dashboard,  # noqa: F401
             eval_ci_cd,  # noqa: F401
@@ -37,3 +38,11 @@ class SdkConfig(AppConfig):
             trace_scan,  # noqa: F401
             trace_session,  # noqa: F401
         )
+
+        from django.conf import settings
+
+        if getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
+            from tracer.services.attachments.storage import from_settings
+
+            # Fail closed on unverifiable/private-storage policy drift.
+            from_settings(settings).verify_readiness()
