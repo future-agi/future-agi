@@ -32959,18 +32959,22 @@ export const Saml2AuthMicrosoftReadQueryParams = zod.object({
 
 export const sdkApiV1ConfigureEvaluationsCreateBodyEvalConfigConfigDefault = {};
 
-export const SdkApiV1ConfigureEvaluationsCreateBody = zod.object({
-  eval_config: zod.object({
-    eval_templates: zod.string().min(1),
-    inputs: zod.record(zod.string(), zod.string()),
-    model_name: zod.string().optional(),
-    config: zod
-      .record(zod.string(), zod.string())
-      .default(sdkApiV1ConfigureEvaluationsCreateBodyEvalConfigConfigDefault),
-  }),
-  platform: zod.string().min(1),
-  custom_eval_name: zod.string().optional(),
-});
+export const SdkApiV1ConfigureEvaluationsCreateBody = zod
+  .object({
+    eval_config: zod.object({
+      eval_templates: zod.string().min(1),
+      inputs: zod.record(zod.string(), zod.string()),
+      model_name: zod.string().optional(),
+      config: zod
+        .record(zod.string(), zod.string())
+        .default(sdkApiV1ConfigureEvaluationsCreateBodyEvalConfigConfigDefault),
+    }),
+    platform: zod.string().min(1),
+    custom_eval_name: zod.string().optional(),
+  })
+  .describe(
+    "Provider credential fields go at the top level of this request, next to eval_config and platform. The langfuse platform requires non-empty langfuse_secret_key, langfuse_public_key and langfuse_host. Every undeclared top-level field is stored as a credential.",
+  );
 
 export const SdkApiV1ConfigureEvaluationsCreateResponse = zod.object({
   status: zod.boolean(),
@@ -32983,10 +32987,14 @@ export const sdkApiV1EvalCreateBodyProtectFlashDefault = false;
 
 export const SdkApiV1EvalCreateBody = zod.object({
   inputs: zod.array(
-    zod.object({
-      input: zod.string().optional(),
-      max_tokens: zod.number().min(1).optional(),
-    }),
+    zod
+      .object({
+        input: zod.string().optional(),
+        max_tokens: zod.number().min(1).optional(),
+      })
+      .describe(
+        "One evaluation input. Only input and max_tokens are read; extra fields of any JSON type in this object are accepted and ignored.",
+      ),
   ),
   config: zod.record(zod.string(), zod.string()),
   protect_flash: zod
