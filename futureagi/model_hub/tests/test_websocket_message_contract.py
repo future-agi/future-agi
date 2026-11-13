@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, patch
 
@@ -17,7 +18,12 @@ from structlog.testing import capture_logs
 from accounts.models import OrgApiKey
 from model_hub.utils import call_websocket
 from sockets.consumer import DataConsumer
-from tfc.utils.websocket_relay_auth import RELAY_SIGNATURE_HEADER, relay_signature
+from tfc.utils.websocket_relay_auth import (
+    RELAY_SIGNATURE_HEADER,
+    RELAY_TIMESTAMP_HEADER,
+    relay_headers,
+    relay_signature,
+)
 from tfc.views.socket import CallWebsocketView
 
 ORG = "00000000-0000-4000-8000-000000000001"
@@ -96,17 +102,29 @@ def relay_settings():
         yield
 
 
-def post_relay(payload, *, raw=None, signature=None):
+def signed_meta(organization_id, raw, *, now=None):
+    """The relay headers for ``raw`` as request META entries."""
+
+    return {
+        "HTTP_" + name.upper().replace("-", "_"): value
+        for name, value in relay_headers(organization_id, raw, now=now).items()
+    }
+
+
+def post_relay(payload, *, raw=None, headers=None):
     """Call the relay as its internal caller: the system key and a signature."""
 
     raw = json.dumps(payload).encode() if raw is None else raw
-    if signature is None:
-        signature = relay_signature(ORG, raw)
+    if headers is None:
+        headers = relay_headers(ORG, raw)
     request = APIRequestFactory().post(
         "/call-websocket/",
         raw,
         content_type="application/json",
-        **{"HTTP_" + RELAY_SIGNATURE_HEADER.upper().replace("-", "_"): signature},
+        **{
+            "HTTP_" + name.upper().replace("-", "_"): value
+            for name, value in headers.items()
+        },
     )
     # The selected authenticated organization wins over both the user default
     # and any untrusted organization_id in the body.
@@ -123,7 +141,15 @@ def post_relay(payload, *, raw=None, signature=None):
 
 def relay_http(url, *, data, headers, **kwargs):
     # Forward the exact bytes and signature that call_websocket sent.
-    response = post_relay(None, raw=data, signature=headers[RELAY_SIGNATURE_HEADER])
+    response = post_relay(
+        None,
+        raw=data,
+        headers={
+            name: headers[name]
+            for name in (RELAY_SIGNATURE_HEADER, RELAY_TIMESTAMP_HEADER)
+            if name in headers
+        },
+    )
     response.render()
     http = requests.Response()
     http.status_code = response.status_code
@@ -273,7 +299,7 @@ def test_relay_requires_authenticated_organization(targeted, organization_attrib
         "/call-websocket/",
         raw,
         content_type="application/json",
-        HTTP_X_RELAY_SIGNATURE=relay_signature(ORG, raw),
+        **signed_meta(ORG, raw),
     )
     # Even a correctly signed system-key request needs its organization.
     request.org_api_key = SimpleNamespace(type="system", organization_id=ORG)
@@ -312,8 +338,8 @@ def test_relay_refuses_callers_other_than_the_internal_client(
     raw = json.dumps({"message": {"alert_title": "Synthetic notification"}}).encode()
     headers = {}
     if signed_org is not None:
-        headers["HTTP_X_RELAY_SIGNATURE"] = relay_signature(
-            signed_org, raw if signed_body is None else signed_body
+        headers.update(
+            signed_meta(signed_org, raw if signed_body is None else signed_body)
         )
     request = APIRequestFactory().post(
         "/call-websocket/", raw, content_type="application/json", **headers
@@ -339,7 +365,14 @@ def test_relay_refuses_callers_other_than_the_internal_client(
 def test_relay_refuses_a_signature_with_non_ascii_characters(signature):
     raw = json.dumps({"message": {"alert_title": "Synthetic notification"}}).encode()
     with patch("tfc.views.socket.get_channel_layer") as layer:
-        response = post_relay(None, raw=raw, signature=signature)
+        response = post_relay(
+            None,
+            raw=raw,
+            headers={
+                RELAY_SIGNATURE_HEADER: signature,
+                RELAY_TIMESTAMP_HEADER: str(int(time.time())),
+            },
+        )
     assert response.status_code == 403
     assert response.data["code"] == "permission_denied"
     layer.assert_not_called()
@@ -349,10 +382,53 @@ def test_signature_check_treats_non_ascii_text_as_a_mismatch():
     from tfc.utils.websocket_relay_auth import relay_signature_is_valid
 
     raw = b"{}"
-    valid = relay_signature(ORG, raw)
-    assert relay_signature_is_valid(ORG, raw, valid)
-    assert not relay_signature_is_valid(ORG, raw, valid[:-1] + "\u00e9")
-    assert not relay_signature_is_valid(ORG, raw, "\ud800" + valid[1:])
+    now = 1_800_000_000
+    valid = relay_signature(ORG, raw, now)
+    signed_at = str(now)
+    assert relay_signature_is_valid(ORG, raw, valid, signed_at, now=now)
+    assert not relay_signature_is_valid(
+        ORG, raw, valid[:-1] + "\u00e9", signed_at, now=now
+    )
+    assert not relay_signature_is_valid(
+        ORG, raw, "\ud800" + valid[1:], signed_at, now=now
+    )
+
+
+@pytest.mark.parametrize(
+    "signed_offset, timestamp",
+    [
+        pytest.param(-301, None, id="expired"),
+        pytest.param(301, None, id="future-beyond-window"),
+        pytest.param(0, "", id="missing"),
+        pytest.param(0, "12.5", id="unparseable"),
+        pytest.param(0, "-1", id="negative"),
+    ],
+)
+def test_relay_refuses_a_signature_outside_its_time_window(signed_offset, timestamp):
+    raw = json.dumps({"message": {"alert_title": "Synthetic notification"}}).encode()
+    now = int(time.time())
+    headers = relay_headers(ORG, raw, now=now + signed_offset)
+    if timestamp is not None:
+        headers[RELAY_TIMESTAMP_HEADER] = timestamp
+    with patch("tfc.views.socket.get_channel_layer") as layer:
+        response = post_relay(None, raw=raw, headers=headers)
+    assert response.status_code == 403
+    layer.assert_not_called()
+
+
+def test_captured_relay_request_is_refused_after_the_window():
+    raw = json.dumps({"message": {"alert_title": "Synthetic notification"}}).encode()
+    sent_at = 1_800_000_000
+    headers = relay_headers(ORG, raw, now=sent_at)
+    with patch("tfc.utils.websocket_relay_auth.time.time", return_value=sent_at + 5):
+        assert post_relay(None, raw=raw, headers=headers).status_code == 200
+    with (
+        patch("tfc.utils.websocket_relay_auth.time.time", return_value=sent_at + 301),
+        patch("tfc.views.socket.get_channel_layer") as layer,
+    ):
+        # The same bytes and headers, sent again later.
+        assert post_relay(None, raw=raw, headers=headers).status_code == 403
+    layer.assert_not_called()
 
 
 @pytest.mark.parametrize("targeted", [False, True])

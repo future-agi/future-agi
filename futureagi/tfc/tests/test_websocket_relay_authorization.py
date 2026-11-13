@@ -34,7 +34,7 @@ from tfc.middleware.workspace_context import (
     set_workspace_context,
 )
 from tfc.settings.settings import MIDDLEWARE
-from tfc.utils.websocket_relay_auth import RELAY_SIGNATURE_HEADER, relay_signature
+from tfc.utils.websocket_relay_auth import relay_headers
 
 pytestmark = [pytest.mark.integration, pytest.mark.django_db(transaction=True)]
 PASSWORD = "Synthetic-relay-test-password"
@@ -246,11 +246,11 @@ def internal_headers(key, signed_org=None, signed_body=None):
     """Headers the server-side relay caller sends: system key plus signature."""
 
     def build(raw):
-        signature = relay_signature(
+        signed = relay_headers(
             signed_org or key.organization_id,
             raw if signed_body is None else signed_body,
         )
-        return {**key_headers(key), RELAY_SIGNATURE_HEADER: signature}
+        return {**key_headers(key), **signed}
 
     return build
 
@@ -364,7 +364,7 @@ def caller_headers(server, caller, org, owner, member, key):
         session = {"Authorization": "Bearer " + login(server, owner)["access"]}
         return lambda raw: {
             **session,
-            RELAY_SIGNATURE_HEADER: relay_signature(org.pk, raw),
+            **relay_headers(org.pk, raw),
         }
     raise AssertionError(caller)
 
