@@ -436,3 +436,159 @@ describe("CompareData compare_id ownership", () => {
     expect(props.compareId.current).toBe(NEW_ID);
   });
 });
+
+describe("CompareData expired comparison", () => {
+  const EXPIRED_ID = "00000000-0000-4000-8000-00000000000c";
+  const FRESH_ID = "00000000-0000-4000-8000-00000000000d";
+  // CompareDatasetsView answers a compare_id it cannot resolve with 404.
+  const notFound = () => ({
+    statusCode: 404,
+    result: "This comparison was not found or has expired.",
+  });
+  const renderWithGrid = () => {
+    const api = {
+      refreshServerSide: vi.fn(),
+      refreshCells: vi.fn(),
+      showNoRowsOverlay: vi.fn(),
+    };
+    const props = renderCompare({ gridApiRef: { current: { api } } });
+    return { api, props };
+  };
+  const failPage = async (startRow) => {
+    const handlers = { success: vi.fn(), fail: vi.fn() };
+    await act(async () => {
+      await grid.props.serverSideDatasource.getRows({
+        request: { startRow, endRow: startRow + 10 },
+        ...handlers,
+      });
+    });
+    return handlers;
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("starts over from the first block with a fresh comparison", async () => {
+    const { api, props } = renderWithGrid();
+    post.mockImplementationOnce(() =>
+      Promise.resolve(withCompareId(EXPIRED_ID)),
+    );
+    await getPage();
+    expect(props.compareId.current).toBe(EXPIRED_ID);
+    api.refreshServerSide.mockClear();
+    api.showNoRowsOverlay.mockClear();
+
+    post.mockImplementationOnce(() => Promise.reject(notFound()));
+    const expired = await failPage(10);
+
+    expect(post).toHaveBeenLastCalledWith(
+      "/model-hub/datasets/dataset-a/compare-datasets/",
+      expect.objectContaining({
+        current_page_index: 1,
+        compare_id: EXPIRED_ID,
+      }),
+    );
+    expect(expired.success).not.toHaveBeenCalled();
+    expect(expired.fail).toHaveBeenCalledTimes(1);
+    expect(props.compareId.current).toBeNull();
+    expect(api.refreshServerSide).toHaveBeenCalledExactlyOnceWith({
+      purge: true,
+    });
+    expect(api.showNoRowsOverlay).not.toHaveBeenCalled();
+
+    // The purged grid asks for the first block again, without the old id.
+    post.mockImplementationOnce(() => Promise.resolve(withCompareId(FRESH_ID)));
+    const success = await getPage();
+    expect(post).toHaveBeenLastCalledWith(
+      "/model-hub/datasets/dataset-a/compare-datasets/",
+      expect.objectContaining({ current_page_index: 0, compare_id: null }),
+    );
+    expect(success).toHaveBeenCalledExactlyOnceWith({
+      rowData: rows.slice(0, 10),
+      rowCount: 12,
+    });
+    expect(props.compareId.current).toBe(FRESH_ID);
+    expect(deleteCompare).not.toHaveBeenCalled();
+  });
+
+  it("ignores a late block of the comparison that was already replaced", async () => {
+    const { api, props } = renderWithGrid();
+    post.mockImplementationOnce(() =>
+      Promise.resolve(withCompareId(EXPIRED_ID)),
+    );
+    await getPage();
+    api.refreshServerSide.mockClear();
+
+    const second = deferred();
+    const third = deferred();
+    post
+      .mockImplementationOnce(() => second.promise)
+      .mockImplementationOnce(() => third.promise);
+    const block1 = startPage(10);
+    const block2 = startPage(20);
+    await act(async () => {
+      second.reject(notFound());
+      await block1.pending;
+    });
+    await act(async () => {
+      third.reject(notFound());
+      await block2.pending;
+    });
+
+    expect(block1.fail).toHaveBeenCalledTimes(1);
+    expect(block2.fail).toHaveBeenCalledTimes(1);
+    expect(block2.success).not.toHaveBeenCalled();
+    expect(api.refreshServerSide).toHaveBeenCalledTimes(1);
+    expect(props.compareId.current).toBeNull();
+  });
+
+  it("shows the empty grid when the fresh comparison is missing too", async () => {
+    const { api } = renderWithGrid();
+    post.mockImplementationOnce(() =>
+      Promise.resolve(withCompareId(EXPIRED_ID)),
+    );
+    await getPage();
+    post.mockImplementationOnce(() => Promise.reject(notFound()));
+    await failPage(10);
+    post.mockImplementationOnce(() => Promise.resolve(withCompareId(FRESH_ID)));
+    await getPage();
+    api.refreshServerSide.mockClear();
+
+    post.mockImplementationOnce(() => Promise.reject(notFound()));
+    const again = await failPage(10);
+
+    // Only one restart per selection, so a comparison that cannot be read
+    // back never loops.
+    expect(api.refreshServerSide).not.toHaveBeenCalled();
+    expect(again.fail).not.toHaveBeenCalled();
+    expect(again.success).toHaveBeenCalledExactlyOnceWith({
+      rowData: [],
+      rowCount: 0,
+    });
+  });
+
+  it("does not start over for other failures", async () => {
+    const { api, props } = renderWithGrid();
+    post.mockImplementationOnce(() =>
+      Promise.resolve(withCompareId(EXPIRED_ID)),
+    );
+    await getPage();
+    api.refreshServerSide.mockClear();
+
+    post.mockImplementationOnce(() =>
+      Promise.reject({
+        statusCode: 400,
+        result: "Unable to compare datasets.",
+      }),
+    );
+    const failed = await failPage(10);
+
+    expect(api.refreshServerSide).not.toHaveBeenCalled();
+    expect(failed.success).toHaveBeenCalledExactlyOnceWith({
+      rowData: [],
+      rowCount: 0,
+    });
+    expect(props.compareId.current).toBe(EXPIRED_ID);
+  });
+});

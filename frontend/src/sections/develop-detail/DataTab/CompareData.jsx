@@ -26,7 +26,7 @@ import CompareDatasetDetailDrawer from "./CompareDatasetDetailDrawer/CompareData
 import { useDeleteCompare } from "src/api/develop/dataset-compare";
 import { useDevelopDetailContext } from "src/pages/dashboard/Develop/Context/DevelopDetailContext";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
-import { APP_CONSTANTS } from "src/utils/constants";
+import { APP_CONSTANTS, RESPONSE_CODES } from "src/utils/constants";
 import CompositeEvalDialog from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/CompositeEvalDialog";
 
 // Define status types that require refreshing
@@ -98,6 +98,8 @@ const CompareData = ({
   );
   const activeSelectionRef = useRef(selection);
   const compareIdSelectionRef = useRef(null);
+  // The selection whose expired comparison was already rebuilt once.
+  const restartedSelectionRef = useRef(null);
   useLayoutEffect(() => {
     activeSelectionRef.current = selection;
   }, [selection]);
@@ -522,6 +524,23 @@ const CompareData = ({
             params.fail?.();
             return;
           }
+          const comparisonGone =
+            requestCompareId && error?.statusCode === RESPONSE_CODES.NOT_FOUND;
+          if (comparisonGone && requestCompareId !== compareId.current) {
+            // Another block already started over with a fresh comparison.
+            params.fail?.();
+            return;
+          }
+          if (comparisonGone && restartedSelectionRef.current !== selection) {
+            // The comparison expired. Start over once with a fresh one, from
+            // the first block, so every block comes from the same comparison.
+            restartedSelectionRef.current = selection;
+            compareId.current = null;
+            compareIdSelectionRef.current = null;
+            params.fail?.();
+            gridApiRef.current?.api?.refreshServerSide({ purge: true });
+            return;
+          }
           setHasData(false);
           isRefreshingColumns.current = null;
           params.success({
@@ -537,6 +556,7 @@ const CompareData = ({
       selectedDatasetsValues,
       baseColumn,
       compareId,
+      gridApiRef,
       deleteCompare,
       setCommonColumn,
       setDatasetInfo,
