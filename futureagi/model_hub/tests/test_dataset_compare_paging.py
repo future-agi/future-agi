@@ -61,8 +61,15 @@ def page_store(monkeypatch, tmp_path):
                 raise CompareObjectUnavailable(name)
             return json.loads(json.dumps(store[key]))
 
+    def delete_metadata(compare_id):
+        with lock:
+            store.pop(f"compare/{compare_id}/metadata.json", None)
+
     monkeypatch.setattr("model_hub.views.develop_dataset.write_compare_json", write)
     monkeypatch.setattr("model_hub.views.develop_dataset.read_compare_json", read)
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.delete_compare_metadata", delete_metadata
+    )
     monkeypatch.setenv("COMPARE_DATASET_LOCAL_ROOT", str(tmp_path / "compare"))
     return store
 
