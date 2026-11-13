@@ -304,7 +304,7 @@ def _gated(
 
 
 def _failed_check_excerpt(bundle: HarnessAssembledBundle | None) -> str | None:
-    """The redacted line ALK recorded for the check this pairing failed."""
+    """What the sandbox's failure record reported for the check this pairing failed, labelled as reported."""
     if bundle is None or bundle.state != HarnessAssembledBundle.State.FAILED:
         return None
     excerpt = (bundle.error or {}).get("excerpt")
