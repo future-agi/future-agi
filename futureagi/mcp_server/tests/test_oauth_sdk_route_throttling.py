@@ -616,7 +616,9 @@ async def test_sdk_token_window_is_per_forwarded_client_behind_a_trusted_proxy()
     assert statuses == [401, 401, 401]
 
     async with _forwarded_client("198.51.100.20") as http:
-        second = await http.post("/revoke", {"client_id": "unknown-9", "token": "t"})
+        second = await http.post(
+            "/revoke", data={"client_id": "unknown-9", "token": "t"}
+        )
         third = await http.post("/token", data=_code_form("unknown-10", "x"))
     assert second.status_code == 401
     _assert_throttled(third, "Too many token requests")
