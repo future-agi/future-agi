@@ -399,6 +399,43 @@ class LinkAcceptance(unittest.TestCase):
                 with self.subTest(text=text, name=name):
                     self.assertEqual(load(name).__globals__["_links"](text), [])
 
+    def test_long_runs_of_closing_brackets_are_trimmed_quickly(self):
+        for text, links in (
+            ("ftp://allowed.example/" + ")" * 1_000_000, ["ftp://allowed.example/"]),
+            (
+                "https://allowed.example/" + ")" * 1_000_000,
+                ["https://allowed.example/"],
+            ),
+            (" //allowed.example/" + ")" * 1_000_000, ["//allowed.example/"]),
+            ("allowed.example/" + ")" * 1_000_000, ["http://allowed.example/"]),
+            (
+                "https://allowed.example/" + "]" * 1_000_000,
+                ["https://allowed.example/"],
+            ),
+            (
+                "https://allowed.example/a_(b" + ")" * 1_000_000,
+                ["https://allowed.example/a_(b)"],
+            ),
+        ):
+            for name in NAMES:
+                links_of = load(name).__globals__["_links"]
+                with self.subTest(name=name, text=text[:30]):
+                    started = time.monotonic()
+                    self.assertEqual(links_of(text), links)
+                    self.assertLess(time.monotonic() - started, 10)
+
+    def test_many_email_like_words_are_skipped_quickly(self):
+        for text in (
+            "a.bc@x " * 150_000,
+            ",a.bc@x" * 150_000,
+        ):
+            for name in NAMES:
+                links_of = load(name).__globals__["_links"]
+                with self.subTest(name=name, text=text[:8]):
+                    started = time.monotonic()
+                    self.assertEqual(links_of(text), [])
+                    self.assertLess(time.monotonic() - started, 10)
+
     def test_link_matching_stays_fast_on_long_input(self):
         inputs = (
             "a" * 1_000_000,

@@ -47,21 +47,30 @@ config:
             r"(?<![\w@.+/:-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+"
             r"[A-Za-z]{2,}(?![\w-]|\.[A-Za-z0-9])(?::[0-9]+)?(?:[/?#][^\s<>\"']*)?"
         )
+        text = str(text)
         result = []
         checked = 0
-        for match in re.finditer(pattern, str(text), re.IGNORECASE):
+        # Whitespace-separated words, read once in step with the matches, so
+        # the email check below stays linear in the length of the text.
+        words = re.finditer(r"\S+", text)
+        word_end = 0
+        in_email = False
+        for match in re.finditer(pattern, text, re.IGNORECASE):
             candidate = match.group().rstrip(".,;!?:")
-            while candidate.endswith(")") and candidate.count(")") > candidate.count("("):
-                candidate = candidate[:-1]
-            while candidate.endswith("]") and candidate.count("]") > candidate.count("["):
-                candidate = candidate[:-1]
+            # Drop unbalanced closing brackets at the end, counted once.
+            for close, opening in ((")", "("), ("]", "[")):
+                surplus = candidate.count(close) - candidate.count(opening)
+                trailing = len(candidate) - len(candidate.rstrip(close))
+                candidate = candidate[: len(candidate) - max(0, min(surplus, trailing))]
             explicit = re.match(r"[a-z][a-z0-9+.-]*://|//", candidate, re.IGNORECASE)
             if not explicit:
                 # A suffix after punctuation in an email is still part of the email.
-                prefix = re.split(r"\s", str(text)[:match.start()])[-1]
-                suffix = re.split(r"\s", str(text)[match.start():], maxsplit=1)[0]
-                authority = re.split(r"[/?#]", prefix + suffix, maxsplit=1)[0]
-                if "@" in authority:
+                while word_end <= match.start():
+                    word = next(words)
+                    word_end = word.end()
+                    authority = re.split(r"[/?#]", word.group(), maxsplit=1)[0]
+                    in_email = "@" in authority
+                if in_email:
                     continue
             if not explicit or explicit.group() == "//":
                 # Common filenames are prose, not links ("//package.json" is a code
