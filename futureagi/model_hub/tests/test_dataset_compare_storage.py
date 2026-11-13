@@ -167,6 +167,49 @@ def test_a_public_or_upload_bucket_is_refused_for_comparison_data(
     assert _compare_objects(minio_storage, compare_id) == {}
 
 
+class _PolicyClient:
+    """An existing bucket whose policy read gives the error code."""
+
+    def __init__(self, code):
+        self.code = code
+        self.written = []
+
+    def bucket_exists(self, bucket):
+        return True
+
+    def get_bucket_policy(self, bucket):
+        error = Exception(self.code)
+        error.code = self.code
+        raise error
+
+    def put_object(self, **kwargs):
+        self.written.append(kwargs["object_name"])
+
+
+@pytest.mark.parametrize(
+    "code, accepted", [("NoSuchBucketPolicy", True), ("AccessDenied", False)]
+)
+def test_a_bucket_whose_policy_cannot_be_read_is_not_used(
+    monkeypatch, settings, code, accepted
+):
+    from model_hub.utils.compare_storage import write_compare_json
+    from tfc.utils.storage_client import PrivateBucketRefused
+
+    settings.UPLOAD_BUCKET_NAME = "test-upload"
+    settings.COMPARE_BUCKET_NAME = f"test-upload-compare-{uuid.uuid4().hex[:8]}"
+    client = _PolicyClient(code)
+    monkeypatch.setattr(storage_client, "_client", client)
+    monkeypatch.setattr(storage_client, "STORAGE_BACKEND", "s3")
+    compare_id = str(uuid.uuid4())
+    if accepted:
+        write_compare_json(compare_id, "metadata.json", {"status": "completed"})
+        assert client.written == [f"compare/{compare_id}/metadata.json"]
+    else:
+        with pytest.raises(PrivateBucketRefused):
+            write_compare_json(compare_id, "metadata.json", {"status": "completed"})
+        assert client.written == []
+
+
 class _FakeBucketClient:
     """Object storage holding objects with their modification times."""
 

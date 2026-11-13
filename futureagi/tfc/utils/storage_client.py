@@ -325,16 +325,17 @@ def ensure_bucket(client: Minio, bucket_name: str) -> None:
 
 
 class PrivateBucketRefused(Exception):
-    """A bucket meant for server-only data whose policy lets anyone in."""
+    """A bucket meant for server-only data that may be readable by others."""
 
     def __init__(self, bucket_name: str):
-        super().__init__(f"bucket {bucket_name} has a policy that lets anyone in")
+        super().__init__(f"bucket {bucket_name} is not known to be private")
         self.bucket_name = bucket_name
 
 
-# Answers to a policy read that mean there is no policy for these credentials
-# to read, as opposed to a failure to ask.
-_NO_POLICY_CODES = ("NoSuchBucketPolicy", "AccessDenied", "NotImplemented")
+# Answers to a policy read that mean the bucket has no policy: none is set,
+# or the service has no bucket policies at all. Anything else, AccessDenied
+# included, leaves the bucket unchecked and refused.
+_NO_POLICY_CODES = ("NoSuchBucketPolicy", "NotImplemented")
 _BUCKET_ALREADY_CREATED_CODES = ("BucketAlreadyOwnedByYou", "BucketAlreadyExists")
 
 # Private buckets this process has already created or checked.
@@ -360,8 +361,8 @@ def policy_allows_anyone(policy: str) -> bool:
 def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
     """Create the bucket if needed, with no bucket policy, so only the
     backend's own credentials reach its objects. An existing bucket whose
-    policy lets anyone in raises PrivateBucketRefused and is asked again on
-    the next call. GCS buckets are pre-created with IAM, as for ensure_bucket.
+    policy lets anyone in, or whose policy these credentials may not read,
+    raises PrivateBucketRefused and is asked again on the next call. GCS buckets are pre-created with IAM, as for ensure_bucket.
     """
     if bucket_name in _checked_private_buckets:
         return
@@ -381,7 +382,12 @@ def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
     try:
         policy = client.get_bucket_policy(bucket_name)
     except Exception as exc:
-        if getattr(exc, "code", None) not in _NO_POLICY_CODES:
+        code = getattr(exc, "code", None)
+        if code == "AccessDenied":
+            # Whether anyone else may read it cannot be told: do not use it.
+            logger.error("storage_private_bucket_policy_unreadable", bucket=bucket_name)
+            raise PrivateBucketRefused(bucket_name) from exc
+        if code not in _NO_POLICY_CODES:
             raise
         policy = None
     if policy and policy_allows_anyone(policy):
