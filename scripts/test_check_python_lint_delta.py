@@ -857,6 +857,113 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
 
         self.assert_gate_stopped(base, path)
 
+    def test_config_only_invalid_project_metadata_stops(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write(
+            "futureagi/model_serving/pyproject.toml",
+            '[project]\nname = "serving"\nrequires-python = ">=3.11"\n',
+        )
+        base = self.commit()
+        path = "futureagi/model_serving/pyproject.toml"
+        self.write(
+            path,
+            '[project]\nname = "serving"\nrequires-python = "^3.11"\n',
+        )
+        self.commit()
+        self.assert_gate_stopped(base, path)
+
+    def test_config_only_new_non_table_project_stops(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        path = "futureagi/app/pyproject.toml"
+        self.write(path, 'project = "x"\n')
+        self.commit()
+        self.assert_gate_stopped(base, path)
+
+    def test_config_deletion_exposes_invalid_shadowed_config(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("futureagi/app/ruff.toml", "line-length = 99\n")
+        hidden = "futureagi/app/pyproject.toml"
+        self.write(hidden, "[tool.ruff]\nline-length = true\n")
+        base = self.commit()
+        self.git("rm", "-q", "futureagi/app/ruff.toml")
+        self.commit()
+        self.assert_gate_stopped(base, hidden)
+
+    def test_config_rename_exposes_invalid_shadowed_config(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("futureagi/app/ruff.toml", "line-length = 99\n")
+        hidden = "futureagi/app/pyproject.toml"
+        self.write(hidden, "[tool.ruff]\nline-length = true\n")
+        base = self.commit()
+        self.git("mv", "futureagi/app/ruff.toml", "futureagi/app/ruff.toml.old")
+        self.commit()
+        self.assert_gate_stopped(base, hidden)
+
+    def test_shadowed_config_uses_effective_ruff_settings(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("futureagi/app/.ruff.toml", "line-length = 99\n")
+        base = self.commit()
+        self.write("futureagi/app/ruff.toml", "line-length = true\n")
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+
+    def test_valid_project_metadata_without_ruff_settings_passes(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        self.write(
+            "futureagi/app/pyproject.toml",
+            '[project]\nname = "sample"\nrequires-python = ">=3.11"\n',
+        )
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+
+    def test_valid_model_serving_version_bump_passes(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        path = "futureagi/model_serving/pyproject.toml"
+        self.write(
+            path,
+            '[project]\nname = "serving"\nversion = "0.1.0"\nrequires-python = ">=3.11"\n',
+        )
+        base = self.commit()
+        self.write(
+            path,
+            '[project]\nname = "serving"\nversion = "0.1.1"\nrequires-python = ">=3.11"\n',
+        )
+        self.commit()
+        code, found, proc = self.gate(base)
+        self.assertEqual((code, found), (0, []), proc.stdout + proc.stderr)
+
+    def test_config_only_other_config_names_and_errors_stop(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        cases = (
+            ("futureagi/app/.ruff.toml", "line-length = true\n"),
+            ("futureagi/app/ruff.toml", "unknown-setting = true\n"),
+            ("futureagi/app/ruff.toml", 'required-version = ">=99.0.0"\n'),
+            ("futureagi/pyproject.toml", "[tool.ruff]\nline-length = true\n"),
+            ("ruff.toml", "line-length = true\n"),
+        )
+        for path, content in cases:
+            with self.subTest(path=path, content=content):
+                self.write(path, content)
+                self.commit()
+                self.assert_gate_stopped(base, path)
+                self.git("reset", "--hard", base)
+
+    def test_config_error_hides_temporary_probe_root(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        path = "futureagi/app/ruff.toml"
+        self.write(path, '[lint.per-file-ignores]\n"[bad" = ["F401"]\n')
+        self.commit()
+        code, _, proc = self.gate(base)
+        self.assertEqual(code, 2, proc.stdout + proc.stderr)
+        self.assertIn(path, proc.stdout)
+        self.assertNotIn("lint-config-check-", proc.stdout)
+
     def test_config_only_valid_nested_config_passes(self):
         self.write("futureagi/pyproject.toml", CONFIG)
         base = self.commit()

@@ -21,12 +21,13 @@ Three passes run on the changed files under futureagi/:
 Only config-named entries in futureagi/ or at the repository root are read:
 these are the paths Ruff can discover for backend files. Both comparison trees
 use the committed configuration from the trusted tip, including [project]
-metadata. Changed head configs are checked separately with pinned Ruff, even
-when no Python file changes. Changing formatter settings and reformatting in
-one PR is judged against the trusted tip's formatter. An in-scope config
-using `extend`, or one at the trusted tip that cannot be parsed as TOML, stops
-the check rather than following settings
-outside the committed overlay.
+metadata. Changed head configs are checked separately with pinned Ruff's
+config discovery, even when no Python file changes; removals are also probed.
+Changing formatter settings and reformatting in one PR is judged against the
+trusted tip's formatter. Root configs are probed at the root even when a
+backend config shadows them. An in-scope config using `extend`, or one that
+cannot be parsed as TOML, stops the check even if a sibling shadows it,
+rather than following settings outside the committed overlay.
 
 Usage, from the repo root:
 
@@ -303,22 +304,31 @@ def validate_changed_head_configs(
     head_configs: dict[str, bytes | None],
     merge_base_configs: dict[str, bytes | None],
 ) -> None:
-    """Ask pinned Ruff to load changed head settings without reading head code."""
-    for path, content in sorted(head_configs.items()):
-        if content == merge_base_configs.get(path):
-            continue
-        if content is None:
-            raise GateError(f"{path}: head config is not a regular file")
-        if (
-            PurePosixPath(path).name == "pyproject.toml"
-            and ruff_section(path, content) is None
-        ):
-            continue  # A pyproject without [tool.ruff] is not a Ruff config.
-        with tempfile.TemporaryDirectory(prefix="lint-config-check-") as tmp:
-            config = Path(tmp) / path
+    """Probe changed or removed config directories with committed head settings.
+
+    Ruff discovers ancestor configs and reads pyproject metadata even without a
+    [tool.ruff] table. A removal can reveal a previously shadowed config. Keep
+    all in-scope head configs in the isolated tree so discovery sees their real
+    hierarchy, but never read or run source files from the head checkout.
+    """
+    changed = sorted(
+        path
+        for path in head_configs.keys() | merge_base_configs.keys()
+        if head_configs.get(path) != merge_base_configs.get(path)
+    )
+    if not changed:
+        return
+    with tempfile.TemporaryDirectory(prefix="lint-config-check-") as tmp:
+        root = Path(tmp)
+        for path, content in head_configs.items():
+            if content is None:
+                raise GateError(f"{path}: head config is not a regular file")
+            config = root / path
             config.parent.mkdir(parents=True, exist_ok=True)
             config.write_bytes(content)
-            probe = config.parent / "__lint_config_probe__.py"
+        for path in changed:
+            probe = (root / path).parent / "__lint_config_probe__.py"
+            probe.parent.mkdir(parents=True, exist_ok=True)
             probe.write_text("pass\n", encoding="utf-8")
             proc = subprocess.run(
                 [
@@ -329,18 +339,20 @@ def validate_changed_head_configs(
                     "--exit-zero",
                     "--output-format",
                     "json",
-                    "--config",
-                    str(config),
                     "--",
                     str(probe),
                 ],
-                cwd=Path(tmp),
+                cwd=root,
                 check=False,
                 capture_output=True,
                 text=True,
             )
             if proc.returncode:
-                error = proc.stderr.strip().replace(str(config), path)[:2000]
+                error = (
+                    proc.stderr.strip()
+                    .replace(f"{root}{os.sep}", "")
+                    .replace(str(root), ".")[:2000]
+                )
                 raise GateError(f"{path}: head Ruff config cannot be loaded: {error}")
 
 
