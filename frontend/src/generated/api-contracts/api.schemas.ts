@@ -13684,7 +13684,7 @@ export interface EvalApiLogRowResponseResultApi {
   log_id: string;
   created_at: string;
   evaluation_id: string;
-  source?: string;
+  source?: string | null;
   required_keys: string[];
   values: EvalApiLogRowResponseResultApiValues;
   output: EvalApiLogRowResponseResultApiOutput;
@@ -13692,13 +13692,12 @@ export interface EvalApiLogRowResponseResultApi {
   error_details?: EvalApiLogRowResponseResultApiErrorDetails;
   error_localizer_status?: string;
   error_localizer_message?: string;
-  dataset_id?: string;
-  /** @minLength 1 */
-  span_id?: string;
-  trace_id?: string;
-  prompt_id?: string;
-  optimization_id?: string;
-  experiment_id?: string;
+  dataset_id?: string | null;
+  span_id?: string | null;
+  trace_id?: string | null;
+  prompt_id?: string | null;
+  optimization_id?: string | null;
+  experiment_id?: string | null;
   source_navigation?: EvalLogSourceNavigationApi;
 }
 

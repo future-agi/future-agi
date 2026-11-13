@@ -56,3 +56,24 @@ describe("generated get-eval-logs source_navigation contract", () => {
     ).toBe(false);
   });
 });
+
+// The log row itself sends explicit null for the ids its source does not have
+// (model_hub/views/separate_evals.py: a tracer log with no span or trace).
+describe("generated get-eval-logs row ids", () => {
+  const row = Response.shape.result.shape;
+
+  it.each([["span_id"], ["trace_id"], ["dataset_id"], ["source"]])(
+    "accepts an explicit null %s",
+    (field) => {
+      expect(row[field].safeParse(null).success).toBe(true);
+    },
+  );
+
+  it("still accepts present ids and rejects a malformed trace id", () => {
+    expect(row.span_id.safeParse("f9da550bd36da78b").success).toBe(true);
+    expect(
+      row.trace_id.safeParse("22222222-2222-4222-8222-222222222222").success,
+    ).toBe(true);
+    expect(row.trace_id.safeParse("not-a-uuid").success).toBe(false);
+  });
+});

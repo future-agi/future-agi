@@ -27233,7 +27233,7 @@ export const ModelHubGetEvalLogsListResponse = zod.object({
     log_id: zod.string().uuid(),
     created_at: zod.string().datetime({ offset: true }),
     evaluation_id: zod.string().uuid(),
-    source: zod.string().optional(),
+    source: zod.union([zod.string(), zod.null()]).optional(),
     required_keys: zod.array(zod.string().min(1)),
     values: zod.object({}).passthrough(),
     output: zod.object({}).passthrough(),
@@ -27241,12 +27241,12 @@ export const ModelHubGetEvalLogsListResponse = zod.object({
     error_details: zod.object({}).passthrough().optional(),
     error_localizer_status: zod.string().optional(),
     error_localizer_message: zod.string().optional(),
-    dataset_id: zod.string().uuid().optional(),
-    span_id: zod.string().min(1).optional(),
-    trace_id: zod.string().uuid().optional(),
-    prompt_id: zod.string().uuid().optional(),
-    optimization_id: zod.string().uuid().optional(),
-    experiment_id: zod.string().uuid().optional(),
+    dataset_id: zod.union([zod.string().uuid(), zod.null()]).optional(),
+    span_id: zod.union([zod.string().min(1), zod.null()]).optional(),
+    trace_id: zod.union([zod.string().uuid(), zod.null()]).optional(),
+    prompt_id: zod.union([zod.string().uuid(), zod.null()]).optional(),
+    optimization_id: zod.union([zod.string().uuid(), zod.null()]).optional(),
+    experiment_id: zod.union([zod.string().uuid(), zod.null()]).optional(),
     source_navigation: zod
       .object({
         status: zod.enum([
