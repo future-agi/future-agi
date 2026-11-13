@@ -23,7 +23,7 @@ type zscalerRequest struct {
 }
 
 type zscalerResponse struct {
-	Matched    bool                `json:"matched"`
+	Matched    bool               `json:"matched"`
 	Violations []zscalerViolation `json:"violations"`
 }
 
@@ -33,7 +33,7 @@ type zscalerViolation struct {
 	Details  string `json:"details"`
 }
 
-func newZscalerAdapter(cfg map[string]interface{}) *zscalerAdapter {
+func newZscalerAdapter(cfg adapterConfig) *zscalerAdapter {
 	return &zscalerAdapter{
 		apiKey:      getStringConfig(cfg, "api_key", ""),
 		cloud:       getStringConfig(cfg, "cloud", "zscaler.net"),

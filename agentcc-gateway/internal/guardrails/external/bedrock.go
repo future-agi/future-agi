@@ -39,7 +39,7 @@ type bedrockResponse struct {
 	} `json:"outputs"`
 }
 
-func newBedrockAdapter(cfg map[string]interface{}) *bedrockAdapter {
+func newBedrockAdapter(cfg adapterConfig) *bedrockAdapter {
 	region := getStringConfig(cfg, "region", "us-east-1")
 	endpoint := getStringConfig(cfg, "endpoint", "")
 	if endpoint == "" {

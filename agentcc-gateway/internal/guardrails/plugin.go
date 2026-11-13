@@ -356,6 +356,9 @@ func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, inp
 
 	select {
 	case res := <-ch:
+		if res.cr != nil && res.cr.OperationalError {
+			res.err = fmt.Errorf("%s", res.cr.Message)
+		}
 		if res.err != nil {
 			slog.Error("dynamic guardrail error",
 				"guardrail", g.Name(),
@@ -366,9 +369,10 @@ func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, inp
 				return nil
 			}
 			return &CheckResult{
-				Pass:    false,
-				Score:   1.0,
-				Message: fmt.Sprintf("guardrail %q error: %v", g.Name(), res.err),
+				Pass:             false,
+				Score:            1.0,
+				Message:          fmt.Sprintf("guardrail %q error: %v", g.Name(), res.err),
+				OperationalError: true,
 			}
 		}
 		return res.cr
