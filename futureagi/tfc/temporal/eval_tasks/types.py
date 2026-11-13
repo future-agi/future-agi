@@ -69,6 +69,10 @@ class ContinuousDrainState:
     workflow_confirmed_stopped: bool = False
     # See ``EvalTaskWorkflowInput.lost_entry_ids``.
     lost_entry_ids: list[str] = field(default_factory=list)
+    # A DB outage during pause cleanup must not lose the known, unstarted IDs
+    # or the pause signal when the deferred loop rolls its history over.
+    pending_requeue_ids: list[str] = field(default_factory=list)
+    pause_requested: bool = False
 
 
 @dataclass

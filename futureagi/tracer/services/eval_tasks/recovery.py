@@ -20,6 +20,7 @@ from tracer.selectors.eval_tasks.stranded import (
     only_unreclaimable_claims_remain,
     sweepable_statuses,
 )
+from tracer.services.eval_tasks.configuration import continuous_coverage_floor
 from tracer.services.eval_tasks.reaper import (
     effective_stale_seconds,
     reap_stale_running,
@@ -84,14 +85,11 @@ def continuous_activation_floor(task: EvalTask, *, now: datetime) -> datetime | 
     that accepts the coverage, and the reconciler stamps it only in the pass
     that also sets the cursor, so with no cursor it is the latest acceptance.
     It is a writable API field, hence the cap at ``now``.
+
+    The rule is ``continuous_coverage_floor``, which edits apply too, so the
+    sweeper and the edit path cannot disagree about a task's floor.
     """
-    floor = task.start_time or task.created_at
-    if task.continuous_cursor is not None or task.last_run is None:
-        return floor
-    accepted = min(task.last_run, now)
-    if floor is None or accepted > floor:
-        return accepted
-    return floor
+    return continuous_coverage_floor(task, now=now)
 
 
 def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
