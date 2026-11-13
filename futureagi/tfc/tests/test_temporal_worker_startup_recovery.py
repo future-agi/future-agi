@@ -13,6 +13,7 @@ import pytest
 from temporalio.service import RPCError, RPCStatusCode
 
 from tfc.management.commands import start_temporal_worker as command
+from tfc.tests._temporal_worker_entry import ENTRY
 
 
 @pytest.fixture
@@ -178,77 +179,6 @@ def test_fatal_worker_failure_reaches_supervisor_instead_of_silent_idle(worker_c
     assert namespace.exits == [1]
 
 
-# The real command in a child process with the real os._exit: the process
-# status is what bin/temporal-worker, Kubernetes or an on-failure restart
-# policy sees. Providers are stubbed as in the fixture above.
-_ENTRY = """
-import asyncio, os, signal, sys
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
-
-import django
-
-django.setup()
-
-import temporalio.client
-import temporalio.worker
-
-import tfc.logging.temporal
-import tfc.telemetry.temporal
-import tfc.temporal
-from tfc.management.commands import start_temporal_worker as command
-
-MODE = sys.argv[1]
-command.disable_litellm_logging_worker = lambda: None
-tfc.telemetry.temporal.init_otel_for_temporal = lambda _: None
-tfc.telemetry.temporal.get_interceptors_for_client = lambda: []
-tfc.logging.temporal.configure_temporal_logging = lambda: None
-tfc.temporal.get_workflows_and_activities_for_queue = lambda _: ([], [])
-
-
-async def describe(request, **kwargs):
-    return Mock()
-
-
-temporalio.client.Client.connect = AsyncMock(
-    return_value=SimpleNamespace(
-        namespace="default",
-        workflow_service=SimpleNamespace(describe_namespace=describe),
-    )
-)
-
-
-class Worker:
-    def __init__(self, **kwargs):
-        self.stopped = asyncio.Event()
-
-    async def run(self):
-        if MODE == "fatal":
-            raise ValueError("synthetic fatal worker poller error")
-        os.kill(os.getpid(), signal.SIGTERM)
-        await self.stopped.wait()
-
-    async def shutdown(self):
-        self.stopped.set()
-
-
-temporalio.worker.Worker = Worker
-command.Command().handle(
-    task_queue="tasks_s",
-    all_queues=False,
-    temporal_host="localhost:7233",
-    namespace="default",
-    graceful_timeout=1,
-    max_concurrent_activities=1,
-    max_concurrent_workflow_tasks=2,
-    target_memory_usage=None,
-    target_cpu_usage=None,
-    reload_dispatcher=False,
-)
-os.write(1, b"handle() returned without exiting\\n")
-"""
-
-
 @pytest.mark.slow
 @pytest.mark.parametrize("mode,expected", [("fatal", 1), ("clean", 0)])
 def test_worker_process_status_reports_fatal_failure(mode, expected):
@@ -258,7 +188,7 @@ def test_worker_process_status_reports_fatal_failure(mode, expected):
         "OTEL_ENABLED": "false",
     }
     result = subprocess.run(
-        [sys.executable, "-c", _ENTRY, mode],
+        [sys.executable, "-c", ENTRY, mode],
         cwd=Path(__file__).resolve().parents[2],
         env=env,
         capture_output=True,

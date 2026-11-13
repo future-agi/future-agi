@@ -11,10 +11,11 @@ import signal
 import stat
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
+
+from tfc.tests._temporal_worker_entry import ENTRY
 
 BACKEND = Path(__file__).resolve().parents[2]
 WRAPPER = BACKEND / "bin" / "temporal-worker"
@@ -65,19 +66,22 @@ def test_wrapper_exits_with_the_worker_status(tmp_path, child, expected):
     ids=["graceful", "stops-on-the-signal", "fails-while-stopping"],
 )
 def test_relayed_shutdown_reports_how_the_worker_stopped(tmp_path, on_term, expected):
-    ready = tmp_path / "ready"
+    # The stub says "ready" once its trap is set; signal only after that.
     env = _stub_python(
-        tmp_path, f'{on_term}\ntouch "{ready}"\nwhile true; do sleep 0.1; done'
+        tmp_path, f"{on_term}\necho ready\nwhile true; do sleep 0.1; done"
     )
     proc = _wrapper(env)
     try:
-        deadline = time.monotonic() + 30
-        while not ready.exists():
-            assert proc.poll() is None, proc.stdout.read()
-            assert time.monotonic() < deadline, "stub worker never started"
-            time.sleep(0.05)
+        started = []
+        for line in proc.stdout:  # ends at EOF if the stub dies first
+            started.append(line)
+            if line.strip() == "ready":
+                break
+        else:
+            pytest.fail("stub worker never started:\n" + "".join(started))
         proc.send_signal(signal.SIGTERM)
         output, _ = proc.communicate(timeout=60)
+        output = "".join(started) + output
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -89,8 +93,6 @@ def test_relayed_shutdown_reports_how_the_worker_stopped(tmp_path, on_term, expe
 @pytest.mark.slow
 @pytest.mark.parametrize("mode,expected", [("fatal", 1), ("clean", 0)])
 def test_wrapper_reports_the_real_command_status(tmp_path, mode, expected):
-    from tfc.tests.test_temporal_worker_startup_recovery import _ENTRY
-
     # exec keeps the wrapper's worker pid on the interpreter running the real
     # command, as with `python manage.py start_temporal_worker`.
     env = _stub_python(
@@ -104,7 +106,7 @@ def test_wrapper_reports_the_real_command_status(tmp_path, mode, expected):
         DJANGO_SETTINGS_MODULE="tfc.settings.test",
         OTEL_ENABLED="false",
         REAL_PYTHON=sys.executable,
-        WORKER_ENTRY=_ENTRY,
+        WORKER_ENTRY=ENTRY,
         WORKER_MODE=mode,
     )
     proc = _wrapper(env)

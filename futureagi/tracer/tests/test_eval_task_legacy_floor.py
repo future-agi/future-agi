@@ -23,6 +23,7 @@ from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, ObservationSpan
 from tracer.models.trace import Trace
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
+from tracer.services.eval_tasks.configuration import continuous_coverage_floor
 from tracer.services.eval_tasks.entries import soft_delete_live
 from tracer.tests._ch_seed import seed_ch_spans, truncate_ch_spans
 
@@ -318,8 +319,5 @@ def test_start_transition_applies_the_coverage_floor_rule(
     before = EvalTask.objects.get(pk=eval_task.pk)
     monkeypatch.setattr(timezone, "now", lambda: now)
     assert _start(eval_task) == expected
-
-    from tracer.services.eval_tasks.configuration import continuous_coverage_floor
-
     # The edit path's Python rule and the start transition's SQL agree.
     assert continuous_coverage_floor(before, now=now) == expected
