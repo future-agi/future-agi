@@ -66,7 +66,98 @@ def legacy_graph(monkeypatch):
         generator=generator,
         create_graph=create_graph,
         enhanced=enhanced,
+        llm=llm,
     )
+
+
+@pytest.mark.parametrize("transcript_option", ["omitted", "empty-list", "empty-dict"])
+def test_legacy_supplied_graph_without_transcripts(
+    legacy_graph, monkeypatch, transcript_option
+):
+    """Supplied graphs still propose intents when legacy payloads lack transcripts."""
+    from model_hub.models.choices import StatusType
+    from tfc.temporal.simulate import activities
+
+    context = legacy_graph
+    graph_data = {
+        "nodes": [{"id": "start", "isStart": True}, {"id": "end"}],
+        "edges": [{"from": "start", "to": "end"}],
+    }
+    payload = {
+        "agent_definition_id": context.agent.id,
+        "graph": graph_data,
+        "generate_graph": False,
+    }
+    if transcript_option != "omitted":
+        payload["transcripts"] = [] if transcript_option == "empty-list" else {}
+    branches = [{"start_node": "start", "end_node": "end"}]
+    context.generator.return_value.get_branches.return_value = branches
+    propose_intents = MagicMock(
+        return_value=[{"use_case_id": "booking", "user_intent": "Ask about a booking"}]
+    )
+    monkeypatch.setattr(
+        activities, "propose_use_cases_covering_workflows", propose_intents
+    )
+
+    result = context.run(context.scenario.id, payload)
+
+    assert result == {
+        "scenario_id": context.scenario.id,
+        "dataset_id": context.dataset.id,
+        "status": "COMPLETED",
+    }
+    assert context.scenario.status == StatusType.COMPLETED.value
+    assert context.scenario.dataset is context.dataset
+    context.create_graph.assert_called_once_with(
+        scenario=context.scenario,
+        name=f"{context.scenario.name} - Graph",
+        description=f"Graph for {context.scenario.name}",
+        organization=context.scenario.organization,
+        graph_config={"graph_data": graph_data, "source": "user_provided"},
+    )
+    context.generator.assert_called_once_with(
+        scenario=context.scenario, agent_definition=context.agent
+    )
+    context.generator.return_value.generate_graph.assert_not_called()
+    context.generator.return_value.get_branches.assert_called_once_with(
+        graph_id="graph-id"
+    )
+    propose_intents.assert_called_once_with(
+        agent_definition=context.agent.description,
+        branches=branches,
+        llm=context.llm.return_value,
+        skip_coverage_patch=True,
+    )
+    run_kwargs = context.enhanced.return_value.run.call_args.kwargs
+    assert run_kwargs["graph_id"] == "graph-id"
+    assert run_kwargs["intent_dict"] == {"booking": "Ask about a booking"}
+
+
+def test_legacy_supplied_graph_with_transcripts(legacy_graph, monkeypatch):
+    """Transcripts remain the intent source without initializing a graph generator."""
+    from tfc.temporal.simulate import activities
+
+    context = legacy_graph
+    propose_intents = MagicMock()
+    monkeypatch.setattr(
+        activities, "propose_use_cases_covering_workflows", propose_intents
+    )
+    payload = {
+        "agent_definition_id": context.agent.id,
+        "graph": {"nodes": [{"id": "start", "isStart": True}], "edges": []},
+        "generate_graph": False,
+        "transcripts": {"call-1": {"transcript": "I have a booking question"}},
+    }
+
+    result = context.run(context.scenario.id, payload)
+
+    assert result["status"] == "COMPLETED", result
+    context.generator.assert_not_called()
+    propose_intents.assert_not_called()
+    context.llm.return_value._get_completion_content.assert_called_once()
+    run_kwargs = context.enhanced.return_value.run.call_args.kwargs
+    assert run_kwargs["graph_id"] == "graph-id"
+    assert run_kwargs["intent_dict"] == {"call-1": "Ask about a booking"}
 
 
 @pytest.mark.parametrize("graph_source", ["generated", "provided", "none"])

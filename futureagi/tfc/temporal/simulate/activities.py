@@ -2588,6 +2588,11 @@ def _create_graph_scenario_sync(
             branches = None
             graph_id = str(scenario_graph.id) if scenario_graph else None
             if graph_id:
+                if not generate_graph:
+                    graph_generator = ConversationGraphGenerator(
+                        scenario=scenario,
+                        agent_definition=agent_definition,
+                    )
                 branches = graph_generator.get_branches(graph_id=graph_id)
 
             if branches:
