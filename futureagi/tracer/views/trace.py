@@ -174,6 +174,7 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
 from tracer.services.entity_tag_reads import (
     attach_legacy_trace_tags,
     enrich_entity_tags,
+    tag_export_row,
     tag_fields,
 )
 from tracer.services.entity_tags import TagReadUnavailable
@@ -4634,7 +4635,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             if page_response.status_code != status.HTTP_200_OK:
                 return page_response
             result = page_response.data.get("result", {})
-            table = result.get("table") or []
+            table = [tag_export_row(row) for row in result.get("table") or []]
             fieldnames = list(dict.fromkeys(key for row in table for key in row))
             fieldnames.extend(
                 key

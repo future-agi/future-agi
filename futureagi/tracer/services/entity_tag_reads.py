@@ -180,6 +180,27 @@ def tag_fields(row: dict[str, Any]) -> dict[str, Any]:
     return {key: row[key] for key in _TAG_FIELDS}
 
 
+# The tag editor's write contract on a list row, not exported data.
+_TAG_EDITOR_FIELDS = ("source_tag_names", "manual_tags", "tag_revision", "tag_target")
+
+
+def tag_export_row(
+    row: dict[str, Any], *, drop: tuple[str, ...] = ()
+) -> dict[str, Any]:
+    """A list row as a CSV export shows it: tag names only, no editor fields."""
+    exported = {
+        key: value
+        for key, value in row.items()
+        if key not in _TAG_EDITOR_FIELDS and key not in drop
+    }
+    tags = exported.get("tags")
+    if isinstance(tags, list):
+        exported["tags"] = [
+            tag.get("name") if isinstance(tag, dict) else tag for tag in tags
+        ]
+    return exported
+
+
 def enrich_entity_tags(
     rows: list[dict[str, Any]],
     *,

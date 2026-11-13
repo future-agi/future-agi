@@ -178,6 +178,7 @@ from tracer.services.clickhouse.v2.span_selectors import (
 from tracer.services.entity_tag_reads import (
     attach_legacy_trace_tags,
     enrich_entity_tags,
+    tag_export_row,
     tag_fields,
 )
 from tracer.services.entity_tags import TagReadUnavailable
@@ -4178,7 +4179,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 return page_response
             result = page_response.data.get("result", {})
             return bounded_page_csv_response(
-                rows=result.get("table"),
+                # parent_span_id keys the grid's tag saves; not an export column.
+                rows=[
+                    tag_export_row(row, drop=("parent_span_id",))
+                    for row in result.get("table") or []
+                ],
                 metadata=result.get("metadata"),
                 filename=f"{project.name or 'project'}_spans.csv",
             )

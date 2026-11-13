@@ -828,3 +828,84 @@ def test_bounded_csv_marks_inexact_candidate_order_without_truncation():
     assert _rows(response)[-1] == [
         "# export candidate membership or ordering is inexact; results are not an exact ordered population"
     ]
+
+
+_TAG_TARGET = {
+    "project_id": "00000000-0000-0000-0000-000000000001",
+    "trace_id": "trace-1",
+    "span_id": "span-1",
+    "start_hour": "2026-01-01T10:00:00+00:00",
+    "observation_type": "span",
+    "service_name": "svc",
+    "expected_start_time": "2026-01-01T10:15:00+00:00",
+    "expected_version": "1",
+}
+
+
+def _tagged_row(**fields):
+    """A list row with the tag editor's fields, as the list handlers send it."""
+    return {
+        **fields,
+        "tags": [{"name": "sdk"}, {"name": "reviewed", "color": "#123456"}],
+        "source_tag_names": ["sdk"],
+        "manual_tags": [{"name": "reviewed", "color": "#123456"}],
+        "tag_revision": 2,
+        "tag_target": _TAG_TARGET,
+    }
+
+
+def test_trace_export_has_readable_tags_and_no_tag_editor_columns():
+    request = _request({"project_id": "00000000-0000-0000-0000-000000000001"})
+    page = SimpleNamespace(
+        status_code=status.HTTP_200_OK,
+        data={
+            "result": {
+                "table": [_tagged_row(trace_id="trace-1", cost=1.25)],
+                "metadata": {},
+            }
+        },
+    )
+
+    with (
+        patch("tracer.views.trace._project_queryset_for_request") as projects,
+        patch("tracer.views.trace._has_voice_conversation_roots", return_value=False),
+        patch.object(TraceView, "list_traces_of_session", return_value=page),
+    ):
+        projects.return_value.filter.return_value.first.return_value = SimpleNamespace(
+            name="Observe"
+        )
+        response = TraceView().get_trace_export_data(request)
+
+    assert response.status_code == status.HTTP_200_OK
+    assert _rows(response) == [
+        ["trace_id", "cost", "tags"],
+        ["trace-1", "1.25", '["sdk","reviewed"]'],
+    ]
+
+
+def test_span_export_has_readable_tags_and_no_tag_editor_columns():
+    request = _request({"project_id": "00000000-0000-0000-0000-000000000001"})
+    page = SimpleNamespace(
+        status_code=status.HTTP_200_OK,
+        data={
+            "result": {
+                "table": [
+                    _tagged_row(span_id="span-1", parent_span_id="", status="OK")
+                ],
+                "metadata": {},
+            }
+        },
+    )
+
+    with (
+        patch("tracer.views.observation_span.Project.objects.filter") as projects,
+        patch.object(ObservationSpanView, "list_spans_observe", return_value=page),
+    ):
+        projects.return_value.first.return_value = SimpleNamespace(name="Observe")
+        response = ObservationSpanView().get_spans_export_data(request)
+
+    assert response.status_code == status.HTTP_200_OK
+    assert _rows(response) == [
+        ["span_id", "status", "tags"],
+        ["span-1", "OK", '["sdk","reviewed"]'],
+    ]
