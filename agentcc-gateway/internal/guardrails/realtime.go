@@ -184,10 +184,14 @@ func (p *RealtimePolicy) CheckModel(ctx context.Context, stage Stage, model, tex
 	}
 	for _, rule := range p.rules[stage] {
 		content, _ := json.Marshal(text)
-		request := &models.ChatCompletionRequest{Model: model, Messages: []models.Message{{Role: "user", Content: content}}}
+		// Post-stage text is vendor output: it is the response, and the request
+		// keeps only the model, as a chat post check sees the text once.
+		request := &models.ChatCompletionRequest{Model: model}
 		input := &CheckInput{Request: request, Metadata: maps.Clone(p.metadata)}
 		if stage == StagePost {
 			input.Response = &models.ChatCompletionResponse{Model: model, Choices: []models.Choice{{Message: models.Message{Role: "assistant", Content: content}}}}
+		} else {
+			request.Messages = []models.Message{{Role: "user", Content: content}}
 		}
 		result, err := runRealtimeCheck(ctx, rule, input)
 		if err != nil || shouldTrigger(result, rule.threshold) {
