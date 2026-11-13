@@ -127,6 +127,45 @@ describe("PDF preview rendering", () => {
     expect(page.props.pageNumber).toBe(1);
   });
 
+  it("follows internal PDF links to their page", () => {
+    render(<PdfPreviewDrawer />);
+    act(() => viewer.props.onLoadSuccess({ numPages: 3 }));
+    expect(page.props.renderAnnotationLayer).toBe(true);
+    act(() =>
+      viewer.props.onItemClick({ dest: [], pageIndex: 2, pageNumber: 3 }),
+    );
+    expect(screen.getByText("Page 3 of 3")).toBeVisible();
+    expect(page.props.pageNumber).toBe(3);
+    // A destination outside the document keeps the current page.
+    act(() =>
+      viewer.props.onItemClick({ dest: [], pageIndex: 8, pageNumber: 9 }),
+    );
+    expect(page.props.pageNumber).toBe(3);
+    act(() =>
+      viewer.props.onItemClick({ dest: [], pageIndex: 0, pageNumber: 1 }),
+    );
+    expect(screen.getByText("Page 1 of 3")).toBeVisible();
+  });
+
+  it("keeps link annotations and opens external links in a new tab", () => {
+    render(<PdfPreviewDrawer />);
+    act(() => viewer.props.onLoadSuccess({ numPages: 1 }));
+    expect(viewer.props.externalLinkTarget).toBe("_blank");
+    expect(viewer.props.externalLinkRel.split(" ")).toEqual(
+      expect.arrayContaining(["noopener", "noreferrer"]),
+    );
+    const link = { subtype: "Link", url: "https://example.com/" };
+    expect(
+      page.props.filterAnnotations({
+        annotations: [
+          link,
+          { subtype: "Widget" },
+          { subtype: "FileAttachment" },
+        ],
+      }),
+    ).toEqual([link]);
+  });
+
   it("reports unreadable documents without rendering a stale page", () => {
     render(<PdfPreviewDrawer />);
     act(() => viewer.props.onLoadError(new Error("invalid PDF")));
