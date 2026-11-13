@@ -1,4 +1,5 @@
 import { create } from "src/utils/zustand";
+import { registerUserStoreReset } from "src/utils/auth/userStoreResets";
 import {
   addEdge,
   applyNodeChanges,
@@ -292,6 +293,8 @@ export const useGraphStore = create((set, get) => ({
 export const resetGraphStore = () => {
   useGraphStore.getState().reset();
 };
+
+registerUserStoreReset("graph-builder", resetGraphStore);
 
 export function getNodeLabel(nodeType) {
   switch (nodeType) {
