@@ -905,7 +905,7 @@ class EvaluationRunner:
         """
         if self.eval_template is None:
             return []
-        retrieval_scope = {}
+        feedback_ids: list[str] | None = None
         organization_id = self.organization_id
         workspace_id = None
         if self.optimize is not None:
@@ -913,8 +913,11 @@ class EvaluationRunner:
 
             dataset = self.optimize.dataset
             scope = (
-                dataset.id, dataset.organization_id, dataset.workspace_id,
-                dataset.deleted, self.eval_template.id,
+                dataset.id,
+                dataset.organization_id,
+                dataset.workspace_id,
+                dataset.deleted,
+                self.eval_template.id,
             )
             # One eligibility snapshot per runner. Feedback recalculation creates
             # a new runner, so submitted corrections are included immediately.
@@ -926,13 +929,18 @@ class EvaluationRunner:
             feedback_ids = self._optimizer_feedback_ids
             if not feedback_ids:
                 return []
-            retrieval_scope["feedback_ids"] = feedback_ids
             organization_id = dataset.organization_id
             # Eligible IDs include legacy default-workspace records. Private
             # workspaces also retain the exact vector workspace predicate.
             if dataset.workspace_id and not dataset.workspace.is_default:
                 workspace_id = dataset.workspace_id
         embedding_manager = EmbeddingManager()
+        if feedback_ids is not None:
+            from model_hub.utils.optimization_feedback import DatasetFeedbackVectorDB
+
+            # Searches return only vectors of this dataset's eligible feedback.
+            embedding_manager.db_client.close()
+            embedding_manager.db_client = DatasetFeedbackVectorDB(feedback_ids)
 
         all_examples = []
         try:
@@ -950,7 +958,6 @@ class EvaluationRunner:
                 input_cols=required_field,
                 organization_id=organization_id,
                 workspace_id=workspace_id,
-                **retrieval_scope,
             )
             end_time = datetime.now()
             elapsed_time = (end_time - start_time).total_seconds()

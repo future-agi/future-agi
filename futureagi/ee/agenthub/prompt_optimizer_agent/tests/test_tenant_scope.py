@@ -245,6 +245,7 @@ def test_optimizer_reuses_only_own_dataset_feedback(neighboring_datasets, user, 
     from ee.agenthub.prompt_optimizer_agent.tests.test_optimizer_examples import (
         make_feedback,
     )
+    from model_hub.utils.optimization_feedback import DatasetFeedbackVectorDB
     from model_hub.views.eval_runner import EvaluationRunner
 
     dataset, column, other_dataset, other_column = neighboring_datasets
@@ -263,8 +264,10 @@ def test_optimizer_reuses_only_own_dataset_feedback(neighboring_datasets, user, 
     with patch("model_hub.views.eval_runner.EmbeddingManager") as manager:
 
         def retrieve(**kwargs):
-            assert kwargs["feedback_ids"] == [str(own.id)]
-            assert str(foreign.id) not in kwargs["feedback_ids"]
+            vector_db = manager.return_value.db_client
+            assert isinstance(vector_db, DatasetFeedbackVectorDB)
+            assert vector_db.feedback_ids == [str(own.id)]
+            assert str(foreign.id) not in vector_db.feedback_ids
             return ["own correction"]
 
         manager.return_value.retrieve_avg_rag_based_examples.side_effect = retrieve

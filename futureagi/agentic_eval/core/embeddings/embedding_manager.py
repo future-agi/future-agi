@@ -943,7 +943,6 @@ class EmbeddingManager:
         syn_data_flag=False,
         organization_id=None,
         workspace_id=None,
-        feedback_ids=None,
     ):
         """
         Retrieves examples based on similarity using RAG-based logic.
@@ -958,9 +957,6 @@ class EmbeddingManager:
         Returns:
             list: List of similar items for the query.
         """
-        if feedback_ids is not None and not feedback_ids:
-            return []
-        retrieval_scope = {"feedback_ids": feedback_ids} if feedback_ids is not None else {}
         if filter_by is None:
             filter_by = {}
         results = []
@@ -1009,8 +1005,7 @@ class EmbeddingManager:
                         meta_data_col,
                         eval_id,
                     top_k,
-                    threshold,
-                    **retrieval_scope,
+                    threshold
                 )
                 else:
                     results = db_client.vector_similarity_search(
@@ -1021,7 +1016,6 @@ class EmbeddingManager:
                         eval_id,
                     top_k,
                     syn_data_flag,
-                    **retrieval_scope,
                 )
             except Exception:
                 traceback.print_exc()
@@ -1045,11 +1039,7 @@ class EmbeddingManager:
         syn_data_flag=False,
         organization_id=None,
         workspace_id=None,
-        feedback_ids=None,
     ):
-        if feedback_ids is not None and not feedback_ids:
-            return []
-        retrieval_scope = {"feedback_ids": feedback_ids} if feedback_ids is not None else {}
         # get input types
         # row_dict
         if filter_by is None:
@@ -1124,7 +1114,6 @@ class EmbeddingManager:
                     syn_data_flag=syn_data_flag,
                     organization_id=organization_id,
                     workspace_id=workspace_id,
-                    **retrieval_scope,
                 )
                 if tenant_scoped and x and effective_threshold is not None:
                     x = [i for i in x if (i[-1] if not isinstance(i, dict) else i["similarity"]) <= effective_threshold]

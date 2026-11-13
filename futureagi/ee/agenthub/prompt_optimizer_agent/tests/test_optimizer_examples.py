@@ -20,6 +20,7 @@ from model_hub.tests.test_develop_optimisation_contracts import (
     create_optimization,
 )
 from model_hub.tests.test_few_shot_examples import _create_dataset_with_rows
+from model_hub.utils.optimization_feedback import DatasetFeedbackVectorDB
 from model_hub.views.eval_runner import EvaluationRunner
 from tfc.constants.api_calls import APICallTypeChoices
 from tfc.middleware.workspace_context import workspace_context
@@ -207,7 +208,9 @@ def test_feedback_recalculation_uses_optimizer_dataset(
     evaluator.return_value.format_result.return_value = "Passed"
 
     def retrieve(**kwargs):
-        assert kwargs["feedback_ids"] == [str(feedback.id)]
+        vector_db = reader.return_value.db_client
+        assert isinstance(vector_db, DatasetFeedbackVectorDB)
+        assert vector_db.feedback_ids == [str(feedback.id)]
         assert kwargs["organization_id"] == dataset.organization_id
         assert kwargs["input_cols"] == [str(column.id)]
         return [
