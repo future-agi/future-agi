@@ -542,6 +542,39 @@ def test_kept_frames_never_lose_a_still_wanted_subscription():
     assert consumer._unanswered_subscription_frames == 0
 
 
+class _Finished:
+    """Set once a wrapped consumer coroutine has returned, raised or been
+    cancelled, so a test waits for it instead of sleeping."""
+
+    def __init__(self, owner, name, *, when=lambda *args, **kwargs: True):
+        self.owner = owner
+        self.name = name
+        self.when = when
+        self.event = asyncio.Event()
+
+    def patch(self):
+        finished = self
+        original = getattr(self.owner, self.name)
+
+        async def wrapped(*args, **kwargs):
+            try:
+                return await original(*args, **kwargs)
+            finally:
+                if finished.when(*args, **kwargs):
+                    finished.event.set()
+
+        return patch.object(self.owner, self.name, wrapped)
+
+    async def wait(self, timeout=10):
+        await asyncio.wait_for(self.event.wait(), timeout=timeout)
+
+
+def _recovery_finished():
+    from sockets.consumer import DataConsumer
+
+    return _Finished(DataConsumer, "_on_saml_check_recovered")
+
+
 def test_window_check_recovery_answers_kept_subscriptions(settings):
     """pending -> the window timer's check succeeds -> a targeted chunk with no
     client frame in between is delivered."""
@@ -551,6 +584,7 @@ def test_window_check_recovery_answers_kept_subscriptions(settings):
     member = create_member(org, workspace)
     credential = Credential()
     target = str(uuid4())
+    recovered = _recovery_finished()
 
     async def run():
         socket = await open_direct_socket(member, org, saml=True)
@@ -558,21 +592,14 @@ def test_window_check_recovery_answers_kept_subscriptions(settings):
             credential.failure = OperationalError("synthetic database outage")
             checks = credential.checks
             await socket.send_json_to({"type": "subscribe", "uuid": target})
-            for _ in range(100):
-                if credential.checks > checks:
-                    break
-                await asyncio.sleep(0.02)
+            await _until(lambda: credential.checks > checks, "a failed check")
             assert await socket.receive_nothing(timeout=0.1)
 
             credential.failure = None
             checks = credential.checks
             # Only the window timer checks again; nothing is sent meanwhile.
-            for _ in range(100):
-                if credential.checks > checks:
-                    break
-                await asyncio.sleep(0.02)
+            await recovered.wait()
             assert credential.checks > checks
-            await asyncio.sleep(0.2)
 
             chunk = {"uuid": target, "chunk": "synthetic", "marker": uuid4().hex}
             await send_to_target(org, target, chunk)
@@ -589,7 +616,7 @@ def test_window_check_recovery_answers_kept_subscriptions(settings):
         finally:
             await socket.disconnect()
 
-    with credential.patch():
+    with credential.patch(), recovered.patch():
         asyncio.run(run())
 
 
@@ -853,6 +880,11 @@ def test_frames_kept_meanwhile_are_answered_when_the_forced_check_succeeds(setti
     credential = Credential()
     first, second = str(uuid4()), str(uuid4())
     blocked = _BlockedGroupAdd(f"uuid_org_{org.pk}_{first}")
+    forced_check = _Finished(
+        MembershipSocketGuard,
+        "ensure_member",
+        when=lambda *args, force=False: force,
+    )
 
     async def run():
         blocked.start()
@@ -868,7 +900,7 @@ def test_frames_kept_meanwhile_are_answered_when_the_forced_check_succeeds(setti
 
             # The membership check this notification forces succeeds.
             await notify_membership_changed(member, org)
-            await asyncio.sleep(0.2)
+            await forced_check.wait()
             blocked.released.set()
 
             events = await outputs(socket, settle=0.5)
@@ -885,7 +917,7 @@ def test_frames_kept_meanwhile_are_answered_when_the_forced_check_succeeds(setti
             blocked.released.set()
             await socket.disconnect()
 
-    with credential.patch(), blocked.patch():
+    with credential.patch(), blocked.patch(), forced_check.patch():
         asyncio.run(run())
 
 
@@ -899,6 +931,7 @@ def test_window_recovery_joins_no_group_after_disconnect(settings):
     target = str(uuid4())
     group = f"uuid_org_{org.pk}_{target}"
     blocked = _BlockedGroupAdd(group)
+    recovered = _recovery_finished()
 
     async def run():
         blocked.start()
@@ -913,8 +946,9 @@ def test_window_recovery_joins_no_group_after_disconnect(settings):
         await asyncio.wait_for(blocked.entered.wait(), timeout=5)
         await socket.disconnect()
         blocked.released.set()
-        await asyncio.sleep(0.3)
+        # Returns once the recovery has finished, cancelled or not.
+        await recovered.wait()
         assert not get_channel_layer().groups.get(group)
 
-    with credential.patch(), blocked.patch():
+    with credential.patch(), blocked.patch(), recovered.patch():
         asyncio.run(run())
