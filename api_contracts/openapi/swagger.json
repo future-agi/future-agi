@@ -5380,7 +5380,7 @@
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": []
+                        "default": ""
                     },
                     {
                         "name": "workspace_id",
@@ -30522,7 +30522,7 @@
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": {}
+                        "default": "{}"
                     },
                     {
                         "name": "page_size",
@@ -37738,7 +37738,7 @@
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": {}
+                        "default": "{}"
                     },
                     {
                         "name": "filters",
@@ -55661,6 +55661,7 @@
                         "required": false,
                         "type": "string",
                         "enum": [
+                            "",
                             "agent_definition",
                             "prompt"
                         ],
@@ -56748,6 +56749,7 @@
                         "required": false,
                         "type": "string",
                         "enum": [
+                            "",
                             "agent_definition",
                             "prompt"
                         ],
@@ -60023,7 +60025,7 @@
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": {}
+                        "default": "{}"
                     },
                     {
                         "name": "ordering",
@@ -60075,6 +60077,7 @@
                         "required": false,
                         "type": "string",
                         "enum": [
+                            "",
                             "goal",
                             "sub_goal",
                             "accent",
@@ -61371,7 +61374,7 @@
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": []
+                        "default": ""
                     },
                     {
                         "name": "agent_definition_id",
@@ -61408,6 +61411,7 @@
                         "required": false,
                         "type": "string",
                         "enum": [
+                            "",
                             "system_metric",
                             "eval_metric",
                             "annotation_metric",
@@ -61422,6 +61426,7 @@
                         "required": false,
                         "type": "string",
                         "enum": [
+                            "",
                             "metric",
                             "dimension"
                         ],
@@ -61433,6 +61438,7 @@
                         "required": false,
                         "type": "string",
                         "enum": [
+                            "",
                             "traces",
                             "spans",
                             "sessions",
@@ -73003,14 +73009,14 @@
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": []
+                        "default": "[]"
                     },
                     {
                         "name": "exclude_annotators",
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": []
+                        "default": "[]"
                     }
                 ],
                 "responses": {
@@ -74883,7 +74889,7 @@
                         "in": "query",
                         "required": false,
                         "type": "string",
-                        "default": []
+                        "default": ""
                     },
                     {
                         "name": "filters",
@@ -76784,8 +76790,7 @@
                         "in": "query",
                         "description": "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
                         "required": false,
-                        "type": "string",
-                        "default": []
+                        "type": "string"
                     },
                     {
                         "name": "attribute_keys",
@@ -76793,7 +76798,7 @@
                         "description": "JSON-encoded list of visible custom user attribute keys. Only these keys (plus keys required by filters) are hydrated.",
                         "required": false,
                         "type": "string",
-                        "default": []
+                        "default": ""
                     }
                 ],
                 "responses": {
@@ -159986,6 +159991,7 @@
                     "title": "Category",
                     "type": "string",
                     "enum": [
+                        "",
                         "system_metric",
                         "eval_metric",
                         "annotation_metric",
@@ -159998,6 +160004,7 @@
                     "title": "Role",
                     "type": "string",
                     "enum": [
+                        "",
                         "metric",
                         "dimension"
                     ],
@@ -160007,6 +160014,7 @@
                     "title": "Source",
                     "type": "string",
                     "enum": [
+                        "",
                         "traces",
                         "spans",
                         "sessions",
@@ -176651,7 +176659,7 @@
                 "trace_ids": {
                     "title": "Trace ids",
                     "type": "string",
-                    "default": []
+                    "default": ""
                 },
                 "filters": {
                     "title": "Filters",
@@ -178828,14 +178836,13 @@
                 "requested_columns": {
                     "title": "Requested columns",
                     "description": "JSON-encoded list of visible Users-table fields. Raw-derived metrics are hydrated only when explicitly requested.",
-                    "type": "string",
-                    "default": []
+                    "type": "string"
                 },
                 "attribute_keys": {
                     "title": "Attribute keys",
                     "description": "JSON-encoded list of visible custom user attribute keys. Only these keys (plus keys required by filters) are hydrated.",
                     "type": "string",
-                    "default": []
+                    "default": ""
                 }
             }
         },

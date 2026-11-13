@@ -496,7 +496,7 @@ const GeneratePrompt = (props) => {
                         fontWeight="fontWeightRegular"
                         sx={{
                           color: "text.secondary",
-                          fontSize: "13px",
+                          fontSize: "12px",
                         }}
                       >
                         {label}
