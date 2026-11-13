@@ -655,6 +655,37 @@ The API holds WebSockets open for live updates and serves long requests
 | ingress-nginx | `proxy-read-timeout` and `proxy-send-timeout` annotations on the WebSocket Ingress (`ingress.websocket.annotations`) |
 | Traefik | the entrypoint's `respondingTimeouts` |
 
+### Client addresses behind the Ingress or Gateway
+
+The API's MCP OAuth endpoints (`/token`, `/revoke`, `/register`,
+`/mcp/oauth/token/`) limit requests per client address. Behind an Ingress or
+Gateway API routes every request reaches the API from the controller, so
+while either is on the chart sets `MCP_OAUTH_TRUSTED_PROXIES` to its
+`ingress.trustedProxies` or `gatewayApi.trustedProxies` and
+`MCP_OAUTH_TRUSTED_PROXY_HOPS` to `1`: a request from one of those addresses
+counts by the last `X-Forwarded-For` entry, the address the controller saw,
+and nothing a client sends before it is read. A request from any other
+address counts by that address. `config.extraEnv` wins over both.
+
+- The default trusts the private and shared ranges pod networks use
+  (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`,
+  `fc00::/7`). An in-cluster caller in them that reaches the API directly,
+  not through the controller, can then set the address it is counted by:
+  narrow `trustedProxies` to the controller's pod network (k3s:
+  `10.42.0.0/16`, as in [`examples/ingress-traefik.yaml`](examples/ingress-traefik.yaml)),
+  or let only the controller reach the API with `networkPolicy.ingressFrom`.
+- GKE's Gateway and Ingress connect from `35.191.0.0/16` and
+  `130.211.0.0/22` (Envoy-based classes from the region's proxy-only
+  subnet), which the default does not trust, and add `<client>, <load
+  balancer address>`: add those ranges and the load balancer's address to
+  `gatewayApi.trustedProxies` and set
+  `config.extraEnv.MCP_OAUTH_TRUSTED_PROXY_HOPS: "2"`.
+- Each further proxy in front of the controller that adds to
+  `X-Forwarded-For` (a load balancer, a CDN): add its addresses and one hop.
+- Empty `trustedProxies`: neither variable is set, and every request through
+  the controller counts by the controller's address, so all its clients
+  share one limit.
+
 ## Enterprise
 
 One chart and one image for both editions: `edition: ee` plus a license
@@ -1549,6 +1580,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `ingress.objects.host` | `""` | Host of the bundled object storage (`objectStorage.mode=bundled`), for browser downloads [MINIO_URL]. Evaluation only, like the bundled storage itself: it publishes the bucket through the Ingress. Empty: not exposed. |
 | `ingress.websocket.enabled` | `false` | A second Ingress for the API's WebSocket paths (`/ws/`) with its own annotations, so long-lived connections get long timeouts without raising them for every request. Same class, host and TLS as the main one. |
 | `ingress.websocket.annotations` | `{}` | Annotations of the WebSocket Ingress, over `ingress.annotations`. ingress-nginx: `nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"` and `proxy-send-timeout: "3600"`. Traefik has no per-Ingress timeout: raise the entrypoint's `respondingTimeouts` (examples/ingress-traefik.yaml). |
+| `ingress.trustedProxies` | `"10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,fc00::/7"` | [MCP_OAUTH_TRUSTED_PROXIES] with the Ingress on: addresses or networks of the ingress controller, comma-separated. The MCP OAuth request limits (`/token`, `/revoke`, `/register`, `/mcp/oauth/token/`) count a request from one of them by the last X-Forwarded-For address, the client the controller saw [MCP_OAUTH_TRUSTED_PROXY_HOPS=1]; any other peer counts by its own address. Default: the private and shared ranges pod networks use. Narrow it to the controller's pod network (k3s: `10.42.0.0/16`, kubeadm with flannel: `10.244.0.0/16`) so in-cluster callers that reach the API directly are counted by their own address too. Empty: every request through the controller counts by the controller's address, so its clients share one limit. `config.extraEnv` wins (README "Client addresses behind the Ingress or Gateway"). |
 | `gatewayApi.enabled` | `false` | Render HTTPRoutes for the UI and the API (OTLP/HTTP on the exact paths `/v1/traces` and `/tracer/v1/traces` to fi-collector), plus the optional routes below. URLs (`urls.*`) are derived from these hosts unless the ingress is on. |
 | `gatewayApi.parentRefs` | `[]` | Gateways (and listeners) the routes attach to, e.g. `[{name: public, namespace: gateway-system, sectionName: https}]`. |
 | `gatewayApi.tls` | `true` | The Gateway terminates TLS for these hosts: derived URLs use https. `false`: http. |
@@ -1565,6 +1597,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `gatewayApi.timeouts.request` | `"300s"` | Route timeout of API requests (Gateway API duration, e.g. `300s`). Empty: the Gateway's default, often 15 s, which cuts long requests. |
 | `gatewayApi.timeouts.websocket` | `"24h"` | Route timeout of the WebSocket paths (`/ws/`). `0s` disables it where the Gateway supports that; some also need a backend or client traffic policy for idle connections (README). |
 | `gatewayApi.gke.healthChecks.enabled` | `false` | GKE Gateway only: a HealthCheckPolicy (networking.gke.io/v1) for each Service the routes use. GKE's load balancer ignores readiness probes and sends `GET /` with the pod's IP as the Host, which the API (a redirect) and the collector's OTLP port (no `/`) fail; these probe the API's `/health/` with Host `localhost`, the collector's `/healthz` on its admin port 9464, the LLM gateway's `/readyz` and the UI's `/`. Needs the GKE Gateway controller (its CRDs). |
+| `gatewayApi.trustedProxies` | `"10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,fc00::/7"` | [MCP_OAUTH_TRUSTED_PROXIES] with the Gateway API on: addresses or networks the Gateway's proxies connect from, comma-separated, as `ingress.trustedProxies`. GKE's Gateway connects from `35.191.0.0/16` and `130.211.0.0/22` (and Envoy-based classes from the region's proxy-only subnet) and adds the load balancer's own address after the client's: see the README before trusting it. |
 | `networkPolicy.enabled` | `false` | NetworkPolicies: the datastores, the gateway, serving and the code sandbox accept traffic only from this release's pods; the UI, API and collector also from `ingressFrom`. A component whose Service is a LoadBalancer or NodePort accepts any source on its Service ports. Egress is open, except for the code sandbox. |
 | `networkPolicy.ingressFrom` | `[]` | Peers (NetworkPolicy `from` entries) that may reach the UI, API and collector, e.g. your ingress controller's namespace: `[{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}}]`. Empty: any source. |
 | `serviceAccount.create` | `true` | Create a ServiceAccount for the application pods. |

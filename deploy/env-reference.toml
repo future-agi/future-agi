@@ -1820,7 +1820,13 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     keys = ["MCP_OAUTH_TRUSTED_PROXIES"]
     default = "empty"
     setups = ["S", "D", "H"]
-    text = "Addresses or networks of the reverse proxies in front of the API, comma-separated (e.g. `10.42.0.0/16`, the ingress controller's pod network). The MCP OAuth request limits (`/token`, `/revoke`, `/register`, `/mcp/oauth/token/`) then count each client by the address these proxies forward in `X-Forwarded-For`; requests from any other peer count by the peer address. Empty: every request counts by the peer address, so clients behind one proxy share its limits. Helm: `config.extraEnv`."
+    text = "Addresses or networks of the reverse proxies in front of the API, comma-separated (e.g. `10.42.0.0/16`, the ingress controller's pod network). The MCP OAuth request limits (`/token`, `/revoke`, `/register`, `/mcp/oauth/token/`) then count each client by the address these proxies forward in `X-Forwarded-For`; requests from any other peer count by the peer address. Empty: every request counts by the peer address, so clients behind one proxy share its limits. Helm: `ingress.trustedProxies` or `gatewayApi.trustedProxies` while the chart routes the API through them (default: the private and shared ranges pod networks use, with `MCP_OAUTH_TRUSTED_PROXY_HOPS=1`), or `config.extraEnv`."
+
+    [[part.section.row]]
+    keys = ["MCP_OAUTH_TRUSTED_PROXY_HOPS"]
+    default = "empty: every hop"
+    setups = ["S", "D", "H"]
+    text = "How many proxies in front of the API add to `X-Forwarded-For`, the one connecting to the API included. With `1`, a request from a `MCP_OAUTH_TRUSTED_PROXIES` address counts by the last `X-Forwarded-For` entry, the client that proxy saw, and nothing a client sends before it is read; `2` reads one entry further when the last one is also a trusted proxy (a load balancer in front of the ingress controller, GKE's `<client>, <load balancer>`). Empty: every trusted proxy entry is skipped, from the end, up to the nearest address that is not one. Helm: `1` with `ingress.trustedProxies` or `gatewayApi.trustedProxies`; `config.extraEnv` wins."
 
     [[part.section.row]]
     keys = ["EXTRA_CSRF_ORIGINS"]

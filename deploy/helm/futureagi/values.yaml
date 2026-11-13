@@ -1126,6 +1126,8 @@ ingress:
     enabled: false
     # -- Annotations of the WebSocket Ingress, over `ingress.annotations`. ingress-nginx: `nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"` and `proxy-send-timeout: "3600"`. Traefik has no per-Ingress timeout: raise the entrypoint's `respondingTimeouts` (examples/ingress-traefik.yaml).
     annotations: {}
+  # -- [MCP_OAUTH_TRUSTED_PROXIES] with the Ingress on: addresses or networks of the ingress controller, comma-separated. The MCP OAuth request limits (`/token`, `/revoke`, `/register`, `/mcp/oauth/token/`) count a request from one of them by the last X-Forwarded-For address, the client the controller saw [MCP_OAUTH_TRUSTED_PROXY_HOPS=1]; any other peer counts by its own address. Default: the private and shared ranges pod networks use. Narrow it to the controller's pod network (k3s: `10.42.0.0/16`, kubeadm with flannel: `10.244.0.0/16`) so in-cluster callers that reach the API directly are counted by their own address too. Empty: every request through the controller counts by the controller's address, so its clients share one limit. `config.extraEnv` wins (README "Client addresses behind the Ingress or Gateway").
+  trustedProxies: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,fc00::/7"
 
 # -----------------------------------------------------------------------------
 # Gateway API (recommended over `ingress`): HTTPRoutes and a GRPCRoute on a
@@ -1174,6 +1176,8 @@ gatewayApi:
     healthChecks:
       # -- GKE Gateway only: a HealthCheckPolicy (networking.gke.io/v1) for each Service the routes use. GKE's load balancer ignores readiness probes and sends `GET /` with the pod's IP as the Host, which the API (a redirect) and the collector's OTLP port (no `/`) fail; these probe the API's `/health/` with Host `localhost`, the collector's `/healthz` on its admin port 9464, the LLM gateway's `/readyz` and the UI's `/`. Needs the GKE Gateway controller (its CRDs).
       enabled: false
+  # -- [MCP_OAUTH_TRUSTED_PROXIES] with the Gateway API on: addresses or networks the Gateway's proxies connect from, comma-separated, as `ingress.trustedProxies`. GKE's Gateway connects from `35.191.0.0/16` and `130.211.0.0/22` (and Envoy-based classes from the region's proxy-only subnet) and adds the load balancer's own address after the client's: see the README before trusting it.
+  trustedProxies: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,fc00::/7"
 
 networkPolicy:
   # -- NetworkPolicies: the datastores, the gateway, serving and the code sandbox accept traffic only from this release's pods; the UI, API and collector also from `ingressFrom`. A component whose Service is a LoadBalancer or NodePort accepts any source on its Service ports. Egress is open, except for the code sandbox.

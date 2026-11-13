@@ -38,11 +38,11 @@ ingress:
     annotations:
       nginx.ingress.kubernetes.io/proxy-read-timeout: "86400"
       nginx.ingress.kubernetes.io/proxy-send-timeout: "86400"
+  # The MCP OAuth request limits count each client by the address
+  # ingress-nginx saw when the request comes from these networks (by default
+  # the private ranges). Narrowed to the controller's pod network, e.g.
+  # kubeadm with flannel:
+  # trustedProxies: "10.244.0.0/16"
 config:
   allowedHosts: api.futureagi.example.com
   corsAllowedOrigins: https://futureagi.example.com
-  # The MCP OAuth request limits count each client by its own address once
-  # the API trusts the ingress controller's X-Forwarded-For. Set the
-  # controller's pod network, e.g.:
-  # extraEnv:
-  #   MCP_OAUTH_TRUSTED_PROXIES: "10.244.0.0/16"

@@ -3089,6 +3089,10 @@
               "description": "Annotations of the WebSocket Ingress, over `ingress.annotations`. ingress-nginx: `nginx.ingress.kubernetes.io/proxy-read-timeout: \"3600\"` and `proxy-send-timeout: \"3600\"`. Traefik has no per-Ingress timeout: raise the entrypoint's `respondingTimeouts` (examples/ingress-traefik.yaml)."
             }
           }
+        },
+        "trustedProxies": {
+          "type": "string",
+          "description": "[MCP_OAUTH_TRUSTED_PROXIES] with the Ingress on: addresses or networks of the ingress controller, comma-separated. The MCP OAuth request limits (`/token`, `/revoke`, `/register`, `/mcp/oauth/token/`) count a request from one of them by the last X-Forwarded-For address, the client the controller saw [MCP_OAUTH_TRUSTED_PROXY_HOPS=1]; any other peer counts by its own address. Default: the private and shared ranges pod networks use. Narrow it to the controller's pod network (k3s: `10.42.0.0/16`, kubeadm with flannel: `10.244.0.0/16`) so in-cluster callers that reach the API directly are counted by their own address too. Empty: every request through the controller counts by the controller's address, so its clients share one limit. `config.extraEnv` wins (README \"Client addresses behind the Ingress or Gateway\")."
         }
       }
     },
@@ -3219,6 +3223,10 @@
               }
             }
           }
+        },
+        "trustedProxies": {
+          "type": "string",
+          "description": "[MCP_OAUTH_TRUSTED_PROXIES] with the Gateway API on: addresses or networks the Gateway's proxies connect from, comma-separated, as `ingress.trustedProxies`. GKE's Gateway connects from `35.191.0.0/16` and `130.211.0.0/22` (and Envoy-based classes from the region's proxy-only subnet) and adds the load balancer's own address after the client's: see the README before trusting it."
         }
       }
     },
