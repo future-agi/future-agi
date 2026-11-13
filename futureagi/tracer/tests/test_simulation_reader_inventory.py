@@ -1056,6 +1056,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             table="tracer_trace, trace_session and tracer_eval_logger",
         ),
         "ConsistencyChecker._latest_sync": _CDC_LAG_CHECK,
+        "ConsistencyChecker._sample_source": _CDC_LAG_CHECK,
     },
     "tracer.services.clickhouse.eval_logger_table": {
         "latest_completed_eval_rows": filed(

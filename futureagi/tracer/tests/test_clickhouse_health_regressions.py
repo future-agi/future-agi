@@ -1,10 +1,14 @@
 """Health regressions for retained readers, verified sidecars and stalled queries."""
 
-from contextlib import contextmanager
-from datetime import datetime
-from time import monotonic
+import queue
+import socket
+import threading
+from contextlib import contextmanager, suppress
+from datetime import UTC, datetime
+from time import monotonic, sleep
 from types import SimpleNamespace
 from unittest.mock import Mock
+from uuid import uuid4
 
 import pytest
 
@@ -103,9 +107,9 @@ def test_health_budget_is_shared_and_does_not_leak_application_policy(
 
     clock = [0.0]
     monkeypatch.setattr(consistency, "monotonic", lambda: clock[0], raising=False)
-    client = health_tests.fake_client(
-        dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
-    )
+    inventory = dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
+    inventory["system.parts"] = PART_COLUMNS
+    client = health_tests.fake_client(inventory)
     read = client.execute_read.side_effect
     timeouts = []
 
@@ -122,9 +126,48 @@ def test_health_budget_is_shared_and_does_not_leak_application_policy(
         health = checker.get_health_status()
         assert is_application_read()
     assert not is_application_read()
-    assert health.status == "unhealthy"
-    assert timeouts == [1000, 500]
+    # Schema and part metadata answered; the lag read found the shared budget
+    # spent. A server that answers but runs out of time is slow, not down.
+    assert health.clickhouse_connected is True
+    assert health.status == "degraded"
+    assert set(health.details["checks"].values()) == {"timeout"}
+    assert health.cdc_lag == dict.fromkeys(health_tests.CDC_TABLES, -1)
+    cap = consistency.ConsistencyChecker.QUERY_TIMEOUT_MS
+    assert cap < consistency.ConsistencyChecker.CHECK_TIMEOUT_SECONDS * 1000
+    assert timeouts == [cap, 500]
     client.execute.assert_not_called()
+
+
+@pytest.mark.unit
+def test_destination_the_budget_never_reached_is_slow_not_down(
+    configure, monkeypatch, settings
+):
+    """Mixed routing: the legacy destination answers, then spends the budget."""
+    from tracer.services.clickhouse import consistency
+
+    clock = [0.0]
+    monkeypatch.setattr(consistency, "monotonic", lambda: clock[0], raising=False)
+    settings.CLICKHOUSE_V2 = {"QUERY_TYPES_V2_ONLY": "TRACE_LIST"}
+    legacy = health_tests.fake_client(SAMPLED_INVENTORY)
+    read = legacy.execute_read.side_effect
+
+    def slow_read(sql, params=None, **kwargs):
+        clock[0] += consistency.ConsistencyChecker.CHECK_TIMEOUT_SECONDS + 0.1
+        return read(sql, params, **kwargs)
+
+    legacy.execute_read.side_effect = slow_read
+    native = health_tests.fake_client(
+        {
+            **health_tests.NATIVE_COLUMNS,
+            "tracer_eval_logger": health_tests.CDC_COLUMNS,
+        }
+    )
+    health = configure(legacy, native).get_health_status()
+    # The native destination was never contacted: unknown, so not disconnected.
+    native.execute_read.assert_not_called()
+    assert health.clickhouse_connected is True, health
+    assert health.status == "degraded", health
+    assert set(health.details["checks"].values()) == {"timeout"}, health
 
 
 @pytest.mark.unit
@@ -314,7 +357,7 @@ def test_health_client_preserves_destination_and_profile_without_sharing_pool(re
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("stage", ["ping", "metadata", "lag"])
+@pytest.mark.parametrize("stage", ["metadata", "parts", "lag"])
 @pytest.mark.parametrize("warm_pool", [False, True])
 @pytest.mark.parametrize("server_readonly", [False, True])
 def test_every_health_query_has_a_short_transport_timeout(
@@ -324,8 +367,14 @@ def test_every_health_query_has_a_short_transport_timeout(
 
     Substitute one three-second statement at the driver boundary, below the
     health checker. This exercises the actual server and socket timeout (not a
-    mocked TimeoutError), without disrupting a sidecar used by other tests.
+    mocked TimeoutError), without disrupting a sidecar used by other tests. The
+    server completed the handshake, so it is slow, not down: connected and
+    degraded, never disconnected.
     """
+    from tracer.services.clickhouse.consistency import ConsistencyChecker
+
+    cap = ConsistencyChecker.QUERY_TIMEOUT_MS / 1000
+    assert cap < 3, "the injected statement must outlast one statement's cap"
     legacy, _, clients = real_clients
     for table in health_tests.CDC_TABLES:
         health_tests.create_cdc(legacy, table)
@@ -342,9 +391,11 @@ def test_every_health_query_has_a_short_transport_timeout(
     original_create = HealthCheckClient._create_client
     drivers = []
     delayed = False
-    needle = {"ping": "SELECT 1", "metadata": "system.columns", "lag": "max(_peerdb"}[
-        stage
-    ]
+    needle = {
+        "metadata": "system.columns",
+        "parts": "FROM system.parts",
+        "lag": "max(_peerdb",
+    }[stage]
 
     def create_client(self, **kwargs):
         driver = original_create(self, **kwargs)
@@ -368,8 +419,9 @@ def test_every_health_query_has_a_short_transport_timeout(
     elapsed = monotonic() - started
     assert delayed, "The intended real query was not exercised"
     assert result.status_code == 200
-    assert result.data["status"] == "unhealthy", result.data
-    assert elapsed < 2.5, f"{stage} health query took {elapsed:.3f}s"
+    assert result.data["status"] == "degraded", result.data
+    assert result.data["clickhouse_connected"] is True, result.data
+    assert elapsed < cap + 0.5, f"{stage} health query took {elapsed:.3f}s"
     assert health_tests.response().data["status"] == "healthy"
     assert all(not driver.connection.connected for driver in drivers)
     driver = client._get_client()
@@ -385,53 +437,110 @@ def test_every_health_query_has_a_short_transport_timeout(
 
 
 PART_COLUMNS = {"database", "table", "name", "rows", "active", "modification_time"}
+SAMPLED_INVENTORY = {
+    **dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS),
+    "system.parts": PART_COLUMNS,
+}
 
 
-def _lag_reads(client, table):
+def _lag_statements(client):
     return [
-        call.args
+        call.args[:2]
         for call in client.execute_read.call_args_list
-        if "max(_peerdb_synced_at)" in call.args[0] and f"FROM {table}" in call.args[0]
+        if "max(_peerdb_synced_at)" in call.args[0]
     ]
+
+
+def _sampled_ranges(params):
+    """Every ``(partition, low block, high block)`` a lag statement selects."""
+    return {
+        (value, params[f"low{key[9:]}"], params[f"high{key[9:]}"])
+        for key, value in params.items()
+        if key.startswith("partition")
+    }
 
 
 @pytest.mark.unit
-def test_lag_sample_reads_newest_parts_that_fit_the_budget(configure, monkeypatch):
+def test_lag_sample_plan_reads_newest_parts_within_the_budget(configure, monkeypatch):
     from tracer.services.clickhouse import consistency
 
-    # raising=False keeps the regression runnable against the unsampled checker.
-    monkeypatch.setattr(
-        consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 1_000, raising=False
-    )
-    inventory = dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
-    inventory["system.parts"] = PART_COLUMNS
+    monkeypatch.setattr(consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 1_000)
+    checker = configure(health_tests.fake_client({}))
+    now = datetime(2026, 1, 1, 12, 0, 30)
+    earlier = datetime(2026, 1, 1, 12, 0, 0)
     # Newest first, as the system.parts ORDER BY returns them.
-    parts = [
-        ("tracer_trace", "just_merged", 5_000),  # oversized: skipped, not a stop
-        ("tracer_trace", "fresh", 10),
-        ("tracer_trace", "recent", 900),
-        ("tracer_trace", "older", 200),  # would overrun the remaining budget
-        ("tracer_trace", "oldest", 50),
-        ("trace_session", "only", 3),
+    reads = checker._plan(
+        [
+            ("202611_9_9_0", 5_000, now),  # newest, over the budget: a prefix
+            ("202611_8_8_0", 10, earlier),
+            ("202611_7_7_0", 900, earlier),  # overruns what is left: skipped
+            ("202610_5_6_1", 200, earlier),
+            ("not-a-part-name", 1, earlier),  # unparseable: never guessed at
+            ("202609_1_4_2_7", 50, earlier),  # mutated part: same block range
+        ]
+    )
+    assert reads == [
+        consistency._SampleRead((("202611", 9, 9),), rows=100, prefix=True),
+        consistency._SampleRead(
+            (("202611", 8, 8), ("202610", 5, 6), ("202609", 1, 4)), rows=900
+        ),
     ]
-    client = health_tests.fake_client(inventory, parts=parts)
+    # A newest part that fits is read in full, with the whole budget as headroom;
+    # an oversized part written in an earlier second is skipped.
+    assert checker._plan([("all_3_3_0", 7, now), ("all_1_2_1", 2_000, earlier)]) == [
+        consistency._SampleRead((("all", 3, 3),), rows=1_000)
+    ]
+    # Parts written in the same second are equally new: the batch written
+    # alongside small parts still contributes its prefix, and only one does.
+    assert checker._plan(
+        [
+            ("202611_5_5_0", 3, now),
+            ("202611_4_4_0", 2_000, now),
+            ("202610_2_2_0", 3_000, now),
+        ]
+    ) == [
+        consistency._SampleRead((("202611", 4, 4),), rows=100, prefix=True),
+        consistency._SampleRead((("202611", 5, 5),), rows=900),
+    ]
+    assert checker._plan([]) == []
+
+
+@pytest.mark.unit
+def test_lag_sample_is_one_statement_selecting_parts_by_block_range(
+    configure, monkeypatch
+):
+    from tracer.services.clickhouse import consistency
+
+    monkeypatch.setattr(consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 1_000)
+    parts = [
+        ("tracer_trace", "202611_9_9_0", 5_000),
+        ("tracer_trace", "202611_8_8_0", 10),
+        ("tracer_trace", "202611_7_7_0", 900),
+        ("tracer_trace", "202610_5_6_1", 200),
+        ("trace_session", "all_3_3_0", 3),
+    ]
+    client = health_tests.fake_client(SAMPLED_INVENTORY, parts=parts)
     health = configure(client).get_health_status()
 
     assert health.status == "healthy"
     assert all(0 <= lag < 60 for lag in health.cdc_lag.values())
     sql = [call.args[0] for call in client.execute_read.call_args_list]
-    assert sql[0] == "SELECT 1" and "system.columns" in sql[1]
-    assert "FROM system.parts" in sql[2] and len(sql) == 6
-    trace = _lag_reads(client, "tracer_trace")
-    assert [params for _, params in trace] == [{"parts": ("fresh", "recent", "oldest")}]
-    assert "WHERE _part IN" in trace[0][0]
-    assert [params for _, params in _lag_reads(client, "trace_session")] == [
-        {"parts": ("only",)}
-    ]
+    assert len(sql) == 3, sql
+    assert "system.columns" in sql[0] and "FROM system.parts" in sql[1]
+    ((statement, params),) = _lag_statements(client)
+    assert health_tests.sampled_tables(params) == list(health_tests.CDC_TABLES)
+    # Parts are chosen by partition and block range, which a merge keeps, not
+    # by name, which a merge replaces.
+    assert "_part IN" not in statement
+    assert _sampled_ranges(params) == {
+        ("202611", 9, 9),
+        ("202611", 8, 8),
+        ("202610", 5, 6),
+        ("all", 3, 3),
+    }
+    assert "_part_offset < 100" in statement
     # No active part: the whole-table aggregate, free on an empty table.
-    assert _lag_reads(client, "tracer_eval_logger") == [
-        ("SELECT count(), max(_peerdb_synced_at) FROM tracer_eval_logger", None)
-    ]
+    assert statement.endswith("FROM tracer_eval_logger")
 
 
 @pytest.mark.unit
@@ -440,65 +549,65 @@ def test_lag_sample_needs_every_part_column_visible(configure, visible):
     inventory = dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
     if visible:
         inventory["system.parts"] = visible
-    client = health_tests.fake_client(inventory, parts=[("tracer_trace", "fresh", 1)])
+    client = health_tests.fake_client(
+        inventory, parts=[("tracer_trace", "all_1_1_0", 1)]
+    )
     assert configure(client).get_health_status().status == "healthy"
     assert not any(
         "FROM system.parts" in call.args[0]
         for call in client.execute_read.call_args_list
     )
+    ((statement, params),) = _lag_statements(client)
+    assert "_part" not in statement
+    assert health_tests.sampled_tables(params) == list(health_tests.CDC_TABLES)
     for table in health_tests.CDC_TABLES:
-        assert [sql for sql, _ in _lag_reads(client, table)] == [
-            f"SELECT count(), max(_peerdb_synced_at) FROM {table}"
-        ]
+        assert f"FROM {table}" in statement
 
 
 @pytest.mark.unit
-def test_lag_sample_falls_back_when_no_part_fits_or_sample_is_empty(
+def test_lag_sample_with_no_visible_row_uses_the_exact_aggregate(
     configure, monkeypatch
 ):
     from tracer.services.clickhouse import consistency
 
-    # raising=False keeps the regression runnable against the unsampled checker.
-    monkeypatch.setattr(
-        consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 100, raising=False
-    )
-    inventory = dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
-    inventory["system.parts"] = PART_COLUMNS
+    monkeypatch.setattr(consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 100)
     client = health_tests.fake_client(
-        inventory,
+        SAMPLED_INVENTORY,
         parts=[
-            ("tracer_trace", "bulk", 1_000),
-            ("trace_session", "masked", 5),
-            ("tracer_eval_logger", "fresh", 1),
+            ("tracer_trace", "202611_2_2_0", 1_000),
+            ("trace_session", "202611_4_4_0", 5),
+            ("tracer_eval_logger", "202611_6_6_0", 1),
         ],
     )
     read = client.execute_read.side_effect
 
     def masked_sample(sql, params=None, **kwargs):
-        # Parts can hold only masked rows, e.g. after a lightweight delete.
-        if "FROM trace_session WHERE _part IN" in sql:
-            return [(0, datetime(1970, 1, 1))], [], 0
-        return read(sql, params, **kwargs)
+        rows, columns, elapsed = read(sql, params, **kwargs)
+        if "max(_peerdb_synced_at)" in sql and "_partition_id" in sql:
+            # Parts can hold only masked rows, e.g. after a lightweight delete.
+            rows = [
+                (table, 0, datetime(1970, 1, 1))
+                if table == "trace_session"
+                else (table, *sample)
+                for table, *sample in rows
+            ]
+        return rows, columns, elapsed
 
     client.execute_read.side_effect = masked_sample
-    assert configure(client).get_health_status().status == "healthy"
-    assert [sql for sql, _ in _lag_reads(client, "tracer_trace")] == [
-        "SELECT count(), max(_peerdb_synced_at) FROM tracer_trace"
-    ]
-    assert [params for _, params in _lag_reads(client, "trace_session")] == [
-        {"parts": ("masked",)},
-        None,
-    ]
-    assert [params for _, params in _lag_reads(client, "tracer_eval_logger")] == [
-        {"parts": ("fresh",)}
-    ]
+    health = configure(client).get_health_status()
+    assert health.status == "healthy"
+    first, second = _lag_statements(client)
+    assert health_tests.sampled_tables(first[1]) == list(health_tests.CDC_TABLES)
+    # The oversized newest part is a bounded prefix, never the whole table.
+    assert "_part_offset < 10" in first[0]
+    # Only the masked sample falls back, and only to the exact aggregate.
+    assert health_tests.sampled_tables(second[1]) == ["trace_session"]
+    assert "_part" not in second[0]
 
 
 @pytest.mark.unit
 def test_failed_part_inventory_is_unavailable_not_healthy(configure):
-    inventory = dict.fromkeys(health_tests.CDC_TABLES, health_tests.CDC_COLUMNS)
-    inventory["system.parts"] = PART_COLUMNS
-    client = health_tests.fake_client(inventory)
+    client = health_tests.fake_client(SAMPLED_INVENTORY)
     read = client.execute_read.side_effect
 
     def unavailable(sql, params=None, **kwargs):
@@ -511,4 +620,244 @@ def test_failed_part_inventory_is_unavailable_not_healthy(configure):
     assert health.status == "unhealthy"
     assert health.cdc_lag == dict.fromkeys(health_tests.CDC_TABLES, -1)
     assert set(health.details["checks"].values()) == {"unavailable"}
-    assert not any(_lag_reads(client, table) for table in health_tests.CDC_TABLES)
+    assert not _lag_statements(client)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mixed", [False, True])
+def test_one_connection_and_three_statements_per_destination(
+    configure, monkeypatch, settings, mixed
+):
+    """Each statement used to open its own connection: ~20 round trips a check."""
+    from tracer.services.clickhouse import consistency
+
+    parts = [(table, "all_1_1_0", 1) for table in health_tests.CDC_TABLES]
+    legacy = health_tests.fake_client(SAMPLED_INVENTORY, parts=parts)
+    native = None
+    if mixed:
+        settings.CLICKHOUSE_V2 = {"QUERY_TYPES_V2_ONLY": "TRACE_LIST"}
+        native = health_tests.fake_client(
+            {
+                **health_tests.NATIVE_COLUMNS,
+                "tracer_eval_logger": health_tests.CDC_COLUMNS,
+                "system.parts": PART_COLUMNS,
+            },
+            parts=parts,
+        )
+    checker = configure(legacy, native)
+    factory = consistency.HealthCheckClient.from_client
+    opened = []
+
+    def counting_factory(source, **kwargs):
+        opened.append(source)
+        return factory(source, **kwargs)
+
+    monkeypatch.setattr(consistency.HealthCheckClient, "from_client", counting_factory)
+    assert checker.get_health_status().status == "healthy"
+    clients = [legacy, native] if mixed else [legacy]
+    assert opened == clients
+    for client in clients:
+        sql = [call.args[0] for call in client.execute_read.call_args_list]
+        assert len(sql) == 3, sql
+        assert "system.columns" in sql[0] and "FROM system.parts" in sql[1]
+        assert "max(_peerdb_synced_at)" in sql[2]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "stage", ["system.columns", "FROM system.parts", "max(_peerdb"]
+)
+@pytest.mark.parametrize("error", ["client", "server"])
+def test_reachable_but_slow_is_degraded_not_disconnected(configure, stage, error):
+    """A server that completed the handshake and then runs out of time is slow."""
+    from clickhouse_driver.errors import ServerException
+
+    failure = (
+        TimeoutError("synthetic socket timeout")
+        if error == "client"
+        else ServerException("synthetic", code=159)  # TIMEOUT_EXCEEDED
+    )
+    client = health_tests.fake_client(
+        SAMPLED_INVENTORY,
+        parts=[(table, "all_1_1_0", 1) for table in health_tests.CDC_TABLES],
+    )
+    client.handshake_completed = True
+    read = client.execute_read.side_effect
+
+    def slow(sql, params=None, **kwargs):
+        if stage in sql:
+            raise failure
+        return read(sql, params, **kwargs)
+
+    client.execute_read.side_effect = slow
+    configure(client)
+    result = health_tests.response()
+    assert result.status_code == 200
+    assert result.data["clickhouse_connected"] is True, result.data
+    assert result.data["status"] == "degraded", result.data
+    assert result.data["cdc_lag"] == dict.fromkeys(health_tests.CDC_TABLES, -1)
+
+
+@pytest.mark.unit
+def test_timeout_before_any_answer_is_disconnected(configure):
+    client = health_tests.fake_client(SAMPLED_INVENTORY)
+    client.handshake_completed = False
+    client.execute_read.side_effect = TimeoutError("synthetic connect timeout")
+    configure(client)
+    result = health_tests.response()
+    assert result.status_code == 200
+    assert result.data["clickhouse_connected"] is False
+    assert result.data["status"] == "unhealthy"
+
+
+@pytest.mark.unit
+def test_server_that_never_answers_the_handshake_is_disconnected(configure):
+    """TCP accepts, the native hello never comes back: down, within the cap."""
+    from tracer.services.clickhouse.client import ClickHouseClient
+    from tracer.services.clickhouse.consistency import ConsistencyChecker
+
+    listener = socket.create_server(("127.0.0.1", 0))
+    held = []
+    threading.Thread(
+        target=lambda: held.append(listener.accept()[0]), daemon=True
+    ).start()
+    client = ClickHouseClient(host="127.0.0.1", port=listener.getsockname()[1])
+    try:
+        started = monotonic()
+        health = configure(client).get_health_status()
+        elapsed = monotonic() - started
+    finally:
+        client.close()
+        listener.close()
+        for sock in held:
+            sock.close()
+    assert health.clickhouse_connected is False, health
+    assert health.status == "unhealthy", health
+    assert elapsed < ConsistencyChecker.QUERY_TIMEOUT_MS / 1000 + 0.5, elapsed
+
+
+class _DelayedProxy:
+    """Forward native connections, delaying every server-to-client byte.
+
+    Like ``netem`` on the server's egress: each byte arrives ``delay`` seconds
+    late, and bytes sent together arrive together. The loopback TCP handshake
+    is not delayed, so each request/response exchange costs one ``delay``.
+    """
+
+    def __init__(self, upstream, delay):
+        self._upstream = upstream
+        self._delay = delay
+        self._listener = socket.create_server(("127.0.0.1", 0))
+        self.port = self._listener.getsockname()[1]
+        self.accepted = 0
+        self._sockets = [self._listener]
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self):
+        while True:
+            try:
+                downstream, _ = self._listener.accept()
+            except OSError:
+                return
+            self.accepted += 1
+            upstream = socket.create_connection(self._upstream)
+            for sock in (downstream, upstream):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                self._sockets.append(sock)
+            self._forward(downstream, upstream, 0.0)
+            self._forward(upstream, downstream, self._delay)
+
+    @staticmethod
+    def _forward(source, target, delay):
+        pending = queue.Queue()
+
+        def receive():
+            while True:
+                try:
+                    data = source.recv(65536)
+                except OSError:
+                    data = b""
+                pending.put((monotonic() + delay, data))
+                if not data:
+                    return
+
+        def send():
+            while True:
+                due, data = pending.get()
+                pause = due - monotonic()
+                if pause > 0:
+                    sleep(pause)
+                try:
+                    if not data:
+                        target.shutdown(socket.SHUT_WR)
+                        return
+                    target.sendall(data)
+                except OSError:
+                    return
+
+        threading.Thread(target=receive, daemon=True).start()
+        threading.Thread(target=send, daemon=True).start()
+
+    def close(self):
+        for sock in self._sockets:
+            with suppress(OSError):
+                sock.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "delay,status", [(0.25, "healthy"), (0.5, "healthy"), (1.5, "degraded")]
+)
+def test_slow_reachable_clickhouse_is_connected_and_costs_few_round_trips(
+    configure, delay, status
+):
+    """Every server byte arrives ``delay`` seconds late; the server itself works.
+
+    Each statement used to open its own connection (handshake, then query)
+    under a one-second cap: about twenty round trips a check, and from about
+    half a second of latency the first statement timed out, so a working server
+    read as disconnected. Now one connection carries one handshake and three
+    statements; a server too slow for them is connected and degraded.
+    """
+    from conftest import _ch_test_native_client, _ch_test_owned_database
+    from tracer.services.clickhouse.client import ClickHouseClient
+    from tracer.services.clickhouse.consistency import ConsistencyChecker
+
+    with (
+        _ch_test_owned_database("test_health_latency_") as database,
+        _ch_test_native_client(database=database) as admin,
+    ):
+        for table in health_tests.CDC_TABLES:
+            health_tests.create_cdc(admin, table)
+            admin.execute(
+                f"INSERT INTO {table} (id, project_id, _peerdb_synced_at) VALUES",
+                [(uuid4(), uuid4(), datetime.now(UTC))],
+            )
+        connection = admin.connection
+        proxy = _DelayedProxy((connection.host, connection.port), delay)
+        client = ClickHouseClient(
+            host="127.0.0.1",
+            port=proxy.port,
+            database=database,
+            user=connection.user,
+            password=connection.password,
+        )
+        try:
+            checker = configure(client)
+            started = monotonic()
+            health = checker.get_health_status()
+            elapsed = monotonic() - started
+        finally:
+            client.close()
+            proxy.close()
+    detail = {"health": health, "elapsed": round(elapsed, 3), "opened": proxy.accepted}
+    assert health.clickhouse_connected is True, detail
+    assert health.status == status, detail
+    assert proxy.accepted == 1, detail
+    if status == "healthy":
+        assert all(0 <= lag < 60 for lag in health.cdc_lag.values()), detail
+        # One handshake and three statements; the old check needed twelve.
+        assert elapsed < 6 * delay, detail
+    else:
+        assert set(health.details["checks"].values()) == {"timeout"}, detail
+        assert elapsed < ConsistencyChecker.QUERY_TIMEOUT_MS / 1000 + 0.5, detail

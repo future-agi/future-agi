@@ -1,5 +1,6 @@
 """Monitor declared ClickHouse tables, CDC lag and PG/CH consistency."""
 
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import monotonic
@@ -11,12 +12,11 @@ from django.db import connection as pg_connection
 
 from tracer.services.clickhouse.application_read_policy import application_read_context
 from tracer.services.clickhouse.client import (
-    ClickHouseClient,
     get_clickhouse_client,
     is_clickhouse_enabled,
 )
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
-from tracer.services.clickhouse.health_client import HealthCheckClient
+from tracer.services.clickhouse.health_client import HealthCheckClient, is_timeout
 from tracer.services.clickhouse.schema import (
     get_all_schema_ddl,
     should_drop_legacy_chain,
@@ -63,6 +63,50 @@ class _Table:
         return f"{self.connection}.{self.name}"
 
 
+@dataclass
+class _Probe:
+    """One destination's diagnostic connection, shared by a check's statements."""
+
+    client: Any
+    answered: bool = False
+
+    @property
+    def reachable(self) -> bool:
+        # A completed native handshake or any answered statement proves the
+        # server is up, however slow a later statement turns out to be.
+        return self.answered or (
+            getattr(self.client, "handshake_completed", False) is True
+        )
+
+
+@dataclass(frozen=True)
+class _SampleRead:
+    """Rows of one table's parts, chosen by ``(partition, low, high)`` blocks.
+
+    ``rows`` bounds the read. A prefix read takes only the first ``rows`` rows
+    of its part, which ClickHouse serves from the granules that hold them.
+    """
+
+    ranges: tuple[tuple[str, int, int], ...]
+    rows: int
+    prefix: bool = False
+
+
+class _BudgetSpent(TimeoutError):
+    """The check's shared wall ran out before this statement was sent."""
+
+
+def _block_range(part_name: str) -> tuple[str, int, int] | None:
+    """``partition_minblock_maxblock_level[_mutation]`` to its blocks."""
+    fields = part_name.split("_")
+    if len(fields) < 4:
+        return None
+    try:
+        return fields[0], int(fields[1]), int(fields[2])
+    except ValueError:
+        return None
+
+
 class ConsistencyChecker:
     """Check declared requirements, never infer optionality from missing metadata.
 
@@ -78,14 +122,19 @@ class ConsistencyChecker:
     ]
 
     # Diagnostics must not inherit the application's long-running read policy.
-    # Bound each statement's server work AND socket wait, with a shared budget
-    # so sequential probes cannot each restart the endpoint's timeout.
-    QUERY_TIMEOUT_MS = 1000
+    # One wall bounds the whole check, so sequential statements cannot each
+    # restart the endpoint's timeout. Each destination uses one connection: a
+    # handshake and at most three statements (schema, parts, lag). A statement
+    # may use part of the wall: room for several round trips on a slow network
+    # plus bounded server work, while a stalled one leaves time for the next
+    # destination. A server that answered the handshake and then runs out of
+    # time is slow (degraded), not disconnected.
+    QUERY_TIMEOUT_MS = 2500
     CHECK_TIMEOUT_SECONDS = 5
 
     # The lag sample's fixed read size. ``_peerdb_synced_at`` is in no sorting or
     # partition key, so a whole-table max() grows with the table and cannot fit
-    # the short statement cap on large mirrors. A few million rows can.
+    # a short statement cap on large mirrors. A few million rows can.
     LAG_SAMPLE_MAX_ROWS = 10_000_000
     LAG_SAMPLE_MAX_PARTS = 64
     # system.parts columns the sample reads. Stock ClickHouse configs require a
@@ -98,7 +147,7 @@ class ConsistencyChecker:
 
     def _read(
         self,
-        client: ClickHouseClient,
+        probe: _Probe,
         query: str,
         params: dict[str, Any] | None = None,
         *,
@@ -106,15 +155,30 @@ class ConsistencyChecker:
     ) -> list[tuple]:
         remaining_ms = min(self.QUERY_TIMEOUT_MS, int((deadline - monotonic()) * 1000))
         if remaining_ms <= 0:
-            raise TimeoutError("ClickHouse health check deadline exhausted")
-        probe = HealthCheckClient.from_client(client, timeout_ms=remaining_ms)
-        try:
-            with application_read_context(enabled=False):
-                rows, _, _ = probe.execute_read(query, params, timeout_ms=remaining_ms)
-            return rows
-        finally:
-            # Never return a partial health response/socket to a production pool.
-            probe.close()
+            raise _BudgetSpent("ClickHouse health check deadline exhausted")
+        with application_read_context(enabled=False):
+            rows, _, _ = probe.client.execute_read(
+                query, params, timeout_ms=remaining_ms
+            )
+        probe.answered = True
+        return rows
+
+    def _open(self, role: str, probes: dict[str, _Probe]) -> _Probe:
+        source = self._ch_client if role == "legacy" else get_v2_query_client()
+        probe = probes[role] = _Probe(
+            HealthCheckClient.from_client(
+                source, timeout_ms=self.CHECK_TIMEOUT_SECONDS * 1000
+            )
+        )
+        return probe
+
+    @staticmethod
+    def _close(probes: dict[str, _Probe]) -> None:
+        # Never return a partial health response/socket to a production pool:
+        # each probe owns its connection and closes it here.
+        for probe in probes.values():
+            with suppress(Exception):
+                probe.client.close()
 
     def _tables(self) -> list[_Table]:
         declared = {name for name, _ in get_all_schema_ddl()}
@@ -164,35 +228,39 @@ class ConsistencyChecker:
         return tables
 
     def _inspect(
-        self, tables: list[_Table], *, deadline: float, row_counts: bool = False
-    ) -> tuple[dict[str, ClickHouseClient], dict[str, str], bool, set[str]]:
-        """Return clients, per-table readiness, connectivity and part visibility.
+        self,
+        tables: list[_Table],
+        probes: dict[str, _Probe],
+        *,
+        deadline: float,
+        row_counts: bool = False,
+    ) -> tuple[dict[str, str], bool, set[str]]:
+        """Return per-table readiness, connectivity and part visibility.
 
         Query system metadata before issuing data probes. An empty or inaccessible
         inventory is a required-check failure, not evidence that CDC is optional.
         Reasons stay internal; the public endpoint retains its existing shape.
         The last value names the connections whose role can read the
-        ``system.parts`` columns the lag sample needs.
+        ``system.parts`` columns the lag sample needs. ``probes`` receives each
+        destination's connection; the caller closes them.
         """
-        clients = {}
         checks = {}
         connected = True
         part_metadata: set[str] = set()
         # Connection dependencies outlive the legacy trace-table inventory.
         for role in dict.fromkeys(["legacy", *(table.connection for table in tables)]):
-            client = self._ch_client if role == "legacy" else get_v2_query_client()
-            clients[role] = client
             selected = [table for table in tables if table.connection == role]
-            reachable = False
+            probe = None
             try:
-                self._read(client, "SELECT 1", deadline=deadline)
-                reachable = True
+                probe = self._open(role, probes)
                 if not selected:
+                    self._read(probe, "SELECT 1", deadline=deadline)
                     continue
                 # system.columns lists only what this role may read, so the
-                # same statement reports whether system.parts is usable.
+                # same statement reports whether system.parts is usable. It is
+                # also the destination's first round trip: no separate ping.
                 rows = self._read(
-                    client,
+                    probe,
                     "SELECT if(database = 'system', 'system.parts', table), name "
                     "FROM system.columns "
                     "WHERE (database = currentDatabase() AND table IN %(tables)s) "
@@ -245,16 +313,24 @@ class ConsistencyChecker:
                     else:
                         checks[table.key] = "ready"
             except Exception as exc:
-                if not reachable:
+                # Reachable, or never contacted because earlier destinations
+                # spent the shared budget: slow, not down.
+                slow = (probe is not None and probe.reachable) or isinstance(
+                    exc, _BudgetSpent
+                )
+                if not slow:
                     connected = False
+                state = "timeout" if slow and is_timeout(exc) else "unavailable"
                 logger.warning(
                     "ClickHouse schema check failed",
                     connection=role,
                     error_type=type(exc).__name__,
                     exc_info=True,
                 )
-                checks.update({table.key: "unavailable" for table in selected})
-        return clients, checks, connected, part_metadata
+                checks.update({table.key: state for table in selected})
+                if not selected and slow:
+                    checks[f"{role}.connection"] = state
+        return checks, connected, part_metadata
 
     def check_row_counts(
         self,
@@ -266,73 +342,68 @@ class ConsistencyChecker:
         """Compare only declared CDC mirrors; native writes are not PG mirrors."""
         tables = [table for table in self._tables() if table.cdc]
         deadline = monotonic() + self.CHECK_TIMEOUT_SECONDS
-        clients, checks, _, _ = self._inspect(
-            tables, deadline=deadline, row_counts=True
-        )
-        results = []
-        for table in tables:
-            pg_count = ch_count = diff = diff_pct = -1
-            consistent = False
-            if checks[table.key] == "ready":
-                try:
-                    with pg_connection.cursor() as cursor:
-                        cursor.execute(
-                            f"SELECT COUNT(*) FROM {table.pg_table} WHERE project_id = %s AND created_at >= %s AND created_at <= %s",
-                            [project_id, start_date, end_date],
-                        )
-                        pg_count = cursor.fetchone()[0]
-                    ch_result = self._read(
-                        clients[table.connection],
-                        f"SELECT count() FROM {table.name} FINAL WHERE project_id = %(project_id)s AND created_at >= %(start)s AND created_at <= %(end)s AND _peerdb_is_deleted = 0",
-                        {
-                            "project_id": project_id,
-                            "start": start_date,
-                            "end": end_date,
-                        },
-                        deadline=deadline,
-                    )
-                    ch_count = ch_result[0][0]
-                    diff = abs(pg_count - ch_count)
-                    diff_pct = (diff / max(pg_count, 1)) * 100
-                    consistent = diff_pct <= threshold_pct
-                except Exception as exc:
-                    logger.warning(
-                        "Consistency check failed",
-                        table=table.key,
-                        error_type=type(exc).__name__,
-                        exc_info=True,
-                    )
-                    pg_count = ch_count = diff = diff_pct = -1
-            results.append(
-                ConsistencyResult(
-                    table.pg_table, pg_count, ch_count, diff, diff_pct, consistent
-                )
+        probes: dict[str, _Probe] = {}
+        try:
+            checks, _, _ = self._inspect(
+                tables, probes, deadline=deadline, row_counts=True
             )
-        return results
+            results = []
+            for table in tables:
+                pg_count = ch_count = diff = diff_pct = -1
+                consistent = False
+                if checks[table.key] == "ready":
+                    try:
+                        with pg_connection.cursor() as cursor:
+                            cursor.execute(
+                                f"SELECT COUNT(*) FROM {table.pg_table} WHERE project_id = %s AND created_at >= %s AND created_at <= %s",
+                                [project_id, start_date, end_date],
+                            )
+                            pg_count = cursor.fetchone()[0]
+                        ch_result = self._read(
+                            probes[table.connection],
+                            f"SELECT count() FROM {table.name} FINAL WHERE project_id = %(project_id)s AND created_at >= %(start)s AND created_at <= %(end)s AND _peerdb_is_deleted = 0",
+                            {
+                                "project_id": project_id,
+                                "start": start_date,
+                                "end": end_date,
+                            },
+                            deadline=deadline,
+                        )
+                        ch_count = ch_result[0][0]
+                        diff = abs(pg_count - ch_count)
+                        diff_pct = (diff / max(pg_count, 1)) * 100
+                        consistent = diff_pct <= threshold_pct
+                    except Exception as exc:
+                        logger.warning(
+                            "Consistency check failed",
+                            table=table.key,
+                            error_type=type(exc).__name__,
+                            exc_info=True,
+                        )
+                        pg_count = ch_count = diff = diff_pct = -1
+                results.append(
+                    ConsistencyResult(
+                        table.pg_table, pg_count, ch_count, diff, diff_pct, consistent
+                    )
+                )
+            return results
+        finally:
+            self._close(probes)
 
-    def _recent_parts(
+    def _sample_plans(
         self,
         tables: list[_Table],
-        clients: dict[str, ClickHouseClient],
+        probes: dict[str, _Probe],
         checks: dict[str, str],
         part_metadata: set[str],
         *,
         deadline: float,
-    ) -> dict[str, list[str]]:
-        """Pick each ready CDC table's newest active parts within the row budget.
+    ) -> dict[str, list[_SampleRead]]:
+        """Plan each ready CDC table's bounded lag sample from its newest parts.
 
-        A row is only ever stored in parts written no earlier than its sync:
-        inserts, merges and replica fetches each write a new part. While CDC is
-        current the latest sync is therefore in a small, recently written part.
-        Walking parts newest first and skipping any that would overrun
-        ``LAG_SAMPLE_MAX_ROWS`` bounds the read regardless of table size. A large
-        part holds the latest sync only briefly (a bulk load, or a merge that
-        absorbed the newest small parts before the next sync). The sample's max
-        never exceeds the table's, so the sampled lag is exact while CDC is
-        current and is otherwise never smaller than the true lag.
-
-        Tables absent from the result keep the whole-table aggregate: their role
-        cannot read ``system.parts`` or the read failed.
+        One ``system.parts`` statement per destination lists the newest active
+        parts. Tables absent from the result keep the whole-table aggregate:
+        their role cannot read ``system.parts``, or they have no active part.
         """
         selected: dict[str, list[_Table]] = {}
         for table in tables:
@@ -342,12 +413,12 @@ class ConsistencyChecker:
                 and table.connection in part_metadata
             ):
                 selected.setdefault(table.connection, []).append(table)
-        samples = {}
+        plans = {}
         for role, ready in selected.items():
             try:
                 rows = self._read(
-                    clients[role],
-                    "SELECT table, name, rows FROM system.parts "
+                    probes[role],
+                    "SELECT table, name, rows, modification_time FROM system.parts "
                     "WHERE database = currentDatabase() AND active AND rows > 0 "
                     "AND table IN %(tables)s "
                     "ORDER BY table, modification_time DESC, rows "
@@ -356,98 +427,190 @@ class ConsistencyChecker:
                     deadline=deadline,
                 )
             except Exception as exc:
+                state = "timeout" if is_timeout(exc) else "unavailable"
                 logger.warning(
                     "CDC lag check failed",
                     connection=role,
                     error_type=type(exc).__name__,
                     exc_info=True,
                 )
-                checks.update({table.key: "unavailable" for table in ready})
+                checks.update({table.key: state for table in ready})
                 continue
-            parts: dict[str, list[str]] = {table.name: [] for table in ready}
-            budget = dict.fromkeys(parts, self.LAG_SAMPLE_MAX_ROWS)
-            for table_name, part, part_rows in rows:
-                if table_name in parts and part_rows <= budget[table_name]:
-                    parts[table_name].append(part)
-                    budget[table_name] -= part_rows
-            samples.update({table.key: parts[table.name] for table in ready})
-        return samples
+            parts: dict[str, list[tuple]] = {table.name: [] for table in ready}
+            for table_name, *part in rows:
+                if table_name in parts:
+                    parts[table_name].append(tuple(part))
+            for table in ready:
+                if reads := self._plan(parts[table.name]):
+                    plans[table.key] = reads
+        return plans
+
+    def _plan(self, parts: list[tuple]) -> list[_SampleRead]:
+        """Choose one table's sample from its active parts, newest first.
+
+        ``parts`` are ``(name, rows, modification_time)``. A row is only ever
+        stored in parts written no earlier than its sync: inserts, merges and
+        replica fetches each write a new part. While CDC is current the latest
+        sync is therefore in a recently written part. Parts that fit the
+        remaining ``LAG_SAMPLE_MAX_ROWS`` are read in full; a larger part is
+        skipped, not a stop. A newest part too large to read in full (a bulk
+        batch, or a merge that absorbed the newest small parts) contributes its
+        first rows instead, a tenth of the budget. ``modification_time`` has
+        one-second resolution, so that is the smallest oversized part written
+        in the newest second. The sample's max never exceeds the table's, so the
+        sampled lag is never smaller than the true lag, and it is exact while
+        the newest sync sits in parts that fit.
+
+        Parts are selected by partition and block range, not by name. A merge
+        replaces names but writes the union of its sources' block ranges in the
+        same partition, so a merge that commits between the inventory and the
+        sample still selects the merged part. The full reads are limited to the
+        rest of the budget, which bounds even a merge that absorbed a large part
+        that was not listed.
+        """
+        reads = []
+        full: list[tuple[str, int, int]] = []
+        remaining = self.LAG_SAMPLE_MAX_ROWS
+        newest = parts[0][2] if parts else None
+        for name, part_rows, modified in parts:
+            blocks = _block_range(name)
+            if blocks is None:
+                continue
+            if part_rows <= remaining:
+                full.append(blocks)
+                remaining -= part_rows
+            elif not reads and modified == newest:
+                prefix = max(1, min(remaining, self.LAG_SAMPLE_MAX_ROWS // 10))
+                reads.append(_SampleRead((blocks,), rows=prefix, prefix=True))
+                remaining -= prefix
+        if full:
+            limit = self.LAG_SAMPLE_MAX_ROWS - sum(read.rows for read in reads)
+            reads.append(_SampleRead(tuple(full), rows=limit))
+        return reads
+
+    @staticmethod
+    def _sample_source(
+        table: str, reads: list[_SampleRead], index: int, params: dict[str, Any]
+    ) -> str:
+        selects = []
+        for read_index, read in enumerate(reads):
+            clauses = []
+            for range_index, (partition, low, high) in enumerate(read.ranges):
+                key = f"{index}_{read_index}_{range_index}"
+                params.update(
+                    {
+                        f"partition{key}": partition,
+                        f"low{key}": low,
+                        f"high{key}": high,
+                    }
+                )
+                # Virtual-column predicates select parts before any row is read.
+                clauses.append(
+                    f"(_partition_id = %(partition{key})s"
+                    f" AND toInt64(splitByChar('_', _part)[2]) <= %(high{key})s"
+                    f" AND toInt64(splitByChar('_', _part)[3]) >= %(low{key})s)"
+                )
+            where = " OR ".join(clauses)
+            if read.prefix:
+                where = f"({where}) AND _part_offset < {int(read.rows)}"
+            selects.append(
+                f"(SELECT _peerdb_synced_at FROM {table} WHERE {where} "
+                f"LIMIT {int(read.rows)})"
+            )
+        return f"({' UNION ALL '.join(selects)})"
 
     def _latest_sync(
         self,
-        client: ClickHouseClient,
-        table: str,
-        parts: list[str] | None,
+        probe: _Probe,
+        tables: list[_Table],
+        plans: dict[str, list[_SampleRead]],
         *,
         deadline: float,
-    ) -> list[tuple]:
-        """Return ``(count, max(_peerdb_synced_at))`` for the sample or the table.
+    ) -> dict[str, tuple]:
+        """Return ``(count, max(_peerdb_synced_at))`` per table, in one statement.
 
-        An empty sample (no active part, or none within the budget) and a sample
-        with no visible row use the exact whole-table aggregate, which is free on
-        an empty table. max() alone returns an epoch default on an empty table.
+        Planned tables read their sample; the others the exact whole-table
+        aggregate, which is free on an empty table. A sample with no visible
+        row (its parts hold only masked rows) is retried once with the exact
+        aggregate. max() alone returns an epoch default on an empty table.
         """
-        if parts:
+        found: dict[str, tuple] = {}
+        pending = tables
+        while pending:
+            selects: list[str] = []
+            params: dict[str, Any] = {}
+            for index, table in enumerate(pending):
+                params[f"table{index}"] = table.name
+                reads = plans.get(table.key)
+                source = (
+                    self._sample_source(table.name, reads, index, params)
+                    if reads
+                    else table.name
+                )
+                # One timestamp type for the UNION, whatever each mirror's zone.
+                selects.append(
+                    f"SELECT %(table{index})s, count(), "
+                    f"toDateTime64(max(_peerdb_synced_at), 6, 'UTC') FROM {source}"
+                )
             rows = self._read(
-                client,
-                f"SELECT count(), max(_peerdb_synced_at) FROM {table} "
-                "WHERE _part IN %(parts)s",
-                {"parts": tuple(parts)},
-                deadline=deadline,
+                probe, " UNION ALL ".join(selects), params, deadline=deadline
             )
-            if rows and rows[0][0]:
-                return rows
-        return self._read(
-            client,
-            f"SELECT count(), max(_peerdb_synced_at) FROM {table}",
-            deadline=deadline,
-        )
+            found.update({name: (count, synced) for name, count, synced in rows})
+            pending = [
+                table
+                for table in pending
+                if table.key in plans and found.get(table.name, (0,))[0] == 0
+            ]
+            plans = {}
+        return {table.key: found[table.name] for table in tables if table.name in found}
 
     def _lag(
         self,
         tables: list[_Table],
-        clients: dict[str, ClickHouseClient],
+        probes: dict[str, _Probe],
         checks: dict[str, str],
         part_metadata: set[str],
         *,
         deadline: float,
     ) -> dict[str, float]:
-        samples = self._recent_parts(
-            tables, clients, checks, part_metadata, deadline=deadline
+        cdc = [table for table in tables if table.cdc]
+        plans = self._sample_plans(
+            cdc, probes, checks, part_metadata, deadline=deadline
         )
+        by_role: dict[str, list[_Table]] = {}
+        for table in cdc:
+            if checks[table.key] == "ready":
+                by_role.setdefault(table.connection, []).append(table)
+        samples: dict[str, tuple] = {}
+        for role, ready in by_role.items():
+            try:
+                samples.update(
+                    self._latest_sync(probes[role], ready, plans, deadline=deadline)
+                )
+            except Exception as exc:
+                state = "timeout" if is_timeout(exc) else "unavailable"
+                logger.warning(
+                    "CDC lag check failed",
+                    connection=role,
+                    error_type=type(exc).__name__,
+                    exc_info=True,
+                )
+                checks.update({table.key: state for table in ready})
         lag = {}
-        for table in tables:
-            if not table.cdc:
-                continue
+        for table in cdc:
             value = -1.0
             if checks[table.key] == "ready":
-                try:
-                    rows = self._latest_sync(
-                        clients[table.connection],
-                        table.name,
-                        samples.get(table.key),
-                        deadline=deadline,
-                    )
-                    if rows and rows[0][0] == 0:
-                        checks[table.key] = "empty"
-                    elif rows and isinstance(rows[0][1], datetime):
-                        last_sync = rows[0][1]
-                        if last_sync.tzinfo is None:
-                            last_sync = last_sync.replace(tzinfo=UTC)
-                        value = max(
-                            0.0, (datetime.now(UTC) - last_sync).total_seconds()
-                        )
-                        if value > 60:
-                            checks[table.key] = "lagging"
-                    else:
-                        checks[table.key] = "unavailable"
-                except Exception as exc:
-                    logger.warning(
-                        "CDC lag check failed",
-                        table=table.key,
-                        error_type=type(exc).__name__,
-                        exc_info=True,
-                    )
+                row = samples.get(table.key)
+                if row and row[0] == 0:
+                    checks[table.key] = "empty"
+                elif row and isinstance(row[1], datetime):
+                    last_sync = row[1]
+                    if last_sync.tzinfo is None:
+                        last_sync = last_sync.replace(tzinfo=UTC)
+                    value = max(0.0, (datetime.now(UTC) - last_sync).total_seconds())
+                    if value > 60:
+                        checks[table.key] = "lagging"
+                else:
                     checks[table.key] = "unavailable"
             # In mixed deployments the public per-table value represents both
             # destinations: an unavailable sample wins over a successful one.
@@ -459,8 +622,12 @@ class ConsistencyChecker:
         """Lag for declared CDC tables; omit native/retired tables, use -1 if unknown."""
         tables = [table for table in self._tables() if table.cdc]
         deadline = monotonic() + self.CHECK_TIMEOUT_SECONDS
-        clients, checks, _, part_metadata = self._inspect(tables, deadline=deadline)
-        return self._lag(tables, clients, checks, part_metadata, deadline=deadline)
+        probes: dict[str, _Probe] = {}
+        try:
+            checks, _, part_metadata = self._inspect(tables, probes, deadline=deadline)
+            return self._lag(tables, probes, checks, part_metadata, deadline=deadline)
+        finally:
+            self._close(probes)
 
     def get_health_status(self) -> HealthStatus:
         if not is_clickhouse_enabled():
@@ -470,19 +637,24 @@ class ConsistencyChecker:
 
         tables = self._tables()
         deadline = monotonic() + self.CHECK_TIMEOUT_SECONDS
-        clients, checks, connected, part_metadata = self._inspect(
-            tables, deadline=deadline
-        )
-        cdc_lag = self._lag(tables, clients, checks, part_metadata, deadline=deadline)
+        probes: dict[str, _Probe] = {}
+        try:
+            checks, connected, part_metadata = self._inspect(
+                tables, probes, deadline=deadline
+            )
+            cdc_lag = self._lag(
+                tables, probes, checks, part_metadata, deadline=deadline
+            )
+        finally:
+            self._close(probes)
+        states = set(checks.values())
         if (
             not connected
             or not tables
-            or any(
-                value not in ("ready", "empty", "lagging") for value in checks.values()
-            )
+            or states - {"ready", "empty", "lagging", "timeout"}
         ):
             status = "unhealthy"
-        elif "lagging" in checks.values():
+        elif states & {"lagging", "timeout"}:
             status = "degraded"
         else:
             status = "healthy"

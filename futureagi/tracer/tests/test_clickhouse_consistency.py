@@ -61,11 +61,24 @@ def configure(monkeypatch, settings):
     return apply
 
 
+PART_WRITTEN = datetime(2026, 1, 1, 12, 0, 0)
+
+
+def sampled_tables(params):
+    """Tables one batched lag statement covers, from its ``tableN`` parameters."""
+    return [
+        value
+        for key, value in (params or {}).items()
+        if key.startswith("table") and key[5:].isdigit()
+    ]
+
+
 def fake_client(columns, *, sample=None, parts=()):
     """Schema-only double; ``columns["system.parts"]`` opts into the part sample.
 
-    ``parts`` are the ``(table, part, rows)`` rows the system.parts read returns,
-    already newest first as the real ORDER BY delivers them.
+    ``parts`` are the ``(table, part, rows[, modification_time])`` rows the
+    system.parts read returns, already newest first as the real ORDER BY
+    delivers them. Without a time, every part was written in the same second.
     """
     if sample is None:
         sample = (1, datetime.now(UTC))
@@ -78,9 +91,16 @@ def fake_client(columns, *, sample=None, parts=()):
                 (table, column) for table, names in columns.items() for column in names
             ]
         if "FROM system.parts" in sql:
-            return [row for row in parts if row[0] in params["tables"]]
+            rows = [row for row in parts if row[0] in params["tables"]]
+            if "modification_time FROM" not in sql:
+                return [row[:3] for row in rows]
+            return [row if len(row) == 4 else (*row, PART_WRITTEN) for row in rows]
         if "max(_peerdb_synced_at)" in sql:
-            # Match both old and new aggregate query shapes.
+            # One batched statement answers ``(table, count, max)`` per table;
+            # the older per-table statements answer a single unnamed row.
+            tables = sampled_tables(params)
+            if tables:
+                return [(table, *sample) for table in tables]
             return [sample if "count()" in sql else (sample[1],)]
         if "LIMIT 0" in sql:
             return []

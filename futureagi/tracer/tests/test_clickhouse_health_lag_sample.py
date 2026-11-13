@@ -5,7 +5,10 @@ no sorting or partition key of the CDC mirrors, so a whole-table
 ``max(_peerdb_synced_at)`` reads every row. On mirrors of a few hundred million
 rows that scan outgrew the cap and the endpoint reported ``unhealthy`` with lag
 -1 while CDC was current. The lag probe now reads only the newest parts that fit
-a fixed row budget.
+a fixed row budget, plus a bounded prefix of the newest part when it alone is
+larger than the budget. It selects parts by partition and block range, so a
+merge that commits between the part inventory and the sample still selects the
+merged part.
 
 These tests use the ClickHouse test sidecar, the production CDC DDL (engine made
 non-replicated; partition and sorting keys unchanged) and synthetic rows only.
@@ -109,6 +112,61 @@ def _sync_now(admin):
         )
 
 
+def _insert_part(admin, table, rows, *, months_back=0, synced_age_seconds=0):
+    """One INSERT ... SELECT: one new part in one monthly partition."""
+    created = (
+        "toDateTime64(toStartOfMonth(now64(3)) "
+        f"- toIntervalMonth({int(months_back)}) + toIntervalDay(3), 3)"
+        if months_back
+        else "now64(3)"
+    )
+    admin.execute(
+        f"INSERT INTO {table} (id, created_at, updated_at, _peerdb_synced_at, "
+        "_peerdb_is_deleted, _peerdb_version) "
+        f"SELECT generateUUIDv4(number), {created}, {created}, "
+        f"toDateTime64(now64(6) - toIntervalSecond({int(synced_age_seconds)}), 6), "
+        f"0, toInt64(number) + 1 FROM numbers({int(rows)})"
+    )
+
+
+def _active_parts(admin, table="tracer_trace"):
+    return admin.execute(
+        "SELECT name, partition_id, rows FROM system.parts "
+        "WHERE database = currentDatabase() AND table = %(table)s AND active "
+        "ORDER BY name",
+        {"table": table},
+    )
+
+
+def _newest_sync_age(admin, table="tracer_trace"):
+    return admin.execute(
+        f"SELECT dateDiff('second', max(_peerdb_synced_at), now64(6)) FROM {table}"
+    )[0][0]
+
+
+def _probe_users(stack, admin, database):
+    """Probing users per profile; the server refuses their whole-table scans."""
+    users = {
+        "readonly2": f"{database}_rw",
+        "server_readonly1": f"{database}_ro",
+        "no_parts_grant": f"{database}_np",
+    }
+    for profile, user in users.items():
+        settings = {
+            "readonly2": f"max_rows_to_read = {SERVER_ROW_LIMIT}",
+            "server_readonly1": f"readonly = 1, max_rows_to_read = {SERVER_ROW_LIMIT}",
+            "no_parts_grant": "readonly = 1",
+        }[profile]
+        stack.callback(admin.execute, f"DROP USER IF EXISTS {user}")
+        admin.execute(
+            f"CREATE USER {user} IDENTIFIED WITH no_password SETTINGS {settings}"
+        )
+        admin.execute(f"GRANT SELECT ON {database}.* TO {user}")
+        if profile != "no_parts_grant":
+            admin.execute(f"GRANT SELECT({PART_COLUMNS}) ON system.parts TO {user}")
+    return users
+
+
 @pytest.fixture(scope="module")
 def large_mirror():
     """A mirror many times the sample budget, plus probing users per profile."""
@@ -120,27 +178,7 @@ def large_mirror():
         _create_mirrors(admin)
         _fill(admin, LARGE_ROWS)
         _settle(admin)
-        users = {
-            "readonly2": f"{database}_rw",
-            "server_readonly1": f"{database}_ro",
-            "no_parts_grant": f"{database}_np",
-        }
-        for profile, user in users.items():
-            settings = {
-                "readonly2": f"max_rows_to_read = {SERVER_ROW_LIMIT}",
-                "server_readonly1": (
-                    f"readonly = 1, max_rows_to_read = {SERVER_ROW_LIMIT}"
-                ),
-                "no_parts_grant": "readonly = 1",
-            }[profile]
-            stack.callback(admin.execute, f"DROP USER IF EXISTS {user}")
-            admin.execute(
-                f"CREATE USER {user} IDENTIFIED WITH no_password SETTINGS {settings}"
-            )
-            admin.execute(f"GRANT SELECT ON {database}.* TO {user}")
-            if profile != "no_parts_grant":
-                admin.execute(f"GRANT SELECT({PART_COLUMNS}) ON system.parts TO {user}")
-        yield admin, database, users
+        yield admin, database, _probe_users(stack, admin, database)
 
 
 def _probe_client(admin, database, user=None, *, server_readonly=False):
@@ -295,7 +333,12 @@ def test_role_without_parts_grant_keeps_the_whole_table_aggregate(
     assert all(0 <= lag < 60 for lag in health.cdc_lag.values()), health
     assert not [s for s in statements if "FROM system.parts" in s["sql"]]
     assert not [s for s in statements if s["error"] is not None], statements
-    assert [s["sql"] for s in _trace_lag_reads(statements)] == [AGGREGATE]
+    # One statement for every mirror, each the unfiltered whole-table aggregate.
+    (lag_read,) = _trace_lag_reads(statements)
+    assert "_part" not in lag_read["sql"], lag_read
+    for table in CDC_TABLES:
+        assert f"FROM {table}" in lag_read["sql"], lag_read
+        assert f"FROM {table} WHERE" not in lag_read["sql"], lag_read
     assert not [e for e in events if e["event"] == "ClickHouse read query failed"]
 
 
@@ -326,4 +369,156 @@ def test_sampled_lag_still_reports_a_stalled_mirror(configure, statements):
     assert health.status == "degraded", (health, statements)
     assert set(health.details["checks"].values()) == {"lagging"}
     assert all(lag >= 590 for lag in health.cdc_lag.values()), health.cdc_lag
-    assert all("WHERE _part IN" in s["sql"] for s in _trace_lag_reads(statements))
+    reads = _trace_lag_reads(statements)
+    assert reads and all("_partition_id" in s["sql"] for s in reads), statements
+
+
+# One CDC batch three times the sample budget, and one merged month of history
+# far above it (both well under the probing users' scan limit on their own).
+BULK_BATCH_ROWS = 3 * SAMPLE_BUDGET
+HISTORY_PART_ROWS = 150_000
+
+
+@pytest.fixture(params=["every_part_oversized", "next_to_stale_small_parts"])
+def oversized_batch(request):
+    """The newest part is one CDC batch larger than the whole sample budget.
+
+    ``every_part_oversized``: history is one large part per month, as after
+    ``OPTIMIZE ... FINAL``, so no part fits the budget and the table is larger
+    than the probing users may scan. ``next_to_stale_small_parts``: the only
+    parts that fit are small ones synced ten minutes ago.
+    """
+    from conftest import _ch_test_native_client, _ch_test_owned_database
+
+    with ExitStack() as stack:
+        database = stack.enter_context(_ch_test_owned_database("test_health_bulk_"))
+        admin = stack.enter_context(_ch_test_native_client(database=database))
+        _create_mirrors(admin)
+        for table in CDC_TABLES:
+            admin.execute(f"SYSTEM STOP MERGES {table}")
+        history = HISTORY_PART_ROWS if request.param == "every_part_oversized" else 100
+        for months_back in (2, 1):
+            _insert_part(
+                admin,
+                "tracer_trace",
+                history,
+                months_back=months_back,
+                synced_age_seconds=600,
+            )
+        _insert_part(admin, "tracer_trace", BULK_BATCH_ROWS)
+        for table in ("trace_session", "tracer_eval_logger"):
+            _insert_part(admin, table, 1)
+        yield request.param, admin, database, _probe_users(stack, admin, database)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("profile", ["readonly2", "server_readonly1"])
+def test_current_mirror_whose_newest_part_exceeds_the_budget_is_healthy(
+    configure, oversized_batch, statements, small_budget, profile
+):
+    """The newest part alone is larger than the budget; CDC is current.
+
+    Skipping every part over the budget left either no sample (and a
+    whole-table scan the server refuses: unhealthy) or only the stale small
+    parts (ten minutes of false lag: degraded). The newest part now contributes
+    a bounded prefix of its rows.
+    """
+    layout, admin, database, users = oversized_batch
+    parts = _active_parts(admin)
+    fitting = [rows for *_, rows in parts if rows <= small_budget]
+    assert len(parts) == 3, parts
+    if layout == "every_part_oversized":
+        assert not fitting, parts
+        (total,) = admin.execute("SELECT count() FROM tracer_trace")[0]
+        assert total > SERVER_ROW_LIMIT, total
+    else:
+        assert fitting == [100, 100], parts
+    assert _newest_sync_age(admin) < 60
+
+    checker = configure(
+        _probe_client(
+            admin,
+            database,
+            users[profile],
+            server_readonly=profile == "server_readonly1",
+        )
+    )
+    with capture_logs() as events:
+        _assert_current_and_healthy(checker, statements, small_budget, events)
+
+
+@pytest.fixture
+def race_layout():
+    """tracer_trace: one small part synced ten minutes ago in each of two earlier
+    months, and the latest CDC batch, two small parts synced now, in this month.
+    Merges are stopped before any insert, so the layout is deterministic."""
+    from conftest import _ch_test_native_client, _ch_test_owned_database
+
+    with (
+        _ch_test_owned_database("test_health_race_") as database,
+        _ch_test_native_client(database=database) as admin,
+    ):
+        _create_mirrors(admin)
+        for table in CDC_TABLES:
+            admin.execute(f"SYSTEM STOP MERGES {table}")
+        for months_back in (2, 1):
+            _insert_part(
+                admin,
+                "tracer_trace",
+                100,
+                months_back=months_back,
+                synced_age_seconds=600,
+            )
+        stale = {name for name, *_ in _active_parts(admin)}
+        _insert_part(admin, "tracer_trace", 5)
+        _insert_part(admin, "tracer_trace", 5)
+        for table in ("trace_session", "tracer_eval_logger"):
+            _insert_part(admin, table, 1)
+        parts = _active_parts(admin)
+        fresh = [name for name, *_ in parts if name not in stale]
+        partitions = {partition for name, partition, _ in parts if name in fresh}
+        assert len(parts) == 4 and len(fresh) == 2 and len(partitions) == 1, parts
+        assert _newest_sync_age(admin) < 60
+        yield admin, database, fresh, partitions.pop()
+
+
+@pytest.mark.integration
+def test_merge_between_inventory_and_sample_keeps_current_mirror_healthy(
+    configure, race_layout, monkeypatch
+):
+    """A merge commits between the part inventory and the sample read.
+
+    The merged part has a new name. A sample that selected the listed names read
+    only the two stale parts, and a current mirror reported ten minutes of lag.
+    """
+    from tracer.services.clickhouse import consistency
+
+    admin, database, fresh, partition = race_layout
+    read = consistency.ConsistencyChecker._read
+    merged = {}
+
+    def read_then_merge(self, *args, **kwargs):
+        rows = read(self, *args, **kwargs)
+        if "FROM system.parts" in args[1] and not merged:
+            admin.execute("SYSTEM START MERGES tracer_trace")
+            try:
+                admin.execute(
+                    f"OPTIMIZE TABLE tracer_trace PARTITION ID '{partition}' FINAL",
+                    settings={"optimize_throw_if_noop": 1},
+                )
+            finally:
+                admin.execute("SYSTEM STOP MERGES tracer_trace")
+            merged["active"] = sorted(name for name, *_ in _active_parts(admin))
+        return rows
+
+    monkeypatch.setattr(consistency.ConsistencyChecker, "_read", read_then_merge)
+    health = configure(_probe_client(admin, database)).get_health_status()
+
+    assert merged, "the merge did not run between inventory and sample"
+    # The listed fresh parts are gone; the data is unchanged and current.
+    assert not set(fresh) & set(merged["active"]), (fresh, merged)
+    assert _newest_sync_age(admin) < 60
+    detail = {"health": health, "fresh": fresh, "merged": merged}
+    assert health.status == "healthy", detail
+    assert health.details["checks"]["legacy.tracer_trace"] == "ready", detail
+    assert 0 <= health.cdc_lag["tracer_trace"] < 60, detail
