@@ -760,9 +760,7 @@ def _settle_bundle(job: HostedHarnessJob) -> str:
                 "run_id": str(job.id),
                 "source": FAILURE_SOURCE,
             }
-            excerpt = ((failure.get("details") or {}).get("harness_failure") or {}).get(
-                "message"
-            )
+            excerpt = assembly.reported_excerpt(failure)
             if excerpt:
                 bundle.error["excerpt"] = excerpt
             bundle.save(update_fields=["state", "error", "updated_at"])

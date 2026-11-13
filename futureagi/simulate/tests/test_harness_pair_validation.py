@@ -1983,20 +1983,23 @@ class TestFailureRecord:
             validation.platform_failure(failure, [{"action": "issue_refund"}]) is None
         )
 
-    def test_the_sandboxs_record_is_kept_and_its_line_replaces_the_logs(
+    def test_a_forged_sandbox_record_is_kept_as_a_diagnostic_and_never_becomes_the_cause(
         self, user, workspace, storage, gateway, monkeypatch
     ):
         environment = _pending(user, workspace, storage, "pv-record")
         job = _start(environment).job
         attempt = _launch(gateway, job)
-        forged = "ProcessRuntimeError: render/internal_forged (world-db): forged by the agent"
+        logs = "ProcessRuntimeError: spawn/spawn_failed (agent): exited 1"
         monkeypatch.setattr(
             gateway,
             "inspect",
-            lambda _: {"exit_code": 78, "logs": forged, "process_logs": ""},
+            lambda _: {"exit_code": 78, "logs": logs, "process_logs": ""},
         )
+        # The tested agent rewrote the record to blame our world.
         record = _recorded(
-            "agent", process="agent", message="spawn/spawn_failed (agent): exited 1"
+            "world",
+            process="world-db",
+            message="render/internal_forged (world-db): forged by the agent",
         )
         files = {assembly.FAILURE_RECORD_PATH: json.dumps(record).encode()}
         monkeypatch.setattr(
@@ -2022,6 +2025,7 @@ class TestFailureRecord:
         assert failure["details"]["harness_failure"] == record
         assert failure["message"].endswith("spawn/spawn_failed (agent): exited 1")
         assert "forged" not in failure["message"]
+        assert assembly.reported_excerpt(failure).startswith(assembly.REPORTED_PREFIX)
 
     def test_an_unreadable_record_is_none(self):
         class Files:
@@ -2053,13 +2057,14 @@ class TestFailureRecord:
             harness_readiness.resolve_pairing(environment)
         )
 
+        # Shown labelled as the sandbox record's report: the agent can write that file.
         assert report["validation"]["error"]["excerpt"] == (
-            "spawn/spawn_failed (agent): exited 1"
+            "Reported by the sandbox's failure record: spawn/spawn_failed (agent): exited 1"
         )
         start = next(row for row in report["rows"] if row["id"] == "start")
         assert {
             "check": "failed_check",
-            "result": "spawn/spawn_failed (agent): exited 1",
+            "result": "Reported by the sandbox's failure record: spawn/spawn_failed (agent): exited 1",
         } in start["evidence"]
 
     def test_the_gateway_keeps_the_excerpt_on_the_failed_bundle(
@@ -2080,7 +2085,9 @@ class TestFailureRecord:
 
         row = _row(environment)
         assert row.state == "failed"
-        assert row.error["excerpt"] == "spawn/spawn_failed (agent): exited 1"
+        assert row.error["excerpt"] == (
+            "Reported by the sandbox's failure record: spawn/spawn_failed (agent): exited 1"
+        )
 
 
 class TestToolRoutingKept:
