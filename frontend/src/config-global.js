@@ -39,7 +39,6 @@ export const REACT_QUERY_DEVTOOLS_ENABLED =
   import.meta.env.VITE_REACT_QUERY_DEVTOOLS_ENABLED !== "false";
 export const GOOGLE_SITE_KEY = import.meta.env.VITE_GOOGLE_SITE_KEY;
 export const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN;
-export const MIXPANEL_HOST = import.meta.env.VITE_MIXPANEL_HOST;
 export const POSTHOG_KEY = import.meta.env.VITE_POSTHOG_KEY;
 export const POSTHOG_HOST = import.meta.env.VITE_POSTHOG_HOST;
 
