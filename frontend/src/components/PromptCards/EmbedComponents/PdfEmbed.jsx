@@ -46,7 +46,7 @@ const PdfEmbed = ({ isEmbed, id, size, onDelete, name }) => {
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
                 fontWeight: 500,
-                fontSize: "13px",
+                fontSize: "12px",
                 fontFamily: "IBM Plex Sans,sans-serif",
                 color: "var(--text-primary)",
               }}

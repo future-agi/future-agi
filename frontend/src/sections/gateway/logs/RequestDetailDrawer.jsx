@@ -110,7 +110,7 @@ function JsonViewer({ data, label }) {
           style={{
             margin: 0,
             fontFamily: "monospace",
-            fontSize: "13px",
+            fontSize: "12px",
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
           }}
@@ -167,13 +167,13 @@ function HeadersAccordion({ title, headers }) {
           <TableBody>
             {Object.entries(headers).map(([key, value]) => (
               <TableRow key={key}>
-                <TableCell sx={{ fontFamily: "monospace", fontSize: "13px" }}>
+                <TableCell sx={{ fontFamily: "monospace", fontSize: "12px" }}>
                   {key}
                 </TableCell>
                 <TableCell
                   sx={{
                     fontFamily: "monospace",
-                    fontSize: "13px",
+                    fontSize: "12px",
                     wordBreak: "break-all",
                   }}
                 >

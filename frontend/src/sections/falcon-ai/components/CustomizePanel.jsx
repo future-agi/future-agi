@@ -112,7 +112,7 @@ function Panel1NavItem({ icon, label, active, onClick }) {
       <ListItemText
         primary={label}
         primaryTypographyProps={{
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: active ? 500 : 400,
         }}
       />
@@ -164,7 +164,7 @@ function NavigationPanel({ selectedTab, onTabChange }) {
         </IconButton>
         <Typography
           sx={{
-            fontSize: 13,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.primary",
           }}
@@ -204,7 +204,7 @@ function NavigationPanel({ selectedTab, onTabChange }) {
             lineHeight: 1.4,
           }}
         >
-          Give Falcon role-level expertise
+          Give Chat role-level expertise
         </Typography>
       </Box>
     </Box>
@@ -263,7 +263,7 @@ function SkillsListPanel({
         }}
       >
         <Typography
-          sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
+          sx={{ fontSize: 12, fontWeight: 600, color: "text.primary" }}
         >
           Skills
         </Typography>
@@ -490,7 +490,7 @@ function ConnectorsListPanel({
         }}
       >
         <Typography
-          sx={{ fontSize: 13, fontWeight: 600, color: "text.primary" }}
+          sx={{ fontSize: 12, fontWeight: 600, color: "text.primary" }}
         >
           Connectors
         </Typography>
@@ -805,19 +805,19 @@ function SkillDetailPanel({
           width={48}
           sx={{ color: "text.disabled", mb: 2 }}
         />
-        <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 0.5 }}>
+        <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 0.5 }}>
           Create new skills
         </Typography>
         <Typography
           sx={{
-            fontSize: 13,
+            fontSize: 12,
             color: "text.secondary",
             textAlign: "center",
             maxWidth: 320,
           }}
         >
-          Teach Falcon your processes, team norms, and expertise. Skills guide
-          how the agent responds.
+          Teach Chat your processes, team norms, and expertise. Skills guide how
+          the agent responds.
         </Typography>
       </Box>
     );
@@ -868,7 +868,7 @@ function SkillDetailPanel({
           error={!!error && !form.name.trim()}
           sx={{
             mb: 2,
-            "& .MuiInputBase-root": { fontSize: 13, borderRadius: "8px" },
+            "& .MuiInputBase-root": { fontSize: 12, borderRadius: "8px" },
           }}
         />
 
@@ -890,7 +890,7 @@ function SkillDetailPanel({
           onChange={handleChange("description")}
           sx={{
             mb: 2,
-            "& .MuiInputBase-root": { fontSize: 13, borderRadius: "8px" },
+            "& .MuiInputBase-root": { fontSize: 12, borderRadius: "8px" },
           }}
         />
 
@@ -914,14 +914,14 @@ function SkillDetailPanel({
           minRows={6}
           maxRows={16}
           required
-          placeholder="Write detailed instructions for how Falcon should behave when this skill is active..."
+          placeholder="Write detailed instructions for how Chat should behave when this skill is active..."
           value={form.instructions}
           onChange={handleChange("instructions")}
           error={!!error && !form.instructions.trim()}
           sx={{
             mb: 2,
             "& .MuiInputBase-root": {
-              fontSize: 13,
+              fontSize: 12,
               borderRadius: "8px",
               fontFamily: "monospace",
             },
@@ -957,7 +957,7 @@ function SkillDetailPanel({
           onKeyDown={handleAddPhrase}
           sx={{
             mb: 1,
-            "& .MuiInputBase-root": { fontSize: 13, borderRadius: "8px" },
+            "& .MuiInputBase-root": { fontSize: 12, borderRadius: "8px" },
           }}
         />
         {form.trigger_phrases.length > 0 && (
@@ -1066,7 +1066,7 @@ function SkillDetailPanel({
             </Box>
             {skill.description && (
               <Typography
-                sx={{ fontSize: 13, color: "text.secondary", mt: 0.25 }}
+                sx={{ fontSize: 12, color: "text.secondary", mt: 0.25 }}
               >
                 {skill.description}
               </Typography>
@@ -1110,7 +1110,7 @@ function SkillDetailPanel({
           >
             Added by
           </Typography>
-          <Typography sx={{ fontSize: 13 }}>
+          <Typography sx={{ fontSize: 12 }}>
             {skill.created_by_display || (isSystem ? "System" : "You")}
           </Typography>
         </Box>
@@ -1156,7 +1156,7 @@ function SkillDetailPanel({
             Description
           </Typography>
           <Typography
-            sx={{ fontSize: 13, color: "text.secondary", lineHeight: 1.6 }}
+            sx={{ fontSize: 12, color: "text.secondary", lineHeight: 1.6 }}
           >
             {skill.description}
           </Typography>
@@ -1187,7 +1187,7 @@ function SkillDetailPanel({
             <Typography
               component="pre"
               sx={{
-                fontSize: 13,
+                fontSize: 12,
                 lineHeight: 1.7,
                 color: "text.secondary",
                 fontFamily: "monospace",
@@ -1201,7 +1201,7 @@ function SkillDetailPanel({
           </Box>
         ) : (
           <Typography
-            sx={{ fontSize: 13, color: "text.disabled", fontStyle: "italic" }}
+            sx={{ fontSize: 12, color: "text.disabled", fontStyle: "italic" }}
           >
             No instructions defined yet.{" "}
             {!isSystem && "Click Edit to add instructions."}
@@ -1387,18 +1387,18 @@ function ConnectorDetailPanel({
           width={48}
           sx={{ color: "text.disabled", mb: 2 }}
         />
-        <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 0.5 }}>
+        <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 0.5 }}>
           Connect your tools
         </Typography>
         <Typography
           sx={{
-            fontSize: 13,
+            fontSize: 12,
             color: "text.secondary",
             textAlign: "center",
             maxWidth: 320,
           }}
         >
-          Add MCP connectors to give Falcon access to external services like
+          Add MCP connectors to give Chat access to external services like
           GitHub, Slack, databases, and more.
         </Typography>
       </Box>
@@ -1411,7 +1411,7 @@ function ConnectorDetailPanel({
     const inputSx = {
       mb: 2,
       "& .MuiInputBase-root": {
-        fontSize: 13,
+        fontSize: 12,
         borderRadius: "8px",
         height: 48,
         bgcolor: "background.neutral",
@@ -1448,8 +1448,8 @@ function ConnectorDetailPanel({
             />
           )}
         </Box>
-        <Typography sx={{ fontSize: 13, color: "text.secondary", mb: 3 }}>
-          Connect Falcon to your data and tools.
+        <Typography sx={{ fontSize: 12, color: "text.secondary", mb: 3 }}>
+          Connect Chat to your data and tools.
         </Typography>
 
         {error && (
@@ -1507,7 +1507,7 @@ function ConnectorDetailPanel({
             width={20}
             sx={{ color: "text.secondary" }}
           />
-          <Typography sx={{ fontSize: 13, fontWeight: 600 }}>
+          <Typography sx={{ fontSize: 12, fontWeight: 600 }}>
             Advanced settings
           </Typography>
         </ButtonBase>
@@ -1660,7 +1660,7 @@ function ConnectorDetailPanel({
             </Box>
             {connector.description && (
               <Typography
-                sx={{ fontSize: 13, color: "text.secondary", mt: 0.25 }}
+                sx={{ fontSize: 12, color: "text.secondary", mt: 0.25 }}
               >
                 {connector.description}
               </Typography>
@@ -1745,11 +1745,11 @@ function ConnectorDetailPanel({
       {/* Tool permissions */}
       {tools.length > 0 && (
         <Box>
-          <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 1.5 }}>
+          <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 1.5 }}>
             Tool permissions
           </Typography>
           <Typography sx={{ fontSize: 12, color: "text.secondary", mb: 2 }}>
-            Choose when Falcon is allowed to use these tools.
+            Choose when Chat is allowed to use these tools.
           </Typography>
 
           {toolError && (
@@ -1917,7 +1917,7 @@ function ConnectorDetailPanel({
             width={28}
             sx={{ color: "text.disabled", mb: 1 }}
           />
-          <Typography sx={{ fontSize: 13, color: "text.disabled" }}>
+          <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
             No tools discovered yet. Tools will appear after the connector
             successfully connects.
           </Typography>
@@ -1987,7 +1987,7 @@ function ToolRow({ tool, enabled, onlyEnabled, pending, onToggle, isLast }) {
       }}
     >
       <Box sx={{ flex: 1, mr: 1 }}>
-        <Typography sx={{ fontSize: 13, fontWeight: 500 }}>
+        <Typography sx={{ fontSize: 12, fontWeight: 500 }}>
           {tool.name || tool.id}
         </Typography>
         {tool.description && (
