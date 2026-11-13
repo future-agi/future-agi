@@ -198,16 +198,18 @@ def sweep_local_compare_root(now: float | None = None) -> None:
             logger.exception("compare_folder_delete_failed", folder=folder)
 
 
-def _sweep_bucket(client, bucket: str, deadline: float, now: datetime) -> None:
+def _sweep_bucket(client, bucket: str, deadline: float, now: datetime) -> bool:
     """Remove the expired comparisons in one bucket while listing it, so that
     a slow listing still removes what it reached. Stops at the deadline
-    (``time.monotonic()``); the next run lists the bucket again."""
+    (``time.monotonic()``); the next run lists the bucket again. Returns
+    whether every expired comparison it listed was removed."""
     cutoff = now - timedelta(seconds=COMPARE_MAX_AGE_SECONDS)
+    complete = True
     try:
         for compare_id, modified in _listed_compare_ids(client, bucket, now):
             if time.monotonic() >= deadline:
                 logger.warning("compare_objects_sweep_deferred", bucket=bucket)
-                return
+                return False
             if modified >= cutoff:
                 continue
             try:
@@ -216,33 +218,38 @@ def _sweep_bucket(client, bucket: str, deadline: float, now: datetime) -> None:
             except Exception:
                 # Still listed, so the next run retries it.
                 logger.exception("compare_objects_delete_failed", compare_id=compare_id)
+                complete = False
     except Exception:
         logger.exception("compare_objects_list_failed", bucket=bucket)
+        return False
+    return complete
 
 
-def sweep_remote_compare_objects(deadline: float, now: datetime | None = None):
+def sweep_remote_compare_objects(deadline: float, now: datetime | None = None) -> bool:
     """Remove expired comparisons' objects from the private bucket, including
     those whose local folder lives on another replica or was lost with it,
     then those an earlier release left under compare/ in the upload bucket.
     Each bucket gets its share of the time left before ``deadline``
     (``time.monotonic()``), so the upload bucket is swept on every run; what
-    is left is listed again by the next run."""
+    is left is listed again by the next run. Returns whether both buckets
+    were swept to the end with nothing left to retry."""
     now = now or datetime.now(UTC)
     private_deadline = time.monotonic() + (deadline - time.monotonic()) / 2
     try:
         client, bucket = _client_and_bucket()
     except Exception:
         logger.exception("compare_bucket_unavailable")
+        complete = False
     else:
-        _sweep_bucket(client, bucket, private_deadline, now)
+        complete = _sweep_bucket(client, bucket, private_deadline, now)
     upload_bucket = str(getattr(settings, "UPLOAD_BUCKET_NAME", "") or "").strip()
     if not upload_bucket:
-        return
+        return complete
     client = get_storage_client()
     try:
         if not client.bucket_exists(upload_bucket):
-            return
+            return complete
     except Exception:
         logger.exception("compare_objects_list_failed", bucket=upload_bucket)
-        return
-    _sweep_bucket(client, upload_bucket, deadline, now)
+        return False
+    return _sweep_bucket(client, upload_bucket, deadline, now) and complete
