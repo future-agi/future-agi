@@ -340,38 +340,34 @@ def _assert_invalid_request(response):
 
 @override_settings(**LOCKOUT_SETTINGS)
 @pytest.mark.parametrize("path", ["/token", "/revoke"])
-async def test_sdk_duplicate_client_id_cannot_dodge_the_victims_lockout(
-    monkeypatch, path
-):
-    # The SDK authenticates the LAST client_id in the body. If the throttle
-    # keyed on a decoy placed first, every guess at the victim's secret would
-    # land in a fresh lockout bucket and the victim would never lock.
-    victim_id, victim_secret = await _register()
+async def test_sdk_duplicate_client_id_returns_invalid_request(monkeypatch, path):
+    # Repeated client_id fields return 400 before SDK dispatch.
+    registered_id, registered_secret = await _register()
     lookups = _count_client_lookups(monkeypatch)
     addr = "203.0.113.120"
     for i in range(6):
         form = {
-            **_code_form(victim_id, "wrong-secret"),
-            "client_id": [f"decoy-{i}", victim_id],
+            **_code_form(registered_id, "wrong-secret"),
+            "client_id": [f"alternate-{i}", registered_id],
             "token": "t",
         }
         _assert_invalid_request(await _post(path, form, addr))
     # No request reached the SDK's client authentication.
     assert lookups == []
 
-    # Authorized-user control: the victim is unaffected from that address.
+    # A subsequent valid flow for the registered client succeeds from the
+    # same address.
     monkeypatch.undo()
-    await _valid_flow_succeeds(victim_id, victim_secret, addr)
+    await _valid_flow_succeeds(registered_id, registered_secret, addr)
 
 
 @override_settings(
     **{**LOCKOUT_SETTINGS, "MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE": "2/min"}
 )
 @pytest.mark.parametrize("path", ["/token", "/revoke"])
-async def test_sdk_multipart_body_cannot_skip_the_per_client_window(monkeypatch, path):
-    # The SDK parses multipart/form-data bodies and checks the secret in them.
-    # A throttle that read client_id only from url-encoded bodies applied no
-    # per-client window to them.
+async def test_sdk_multipart_body_returns_invalid_request(monkeypatch, path):
+    # /token and /revoke accept URL-encoded form bodies; multipart requests
+    # return 400 before SDK dispatch.
     client_id, _secret = await _register()
     lookups = _count_client_lookups(monkeypatch)
     fields = {**_code_form(client_id, "wrong-secret"), "token": "t"}
@@ -390,9 +386,8 @@ async def test_sdk_multipart_body_cannot_skip_the_per_client_window(monkeypatch,
 async def test_sdk_mixed_case_urlencoded_body_counts_in_the_per_client_window(
     monkeypatch,
 ):
-    # Starlette (and so the SDK) parses "Application/X-WWW-Form-Urlencoded"
-    # without parameters as a form and checks the secret in it. A throttle
-    # that matched only the lowercase type skipped the per-client window.
+    # Mixed-case URL-encoded media types without parameters use the same
+    # per-client request window.
     client_id, _secret = await _register()
     lookups = _count_client_lookups(monkeypatch)
     body = "&".join(
@@ -568,3 +563,4 @@ async def test_sdk_valid_exchange_is_admitted_when_an_earlier_request_finishes_m
     assert fired == [True]
     assert response.status_code == 200, response.text
     assert response.json()["access_token"]
+

@@ -602,11 +602,11 @@ def _bad_secret_payload(client_id, grant_type, secret="wrong-secret"):
     MCP_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS=300,
     MCP_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS=60,
 )
-def test_invalid_secret_lockout_cannot_be_bypassed_by_switching_grant_type(
+def test_invalid_attempt_lockout_is_shared_across_grant_types(
     api_client, user, workspace, oauth_client_app
 ):
-    # Both grant types verify the same client_secret, so a lockout earned with
-    # one grant must also stop secret guesses sent with the other grant.
+    # Authorization-code and refresh-token requests share the same
+    # client-and-address attempt counter.
     for _ in range(2):
         response = _post_token(
             api_client,
@@ -1274,3 +1274,4 @@ def test_redis_recorded_attempts_and_reservations_share_the_limit(redis_cache):
         for request in requests:
             throttles.release_token_attempt_reservation(request)
         _clear_redis_attempts(redis_cache, client_id, addr)
+

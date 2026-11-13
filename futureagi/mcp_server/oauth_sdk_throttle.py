@@ -1,33 +1,19 @@
-"""Throttling for the MCP SDK OAuth routes mounted at the server root.
+"""Shared request limits for the MCP SDK OAuth routes mounted at the server root.
 
 tfc/asgi.py sends ``/token``, ``/revoke`` and ``/register`` to the MCP SDK's
-Starlette OAuth app. Those handlers verify client secrets, authorization codes
-and refresh tokens, and register clients, without any throttling of their own.
-This ASGI wrapper applies the same limits as the Django token endpoint
-(``POST /mcp/oauth/token/``) before the SDK sees the request:
+Starlette OAuth app; this ASGI wrapper applies the Django token endpoint's
+(``POST /mcp/oauth/token/``) limits before the SDK handles the request:
 
-- ``/token`` and ``/revoke``: the invalid-attempt lockout per address and
-  ``client_id`` (with in-flight accounting), the per-address window and the
-  per-client window. They share counters with the Django token endpoint, so
-  using both routes does not double any budget.
-- ``/register``: a per-address registration window.
+- ``/token`` and ``/revoke`` share the Django token endpoint's address and
+  client counters and its in-flight accounting.
+- ``/register`` uses a per-address window.
 
-Refusals use the Django endpoint's OAuth error shape: ``429`` with
-``{"error": "slow_down", ...}`` and ``Retry-After``.
+Rate-limited requests return ``429`` with ``{"error": "slow_down", ...}`` and
+``Retry-After``.
 
-The throttle must key on the same ``client_id`` whose secret the SDK checks.
-So ``/token`` and ``/revoke`` bodies are parsed with Starlette's own form
-parser, the one the SDK handlers call, and two kinds of body are refused with
-``400 invalid_request`` before any throttle or SDK code runs:
-
-- a body that Starlette would not parse as
-  ``application/x-www-form-urlencoded``, the format RFC 6749 (sections 4.1.3
-  and 6) and RFC 7009 (section 2.1) specify for these requests. Without this,
-  a ``multipart/form-data`` body would reach the SDK's secret check under a
-  client the throttle never saw.
-- a body with more than one ``client_id``. RFC 6749 sections 3.1 and 3.2 forbid
-  repeating a parameter, and the SDK authenticates the last one, so a decoy
-  could otherwise take the throttle's attention.
+Token and revocation bodies use Starlette's form parser. Unsupported media
+types and repeated ``client_id`` fields return ``400 invalid_request``
+(RFC 6749 sections 3.1, 3.2, 4.1.3 and 6; RFC 7009 section 2.1).
 """
 
 import json

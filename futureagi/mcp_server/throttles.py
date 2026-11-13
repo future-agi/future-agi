@@ -81,9 +81,7 @@ def log_token_warning(request: Request, event_name: str, **kwargs: object) -> No
 
 
 def oauth_token_attempt_ident(request: Request) -> str:
-    # Every grant type verifies the same client_secret, so invalid attempts are
-    # counted per client and address, not per grant type. Keying on grant_type
-    # would give each client one extra lockout budget per grant type.
+    # Count attempts per client and address across grant types.
     client_id = request_data_value(request, "client_id") or "unknown"
     return stable_hash(f"{client_ident(request)}:{client_id}")
 
@@ -241,12 +239,9 @@ def clear_invalid_token_attempts(request: Request) -> None:
 def reserve_token_attempt(request: Request) -> bool:
     """Count this request as in flight; return False if it would exceed the limit.
 
-    The lockout is only written after a failed secret check, so without a
-    reservation a concurrent burst passes the lockout check together and gets
-    more secret checks than the limit allows. Recorded invalid attempts plus
-    requests still being verified must stay within the limit. Both are read
-    in the same step that adds the reservation, and a refused request never
-    takes a slot. An admitted request keeps its slot until
+    Recorded invalid attempts and in-flight requests share the configured
+    limit. Both are read in the same step that adds the reservation, and a
+    refused request never takes a slot. An admitted request keeps its slot until
     record_invalid_token_attempt() or release_token_attempt_reservation()
     gives it back, or until the reservation expires
     _RESERVATION_TIMEOUT_SECONDS after it was taken.
