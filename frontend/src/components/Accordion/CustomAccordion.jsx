@@ -105,7 +105,7 @@ export default function CustomAccordion({
               overflow: "hidden",
               textOverflow: "ellipsis",
             }}
-            fontSize={13}
+            fontSize={12}
             fontWeight={400}
           >
             {!isExpanded ? detailsText : labelText}
@@ -123,7 +123,7 @@ export default function CustomAccordion({
         >
           <Typography
             color={theme.palette.text.primary}
-            fontSize={13}
+            fontSize={12}
             fontWeight={theme.typography.fontWeightRegular}
             lineHeight={1.6}
           >

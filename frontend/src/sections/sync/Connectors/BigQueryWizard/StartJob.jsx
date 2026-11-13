@@ -88,7 +88,7 @@ const StartJob = ({
             <TableBody>
               <TableRow>
                 <TableCell>
-                  <Typography fontSize={13} fontWeight={600} color="primary">
+                  <Typography fontSize={12} fontWeight={600} color="primary">
                     Table Permission
                   </Typography>
                   <Box
@@ -103,7 +103,7 @@ const StartJob = ({
                   </Box>
                   <Typography
                     sx={{ paddingTop: "10px" }}
-                    fontSize={13}
+                    fontSize={12}
                     fontWeight={600}
                     color="primary"
                   >
@@ -136,7 +136,7 @@ const StartJob = ({
                   </Box>
                   <Typography
                     sx={{ paddingTop: "10px" }}
-                    fontSize={13}
+                    fontSize={12}
                     fontWeight={600}
                     color="primary"
                   >
@@ -182,7 +182,7 @@ const StartJob = ({
                   </Box>
                   <Typography
                     sx={{ paddingTop: "10px" }}
-                    fontSize={13}
+                    fontSize={12}
                     fontWeight={600}
                     color="primary"
                   >
@@ -220,13 +220,13 @@ const InfoItem = ({ title, value }) => {
     <Box>
       <Typography
         component="span"
-        fontSize="13px"
+        fontSize="12px"
         fontWeight={600}
         color="text.secondary"
       >
         {title}
       </Typography>{" "}
-      <Typography component="span" fontSize={13} color="text.primary">
+      <Typography component="span" fontSize={12} color="text.primary">
         {value}
       </Typography>
     </Box>
