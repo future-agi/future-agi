@@ -1283,6 +1283,7 @@ class EvidenceTests(unittest.TestCase):
             ("futureagi/model_hub/**", True),
             ("futureagi/*.txt", True),  # futureagi/mypy-baseline.txt
             ("futureagi/*.ini", True),  # a mypy.ini would replace [tool.mypy]
+            ("futureagi/.mypy.ini", True),
             ("scripts/**", True),  # scripts/mypy_baseline.py
             ("futureagi/agentic_eval/tests/test_*.py", False),
             ("futureagi/tracer/tests/**", False),
