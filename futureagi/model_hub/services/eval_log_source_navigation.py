@@ -1,9 +1,10 @@
 """Resolve an eval log's exact, currently authorized Observe source."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from uuid import UUID
 
 import structlog
+from django.db.models import Q
 
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
@@ -96,45 +97,61 @@ def _classify_reference(log_row, config) -> SourceNavigation | _Candidate:
     )
 
 
-def _resolve_project(
+def _resolve_project_scope(
     request, log_row, candidate
-) -> tuple[str | None, SourceNavigation | None]:
+) -> tuple[list[str], SourceNavigation | None]:
+    """Return the project ids the trace read may search, or a terminal state."""
     # Import lazily: the shared scope helper belongs to the tracer view module.
     from tracer.views.trace import _project_queryset_for_request
 
-    project_id = candidate.project_id
-    if project_id is None:
-        config_row = (
-            CustomEvalConfig.all_objects.filter(id=candidate.config_id)
-            .select_related("project")
-            .first()
-        )
-        if config_row is None:
-            return None, SourceNavigation("unavailable")
-        project_id = str(config_row.project_id)
-        if log_row.source_id and str(config_row.eval_template_id) != str(
-            log_row.source_id
+    scope = _project_queryset_for_request(request)
+    if candidate.project_id is not None:
+        project = scope.filter(id=candidate.project_id).first()
+        if project is None:
+            return [], SourceNavigation("unavailable")
+        if (
+            log_row.workspace_id
+            and project.workspace_id
+            and str(log_row.workspace_id) != str(project.workspace_id)
         ):
-            return None, SourceNavigation("invalid_reference")
+            return [], SourceNavigation("invalid_reference")
+        return [str(project.id)], None
 
-    project = _project_queryset_for_request(request).filter(id=project_id).first()
-    if project is None:
-        return None, SourceNavigation("unavailable")
-    if (
-        log_row.workspace_id
-        and project.workspace_id
-        and str(log_row.workspace_id) != str(project.workspace_id)
+    # Older logs did not record their project. The eval config's project is
+    # writable, so it says nothing about where this log's trace lives: search
+    # the projects this user may read in the log's workspace instead, and let
+    # the read refuse a trace found in more than one of them.
+    config_row = (
+        CustomEvalConfig.all_objects.filter(id=candidate.config_id)
+        .values("eval_template_id")
+        .first()
+    )
+    if config_row is None:
+        return [], SourceNavigation("unavailable")
+    if log_row.source_id and str(config_row["eval_template_id"]) != str(
+        log_row.source_id
     ):
-        return None, SourceNavigation("invalid_reference")
-    return str(project.id), None
+        return [], SourceNavigation("invalid_reference")
+    if log_row.workspace_id:
+        scope = scope.filter(
+            Q(workspace_id=log_row.workspace_id) | Q(workspace_id__isnull=True)
+        )
+    # One past the reader's project bound, so an oversized scope fails closed.
+    project_ids = [
+        str(project_id)
+        for project_id in scope.order_by("id").values_list("id", flat=True)[:4097]
+    ]
+    if not project_ids:
+        return [], SourceNavigation("unavailable")
+    return project_ids, None
 
 
 def _map_read_error(exc) -> SourceNavigation:
     if isinstance(exc, TraceDetailNotFound):
         return SourceNavigation("unavailable")
-    if (
-        isinstance(exc, TraceDetailReadUnavailable)
-        and exc.code == "ambiguous_span_identity"
+    if isinstance(exc, TraceDetailReadUnavailable) and exc.code in (
+        "ambiguous_span_identity",
+        "ambiguous_project",
     ):
         return SourceNavigation("ambiguous_reference")
     return SourceNavigation("temporarily_unavailable")
@@ -156,22 +173,31 @@ def resolve_eval_log_source_navigation(
         if isinstance(candidate, SourceNavigation):
             result = candidate
         else:
-            project_id, result = _resolve_project(request, log_row, candidate)
+            project_ids, result = _resolve_project_scope(request, log_row, candidate)
             if result is None:
-                candidate = replace(candidate, project_id=project_id)
                 detail = (read_detail or read_trace_detail)(
                     analytics=analytics or V2AnalyticsQueryService(),
-                    project_ids=[project_id],
+                    project_ids=project_ids,
                     trace_id=candidate.trace_id,
                     eval_config_ids_resolver=None,
                     include_annotations=False,
                     deadline_ms=deadline_ms,
+                    unique_project=True,
                 )
-                result = classify_trace_source(
-                    detail,
-                    project_id=candidate.project_id,
-                    trace_id=candidate.trace_id,
-                    span_id=candidate.span_id,
+                # A recorded project is the only one read; otherwise the read
+                # found the trace in exactly one of the scoped projects.
+                project_id = (
+                    project_ids[0] if candidate.project_id else str(detail.project_id)
+                )
+                result = (
+                    classify_trace_source(
+                        detail,
+                        project_id=project_id,
+                        trace_id=candidate.trace_id,
+                        span_id=candidate.span_id,
+                    )
+                    if project_id in project_ids
+                    else SourceNavigation("invalid_reference")
                 )
     except (TraceDetailNotFound, TraceDetailReadUnavailable) as exc:
         error_code = getattr(exc, "code", None)

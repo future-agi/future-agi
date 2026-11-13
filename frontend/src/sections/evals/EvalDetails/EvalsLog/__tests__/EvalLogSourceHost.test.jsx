@@ -580,7 +580,7 @@ describe("eval-owned source host", () => {
         status === "unavailable"
           ? unavailable
           : status === "ambiguous_reference"
-            ? "This log's source cannot be identified uniquely."
+            ? "Can't tell which trace or call this evaluation ran on."
             : "Source details could not be loaded. Try again.";
       expect(await screen.findByText(expected)).toBeInTheDocument();
       expect(enrichmentCalls()).toHaveLength(3);

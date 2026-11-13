@@ -1,4 +1,4 @@
-"""TH-4804 U01-U32: provenance, bounded reads, and terminal wire states."""
+"""TH-4804 U01-U35: provenance, bounded reads, and terminal wire states."""
 
 import json
 from types import SimpleNamespace
@@ -227,6 +227,11 @@ def test_ambiguous_ancestry(resolve, spans):
             "ambiguous_reference",
             "ambiguous_span_identity",
         ),
+        (
+            TraceDetailReadUnavailable("ambiguous_project"),
+            "ambiguous_reference",
+            "ambiguous_project",
+        ),
         (TraceDetailNotFound(), "unavailable", None),
         (
             TraceDetailReadUnavailable("deadline_exceeded"),
@@ -245,7 +250,7 @@ def test_ambiguous_ancestry(resolve, spans):
         ),
         (RuntimeError("boom"), "temporarily_unavailable", None),
     ],
-    ids=["u22", "u24", "u25", "u26", "u27", "u28"],
+    ids=["u22", "u22b", "u24", "u25", "u26", "u27", "u28"],
 )
 def test_reader_error_mapping(resolve, exc, status, code):
     resolve.reader.side_effect = exc
@@ -279,6 +284,7 @@ def test_u29_bounded_singleton_read(resolve):
         eval_config_ids_resolver=None,
         include_annotations=False,
         deadline_ms=1234,
+        unique_project=True,
     )
 
 
@@ -369,3 +375,39 @@ def test_collector_and_observe_string_ids_preserve_exact_identity(resolve, span_
 def test_invalid_span_string_is_not_repaired(resolve, span_id):
     assert resolve(_config(span_id=span_id)).status == "invalid_reference"
     resolve.reader.assert_not_called()
+
+
+@pytest.fixture
+def legacy(resolve, monkeypatch):
+    """An older log with no recorded project; the config only proves its template."""
+    scope = resolve.manager.filter.return_value
+    scope.order_by.return_value.values_list.return_value = [PROJECT, ROOT]
+    config_lookup = Mock()
+    config_lookup.return_value.values.return_value.first.return_value = {
+        "eval_template_id": None
+    }
+    monkeypatch.setattr(
+        navigation.CustomEvalConfig.all_objects, "filter", config_lookup
+    )
+    resolve.config_lookup = config_lookup
+    return resolve
+
+
+def test_u33_legacy_log_reads_the_scoped_projects_not_the_config(legacy):
+    result = legacy(_config(project_id=None))
+    assert result.as_dict()["project_id"] == PROJECT
+    legacy.config_lookup.return_value.values.assert_called_once_with("eval_template_id")
+    assert legacy.reader.call_args.kwargs["project_ids"] == [PROJECT, ROOT]
+    assert legacy.reader.call_args.kwargs["unique_project"] is True
+
+
+def test_u34_legacy_read_outside_the_scope_is_invalid(legacy):
+    legacy.reader.return_value = _detail(_span(project_id=OTHER), project_id=OTHER)
+    assert legacy(_config(project_id=None)).status == "invalid_reference"
+
+
+def test_u35_legacy_log_with_no_readable_project_is_unavailable(legacy):
+    scope = legacy.manager.filter.return_value
+    scope.order_by.return_value.values_list.return_value = []
+    assert legacy(_config(project_id=None)).status == "unavailable"
+    legacy.reader.assert_not_called()

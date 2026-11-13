@@ -27,6 +27,10 @@ from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 from tracer.models.project import Project
+from tracer.services.clickhouse.v2.trace_detail_reads import (
+    TraceDetailReadUnavailable,
+    read_trace_detail,
+)
 
 STARTED = datetime(2026, 9, 22, 16, 27, 36, 543000, tzinfo=UTC)
 
@@ -130,7 +134,7 @@ class _PhysicalCopies:
                     "trace_id": row["trace_id"],
                     "span_id": row["id"],
                     "start_time": row["start_time"],
-                    "latest_is_deleted": 0,
+                    "latest_is_deleted": row.get("latest_is_deleted", 0),
                     "latest_version": row["_version"],
                 }
                 for row in sorted(
@@ -198,6 +202,44 @@ def _read_projects(analytics):
         if "latest_physical_spans" in query
         for project_id in params["detail_project_ids"]
     }
+
+
+def _unique_project_read(replayed_trace, *projects):
+    return read_trace_detail(
+        analytics=replayed_trace.analytics,
+        project_ids=[str(project.id) for project in projects],
+        trace_id=replayed_trace.trace_id,
+        include_annotations=False,
+        unique_project=True,
+    )
+
+
+@pytest.mark.django_db
+def test_unique_project_read_refuses_a_trace_held_by_two_scoped_projects(
+    replayed_trace,
+):
+    # A caller with no recorded project must not be handed the newest copy.
+    with pytest.raises(TraceDetailReadUnavailable) as raised:
+        _unique_project_read(replayed_trace, replayed_trace.older, replayed_trace.newer)
+    assert raised.value.code == "ambiguous_project"
+    assert _read_projects(replayed_trace.analytics) == set()
+
+
+@pytest.mark.django_db
+def test_unique_project_read_serves_the_only_live_scoped_copy(replayed_trace):
+    # A copy tombstoned in one project does not make the other one ambiguous.
+    for row in replayed_trace.analytics.rows:
+        if row["project_id"] == str(replayed_trace.newer.id):
+            row["latest_is_deleted"] = 1
+    detail = _unique_project_read(
+        replayed_trace,
+        replayed_trace.older,
+        replayed_trace.newer,
+        replayed_trace.empty,
+    )
+    assert detail.project_id == str(replayed_trace.older.id)
+    assert sorted(row["id"] for row in detail.spans) == ["child", "root"]
+    assert _read_projects(replayed_trace.analytics) == {str(replayed_trace.older.id)}
 
 
 @pytest.mark.django_db

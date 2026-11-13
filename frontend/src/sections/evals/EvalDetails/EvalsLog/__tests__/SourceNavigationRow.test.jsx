@@ -31,7 +31,7 @@ const states = [
   ["invalid_reference", "This log's source reference is invalid.", null],
   [
     "ambiguous_reference",
-    "This log's source cannot be identified uniquely.",
+    "Can't tell which trace or call this evaluation ran on.",
     null,
   ],
   ["unavailable", "The source is unavailable or you do not have access.", null],

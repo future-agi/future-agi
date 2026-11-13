@@ -12,7 +12,7 @@ const COPY = {
   incomplete_reference:
     "This log does not contain enough source information to open a trace or call.",
   invalid_reference: "This log's source reference is invalid.",
-  ambiguous_reference: "This log's source cannot be identified uniquely.",
+  ambiguous_reference: "Can't tell which trace or call this evaluation ran on.",
   unavailable: "The source is unavailable or you do not have access.",
   temporarily_unavailable: "Source details could not be loaded. Try again.",
   unsupported_backend: "Source navigation is not available on this server.",

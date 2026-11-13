@@ -385,27 +385,147 @@ def test_i08_colliding_newer_project_is_never_selected(
     assert reader.call_count == 1
 
 
-@pytest.mark.parametrize("stamp", [True, False], ids=["i09-stamped", "i10-D02-legacy"])
-def test_reassigned_config_project(
-    auth_client, log_factory, custom_eval_config, project, fake_reader, stamp
-):
-    log = log_factory(stamp=stamp)
-    other = Project.no_workspace_objects.create(
-        name="Reassigned",
+def _sibling_project(project, name):
+    return Project.no_workspace_objects.create(
+        name=name,
         organization=project.organization,
         workspace=project.workspace,
         model_type=project.model_type,
         trace_type=project.trace_type,
     )
+
+
+def _seed_copy(collector_tree, target, *, trace_id=None):
+    """Write the collector tree into ``target``, optionally under a new trace id."""
+    for row in collector_tree:
+        seed_ch_span(
+            {
+                **row,
+                "project_id": str(target.id),
+                "org_id": str(target.organization_id),
+                "trace_id": trace_id or row["trace_id"],
+            }
+        )
+
+
+@pytest.fixture
+def wrapped_reader(monkeypatch):
+    from model_hub.services import eval_log_source_navigation as navigation
+
+    reader = Mock(wraps=navigation.read_trace_detail)
+    monkeypatch.setattr(navigation, "read_trace_detail", reader)
+    return reader
+
+
+def test_i09_stamped_project_wins_over_reassigned_config(
+    auth_client, log_factory, custom_eval_config, project, fake_reader
+):
+    log = log_factory()
+    other = _sibling_project(project, "Reassigned")
     CustomEvalConfig.all_objects.filter(id=custom_eval_config.id).update(project=other)
     fake_reader(log)
-    # D-02 explicitly accepts the reassigned-FK residual for pre-r1.2 logs
-    # if the candidate project also contains the exact trace/span identities.
     nav = _nav(_get(auth_client, log))
-    assert nav["project_id"] == str(project.id if stamp else other.id)
+    assert nav["project_id"] == str(project.id)
+    assert fake_reader.reader.call_args.kwargs["project_ids"] == [str(project.id)]
 
 
-def test_i11_soft_deleted_config_remains_provenance(
+def test_i10_legacy_log_follows_its_trace_not_the_moved_config(
+    auth_client,
+    log_factory,
+    collector_tree,
+    custom_eval_config,
+    project,
+    wrapped_reader,
+):
+    # An older log recorded no project. Its eval config later moved to another
+    # project; the link must still open the trace the eval ran on.
+    root, child = collector_tree
+    log = _tree_log(log_factory, collector_tree, stamp=False)
+    moved = _sibling_project(project, "Config moved here")
+    CustomEvalConfig.all_objects.filter(id=custom_eval_config.id).update(project=moved)
+    nav = _nav(_get(auth_client, log))
+    assert (nav["kind"], nav["project_id"], nav["trace_id"], nav["span_id"]) == (
+        "trace",
+        str(project.id),
+        str(root["trace_id"]),
+        child["id"],
+    )
+    assert wrapped_reader.call_count == 1
+    scope = wrapped_reader.call_args.kwargs["project_ids"]
+    assert {str(project.id), str(moved.id)} <= set(scope)
+    opened = auth_client.get(
+        f"/tracer/trace/{nav['trace_id']}/", {"project_id": nav["project_id"]}
+    )
+    assert opened.status_code == 200, opened.content
+
+
+def test_i10b_legacy_trace_in_two_readable_projects_is_ambiguous(
+    auth_client, log_factory, collector_tree, project, wrapped_reader
+):
+    log = _tree_log(log_factory, collector_tree, stamp=False)
+    replay = _sibling_project(project, "Replayed copy")
+    _seed_copy(collector_tree, replay)
+    response = _get(auth_client, log)
+    _nav(response, "ambiguous_reference")
+    assert wrapped_reader.call_count == 1
+    scope = wrapped_reader.call_args.kwargs["project_ids"]
+    assert {str(project.id), str(replay.id)} <= set(scope)
+    body = response.content.decode()
+    assert str(project.id) not in body and str(replay.id) not in body
+
+
+def test_i10c_legacy_trace_only_in_unreadable_project_is_unavailable(
+    auth_client, log_factory, collector_tree, project, wrapped_reader
+):
+    _, child = collector_tree
+    readable = _sibling_project(project, "Readable without the trace")
+    hidden = Project.no_workspace_objects.create(
+        name="Hidden source project",
+        organization=Organization.objects.create(name="Unreadable organization"),
+        model_type=project.model_type,
+        trace_type=project.trace_type,
+    )
+    trace_id = str(uuid4())
+    _seed_copy(collector_tree, hidden, trace_id=trace_id)
+    log = log_factory(stamp=False, extra={"trace_id": trace_id, "span_id": child["id"]})
+    response = _get(auth_client, log)
+    _nav(response, "unavailable")
+    scope = wrapped_reader.call_args.kwargs["project_ids"]
+    assert {str(project.id), str(readable.id)} <= set(scope)
+    assert str(hidden.id) not in scope
+    body = response.content.decode()
+    assert str(hidden.id) not in body and hidden.name not in body
+
+
+def test_i10d_legacy_lookup_stays_in_the_log_workspace(
+    auth_client,
+    log_factory,
+    collector_tree,
+    user,
+    workspace,
+    project,
+    wrapped_reader,
+    monkeypatch,
+):
+    # The other workspace is readable in this request, but the log ran in
+    # ``workspace``; a trace found only over there is not this log's source.
+    _, child = collector_tree
+    elsewhere = Project.no_workspace_objects.create(
+        name="Other workspace project",
+        organization=project.organization,
+        workspace=_another_default_workspace(user, workspace, monkeypatch, auth_client),
+        model_type=project.model_type,
+        trace_type=project.trace_type,
+    )
+    trace_id = str(uuid4())
+    _seed_copy(collector_tree, elsewhere, trace_id=trace_id)
+    log = log_factory(stamp=False, extra={"trace_id": trace_id, "span_id": child["id"]})
+    _nav(_get(auth_client, log), "unavailable")
+    scope = wrapped_reader.call_args.kwargs["project_ids"]
+    assert str(project.id) in scope and str(elsewhere.id) not in scope
+
+
+def test_i11_soft_deleted_config_still_resolves_legacy_log(
     auth_client, log_factory, custom_eval_config, fake_reader
 ):
     log = log_factory(stamp=False)
@@ -606,7 +726,8 @@ def test_i25_bounded_pg_and_ch_queries(
     _get(auth_client, log, None)
     with django_assert_num_queries(5), CaptureQueriesContext(connection) as pg:
         _nav(_get(auth_client, log))
-    assert len(pg) == 5  # workspace injection + log + localizer + config + project
+    # workspace injection + log + localizer + config template + project scope
+    assert len(pg) == 5
     assert query.call_count == 2
     assert all(
         "tracer_eval_logger" not in call.args[0]
