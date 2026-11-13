@@ -1,10 +1,10 @@
-"""Request logging without OAuth callback credentials."""
+"""Request-event formatting for OAuth callbacks."""
 
 from django_structlog.middlewares import RequestMiddleware
 
 
-class CredentialSafeRequestMiddleware(RequestMiddleware):
-    """Keep identity query strings out of every django-structlog request event.
+class CallbackRequestMiddleware(RequestMiddleware):
+    """Request-event formatting for OAuth callbacks.
 
     Drop the entire query on the SSO namespace rather than enumerating secret
     names: providers may add code, token, state or error parameters. Only the

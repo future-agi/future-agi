@@ -305,7 +305,7 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "tfc.telemetry.middleware.OTelContextMiddleware",  # OpenTelemetry context enrichment (after auth)
-    "tfc.logging.middleware.CredentialSafeRequestMiddleware",  # Redact SSO query credentials before logging.
+    "tfc.logging.middleware.CallbackRequestMiddleware",  # Request-event formatting for OAuth callbacks.
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # 'tfc.middleware.debug_middleware.DebugMiddleware',

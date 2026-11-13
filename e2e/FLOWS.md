@@ -299,7 +299,7 @@
 **Backend state verified:**
 
 - Successful Google callbacks persist exactly one new active AuthToken for the minted user and its existing organization.
-- Rejected Google callbacks persist no new AuthToken or user and expose no application bearer in the callback redirect.
+- Rejected Google callbacks leave account and token counts unchanged and return the expected login-error redirect.
 - The owned provider witnesses token exchange and JWKS verification; an unknown cached kid refreshes once, then succeeds only when the key is published.
 
 ### AUTH-E2E-016 — after a same-tab logout the next account sees none of the previous account's state
