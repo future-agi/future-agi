@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import chevron
+import chevron.tokenizer
 import litellm
 import structlog
 import yaml
@@ -435,7 +436,11 @@ _jinja2_env = SandboxedEnvironment()
 
 
 def render_template(
-    template_str: str, context: dict, template_format: str = None
+    template_str: str,
+    context: dict,
+    template_format: str = None,
+    *,
+    escape_mustache: bool = True,
 ) -> str:
     """
     Render a template string with the given context.
@@ -445,6 +450,7 @@ def render_template(
         template_str: The template string
         context: Dictionary of variables to substitute
         template_format: One of 'f-string', 'mustache', 'jinja2' (default: jinja2)
+        escape_mustache: Preserve Mustache HTML escaping except for experiment inputs.
 
     Returns:
         Rendered string
@@ -459,7 +465,14 @@ def render_template(
         return template_str.format(**context)
 
     elif template_format == TEMPLATE_FORMAT_MUSTACHE:
-        return chevron.render(template_str, context)
+        if escape_mustache:
+            return chevron.render(template_str, context)
+        # Experiment inputs remain raw, matching the Workbench and agent runtime.
+        tokens = [
+            ("no escape", key) if tag == "variable" else (tag, key)
+            for tag, key in chevron.tokenizer.tokenize(template_str)
+        ]
+        return chevron.render(tokens, context)
 
     elif template_format == TEMPLATE_FORMAT_JINJA2:
         # Pre-process: handle variable names with spaces (Jinja2 doesn't allow them)
@@ -499,7 +512,14 @@ class JsonStr(dict):
 
 
 def populate_placeholders(
-    messages: list[dict], dataset_id, row_id, col_id, model_name, template_format=None
+    messages: list[dict],
+    dataset_id,
+    row_id,
+    col_id,
+    model_name,
+    template_format=None,
+    *,
+    escape_mustache=True,
 ):
     try:
         media_error = None
@@ -613,6 +633,7 @@ def populate_placeholders(
                         image_counter,
                         model_name,
                         template_format=template_format,
+                        escape_mustache=escape_mustache,
                     )
                 elif isinstance(content, str):
                     processed_content = process_string_content(
@@ -622,6 +643,7 @@ def populate_placeholders(
                         image_counter,
                         model_name,
                         template_format=template_format,
+                        escape_mustache=escape_mustache,
                     )
 
                 # If no content was processed, keep original
@@ -651,7 +673,14 @@ def populate_placeholders(
 
 
 def process_list_content(
-    content, column_info, context, image_counter, model_name, template_format=None
+    content,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    *,
+    escape_mustache=True,
 ):
     """Process list-type content with proper media handling"""
     processed_content = []
@@ -666,6 +695,7 @@ def process_list_content(
                 image_counter,
                 model_name,
                 template_format=template_format,
+                escape_mustache=escape_mustache,
             )
             processed_content.extend(text_segments)
         else:
@@ -681,7 +711,14 @@ def process_list_content(
 
 
 def process_string_content(
-    content, column_info, context, image_counter, model_name, template_format=None
+    content,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    *,
+    escape_mustache=True,
 ):
     """Process string-type content with proper media handling"""
     return process_text_with_media(
@@ -691,11 +728,19 @@ def process_string_content(
         image_counter,
         model_name,
         template_format=template_format,
+        escape_mustache=escape_mustache,
     )
 
 
 def process_text_with_media(
-    text, column_info, context, image_counter, model_name, template_format=None
+    text,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    *,
+    escape_mustache=True,
 ):
     """Process text content, handling both templates and media placeholders"""
     try:
@@ -813,7 +858,10 @@ def process_text_with_media(
             effective_format = TEMPLATE_FORMAT_JINJA2
         try:
             processed_text = render_template(
-                text, context, template_format=effective_format
+                text,
+                context,
+                template_format=effective_format,
+                escape_mustache=escape_mustache,
             )
         except Exception as render_error:
             logger.exception(

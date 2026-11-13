@@ -13,6 +13,7 @@ import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField
 import { getRandomId } from "src/utils/utils";
 import CustomToolModal from "../../RunPrompt/Modals/CustomToolModal";
 import { useRunPromptOptions } from "src/api/develop/develop-detail";
+import TemplateFormatSelector from "src/sections/workbench/createPrompt/Playground/TemplateFormatSelector";
 const toolsChoiceOptions = [
   {
     label: "Auto",
@@ -118,10 +119,23 @@ const ConfigureStepTTSItem = ({
     control,
     name: `promptConfig.${index}.configuration.tools`,
   });
+  const templateFormat =
+    watchModelPromptConfiguration?.template_format || "mustache";
 
   return (
     <Stack sx={{ gap: 3, backgroundColor: "background.paper", padding: 2 }}>
+      <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+        <TemplateFormatSelector
+          value={templateFormat}
+          onChange={(v) =>
+            setValue(`promptConfig.${index}.configuration.template_format`, v, {
+              shouldDirty: true,
+            })
+          }
+        />
+      </Box>
       <PromptTTSInput
+        jinjaMode={templateFormat === "jinja"}
         allColumns={allColumns}
         derivedVariables={derivedVariables}
         allInvalidVariables={allInvalidVariables}
