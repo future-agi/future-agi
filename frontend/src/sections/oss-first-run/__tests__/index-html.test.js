@@ -46,10 +46,9 @@ describe("index.html third-party requests", () => {
     );
   });
 
-  it("loads Tag Manager when the build sets VITE_GTM_ID", () => {
-    expect(googleUrls({ VITE_GTM_ID: "GTM-TEST" })).toEqual([
-      "https://www.googletagmanager.com/gtm.js?id=GTM-TEST",
-    ]);
+  // The Tag Manager snippet was removed; a leftover build key must not bring it back.
+  it("contacts no Google host even when the build sets VITE_GTM_ID", () => {
+    expect(googleUrls({ VITE_GTM_ID: "GTM-TEST" })).toEqual([]);
   });
 
   it("leaves reCAPTCHA to the app when the build sets a site key", () => {

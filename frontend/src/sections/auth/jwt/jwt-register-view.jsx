@@ -16,9 +16,6 @@ import { useAuthContext } from "src/auth/hooks";
 import { enqueueSnackbar } from "src/components/snackbar";
 import axios, { endpoints } from "src/utils/axios";
 import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
-import { trackSignupConversion } from "src/utils/googleAds";
-import { trackRedditSignup } from "src/utils/redditAds";
-import { trackTwitterSignup } from "src/utils/twitterAds";
 import Iconify from "src/components/iconify";
 import FormProvider, { RHFTextField } from "src/components/hook-form";
 import "./register.css";
@@ -215,32 +212,12 @@ export default function JwtRegisterView() {
           [PropertyName.email]: data.email,
           [PropertyName.name]: data.fullName,
         });
-        if (typeof window.gtag === "function") {
-          trackSignupConversion({
-            email: data.email,
-            method: "email",
-            userId: response?.result?.user_id,
-          });
-        }
-        if (typeof window.rdt === "function") {
-          trackRedditSignup({
-            email: data.email,
-            userId: response?.result?.user_id,
-          });
-        }
-        trackTwitterSignup({
-          email: data.email,
-          method: "email",
-          userId: response?.result?.user_id,
-        });
-
         if (isOSS) {
           try {
             if (!response.result?.access) {
               throw new Error("signup response carried no access token");
             }
             await login({ status: 200, data: response.result });
-            // Stops the auth guard re-firing the conversions sent above.
             localStorage.setItem("signupProvider", "email");
 
             if (response.result.new_org) {
