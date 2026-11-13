@@ -165,10 +165,13 @@ def persist_eval_result(logger_kwargs: dict[str, Any]) -> EvalLogger | None:
     epoch = _engine_entry_epoch.get()
     if epoch is not None:
         fence["updated_at"] = epoch
-    EvalLogger.objects.filter(**fence).update(**fields)
+    if not EvalLogger.objects.filter(**fence).update(**fields):
+        # A deleted/reclaimed entry did not accept this result. Do not hand a
+        # newer claim to callers that may start follow-up work such as localization.
+        return None
     # Primary: the entry was materialized and claimed moments ago, and the
     # caller hands this row to the error localizer.
-    return EvalLogger.objects.using("default").filter(id=entry_id).first()
+    return EvalLogger.objects.using("default").filter(**fence).first()
 
 
 def materialize_pending(

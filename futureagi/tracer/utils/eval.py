@@ -1913,18 +1913,21 @@ def _execute_evaluation(
             error_localizer_enabled,
         )
 
-        if error_localizer_enabled(custom_eval_config):
+        if eval_log is not None and error_localizer_enabled(custom_eval_config):
             from model_hub.tasks.user_evaluation import (
                 trigger_error_localization_for_span,
             )
 
             # Primary: the localizer reads the result's span, which may have
-            # been ingested moments ago. The non-engine branch above already
-            # loaded it from the primary; the engine's entry loads it lazily.
+            # been ingested moments ago, and the result's eval config, which
+            # may have been created moments ago. The non-engine branch above
+            # already loaded the span from the primary; the engine's entry
+            # loads it lazily.
             with force_primary():
                 trigger_error_localization_for_span(
                     eval_template=eval_model,
                     eval_logger=eval_log,
+                    observation_span=observation_span,
                     mapping=raw_mapping,
                     eval_explanation=logger_kwargs.get("eval_explanation", ""),
                     value=value,
