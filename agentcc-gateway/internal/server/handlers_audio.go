@@ -62,6 +62,7 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 	rc.Model = req.Model
 	rc.SpeechRequest = &req
 
+	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
 
@@ -209,6 +210,7 @@ func (h *Handlers) CreateTranslation(w http.ResponseWriter, r *http.Request) {
 	rc.Model = req.Model
 	rc.TranslationReq = &req
 
+	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
 
@@ -349,6 +351,7 @@ func (h *Handlers) CreateTranscription(w http.ResponseWriter, r *http.Request) {
 	rc.Model = req.Model
 	rc.TranscriptionReq = &req
 
+	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
 
@@ -552,6 +555,7 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 	rc.Model = req.Model
 	rc.SpeechRequest = &req
 
+	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
 

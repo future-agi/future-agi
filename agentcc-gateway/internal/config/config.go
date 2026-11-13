@@ -1001,6 +1001,14 @@ type CORSConfig struct {
 	AllowCredentials bool     `yaml:"allow_credentials" json:"allow_credentials"`
 }
 
+// AllowsAnyOrigin reports whether the CORS middleware treats the origin list
+// as a wildcard: empty, or exactly ["*"]. A "*" alongside other entries is a
+// literal entry, not a wildcard.
+func (c CORSConfig) AllowsAnyOrigin() bool {
+	o := c.AllowedOrigins
+	return len(o) == 0 || (len(o) == 1 && o[0] == "*")
+}
+
 // IPACLConfig controls IP-based access control lists.
 type IPACLConfig struct {
 	Enabled        bool     `yaml:"enabled" json:"enabled"`
@@ -1371,6 +1379,10 @@ func (c *Config) Validate() error {
 	validLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 	if !validLevels[strings.ToLower(c.Logging.Level)] {
 		return fmt.Errorf("logging.level must be one of debug, info, warn, error; got %q", c.Logging.Level)
+	}
+
+	if c.CORS.Enabled && c.CORS.AllowCredentials && c.CORS.AllowsAnyOrigin() {
+		return fmt.Errorf("cors: allow_credentials cannot be combined with a wildcard origin %q (or an empty allowed_origins, which means %q); list explicit origins instead", "*", "*")
 	}
 
 	if err := c.validateOTel(); err != nil {

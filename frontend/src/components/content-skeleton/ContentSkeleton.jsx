@@ -2,12 +2,12 @@ import React from "react";
 import PropTypes from "prop-types";
 import { Box, Skeleton, Stack } from "@mui/material";
 import { ROW_HEIGHT } from "src/theme/sizes";
+import Loader from "../loading-screen/loader";
 
-// Design system loading state: keep the layout, show grey placeholders where
-// the content will land. One shape per kind of screen:
-//   page  – title, subtitle, toolbar and table rows (a whole screen)
-//   rows  – table or list rows only (inside a table, panel or drawer)
-//   panel – a few lines of text (a card, side panel or detail block)
+// Design system loading state. A skeleton only where it copies the content:
+//   rows  – table or list rows inside a table whose header is already drawn
+//   page, panel – a generic page or text block can't copy the real layout,
+//           so these render the simple loader instead of grey bars.
 function Rows({ count }) {
   return (
     <Stack>
@@ -43,7 +43,19 @@ export default function ContentSkeleton({
   sx,
   ...other
 }) {
-  // An indeterminate loading indicator, like the spinner it replaces.
+  if (variant !== "rows") {
+    return (
+      <Loader
+        label={label}
+        role={role}
+        minHeight={variant === "page" ? "60vh" : 96}
+        sx={sx}
+        {...other}
+      />
+    );
+  }
+
+  // Table rows: grey bars where the rows will land, under the real header.
   return (
     <Box
       role={role}
@@ -53,32 +65,7 @@ export default function ContentSkeleton({
       sx={{ width: 1, ...sx }}
       {...other}
     >
-      {variant === "page" && (
-        <Stack spacing={1.5} sx={{ px: 3, pt: 2 }}>
-          <Skeleton variant="rounded" width={180} height={18} />
-          <Skeleton variant="rounded" width={360} height={12} />
-          <Stack direction="row" spacing={1} sx={{ pt: 1 }}>
-            <Skeleton variant="rounded" width={240} height={30} />
-            <Skeleton variant="rounded" width={88} height={30} />
-          </Stack>
-          <Rows count={rows ?? 8} />
-        </Stack>
-      )}
-      {variant === "rows" && <Rows count={rows ?? 6} />}
-      {variant === "panel" && (
-        <Stack spacing={1} sx={{ p: 1.5 }}>
-          <Skeleton variant="rounded" width="40%" height={14} />
-          {Array.from({ length: rows ?? 3 }, (_, i) => (
-            <Skeleton
-              // eslint-disable-next-line react/no-array-index-key
-              key={i}
-              variant="rounded"
-              width={i % 2 ? "70%" : "90%"}
-              height={12}
-            />
-          ))}
-        </Stack>
-      )}
+      <Rows count={rows ?? 6} />
     </Box>
   );
 }

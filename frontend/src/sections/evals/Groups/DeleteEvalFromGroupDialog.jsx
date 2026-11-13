@@ -91,7 +91,7 @@ const DeleteEvalFromGroupDialog = ({
       }}
     >
       <Typography
-        fontSize="13px"
+        fontSize="12px"
         color="text.primary"
         fontWeight="fontWeightRegular"
         sx={{ lineHeight: 1.5 }}

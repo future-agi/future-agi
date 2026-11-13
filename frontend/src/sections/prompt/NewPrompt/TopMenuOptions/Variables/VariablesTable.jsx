@@ -12,6 +12,7 @@ import {
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { LoadingButton } from "@mui/lab";
 import { useForm } from "react-hook-form";
