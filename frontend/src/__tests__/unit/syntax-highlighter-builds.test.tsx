@@ -84,6 +84,7 @@ const typescriptCases = [
   'import { Client } from "client";\nexport const run = async () => {\n  const values: Array<string> = [...items];\n  if (values.length) return Promise.resolve(values.map(String));\n};',
   "/**\n * @param {string} name - display name\n * @returns {Promise<string>} message\n */\nfunction greet<T extends string>(name: T): Promise<T> { return Promise.resolve(name); }",
   'const message = `Hello ${name.toUpperCase()}`;\nconst style = css`a.link:hover { color: red; }`;\nconst view = html`<b class="value">${message}</b>`;\nconst icon = svg`<path fill="red" />`;\nconst query = gql`query { user { id } }`;\nconst rows = sql`SELECT id FROM users WHERE id = ${id}`;',
+  "const t = html`<script>/** @param {string} name */ console.log(name);</script>`;",
 ];
 
 afterEach(cleanup);
@@ -136,7 +137,7 @@ describe("light syntax highlighter builds", () => {
   );
 
   it.each(typescriptCases)(
-    "matches isolated full-build TypeScript markup for %s",
+    "matches isolated full-build TypeScript markup before importing full Prism for %s",
     (text) => {
       const { container } = render(
         <InstructionCodeCopy text={text} language="typescript" />,
