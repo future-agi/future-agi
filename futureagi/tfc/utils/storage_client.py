@@ -336,7 +336,9 @@ class PrivateBucketRefused(Exception):
 # or the service has no bucket policies at all. Anything else, AccessDenied
 # included, leaves the bucket unchecked and refused.
 _NO_POLICY_CODES = ("NoSuchBucketPolicy", "NotImplemented")
-_BUCKET_ALREADY_CREATED_CODES = ("BucketAlreadyOwnedByYou", "BucketAlreadyExists")
+# Only a bucket these credentials already own may be reused after a creation
+# race. BucketAlreadyExists means another account owns that name.
+_BUCKET_ALREADY_CREATED_CODES = ("BucketAlreadyOwnedByYou",)
 
 # Private buckets this process has already created or checked.
 _checked_private_buckets: set[str] = set()
@@ -368,10 +370,15 @@ def policy_allows_anyone(policy: str) -> bool:
 
 
 def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
-    """Create the bucket if needed, with no bucket policy, so only the
-    backend's own credentials reach its objects. A bucket whose policy may let
-    anyone in, or whose policy these credentials may not read, raises
-    PrivateBucketRefused and is asked again on the next call. GCS buckets are
+    """Check that the bucket exists with no bucket policy that lets anyone in,
+    so only the backend's own credentials reach its objects. A bucket whose
+    policy may let anyone in, or whose policy these credentials may not read,
+    raises PrivateBucketRefused and is asked again on the next call.
+
+    On MinIO a missing bucket is created, with no policy. On S3 it must be
+    created in advance: the S3 client cannot send ExpectedBucketOwner on the
+    bucket and object calls, so it cannot confirm that a bucket of that name
+    belongs to this account, and does not create one. GCS buckets are
     pre-created with IAM, as for ensure_bucket.
     """
     if bucket_name in _checked_private_buckets:
@@ -380,6 +387,9 @@ def ensure_private_bucket(client: Minio, bucket_name: str) -> None:
         _checked_private_buckets.add(bucket_name)
         return
     if not client.bucket_exists(bucket_name):
+        if STORAGE_BACKEND == "s3":
+            logger.error("storage_private_bucket_missing", bucket=bucket_name)
+            raise PrivateBucketRefused(bucket_name)
         try:
             client.make_bucket(bucket_name)
         except Exception as exc:

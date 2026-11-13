@@ -250,6 +250,98 @@ def test_a_bucket_whose_policy_cannot_be_read_is_not_used(
         assert client.written == []
 
 
+class _CreationClient:
+    """A bucket that may not exist yet. ``make_bucket`` creates it, or fails
+    with ``create_code`` as when another request created it first."""
+
+    def __init__(self, exists, create_code=None):
+        self.exists = exists
+        self.create_code = create_code
+        self.created = []
+        self.written = []
+
+    def bucket_exists(self, bucket):
+        return self.exists
+
+    def make_bucket(self, bucket):
+        self.created.append(bucket)
+        if self.create_code is not None:
+            error = Exception(self.create_code)
+            error.code = self.create_code
+            raise error
+        self.exists = True
+
+    def get_bucket_policy(self, bucket):
+        error = Exception("no policy")
+        error.code = "NoSuchBucketPolicy"
+        raise error
+
+    def put_object(self, **kwargs):
+        self.written.append(kwargs["object_name"])
+
+
+def _use_creation_client(monkeypatch, settings, client, backend):
+    settings.UPLOAD_BUCKET_NAME = "test-upload"
+    settings.COMPARE_BUCKET_NAME = f"test-upload-compare-{uuid.uuid4().hex[:8]}"
+    monkeypatch.setattr(storage_client, "_client", client)
+    monkeypatch.setattr(storage_client, "STORAGE_BACKEND", backend)
+    return settings.COMPARE_BUCKET_NAME
+
+
+def test_s3_uses_an_existing_compare_bucket_without_creating_one(monkeypatch, settings):
+    from model_hub.utils.compare_storage import write_compare_json
+
+    client = _CreationClient(exists=True)
+    _use_creation_client(monkeypatch, settings, client, "s3")
+    compare_id = str(uuid.uuid4())
+    write_compare_json(compare_id, "metadata.json", {"status": "completed"})
+    assert client.created == []
+    assert client.written == [f"compare/{compare_id}/metadata.json"]
+
+
+def test_s3_does_not_create_a_missing_compare_bucket(monkeypatch, settings):
+    from model_hub.utils.compare_storage import write_compare_json
+    from tfc.utils.storage_client import PrivateBucketRefused
+
+    client = _CreationClient(exists=False)
+    _use_creation_client(monkeypatch, settings, client, "s3")
+    compare_id = str(uuid.uuid4())
+    with pytest.raises(PrivateBucketRefused):
+        write_compare_json(compare_id, "metadata.json", {"status": "completed"})
+    assert client.created == []
+    assert client.written == []
+
+    # Not remembered: once an operator creates it, the next write uses it.
+    client.exists = True
+    write_compare_json(compare_id, "metadata.json", {"status": "completed"})
+    assert client.created == []
+    assert client.written == [f"compare/{compare_id}/metadata.json"]
+
+
+@pytest.mark.parametrize(
+    "create_code, accepted",
+    [(None, True), ("BucketAlreadyOwnedByYou", True), ("BucketAlreadyExists", False)],
+    ids=["created", "already-owned-by-this-account", "owned-by-another-account"],
+)
+def test_minio_creates_a_missing_compare_bucket_only_for_this_account(
+    monkeypatch, settings, create_code, accepted
+):
+    from model_hub.utils.compare_storage import write_compare_json
+
+    client = _CreationClient(exists=False, create_code=create_code)
+    bucket = _use_creation_client(monkeypatch, settings, client, "minio")
+    compare_id = str(uuid.uuid4())
+    if accepted:
+        write_compare_json(compare_id, "metadata.json", {"status": "completed"})
+        assert client.written == [f"compare/{compare_id}/metadata.json"]
+    else:
+        with pytest.raises(Exception) as refused:
+            write_compare_json(compare_id, "metadata.json", {"status": "completed"})
+        assert getattr(refused.value, "code", None) == "BucketAlreadyExists"
+        assert client.written == []
+    assert client.created == [bucket]
+
+
 class _PolicyTextClient:
     """An existing bucket whose policy read returns the given text."""
 
