@@ -50,6 +50,9 @@ _DDL = {
 LARGE_ROWS = 2_000_000
 # Far below the table and every bulk part, far above a fresh CDC batch.
 SAMPLE_BUDGET = 20_000
+# A part that fits the budget beside a planned prefix, but not beside the whole
+# granule (8192 rows) ClickHouse reads for that prefix.
+LARGE_FITTING_ROWS = 15_000
 # Server-side scan limit for the probing users: room for the metadata reads and
 # the sample, an order of magnitude short of the whole table.
 SERVER_ROW_LIMIT = 200_000
@@ -467,7 +470,13 @@ BULK_BATCH_ROWS = 3 * SAMPLE_BUDGET
 HISTORY_PART_ROWS = 150_000
 
 
-@pytest.fixture(params=["every_part_oversized", "next_to_stale_small_parts"])
+@pytest.fixture(
+    params=[
+        "every_part_oversized",
+        "next_to_stale_small_parts",
+        "next_to_large_fitting_parts",
+    ]
+)
 def oversized_batch(request):
     """The newest part is one CDC batch larger than the whole sample budget.
 
@@ -475,6 +484,8 @@ def oversized_batch(request):
     ``OPTIMIZE ... FINAL``, so no part fits the budget and the table is larger
     than the probing users may scan. ``next_to_stale_small_parts``: the only
     parts that fit are small ones synced ten minutes ago.
+    ``next_to_large_fitting_parts``: a stale part fits beside the prefix's
+    planned rows but not beside the whole granule ClickHouse reads for it.
     """
     from conftest import _ch_test_native_client, _ch_test_owned_database
 
@@ -484,7 +495,11 @@ def oversized_batch(request):
         _create_mirrors(admin)
         for table in CDC_TABLES:
             admin.execute(f"SYSTEM STOP MERGES {table}")
-        history = HISTORY_PART_ROWS if request.param == "every_part_oversized" else 100
+        history = {
+            "every_part_oversized": HISTORY_PART_ROWS,
+            "next_to_stale_small_parts": 100,
+            "next_to_large_fitting_parts": LARGE_FITTING_ROWS,
+        }[request.param]
         for months_back in (2, 1):
             _insert_part(
                 admin,
@@ -493,6 +508,10 @@ def oversized_batch(request):
                 months_back=months_back,
                 synced_age_seconds=600,
             )
+        if request.param == "next_to_large_fitting_parts":
+            # system.parts has one-second modification times: write the batch
+            # in a later second than the history, so it alone is newest.
+            time.sleep(1.1)
         _insert_part(admin, "tracer_trace", BULK_BATCH_ROWS)
         for table in ("trace_session", "tracer_eval_logger"):
             _insert_part(admin, table, 1)
@@ -519,6 +538,8 @@ def test_current_mirror_whose_newest_part_exceeds_the_budget_is_healthy(
         assert not fitting, parts
         (total,) = admin.execute("SELECT count() FROM tracer_trace")[0]
         assert total > SERVER_ROW_LIMIT, total
+    elif layout == "next_to_large_fitting_parts":
+        assert fitting == [LARGE_FITTING_ROWS] * 2, parts
     else:
         assert fitting == [100, 100], parts
     assert _newest_sync_age(admin) < 60

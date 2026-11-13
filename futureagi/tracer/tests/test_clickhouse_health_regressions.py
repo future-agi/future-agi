@@ -1037,3 +1037,34 @@ def test_slow_reachable_clickhouse_is_connected_and_costs_few_round_trips(
     else:
         assert set(health.details["checks"].values()) == {"timeout"}, detail
         assert elapsed < ConsistencyChecker.QUERY_TIMEOUT_MS / 1000 + 0.5, detail
+
+
+@pytest.mark.unit
+def test_lag_sample_plan_charges_a_prefix_its_whole_granules(configure, monkeypatch):
+    """A prefix reads whole granules, so the parts beside it fit what is left."""
+    from tracer.services.clickhouse import consistency
+
+    monkeypatch.setattr(consistency.ConsistencyChecker, "LAG_SAMPLE_MAX_ROWS", 20_000)
+    checker = configure(health_tests.fake_client({}))
+    now = datetime(2026, 1, 1, 12, 0, 30)
+    earlier = datetime(2026, 1, 1, 12, 0, 0)
+    prefix = consistency._SampleRead((("202611", 9, 9),), rows=2_000, prefix=True)
+    # An older part fits beside the planned 2,000 rows, not the 8,192 read.
+    assert checker._plan(
+        [
+            ("202611_10_10_0", 1, now),
+            ("202611_9_9_0", 50_000, now),
+            ("202610_1_1_0", 15_000, earlier),
+            ("202609_1_1_0", 5_000, earlier),
+        ]
+    ) == [
+        prefix,
+        consistency._SampleRead(
+            (("202611", 10, 10), ("202609", 1, 1)), rows=20_000 - 8_192
+        ),
+    ]
+    # A part of the same second taken before the prefix is dropped once the
+    # prefix's granules leave no room for it.
+    assert checker._plan(
+        [("202611_5_5_0", 15_000, now), ("202611_9_9_0", 50_000, now)]
+    ) == [prefix]

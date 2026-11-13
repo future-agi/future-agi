@@ -144,6 +144,9 @@ class ConsistencyChecker:
     # is enforced by what the probe chooses to read, never by settings.
     LAG_SAMPLE_MAX_ROWS = 10_000_000
     LAG_SAMPLE_MAX_PARTS = 64
+    # ClickHouse reads whole granules (the mirrors' index_granularity), so a
+    # prefix read costs its rows rounded up to granules.
+    LAG_SAMPLE_GRANULE_ROWS = 8192
     # system.parts columns the sample reads. Stock ClickHouse configs require a
     # grant for system tables. A role that cannot read all of them is never
     # sent a query that would be denied: it reads a table in full only when
@@ -541,25 +544,43 @@ class ConsistencyChecker:
         rest of the budget, which bounds even a merge that absorbed a large part
         that was not listed.
         """
+        budget = self.LAG_SAMPLE_MAX_ROWS
         reads = []
-        full: list[tuple[str, int, int]] = []
-        remaining = self.LAG_SAMPLE_MAX_ROWS
+        full: list[tuple[tuple[str, int, int], int]] = []
+        remaining = budget
+        prefix_cost = 0
         newest = parts[0][2] if parts else None
         for name, part_rows, modified in parts:
             blocks = _block_range(name)
             if blocks is None:
                 continue
             if part_rows <= remaining:
-                full.append(blocks)
+                full.append((blocks, part_rows))
                 remaining -= part_rows
             elif not reads and modified == newest:
-                prefix = max(1, min(remaining, self.LAG_SAMPLE_MAX_ROWS // 10))
+                prefix = max(1, min(remaining, budget // 10))
                 reads.append(_SampleRead((blocks,), rows=prefix, prefix=True))
-                remaining -= prefix
+                prefix_cost = self._prefix_cost(prefix)
+                remaining -= prefix_cost
+        # Parts of the newest second taken before the prefix may not fit beside
+        # its whole granules: drop the last taken, the oldest, until they do.
+        while full and prefix_cost + sum(rows for _, rows in full) > budget:
+            full.pop()
         if full:
-            limit = self.LAG_SAMPLE_MAX_ROWS - sum(read.rows for read in reads)
-            reads.append(_SampleRead(tuple(full), rows=limit))
+            reads.append(
+                _SampleRead(
+                    tuple(blocks for blocks, _ in full), rows=budget - prefix_cost
+                )
+            )
         return reads
+
+    def _prefix_cost(self, rows: int) -> int:
+        """Rows a prefix read costs: whole granules, as ClickHouse reads them.
+        A budget smaller than those granules cannot hold any prefix, so its
+        planned rows are charged instead."""
+        granule = self.LAG_SAMPLE_GRANULE_ROWS
+        cost = -(-rows // granule) * granule
+        return cost if cost <= self.LAG_SAMPLE_MAX_ROWS else rows
 
     @staticmethod
     def _sample_source(
