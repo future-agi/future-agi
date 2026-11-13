@@ -256,7 +256,6 @@ export async function createDriver({ jobId, runId, registration }) {
       }
 
       if (stage.id === 'choose-eligible-release') {
-        await operator.click(authorPage.getByRole('button', { name: 'Change', exact: true }), 'inspect-recovery-alternatives');
         const releases = authorPage.getByRole('table', { name: 'Recovery releases' });
         await expect(releases).toBeVisible();
         // Quarantined alternative: the UI refuses it and the public API independently refuses a packet.

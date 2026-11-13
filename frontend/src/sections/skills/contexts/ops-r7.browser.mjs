@@ -91,7 +91,6 @@ try {
       await page.getByText('Synthetic UI fixture · no repository writes or production changes').waitFor({ timeout: 60000 });
       if (screen === 'consumers-drawer') await page.getByRole('button', { name: 'Inspect Support application' }).click();
       if (screen === 'rollout-target-drawer') await page.getByRole('button', { name: 'Review target support-repository-01' }).click();
-      if (screen === 'recovery-candidates') await page.getByRole('button', { name: 'Change', exact: true }).click();
       if (screen === 'recovery-await') {
         await page.getByRole('checkbox', { name: /I reviewed the complete v1 closure/ }).check();
         await page.getByRole('button', { name: 'Submit rollback for review' }).click();
@@ -107,7 +106,6 @@ try {
       }
       if (screen === 'recovery-verify') await page.getByText('Production moved from v2 to v1 · 1 of 2 consumers confirmed').waitFor();
       if (screen === 'consumers') { await page.getByText(/As of 13 Nov 2026, 01:46 UTC/).waitFor(); assert.equal(await page.getByText('Updated 3s ago', { exact: true }).count(), 2); }
-      if (screen === 'recovery-candidates' && !(await page.getByRole('button', { name: 'Choose v1' }).isVisible())) await page.getByRole('button', { name: 'Change', exact: true }).click();
       if (screen === 'recovery-candidates') {
         assert.equal(await page.getByRole('button', { name: 'Choose v1' }).getAttribute('aria-pressed'), 'true');
         assert.equal(await page.getByRole('button', { name: 'Exact identities', exact: true }).count(), 1);
@@ -157,7 +155,6 @@ try {
     await page.getByText('Synthetic UI fixture · no repository writes or production changes').waitFor({ timeout: 60000 });
     if (screen === 'consumers-drawer') await page.getByRole('button', { name: 'Inspect Support application' }).click();
     if (screen === 'rollout-target-drawer') await page.getByRole('button', { name: 'Review target support-repository-01' }).click();
-    if (screen === 'recovery-candidates' && !(await page.getByRole('button', { name: 'Choose v1' }).isVisible())) await page.getByRole('button', { name: 'Change', exact: true }).click();
       if (screen === 'recovery-candidates') {
         assert.equal(await page.getByRole('button', { name: 'Choose v1' }).getAttribute('aria-pressed'), 'true');
         assert.equal(await page.getByRole('button', { name: 'Exact identities', exact: true }).count(), 1);

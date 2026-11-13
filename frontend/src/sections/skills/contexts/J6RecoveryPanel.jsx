@@ -156,9 +156,8 @@ Cohort.propTypes = {
   asOf: PropTypes.string,
 };
 
-function Candidates({ candidates, chosen, onChoose }) {
-  return (
-    <Section title="Choose a recovery release">
+function Candidates({ candidates, chosen, onChoose, bare = false }) {
+  const table = (
       <TableContainer sx={{ maxWidth: 1 }}>
         <Table size="small" aria-label="Recovery releases">
           <TableHead sx={{ display: { xs: 'none', sm: 'table-header-group' } }}>
@@ -239,13 +238,15 @@ function Candidates({ candidates, chosen, onChoose }) {
           </TableBody>
         </Table>
       </TableContainer>
-    </Section>
   );
+  // Inside the release review the table needs no section of its own.
+  return bare ? table : <Section title="Choose a recovery release">{table}</Section>;
 }
 Candidates.propTypes = {
   candidates: PropTypes.array.isRequired,
   chosen: PropTypes.string,
   onChoose: PropTypes.func.isRequired,
+  bare: PropTypes.bool,
 };
 
 const changeNames = {
@@ -704,7 +705,8 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
       {!awaiting && <>
         <Section title={candidate ? `Recovery release: v${candidate.number}${suggestion?.candidateId === candidate.id ? ' (suggested)' : ''}` : 'Choose a recovery release'}>
           {suggestion && <Typography variant="s3" color="text.secondary">v{suggestion.number} is the newest eligible release before v{suggestion.failing}. Review it below or choose another.</Typography>}
-          <TechnicalDetails title="Change" defaultOpen={!candidate}><Candidates candidates={data.candidates} chosen={chosen} onChoose={setChosen} /></TechnicalDetails>
+          {/* The excluded alternatives stay visible: the closure acknowledgment covers them, and a closed disclosure would add a gesture to every recovery. */}
+          <Candidates bare candidates={data.candidates} chosen={chosen} onChoose={setChosen} />
         </Section>
         {candidate && <ClosureReview candidate={candidate} production={production} closure={closure} />}
       </>}

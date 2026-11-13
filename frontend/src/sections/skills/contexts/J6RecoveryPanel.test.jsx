@@ -138,9 +138,11 @@ it("preselects the newest eligible release before the failing one and shows its 
   expect(screen.getByText("Request rollback to v1")).toBeVisible();
   expect(previewMutate).not.toHaveBeenCalled();
   expect(screen.getByRole("checkbox", { name: /I reviewed the complete v1 closure/ })).not.toBeChecked();
-  // The quarantined alternative is still refused, and another release can still be chosen.
-  fireEvent.click(screen.getByRole("button", { name: "Change", exact: true }));
+  // The quarantined alternative is still refused, and another release can still be chosen,
+  // all without opening anything: the alternatives sit in the review the acknowledgment covers.
+  expect(screen.getByRole("table", { name: "Recovery releases" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Choose v2" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Change", exact: true })).toBeNull();
 });
 
 it("preselects whoever last moved production as the reviewer", () => {
@@ -258,7 +260,6 @@ it('reopens verification after a reload without inventing the previous productio
 it('uses one exact-identity disclosure and a pressed release choice', () => {
   recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
   render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
-  fireEvent.click(screen.getByRole('button', { name: 'Change', exact: true }));
   expect(screen.getByRole('button', { name: 'Choose v1' })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getAllByRole('button', { name: 'Exact identities', exact: true })).toHaveLength(1);
   expect(screen.queryByText(/0 removed|0 sources retired/)).toBeNull();
