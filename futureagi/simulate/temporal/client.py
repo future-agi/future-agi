@@ -328,7 +328,9 @@ async def _cancel_with_retries(client, workflow_id: str, max_retries: int = 3) -
             return False
         except Exception as e:
             last_error = e
-            logger.warning(f"Could not cancel workflow {workflow_id}: {e}")
+            logger.warning(
+                "workflow_cancel_failed", workflow_id=workflow_id, error=str(e)
+            )
             return False
 
     logger.warning(
