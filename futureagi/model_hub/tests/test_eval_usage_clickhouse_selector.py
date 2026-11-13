@@ -272,9 +272,10 @@ def test_eval_usage_queries_are_project_scoped_bounded_and_page_only(monkeypatch
     assert all(
         "trace_dict" not in query
         and "FROM traces" in query
-        and "INNER JOIN (" in query
-        and "AS bounded_trace_candidates" in query
+        and "INNER JOIN (" not in query
         and "PREWHERE trace_project_scan.project_id IN %(project_ids)s" in query
+        # The candidates prune the (project_id, id) key, not a join.
+        and "AND trace_project_scan.id IN (" in query
         and "SELECT DISTINCT toUUIDOrZero(eval_trace_id) AS trace_id" in query
         and "GROUP BY trace_project_scan.id, trace_project_scan.project_id" in query
         and "LEFT JOIN (" in query
@@ -421,7 +422,7 @@ def test_eval_usage_deep_page_seeks_to_small_time_leaf(monkeypatch):
     )
     assert all(
         "FROM traces" in query
-        and "AS bounded_trace_candidates" in query
+        and "AND trace_project_scan.id IN (" in query
         and query.count("FROM usage_apicalllog") == 2
         for query, *_ in seek_calls + page_calls
     )
