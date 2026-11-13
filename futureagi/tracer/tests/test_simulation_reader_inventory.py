@@ -876,6 +876,32 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             row="tracer.CustomEvalConfig",
         ),
     },
+    "model_hub.services.skills_hub.v11.adoption": {
+        "adoption_summary": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "Skills adoption summary: its FROM templates are the quoted "
+                "Postgres tables of the skill, workspace, label, label event, "
+                "daily usage and version models, scoped to the caller's "
+                "organization and workspace"
+            ),
+            table=(
+                "HubSkill, Workspace, HubSkillLabel, HubSkillLabelEvent, "
+                "HubSkillUsageDaily and HubSkillVersion"
+            ),
+        ),
+    },
+    "model_hub.services.skills_hub.v12.trace_source": {
+        "read_trace_source": filed(
+            PROJECT_SET,
+            why=(
+                "context capture reads one span by project, trace, span id and "
+                "start hour; authorize_trace_source first resolves the project "
+                "through Project.no_workspace_objects in the caller's organization "
+                "and workspace, a manager that never returns a simulation project"
+            ),
+        ),
+    },
     "model_hub.utils.clickhouse": {
         "create_empty_conversation": _RECORD_UPSERT,
         "update_eval_record": _RECORD_UPSERT,
@@ -2326,9 +2352,10 @@ def test_every_spans_reading_function_is_filed():
         "decide which category covers each, then add it to FILED with a reason:\n"
         + "\n".join(unfiled)
     )
-    assert not stale, (
-        "these filings no longer match a reader; rename or remove them:\n"
-        + "\n".join(stale)
+    assert (
+        not stale
+    ), "these filings no longer match a reader; rename or remove them:\n" + "\n".join(
+        stale
     )
 
     unlisted = {
@@ -2339,9 +2366,9 @@ def test_every_spans_reading_function_is_filed():
     assert not unlisted, f"filed under a category that does not exist: {unlisted}"
     assert not [key for key, filing in FILED.items() if not filing.why.strip()]
     used = {bucket for filing in FILED.values() for bucket in filing.buckets}
-    assert used == set(BUCKETS), (
-        f"categories nothing is filed under: {sorted(set(BUCKETS) - used)}"
-    )
+    assert used == set(
+        BUCKETS
+    ), f"categories nothing is filed under: {sorted(set(BUCKETS) - used)}"
     claims = _filing_problems(readers)
     assert not claims, "\n".join(claims)
 
@@ -2938,7 +2965,7 @@ def creator_problems(found, pinned, present):
                     f"{key} (line {creator.call.lineno}) is pinned as {claim!r} and "
                     "the code does not show it"
                 )
-    for key, (claim, _why) in sorted(pinned.items()):
+    for key, (_claim, _why) in sorted(pinned.items()):
         if key in found:
             continue
         relative = key.split(":", 1)[0]
@@ -3368,9 +3395,9 @@ def test_no_postgres_row_names_a_hidden_project_after_a_simulated_run(
                 f"below would prove nothing for it: {recorder.project_names}"
             )
         else:
-            assert not recorder.project_names, (
-                f"{name} exported {recorder.project_names}"
-            )
+            assert (
+                not recorder.project_names
+            ), f"{name} exported {recorder.project_names}"
 
     # The run's own rows exist, so a row that is missing below is not for lack of one.
     assert RunTest.objects.filter(pk=run.pk).exists()
