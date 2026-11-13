@@ -690,3 +690,466 @@ def test_forward_overflow_long_after_enrollment_sweeps_only_the_bursts(
         values = dict(_version_fields(writer, state.head_manifest, definition))
         assert {str(sessions[name]) for name in bursts} <= values.keys()
         assert values[str(sessions[f"burst{round_no}-0"])] == pytest.approx(8.0)
+
+
+def _session_projection(writer):
+    """The production proj_by_session lookup (021_session_and_user_projections.sql)
+    on a ReplacingMergeTree, which (as 002_spans_v2.sql does) must rebuild it."""
+    writer.store.execute(
+        "ALTER TABLE spans MODIFY SETTING deduplicate_merge_projection_mode = 'rebuild'"
+    )
+    writer.store.execute(
+        "ALTER TABLE spans ADD PROJECTION proj_by_session (SELECT project_id, "
+        "trace_session_id, start_time ORDER BY project_id, trace_session_id, start_time)"
+    )
+
+
+def _version_index(writer):
+    """The production spans _version minmax skip index (002_spans_v2.sql)."""
+    writer.store.execute(
+        "ALTER TABLE spans ADD INDEX auto_minmax_index__version _version "
+        "TYPE minmax GRANULARITY 1"
+    )
+
+
+def _logged(writer, prefix, since):
+    """(read_rows, projections) of finished statements with a query id prefix."""
+    writer.store.client.execute("SYSTEM FLUSH LOGS")
+    return writer.store.client.execute(
+        "SELECT read_rows, projections FROM system.query_log "
+        "WHERE type = 'QueryFinish' AND query_id LIKE %(prefix)s "
+        "AND event_time >= %(since)s",
+        {"prefix": prefix + "%", "since": since.replace(tzinfo=None)},
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("mode", ["forward", "history"])
+def test_unit_source_capture_reads_the_burst_not_the_project_history(
+    live_writer, workspace, observe_project, mode
+):
+    """The 10M BIG 241: unit capture scanned every span of the project.
+
+    A recent conversation is captured on a project holding 60,000 old spans
+    written before it. The floor is dated through proj_by_session, the guard
+    for newer backdated revisions is pruned by the _version index, and the
+    session nominee and both identity reads are bounded by the floor, so the
+    capture reads the recent granules only, for a forward-only and a history
+    version alike.
+    """
+    writer = live_writer
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    _session_projection(writer)
+    _version_index(writer)
+    definition = definition_for(writer, workspace, observe_project)
+    now = datetime.now(UTC).replace(microsecond=0)
+    if mode == "forward":
+        definition = _forward(definition, now - timedelta(days=3))
+    writer.store.execute(
+        "INSERT INTO spans (id, project_id, org_id, trace_id, trace_session_id, "
+        "start_time, created_at, updated_at, attrs_number) "
+        "SELECT concat('old-', toString(number)), toUUID(%(project_id)s), "
+        "toUUID(%(org_id)s), concat('old-trace-', toString(intDiv(number, 4))), "
+        "generateUUIDv4(), now64(6, 'UTC') - toIntervalDay(2) + toIntervalSecond(number), "
+        "now64(6, 'UTC') - toIntervalDay(2), now64(6, 'UTC') - toIntervalDay(2), "
+        "map('resolved', 1) FROM numbers(60000)",
+        scope.parameters(),
+    )
+    session, trace = uuid4(), uuid4()
+    at = now - timedelta(minutes=40)
+    # Written after the history (old spans keep the default _version 1).
+    seed_span_revision(writer, scope, trace, "recent", session, at, 7, revision=2)
+    dependency = Dependency(
+        str(trace), "recent", str(session), str(session), "", "", at
+    )
+    since = datetime.now(UTC) - timedelta(seconds=1)
+    head = writer.refresh(
+        change_for(session, dependencies=[dependency]),
+        [definition],
+        scope,
+        start=now - timedelta(days=90),
+        end=now,
+        as_of=now,
+    )
+    assert _version_fields(writer, head, definition) == [(str(session), 7.0)]
+    captures = _logged(writer, "metric-source-capture-", since)
+    assert captures
+    # Unbounded, a capture reads all 60,000 old spans (twice); bounded, only
+    # the granules from the recent session's own start onward.
+    assert max(rows for rows, _ in captures) < 20_000, captures
+    floors = _logged(writer, "metric-source-floor-", since)
+    versions = _logged(writer, "metric-source-version-", since)
+    guards = _logged(writer, "metric-source-guard-", since)
+    assert floors and versions and guards
+    # The floor statements are bounded too: a projection lookup, a read from
+    # the floor onward, and a guard the _version index prunes to recent writes.
+    for logged in (floors, versions, guards):
+        assert max(rows for rows, _ in logged) < 20_000, logged
+    assert all(
+        any("proj_by_session" in p for p in projections) for _, projections in floors
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_forward_conversation_straddling_coverage_stays_excluded_on_a_burst(
+    live_writer, workspace, observe_project
+):
+    """A conversation that began before coverage_start never gets a forward
+    value, even when only its post-coverage spans are nominated: the capture
+    floor is the session's own earliest span, never coverage_start."""
+    writer = live_writer
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    coverage = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=2)
+    forward = _forward(definition_for(writer, workspace, observe_project), coverage)
+    session, trace = uuid4(), uuid4()
+    early, late = coverage - timedelta(minutes=30), coverage + timedelta(minutes=30)
+    for name, at, value in (("early", early, 2), ("late", late, 9)):
+        seed_span_revision(writer, scope, trace, name, session, at, value, revision=1)
+    only_late = Dependency(str(trace), "late", str(session), str(session), "", "", late)
+    head = writer.refresh(
+        change_for(session, dependencies=[only_late]),
+        [forward],
+        scope,
+        start=coverage - timedelta(days=1),
+        end=coverage + timedelta(hours=1, minutes=30),
+        as_of=coverage + timedelta(hours=1, minutes=30),
+    )
+    assert _version_fields(writer, head, forward) == []
+
+
+@pytest.mark.django_db(transaction=True)
+def test_span_moved_to_another_session_and_backdated_leaves_its_old_unit(
+    live_writer, workspace, observe_project
+):
+    """A later revision moves span K from conversation U to S2 AND backdates it
+    below every span of U. Recapturing U in the same pass as the move, and
+    again in a later pass after the move was committed, never counts K in U
+    (the floor covers the new revision both times) and never counts it twice.
+    The value is the latest span's (reducer "latest"), so a stale K, the latest
+    span of U, would show as U's value."""
+    writer = live_writer
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    definition = definition_for(writer, workspace, observe_project)
+    now = datetime.now(UTC).replace(microsecond=0)
+    u, s2, trace = uuid4(), uuid4(), uuid4()
+    a_at, j_at, k_at = (now - timedelta(minutes=m) for m in (60, 55, 50))
+    moved_at = now - timedelta(hours=3)
+
+    def dep(name, session, at):
+        return Dependency(str(trace), name, str(session), str(session), "", "", at)
+
+    def refresh(keys, units, after, before, as_of):
+        return writer.refresh(
+            ChangeBatch(
+                tuple(SourceKey(str(trace), k) for k in keys),
+                tuple(UnitKey("conversation", str(x)) for x in units),
+                (),
+                tuple(after),
+                tuple(before),
+                {"watermark_ns": changes.ns(as_of)},
+            ),
+            [definition],
+            scope,
+            start=now - timedelta(days=1),
+            end=as_of,
+            as_of=as_of,
+        )
+
+    seed_span_revision(writer, scope, trace, "a", u, a_at, 2, revision=1)
+    seed_span_revision(writer, scope, trace, "k", u, k_at, 8, revision=1)
+    head = refresh(["a", "k"], [u], [dep("a", u, a_at), dep("k", u, k_at)], [], now)
+    assert dict(_version_fields(writer, head, definition)) == {str(u): 8.0}
+    # K moves to S2 with a start three hours earlier than any span of U.
+    seed_span_revision(writer, scope, trace, "k", s2, moved_at, 8, revision=2)
+    head = refresh(["k"], [u, s2], [dep("k", s2, moved_at)], [dep("k", u, k_at)], now)
+    assert dict(_version_fields(writer, head, definition)) == {
+        str(u): 2.0,
+        str(s2): 8.0,
+    }
+    # A later pass recaptures U alone (a new span J), after the move committed:
+    # K's old revision still nominates it, its new one is far below U's spans.
+    seed_span_revision(writer, scope, trace, "j", u, j_at, 4, revision=1)
+    head = refresh(["j"], [u], [dep("j", u, j_at)], [], now)
+    assert dict(_version_fields(writer, head, definition)) == {
+        str(u): 4.0,
+        str(s2): 8.0,
+    }
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("mode", ["forward", "history"])
+def test_span_capture_reads_the_dirty_window_not_the_project_history(
+    live_writer, workspace, observe_project, mode
+):
+    """The 10M BIG 395: a span page's capture read 105M rows of history.
+
+    The span window's revisions are read from the window's floor onward (its
+    start, or the start of a newer backdated revision of one of its spans), so
+    a span page on a project with 60,000 old spans written before it reads
+    only the recent granules, for a forward-only and a history version alike.
+    """
+    writer = live_writer
+    scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
+    _version_index(writer)
+    span = span_definition_for(writer, workspace, observe_project)
+    now = datetime.now(UTC).replace(minute=7, second=0, microsecond=0)
+    if mode == "forward":
+        span = _forward(span, now - timedelta(days=3))
+    writer.store.execute(
+        "INSERT INTO spans (id, project_id, org_id, trace_id, trace_session_id, "
+        "start_time, end_time, created_at, updated_at, attrs_number) "
+        "SELECT concat('old-', toString(number)), toUUID(%(project_id)s), "
+        "toUUID(%(org_id)s), concat('old-trace-', toString(intDiv(number, 4))), "
+        "generateUUIDv4(), now64(6, 'UTC') - toIntervalDay(2) + toIntervalSecond(number), "
+        "now64(6, 'UTC') - toIntervalDay(2) + toIntervalSecond(number + 1), "
+        "now64(6, 'UTC') - toIntervalDay(2), now64(6, 'UTC') - toIntervalDay(2), "
+        "map('resolved', 1) FROM numbers(60000)",
+        scope.parameters(),
+    )
+    session, trace = uuid4(), uuid4()
+    at = now - timedelta(hours=1)
+    seed_span_revision(writer, scope, trace, "recent", session, at, 6, revision=2)
+    dependency = Dependency(
+        str(trace), "recent", str(session), str(session), "", "", at
+    )
+    since = datetime.now(UTC) - timedelta(seconds=1)
+    head = writer.refresh(
+        change_for(session, dependencies=[dependency]),
+        [span],
+        scope,
+        start=now - timedelta(days=90),
+        end=now,
+        as_of=now,
+    )
+    rows = metric_bucket_rows(writer, head, span)
+    assert [r[2:] for r in rows] == [(1, 6.0, 1.0)], rows
+    writer.store.client.execute("SYSTEM FLUSH LOGS")
+    captures = writer.store.client.execute(
+        "SELECT read_rows FROM system.query_log WHERE type = 'QueryFinish' "
+        "AND query LIKE 'INSERT INTO metric_span_capture_%%' AND event_time >= %(since)s",
+        {"since": since.replace(tzinfo=None)},
+    )
+    assert captures
+    # Unbounded, the window's revision reads scan all 60,000 old spans.
+    assert max(r for (r,) in captures) < 20_000, captures
+    versions = _logged(writer, "metric-span-version-", since)
+    floors = _logged(writer, "metric-span-floor-", since)
+    assert versions and floors
+    for logged in (versions, floors):
+        assert max(r for r, _ in logged) < 20_000, logged
+
+
+@pytest.mark.django_db(transaction=True)
+def test_uncommitted_backdated_move_out_of_a_unit_is_not_counted_in_it(
+    live_writer, workspace, observe_project
+):
+    """K moves from U to S2 with a start below every span of U, and NO pass has
+    seen the move. A pass that recaptures U alone (a new span J) must not count
+    K in U: no dependency records the new start, so only the guard for newer
+    backdated revisions of U's spans finds it. Same result as an unbounded read.
+    The value is the latest span's: a stale K would show as U's value, 8."""
+    writer = live_writer
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    definition = definition_for(writer, workspace, observe_project)
+    now = datetime.now(UTC).replace(microsecond=0)
+    u, s2, trace = uuid4(), uuid4(), uuid4()
+    a_at, j_at, k_at = (now - timedelta(minutes=m) for m in (60, 55, 50))
+    moved_at = now - timedelta(days=1, hours=3)
+
+    def dep(name, at):
+        return Dependency(str(trace), name, str(u), str(u), "", "", at)
+
+    def refresh(keys, deps, cursor):
+        return writer.refresh(
+            ChangeBatch(
+                tuple(SourceKey(str(trace), k) for k in keys),
+                (UnitKey("conversation", str(u)),),
+                (),
+                tuple(deps),
+                (),
+                {"watermark_ns": cursor},
+            ),
+            [definition],
+            scope,
+            start=now - timedelta(days=2),
+            end=now,
+            as_of=now,
+        )
+
+    seed_span_revision(writer, scope, trace, "a", u, a_at, 2, revision=1)
+    seed_span_revision(writer, scope, trace, "k", u, k_at, 8, revision=1)
+    head = refresh(["a", "k"], [dep("a", a_at), dep("k", k_at)], 1)
+    assert dict(_version_fields(writer, head, definition)) == {str(u): 8.0}
+    seed_span_revision(writer, scope, trace, "k", s2, moved_at, 8, revision=2)
+    seed_span_revision(writer, scope, trace, "j", u, j_at, 4, revision=1)
+    head = refresh(["j"], [dep("j", j_at)], 2)
+    assert dict(_version_fields(writer, head, definition)) == {str(u): 4.0}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_uncommitted_backdated_move_out_of_a_span_window_leaves_it(
+    live_writer, workspace, observe_project
+):
+    """Span X moves from window W to a start a day earlier, and NO pass has seen
+    the move. A pass dirtied by another span Z in W must not count X in W: its
+    new quarter is not dirty and no dependency records it, so only the guard for
+    newer backdated revisions finds it. Same result as an unbounded read."""
+    writer = live_writer
+    scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
+    span = span_definition_for(writer, workspace, observe_project)
+    now = datetime.now(UTC).replace(minute=7, second=0, microsecond=0)
+    window = now.replace(minute=0) - timedelta(hours=1)
+    session, trace = uuid4(), uuid4()
+    x_at, y_at, z_at = (window + timedelta(minutes=m) for m in (1, 2, 3))
+
+    def dep(name, at):
+        return Dependency(str(trace), name, str(session), str(session), "", "", at)
+
+    def refresh(deps, cursor):
+        return writer.refresh(
+            change_for(session, cursor=cursor, dependencies=deps),
+            [span],
+            scope,
+            start=now - timedelta(days=2),
+            end=now,
+            as_of=now,
+        )
+
+    seed_span_revision(writer, scope, trace, "x", session, x_at, 2, revision=1)
+    seed_span_revision(writer, scope, trace, "y", session, y_at, 4, revision=1)
+    head = refresh([dep("x", x_at), dep("y", y_at)], 1)
+    assert [r[2:] for r in metric_bucket_rows(writer, head, span)] == [(2, 6.0, 2.0)]
+    seed_span_revision(
+        writer, scope, trace, "x", session, now - timedelta(days=1), 2, revision=2
+    )
+    seed_span_revision(writer, scope, trace, "z", session, z_at, 10, revision=1)
+    head = refresh([dep("z", z_at)], 2)
+    rows = metric_bucket_rows(writer, head, span)
+    assert [(r[0].replace(tzinfo=UTC), *r[2:]) for r in rows] == [
+        (window, 2, 14.0, 2.0)
+    ], rows
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("enabled_metrics")
+@pytest.mark.parametrize("lane", ["incremental", "repair"])
+def test_forward_burst_over_a_pending_repair_reads_the_burst_not_the_history(
+    live_writer, workspace, observe_project, settings, lane
+):
+    """OVER2 on the 10M VM: a burst of conversations, some begun before
+    coverage, lands over an in-flight routine repair of a forward project with
+    history. Every unit capture of the burst sweep read the whole project
+    (about 1.74M rows, Code 241). Bounded by the batch's own first span, each
+    capture reads the burst only, and the straddling units stay excluded."""
+    writer = live_writer
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    writer.store.execute(
+        "ALTER TABLE spans ADD COLUMN IF NOT EXISTS observation_type String DEFAULT ''"
+    )
+    _session_projection(writer)
+    _version_index(writer)
+    definition = definition_for(writer, workspace, observe_project)
+    MetricProjectRefresh.objects.filter(project_id=observe_project.id).update(
+        settle_minutes=1
+    )
+    enrolled = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=3)
+    DerivedMetricVersion.objects.filter(id=definition.id).update(created_at=enrolled)
+    # Two days of history, ingested as it happened (_version = start).
+    writer.store.execute(
+        "INSERT INTO spans (id, project_id, org_id, trace_id, trace_session_id, "
+        "start_time, end_time, created_at, updated_at, _version, attrs_number) "
+        "SELECT concat('hist-', toString(number)), toUUID(%(project_id)s), "
+        "toUUID(%(org_id)s), concat('hist-trace-', toString(intDiv(number, 4))), "
+        "toUUID(concat('00000000-0000-0000-0000-', leftPad(toString(intDiv(number, 4)), 12, '0'))), "
+        "start, start + toIntervalSecond(1), start, start, "
+        "toUInt64(toUnixTimestamp64Nano(start)), map('resolved', 1) FROM ("
+        "SELECT number, now64(6, 'UTC') - toIntervalDay(2) + toIntervalSecond(number) "
+        "AS start FROM numbers(60000))",
+        scope.parameters(),
+    )
+    # Conversations since enrollment give the first publication.
+    for i in range(2):
+        start = enrolled + timedelta(minutes=5 + 10 * i)
+        seed_span_revision(
+            writer,
+            scope,
+            uuid4(),
+            f"early-{i}",
+            uuid4(),
+            start,
+            2,
+            revision=changes.ns(start + timedelta(seconds=1)),
+            arrival=start + timedelta(seconds=1),
+        )
+    analytics = Analytics(writer.store.client)
+    settings.METRICS_BACKFILL_MAX_SPANS = 2
+    assert backfill.enter_backfill(
+        writer.lease, analytics, retention_days=lambda: 0
+    ) == {str(definition.id): "forward"}
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    admission.run_incremental(writer, analytics, scope, state)
+    assert (
+        DerivedMetric.objects.get(id=definition.metric_id).active_version_id
+        == definition.id
+    )
+    consumed = MetricProjectRefresh.for_project(observe_project.id).watermark_ns
+    at = changes.from_ns(consumed)
+    # A routine full repair is in flight when the burst lands.
+    MetricProjectRefresh.objects.filter(project_id=observe_project.id).update(
+        pending_repair=True,
+        reconciliation_cursor=ReconciliationCheckpoint(
+            started_at=at - timedelta(minutes=1),
+            phase="sources",
+            scanned=3,
+            day=enrolled.date(),
+            last_day=at.date(),
+        ).to_dict(),
+        reconciliation_started_at=at - timedelta(minutes=1),
+        reconciliation_completed_at=None,
+    )
+    sessions = {}
+
+    def seed(name, starts, value):
+        sessions[name] = session = uuid4()
+        trace = uuid4()
+        for offset, start in enumerate(starts):
+            arrival = at - timedelta(minutes=2) + timedelta(seconds=offset)
+            seed_span_revision(
+                writer,
+                scope,
+                trace,
+                f"{name}-{offset}",
+                session,
+                start,
+                value,
+                revision=changes.ns(arrival),
+                arrival=arrival,
+            )
+
+    # Five conversations began before coverage and continue after it; three
+    # began after it. Eight already-settled arrivals overflow a cap of three.
+    for i in range(5):
+        seed(
+            f"straddle-{i}",
+            [enrolled - timedelta(minutes=10, seconds=i), at - timedelta(minutes=40)],
+            8,
+        )
+    for i in range(3):
+        seed(f"fresh-{i}", [at - timedelta(minutes=40, seconds=i)], 8)
+    writer.incremental_unit_limit = 3
+    since = datetime.now(UTC) - timedelta(seconds=1)
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    if lane == "incremental":
+        admission.run_incremental(writer, analytics, scope, state)
+    else:
+        backfill.BackfillRunner(writer, analytics, scope).run_repair_page()
+    state = MetricProjectRefresh.for_project(observe_project.id)
+    assert not state.pending_repair
+    assert state.reconciliation_cursor["phase"] == "complete"
+    values = dict(_version_fields(writer, state.head_manifest, definition))
+    assert {str(sessions[f"fresh-{i}"]) for i in range(3)} <= values.keys()
+    assert not {str(sessions[f"straddle-{i}"]) for i in range(5)} & values.keys()
+    captures = _logged(writer, "metric-source-capture-", since)
+    assert captures
+    # Unbounded, every capture reads the 60,000 spans of history.
+    assert max(rows for rows, _ in captures) < 20_000, captures

@@ -8,7 +8,7 @@ preparation. Only frozen publication batches are recoverable.
 """
 
 from contextlib import ExitStack, contextmanager
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from time import monotonic
 from uuid import uuid4
 
@@ -22,7 +22,11 @@ from tracer.services.derived_metrics.publication import (
     committed_rows_select,
 )
 from tracer.services.derived_metrics.storage import FIELD_VALUES, SOURCE_DEPENDENCIES
-from tracer.services.derived_metrics.unit_reads import span_values_select
+from tracer.services.derived_metrics.unit_reads import (
+    span_values_select,
+    span_window_floor_select,
+    span_window_version_select,
+)
 
 # Operational admission bounds, not a measured production capacity envelope.
 # Overflow aborts preparation; it must never truncate and publish a partial bucket.
@@ -172,6 +176,28 @@ def _bucket_runs(dirty):
     return [(start, end) for start, end, _ in runs]
 
 
+def _span_window_floor(store, scope, at, until):
+    """Exact physical start_time floor of a span window's revision reads."""
+    version_sql, version_params = span_window_version_select(scope, start=at, end=until)
+    version = store.execute(
+        version_sql, version_params, query_id="metric-span-version-" + uuid4().hex
+    )[0][0]
+    if version is None:
+        return at
+    floor_sql, floor_params = span_window_floor_select(
+        scope, start=at, end=until, version=version
+    )
+    moved = store.execute(
+        floor_sql, floor_params, query_id="metric-span-floor-" + uuid4().hex
+    )[0][0]
+    if moved is None:
+        return at
+    aware = (
+        value if value.tzinfo else value.replace(tzinfo=UTC) for value in (at, moved)
+    )
+    return min(aware)
+
+
 @contextmanager
 def captured_span_fields(
     writer,
@@ -277,7 +303,12 @@ def captured_span_fields(
             # half-open windows tile [at, until) exactly, and sampling ambiguity
             # stays partitioned per quarter, so rows equal the per-quarter union.
             fields, params = span_values_select(
-                definition, scope, start=at, end=until, as_of=as_of
+                definition,
+                scope,
+                start=at,
+                end=until,
+                as_of=as_of,
+                start_floor=_span_window_floor(store, scope, at, until),
             )
             if preserve_pruned:
                 previous_columns = ", ".join(

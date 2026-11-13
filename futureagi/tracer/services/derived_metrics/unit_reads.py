@@ -28,7 +28,11 @@ from tracer.services.derived_metrics.formula import (
     FormulaError,
     compile_formula,
 )
-from tracer.services.derived_metrics.queries import Scope, snapshot_select
+from tracer.services.derived_metrics.queries import (
+    Scope,
+    snapshot_select,
+    utc_timestamp,
+)
 from tracer.services.derived_metrics.storage import (
     FIELD_CHECKPOINT,
     FIELD_VALUES,
@@ -287,9 +291,21 @@ def committed_unit_values_select(
 
 
 def _source_plan(
-    scope: Scope, ids: tuple[str, ...], manifest, source_identities
+    scope: Scope, ids: tuple[str, ...], manifest, source_identities, start_floor=None
 ) -> tuple[tuple[str, ...], str, dict]:
+    """``start_floor`` (RefreshWriter._unit_source_floor) bounds every spans read.
+
+    It is the least of the requested aliases' earliest physical span and the
+    start of any newer revision of such a span below it (unit_source_guard_select),
+    so no requested unit's result changes. Without it each read is a scan of the
+    project (start_time is not a leading sort-key column and IN sets this large
+    defeat the Bloom indexes).
+    """
     params = {"unit_read_ids": list(ids)}
+    bound = ""
+    if start_floor is not None:
+        params["unit_read_floor"] = utc_timestamp(start_floor)
+        bound = " AND start_time >= toDateTime64(%(unit_read_floor)s, 6, 'UTC')"
     canonical = resolved_id_expr("r.requested_id", "rm")
     survivors = survivor_map_subquery("trace_session_id_remap")
     ctes = [
@@ -307,7 +323,9 @@ def _source_plan(
     ]
     nominees = [
         """SELECT trace_id AS trace_key, id AS span_key FROM spans
-        PREWHERE project_id = %(project_id)s AND trace_session_id IN (SELECT alias_id FROM unit_aliases)
+        PREWHERE project_id = %(project_id)s AND trace_session_id IN (SELECT alias_id FROM unit_aliases)"""
+        + bound
+        + """
         WHERE org_id = %(org_id)s OR isNull(org_id)"""
     ]
     if source_identities:
@@ -339,8 +357,78 @@ def _source_plan(
     # the 500-owner source read measured MORE rows with it (1,294,346 versus
     # 770,054 on 262,144 source spans). Keep only the exact immutable pair.
     # Never push mutable session/hour/service membership here.
-    predicate = "(trace_id, id) IN (SELECT trace_key, span_key FROM unit_source_keys)"
+    predicate = (
+        "(trace_id, id) IN (SELECT trace_key, span_key FROM unit_source_keys)" + bound
+    )
     return tuple(ctes), predicate, params
+
+
+def unit_source_floor_select(scope: Scope, unit_ids, manifest) -> tuple[str, dict]:
+    """Stage 1 of the _source_plan start_floor: the requested aliases' first span.
+
+    The earliest start_time of every physical span (any revision, deleted or
+    not, any organization) whose session is a requested alias, served by
+    proj_by_session (project_id, trace_session_id, start_time). NULL when the
+    aliases hold no span. unit_source_guard_select may lower it.
+    """
+    ctes, _, params = _source_plan(scope, _ids(unit_ids), manifest, ())
+    sql = (
+        "WITH " + ", ".join(ctes[:3]) + " SELECT minOrNull(start_time) FROM spans "
+        "WHERE project_id = %(project_id)s "
+        "AND trace_session_id IN (SELECT alias_id FROM unit_aliases)"
+    )
+    return sql, {**scope.parameters(), **params}
+
+
+def unit_source_version_select(
+    scope: Scope, unit_ids, manifest, *, floor
+) -> tuple[str, dict]:
+    """Stage 2: the oldest _version of any span revision in a requested alias.
+
+    Every alias revision starts at or after the stage-1 floor, so this read is
+    bounded by it.
+    """
+    ctes, _, params = _source_plan(scope, _ids(unit_ids), manifest, ())
+    params["unit_guard_floor"] = utc_timestamp(floor)
+    sql = (
+        "WITH " + ", ".join(ctes[:3]) + " SELECT minOrNull(_version) FROM spans "
+        "PREWHERE project_id = %(project_id)s "
+        "AND start_time >= toDateTime64(%(unit_guard_floor)s, 6, 'UTC') "
+        "AND trace_session_id IN (SELECT alias_id FROM unit_aliases)"
+    )
+    return sql, {**scope.parameters(), **params}
+
+
+def unit_source_guard_select(
+    scope: Scope, unit_ids, manifest, *, floor, version
+) -> tuple[str, dict]:
+    """Stage 3: the start of any NEWER revision below the floor of an alias span.
+
+    Bounding the capture at a floor F changes a unit's result only if a span's
+    winning revision among those starting at or after F lies in a requested
+    alias while a newer revision of that span starts before F (a move to
+    another session with a backdated start, committed or not). Every such newer
+    revision is found here: it starts before F, its _version is at least the
+    stage-2 minimum, and its span has a revision in a requested alias. So the
+    least of F and this start is exact. The read is bounded by start_time < F
+    on the sort key and by the _version minmax skip index: only granules
+    written after the aliases' oldest revision are read.
+    """
+    ctes, _, params = _source_plan(scope, _ids(unit_ids), manifest, ())
+    params.update(
+        unit_guard_floor=utc_timestamp(floor), unit_guard_version=int(version)
+    )
+    sql = (
+        "WITH " + ", ".join(ctes[:3]) + " SELECT minOrNull(start_time) FROM spans "
+        "PREWHERE project_id = %(project_id)s "
+        "AND start_time < toDateTime64(%(unit_guard_floor)s, 6, 'UTC') "
+        "AND _version >= %(unit_guard_version)s "
+        "WHERE (trace_id, id) IN (SELECT trace_id, id FROM spans "
+        "PREWHERE project_id = %(project_id)s "
+        "AND start_time >= toDateTime64(%(unit_guard_floor)s, 6, 'UTC') "
+        "AND trace_session_id IN (SELECT alias_id FROM unit_aliases))"
+    )
+    return sql, {**scope.parameters(), **params}
 
 
 def _authority_ctes(predicate):
@@ -380,6 +468,7 @@ def unit_values_select(
     settle_minutes: int = 30,
     manifest=None,
     source_identities=(),
+    start_floor=None,
 ) -> tuple[str, dict]:
     """One typed, fully evidenced row per canonical requested conversation.
 
@@ -413,7 +502,7 @@ def unit_values_select(
     ids = _ids(unit_ids)
     recipe = field_recipe(definition)
     ctes, predicate, source_params = _source_plan(
-        scope, ids, manifest, source_identities
+        scope, ids, manifest, source_identities, start_floor
     )
     ctes = (*ctes, *_authority_ctes(predicate))
     source, params = snapshot_select(
@@ -475,7 +564,7 @@ def unit_values_select(
     )
 
 
-def span_values_select(definition, scope, *, start, end, as_of):
+def span_values_select(definition, scope, *, start, end, as_of, start_floor=None):
     """Transient deduped-span fields for a WHOLE dirty bucket; never persisted.
 
     Mutable start/filter predicates run after immutable source collapse. This
@@ -493,10 +582,20 @@ def span_values_select(definition, scope, *, start, end, as_of):
     # invoking the shared compiler. unit_predicate deliberately disables that
     # compiler's member window, so this relation MUST apply it after collapse.
     # This also keeps same-span-id sampling ambiguity restricted to the window.
-    window_keys = """span_window_keys AS (
+    # start_floor (span_window_floor_select) bounds the revision reads without
+    # changing the window's winners, so the reads skip the project's history.
+    bound = (
+        ""
+        if start_floor is None
+        else " AND start_time >= toDateTime64(%(span_window_floor)s, 6, 'UTC')"
+    )
+    window_keys = (
+        """span_window_keys AS (
         SELECT trace_id, id FROM (
             SELECT trace_id, id, start_time FROM spans
-            PREWHERE project_id = %(project_id)s AND (trace_id, id) IN (
+            PREWHERE project_id = %(project_id)s"""
+        + bound
+        + """ AND (trace_id, id) IN (
                 SELECT trace_id, id FROM spans
                 PREWHERE project_id = %(project_id)s
                 WHERE (org_id = %(org_id)s OR isNull(org_id))
@@ -507,6 +606,7 @@ def span_values_select(definition, scope, *, start, end, as_of):
             ORDER BY _version DESC LIMIT 1 BY project_id, trace_id, id
         ) WHERE start_time >= %(start)s AND start_time < %(end)s
     )"""
+    )
     # The compiler nominates evaluation ids separately and collapses their
     # complete eligible histories, so a window cannot hide a retargeted winner.
     source, params = snapshot_select(
@@ -517,13 +617,16 @@ def span_values_select(definition, scope, *, start, end, as_of):
         as_of,
         list(getattr(definition, "filters", ())),
         "",
-        unit_predicate="(trace_id, id) IN (SELECT trace_id, id FROM span_window_keys)",
+        unit_predicate="(trace_id, id) IN (SELECT trace_id, id FROM span_window_keys)"
+        + bound,
         source_ctes=(window_keys,),
         include_evidence=True,
         # Bucket captures may tile adjacent quarters into one window.
         quarter_ambiguity=True,
     )
     params["unit_settle_minutes"] = 0
+    if start_floor is not None:
+        params["span_window_floor"] = utc_timestamp(start_floor)
     return _field_projection(
         recipe,
         source,
@@ -654,3 +757,46 @@ def _field_projection(
         )
     """
     return query, params
+
+
+def span_window_version_select(scope: Scope, *, start, end):
+    """Stage 1 of the span_values_select start_floor: the window's oldest _version."""
+    params = {
+        **scope.parameters(),
+        "span_floor_start": utc_timestamp(start),
+        "span_floor_end": utc_timestamp(end),
+    }
+    return (
+        "SELECT minOrNull(_version) FROM spans "
+        "PREWHERE project_id = %(project_id)s "
+        "AND start_time >= toDateTime64(%(span_floor_start)s, 6, 'UTC') "
+        "AND start_time < toDateTime64(%(span_floor_end)s, 6, 'UTC')",
+        params,
+    )
+
+
+def span_window_floor_select(scope: Scope, *, start, end, version):
+    """Stage 2: the start of any NEWER revision before the window of a window span.
+
+    The floor is the least of the window start and this. Bounding the window's
+    revision reads at a floor F changes the window only if a span's winning
+    revision among those starting at or after F lies in the window while a
+    newer revision starts before F (a move to an earlier start, committed or
+    not). Every such newer revision is found here: it starts before the window,
+    its _version is at least the window's oldest, and its span has a revision
+    in the window. The read is bounded by start_time on the sort key and by the
+    _version minmax skip index.
+    """
+    _, params = span_window_version_select(scope, start=start, end=end)
+    params["span_floor_version"] = int(version)
+    return (
+        "SELECT minOrNull(start_time) FROM spans "
+        "PREWHERE project_id = %(project_id)s "
+        "AND start_time < toDateTime64(%(span_floor_start)s, 6, 'UTC') "
+        "AND _version >= %(span_floor_version)s "
+        "WHERE (trace_id, id) IN (SELECT trace_id, id FROM spans "
+        "PREWHERE project_id = %(project_id)s "
+        "AND start_time >= toDateTime64(%(span_floor_start)s, 6, 'UTC') "
+        "AND start_time < toDateTime64(%(span_floor_end)s, 6, 'UTC'))",
+        params,
+    )

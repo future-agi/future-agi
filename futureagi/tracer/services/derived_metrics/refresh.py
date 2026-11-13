@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
 from time import monotonic
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from django.db import connection, transaction
 from django.db.models import BigIntegerField, Count, Max, Q, Sum
@@ -71,7 +71,12 @@ from tracer.services.derived_metrics.storage import (
     SOURCE_DEPENDENCIES,
     UNIT_STATE,
 )
-from tracer.services.derived_metrics.unit_reads import unit_values_select
+from tracer.services.derived_metrics.unit_reads import (
+    unit_source_floor_select,
+    unit_source_guard_select,
+    unit_source_version_select,
+    unit_values_select,
+)
 
 MAX_PASS_UNITS = 50_000
 MAX_DELTAS_BEFORE_COMPACTION = 1
@@ -1173,6 +1178,7 @@ class RefreshWriter:
                     settle_minutes=settle_minutes,
                     manifest=head,
                     source_identities=keys,
+                    start_floor=self._unit_source_floor(scope, page, head),
                 )
                 if self.store.execute(
                     f"SELECT count() FROM ({sql}) WHERE unit_start < toDateTime64(%(takeover_cutoff)s, 6, 'UTC')",
@@ -1180,6 +1186,32 @@ class RefreshWriter:
                 )[0][0]:
                     return False
         return True
+
+    def _unit_source_floor(self, scope, units, head):
+        """Exact physical start_time floor of the source capture for these units."""
+
+        def scalar(sql, params, stage):
+            rows = self.store.execute(
+                sql, params, query_id=f"metric-source-{stage}-" + uuid4().hex
+            )
+            return rows[0][0] if rows else None
+
+        floor = scalar(*unit_source_floor_select(scope, units, head), "floor")
+        if floor is None:
+            return None
+        version = scalar(
+            *unit_source_version_select(scope, units, head, floor=floor), "version"
+        )
+        if version is not None:
+            moved = scalar(
+                *unit_source_guard_select(
+                    scope, units, head, floor=floor, version=version
+                ),
+                "guard",
+            )
+            if moved is not None:
+                floor = min(floor, moved)
+        return floor if floor.tzinfo else floor.replace(tzinfo=UTC)
 
     def _refresh(
         self,
@@ -1411,11 +1443,16 @@ class RefreshWriter:
                 owners = self._unowned_span_sessions(attempt, head, ids)
                 if len(ids | owners) <= MAX_PASS_UNITS:
                     ids |= owners
+        floors = {}
         for definition in definitions:
             if definition.level == "span":
                 continue
             for offset in range(0, len(ids), MAX_BATCH_ROWS):
                 candidates = tuple(sorted(ids))[offset : offset + MAX_BATCH_ROWS]
+                if candidates not in floors:
+                    floors[candidates] = self._unit_source_floor(
+                        scope, candidates, head
+                    )
                 where = "field_id = toUUID(%(field)s) AND field_version = %(version)s"
                 candidate_params_fixed = {
                     "field": str(definition.metric_id),
@@ -1480,6 +1517,7 @@ class RefreshWriter:
                     settle_minutes=settle_minutes,
                     manifest=head,
                     source_identities=source_ids,
+                    start_floor=floors[candidates],
                 )
                 captured = capture_source_output(
                     self.store,

@@ -2194,12 +2194,57 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
             row="tracer.MetricProjectRefresh",
         ),
+        "unit_source_floor_select": filed(
+            ROW_DRIVEN,
+            why=(
+                "refresh dates the requested units' own spans (min start_time) "
+                "for the refresh-row project to bound its capture; not "
+                "authorization. Depends on the admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "unit_source_version_select": filed(
+            ROW_DRIVEN,
+            why=(
+                "refresh reads the requested units' oldest span _version for the "
+                "refresh-row project to bound its capture guard; not "
+                "authorization. Depends on the admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "unit_source_guard_select": filed(
+            ROW_DRIVEN,
+            why=(
+                "refresh dates newer backdated revisions of the requested units' "
+                "spans for the refresh-row project to bound its capture; not "
+                "authorization. Depends on the admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
         "span_values_select": filed(
             ROW_DRIVEN,
             why=(
                 "refresh and retention recompute complete dirty span buckets for "
                 "the refresh-row project, collapsing immutable keys before mutable "
                 "windows. Hidden-project admission remains a separate dependency"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "span_window_version_select": filed(
+            ROW_DRIVEN,
+            why=(
+                "span evidence reads a dirty window's oldest span _version for "
+                "the refresh-row project to bound its capture guard; not "
+                "authorization. Depends on the admission repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "span_window_floor_select": filed(
+            ROW_DRIVEN,
+            why=(
+                "span evidence dates newer backdated revisions of a dirty "
+                "window's spans for the refresh-row project to bound its "
+                "capture; not authorization. Depends on the admission repair"
             ),
             row="tracer.MetricProjectRefresh",
         ),
