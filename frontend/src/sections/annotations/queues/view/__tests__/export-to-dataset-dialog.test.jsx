@@ -260,7 +260,7 @@ describe("ExportToDatasetDialog", () => {
       screen.getByRole("progressbar", { name: /loading export drawer/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("progressbar", { name: /loading source fields/i }),
+      screen.getByRole("status", { name: /loading source fields/i }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /add column/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();

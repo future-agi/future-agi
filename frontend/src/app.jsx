@@ -14,7 +14,7 @@ import ThemeProvider from "src/theme";
 
 import { useScrollToTop } from "src/hooks/use-scroll-to-top";
 
-import ProgressBar from "src/components/progress-bar";
+import { releaseBootSplash } from "src/components/loading-screen";
 import { MotionLazy } from "src/components/animate/motion-lazy";
 import { SettingsDrawer, SettingsProvider } from "src/components/settings";
 
@@ -87,6 +87,12 @@ export default function App() {
     return registerGlobalCleanup();
   }, []);
 
+  // First commit: drop the index.html boot splash unless a SplashScreen
+  // (auth or deployment check) took it over.
+  useEffect(() => {
+    releaseBootSplash();
+  }, []);
+
   useEffect(() => {
     if (window.Appcues) {
       window.Appcues.page();
@@ -139,7 +145,6 @@ export default function App() {
                       <SnackbarProvider>
                         <AudioPlaybackProvider>
                           <SettingsDrawer />
-                          <ProgressBar />
                           <ErrorBoundary
                             FallbackComponent={({
                               error,

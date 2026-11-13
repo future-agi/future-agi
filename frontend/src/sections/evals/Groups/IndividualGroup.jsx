@@ -19,6 +19,7 @@ import Iconify from "src/components/iconify";
 import { format, isValid, parseISO } from "date-fns";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { stringAvatar } from "src/utils/utils";

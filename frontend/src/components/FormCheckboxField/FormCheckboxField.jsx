@@ -97,13 +97,13 @@ export const FormCheckboxField = ({
                       marginLeft: -1,
                     }}
                   >
-                    <Typography sx={{ fontWeight: 500, fontSize: "13px" }}>
+                    <Typography sx={{ fontWeight: 500, fontSize: "12px" }}>
                       {label}
                     </Typography>
                     <Typography
                       sx={{
                         fontWeight: 400,
-                        fontSize: "13px",
+                        fontSize: "12px",
                         color: "text.disabled",
                       }}
                     >
