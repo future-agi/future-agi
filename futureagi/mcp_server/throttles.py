@@ -106,6 +106,32 @@ def _is_trusted_proxy(
     return any(ip in network for network in networks)
 
 
+def _forwarded_address(entry: str) -> str | None:
+    """The address of one X-Forwarded-For entry, without a port.
+
+    Accepts ``IP``, ``IPv4:port``, ``[IPv6]`` and ``[IPv6]:port``. Anything
+    else (``unknown``, a hostname, a malformed entry) is ``None``.
+    """
+    host = entry
+    if entry.startswith("["):
+        closing = entry.find("]")
+        port = entry[closing + 1 :] if closing > 0 else ""
+        if closing < 0 or (port and not (port[0] == ":" and port[1:].isdigit())):
+            return None
+        host = entry[1:closing]
+    elif entry.count(":") == 1:
+        host, port = entry.split(":")
+        if not port.isdigit():
+            return None
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    if entry.startswith("[") and not isinstance(address, ipaddress.IPv6Address):
+        return None
+    return str(address)
+
+
 def client_ident(request: Request) -> str:
     """Return a consistent client IP identifier across throttles, lockouts, and logs."""
     # DRF trusts the full X-Forwarded-For header when NUM_PROXIES is unset.
@@ -129,11 +155,19 @@ def client_ident(request: Request) -> str:
         limit = _trusted_proxy_hops()
         if limit:
             hops = hops[-limit:]
+        addresses = []
         for hop in reversed(hops):
-            if not _is_trusted_proxy(hop, networks):
-                return hop
-        if hops:
-            return hops[0]
+            # Controllers may write "address:port"; the port is not part of
+            # the client. An entry that is not an address is not trusted to
+            # name the client, so the request counts by its peer address.
+            address = _forwarded_address(hop)
+            if address is None:
+                return remote_addr or "unknown"
+            if not _is_trusted_proxy(address, networks):
+                return address
+            addresses.append(address)
+        if addresses:
+            return addresses[-1]
     return remote_addr or "unknown"
 
 

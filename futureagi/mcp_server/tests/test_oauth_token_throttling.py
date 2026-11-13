@@ -1364,6 +1364,52 @@ def test_trusted_hop_count_limits_how_far_forwarded_entries_are_read(
     assert _client_ident_for(remote_addr, forwarded_for) == expected
 
 
+@override_settings(
+    MCP_OAUTH_TRUSTED_PROXIES=["10.0.0.0/8", "2001:db8:ffff::/48"],
+    MCP_OAUTH_TRUSTED_PROXY_HOPS=2,
+)
+@pytest.mark.parametrize(
+    "forwarded_for, expected",
+    [
+        # Controllers that write the client's source port: the address alone.
+        ("198.51.100.10:51234", "198.51.100.10"),
+        ("192.0.2.7, 198.51.100.10:443", "198.51.100.10"),
+        ("[2001:db8:1::5]:443", "2001:db8:1::5"),
+        ("[2001:db8:1::5]", "2001:db8:1::5"),
+        ("2001:db8:1::5", "2001:db8:1::5"),
+        # A trusted proxy's entry with a port is still the trusted proxy.
+        ("198.51.100.10, 10.0.0.9:8080", "198.51.100.10"),
+    ],
+)
+def test_forwarded_entry_port_is_not_part_of_the_client_address(
+    forwarded_for, expected
+):
+    assert _client_ident_for("10.0.0.1", forwarded_for) == expected
+
+
+@override_settings(MCP_OAUTH_TRUSTED_PROXIES=["10.0.0.0/8"])
+@pytest.mark.parametrize(
+    "forwarded_for",
+    [
+        "unknown",
+        "client.example",
+        "198.51.100.10:port",
+        "198.51.100.10:51234:1",
+        "[2001:db8:1::5",
+        "192.0.2.7, not-an-address",
+    ],
+)
+def test_unparseable_forwarded_entry_counts_by_the_peer_address(forwarded_for):
+    assert _client_ident_for("10.0.0.1", forwarded_for) == "10.0.0.1"
+
+
+def test_source_ports_of_one_client_share_a_window():
+    with override_settings(MCP_OAUTH_TRUSTED_PROXIES=["10.0.0.0/8"]):
+        first = _client_ident_for("10.0.0.1", "198.51.100.10:50001")
+        second = _client_ident_for("10.0.0.1", "198.51.100.10:50002")
+    assert first == second == "198.51.100.10"
+
+
 # examples/cloud/gke.yaml: GKE's load balancer connects from its proxy ranges
 # and appends "<client>, <load balancer address>" to X-Forwarded-For.
 GKE_GATEWAY_PROXIES = "35.191.0.0/16,130.211.0.0/22,203.0.113.10/32"
