@@ -464,6 +464,7 @@ import type {
   EvalTaskApi,
   EvalTaskCreateResponseApi,
   EvalTaskDeleteRequestApi,
+  EvalTaskDetailsResponseApi,
   EvalTaskMessageResponseApi,
   EvalTaskUpdateRequestApi,
   EvalTaskUpdateResponseApi,
@@ -1014,6 +1015,7 @@ import type {
   ProjectGraphDataResponseApi,
   ProjectIdListResponseApi,
   ProjectListResponseApi,
+  ProjectNameUpdateApi,
   ProjectUserGraphDataRequestApi,
   ProjectUserGraphDataResponseApi,
   ProjectUserMetricsRequestApi,
@@ -1175,6 +1177,9 @@ import type {
   Saml2AuthMicrosoftCallbackListParams,
   Saml2AuthMicrosoftReadParams,
   Saml2AuthReadParams,
+  SamplingAuditResponseApi,
+  SamplingPreviewRequestApi,
+  SamplingPreviewResponseApi,
   SavedViewDetailResponseApi,
   SavedViewListApi,
   SavedViewListResponseApi,
@@ -1390,7 +1395,6 @@ import type {
   TracerDashboardWidgetsPreviewQueryParams,
   TracerDatasetList200,
   TracerDatasetListParams,
-  TracerEvalTaskGetEvalDetails200,
   TracerEvalTaskGetEvalDetailsParams,
   TracerEvalTaskGetEvalTaskLogs200,
   TracerEvalTaskGetEvalTaskLogsParams,
@@ -1400,6 +1404,7 @@ import type {
   TracerEvalTaskListEvalTasksWithProjectNameParams,
   TracerEvalTaskListParams,
   TracerEvalTaskPauseEvalTaskParams,
+  TracerEvalTaskSamplingAuditParams,
   TracerEvalTaskUnpauseEvalTaskParams,
   TracerFeedIssuesListParams,
   TracerFeedIssuesOverviewListParams,
@@ -72676,7 +72681,7 @@ export const tracerEvalTaskCreate = async (
 };
 
 export type tracerEvalTaskGetEvalDetailsResponse200 = {
-  data: TracerEvalTaskGetEvalDetails200;
+  data: EvalTaskDetailsResponseApi;
   status: 200;
 };
 
@@ -72730,7 +72735,7 @@ export type tracerEvalTaskGetEvalDetailsResponse =
   | tracerEvalTaskGetEvalDetailsResponseError;
 
 export const getTracerEvalTaskGetEvalDetailsUrl = (
-  params?: TracerEvalTaskGetEvalDetailsParams,
+  params: TracerEvalTaskGetEvalDetailsParams,
 ) => {
   const normalizedParams = new URLSearchParams();
 
@@ -72752,7 +72757,7 @@ export const getTracerEvalTaskGetEvalDetailsUrl = (
 };
 
 export const tracerEvalTaskGetEvalDetails = async (
-  params?: TracerEvalTaskGetEvalDetailsParams,
+  params: TracerEvalTaskGetEvalDetailsParams,
   options?: RequestInit,
 ): Promise<tracerEvalTaskGetEvalDetailsResponse> => {
   return apiMutator<tracerEvalTaskGetEvalDetailsResponse>(
@@ -73227,6 +73232,171 @@ export const tracerEvalTaskPauseEvalTask = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type tracerEvalTaskSamplingAuditResponse200 = {
+  data: SamplingAuditResponseApi;
+  status: 200;
+};
+
+export type tracerEvalTaskSamplingAuditResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerEvalTaskSamplingAuditResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerEvalTaskSamplingAuditResponse409 = {
+  data: ApiErrorResponseApi;
+  status: 409;
+};
+
+export type tracerEvalTaskSamplingAuditResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerEvalTaskSamplingAuditResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerEvalTaskSamplingAuditResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerEvalTaskSamplingAuditResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 429 | 500 | 503>;
+};
+
+export type tracerEvalTaskSamplingAuditResponseSuccess =
+  tracerEvalTaskSamplingAuditResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerEvalTaskSamplingAuditResponseError = (
+  | tracerEvalTaskSamplingAuditResponse400
+  | tracerEvalTaskSamplingAuditResponse404
+  | tracerEvalTaskSamplingAuditResponse409
+  | tracerEvalTaskSamplingAuditResponse429
+  | tracerEvalTaskSamplingAuditResponse500
+  | tracerEvalTaskSamplingAuditResponse503
+  | tracerEvalTaskSamplingAuditResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerEvalTaskSamplingAuditResponse =
+  | tracerEvalTaskSamplingAuditResponseSuccess
+  | tracerEvalTaskSamplingAuditResponseError;
+
+export const getTracerEvalTaskSamplingAuditUrl = (
+  params: TracerEvalTaskSamplingAuditParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/eval-task/sampling_audit/?${stringifiedParams}`
+    : `/tracer/eval-task/sampling_audit/`;
+};
+
+/**
+ * Per-stratum design, realized sample, weights, Kish and balance.
+ */
+export const tracerEvalTaskSamplingAudit = async (
+  params: TracerEvalTaskSamplingAuditParams,
+  options?: RequestInit,
+): Promise<tracerEvalTaskSamplingAuditResponse> => {
+  return apiMutator<tracerEvalTaskSamplingAuditResponse>(
+    getTracerEvalTaskSamplingAuditUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerEvalTaskSamplingPreviewResponse200 = {
+  data: SamplingPreviewResponseApi;
+  status: 200;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerEvalTaskSamplingPreviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 429 | 500 | 503>;
+};
+
+export type tracerEvalTaskSamplingPreviewResponseSuccess =
+  tracerEvalTaskSamplingPreviewResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerEvalTaskSamplingPreviewResponseError = (
+  | tracerEvalTaskSamplingPreviewResponse400
+  | tracerEvalTaskSamplingPreviewResponse429
+  | tracerEvalTaskSamplingPreviewResponse500
+  | tracerEvalTaskSamplingPreviewResponse503
+  | tracerEvalTaskSamplingPreviewResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse =
+  | tracerEvalTaskSamplingPreviewResponseSuccess
+  | tracerEvalTaskSamplingPreviewResponseError;
+
+export const getTracerEvalTaskSamplingPreviewUrl = () => {
+  return `/tracer/eval-task/sampling_preview/`;
+};
+
+export const tracerEvalTaskSamplingPreview = async (
+  samplingPreviewRequestApi: SamplingPreviewRequestApi,
+  options?: RequestInit,
+): Promise<tracerEvalTaskSamplingPreviewResponse> => {
+  return apiMutator<tracerEvalTaskSamplingPreviewResponse>(
+    getTracerEvalTaskSamplingPreviewUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(samplingPreviewRequestApi),
     },
   );
 };
@@ -81806,7 +81976,7 @@ export const tracerProjectUpdateProjectConfig = async (
 };
 
 export type tracerProjectUpdateProjectNameResponse201 = {
-  data: ProjectApi;
+  data: ProjectNameUpdateApi;
   status: 201;
 };
 
@@ -81833,7 +82003,7 @@ export const getTracerProjectUpdateProjectNameUrl = () => {
 };
 
 export const tracerProjectUpdateProjectName = async (
-  projectApi: NonReadonly<ProjectApi>,
+  projectNameUpdateApi: ProjectNameUpdateApi,
   options?: RequestInit,
 ): Promise<tracerProjectUpdateProjectNameResponse> => {
   return apiMutator<tracerProjectUpdateProjectNameResponse>(
@@ -81842,7 +82012,7 @@ export const tracerProjectUpdateProjectName = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(projectApi),
+      body: JSON.stringify(projectNameUpdateApi),
     },
   );
 };
