@@ -282,6 +282,9 @@ _NAMED_READER = {
         ('"text"', False),
         (json.dumps({"Statement": "Allow"}), False),
         (json.dumps({"Statement": ["Allow"]}), False),
+        (json.dumps({"Statement": None}), False),
+        (json.dumps({"Statement": False}), False),
+        (json.dumps({"Statement": ""}), False),
         (
             json.dumps(
                 {
@@ -304,6 +307,9 @@ _NAMED_READER = {
         "a-string",
         "statement-text",
         "statement-list-of-text",
+        "statement-null",
+        "statement-false",
+        "statement-empty-text",
         "allow-not-principal",
         "named-principal",
     ],

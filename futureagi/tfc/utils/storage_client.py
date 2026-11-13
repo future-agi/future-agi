@@ -352,7 +352,7 @@ def policy_allows_anyone(policy: str) -> bool:
         return True
     if not isinstance(document, dict):
         return True
-    statements = document.get("Statement") or []
+    statements = document.get("Statement", [])
     if isinstance(statements, dict):
         statements = [statements]
     if not isinstance(statements, list):
