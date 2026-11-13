@@ -969,6 +969,12 @@ bump could compare between the pinned and the new backend digest.
   a failed read fails `check`, the callout gate then does not pass
   (`callout_passed`, `scripts/release_autopilot.py:337-357`), and the
   release waits for a person.
+- First merge with both variables unset. Verify labels, App permissions, the
+  approver App live check, environment protections, default-branch/main
+  availability, required check names, and immutable-tag rules. Then enable PR merging during an explicit
+  weekday window; verify that the App merge triggers release-please tagging.
+  Enable `RELEASE_AUTO_APPROVE` separately after observing its manual-path
+  summaries and the deployment safety net. No admin setting is changed by code.
 - On the first release PR after `RELEASE_AUTOPILOT` is on, which may not be
   the first after the promotion, read the autopilot's run summary. This is
   also the first live merge attempt: there is no report-only mode. The
@@ -985,12 +991,6 @@ bump could compare between the pinned and the new backend digest.
   - Fail: the summary keeps giving "the migrations-callout workflow has not
     passed on this head" with `check` green. Set `RELEASE_AUTOPILOT` off
     and report it.
-- First merge with both variables unset. Verify labels, App permissions, the
-  approver App live check, environment protections, default-branch/main
-  availability, required check names, and immutable-tag rules. Then enable PR merging during an explicit
-  weekday window; verify that the App merge triggers release-please tagging.
-  Enable `RELEASE_AUTO_APPROVE` separately after observing its manual-path
-  summaries and the deployment safety net. No admin setting is changed by code.
 
 ## Python calls in key-holding jobs
 
