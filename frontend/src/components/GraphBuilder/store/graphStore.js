@@ -5,7 +5,7 @@ import {
   applyEdgeChanges,
   MarkerType,
 } from "@xyflow/react";
-import { getRandomId } from "src/utils/utils";
+import { getRandomId } from "src/utils/getRandomId";
 import logger from "src/utils/logger";
 import { validateGraphConnectivity } from "../connectivity";
 
