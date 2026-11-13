@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { Box, Stack, Typography, Collapse } from "@mui/material";
 import Iconify from "src/components/iconify";
 
+import { CONSOLE_COPY } from "../build.constants";
 import AskUserQuestionCard from "./AskUserQuestionCard";
 import ChatMarkdown from "./ChatMarkdown";
 import NudgeCard from "./NudgeCard";
@@ -52,7 +53,7 @@ export function Turn({ turn }) {
 
   if (turn.role === "user") {
     return (
-      <Stack alignItems="flex-end">
+      <Stack alignItems="flex-end" spacing={0.25}>
         <Box
           sx={{
             maxWidth: "82%",
@@ -60,6 +61,8 @@ export function Turn({ turn }) {
             py: 1,
             borderRadius: "8px",
             bgcolor: "action.selected",
+            // Waiting in the server's queue; the builder hasn't picked it up yet.
+            opacity: turn.queued ? 0.6 : 1,
           }}
         >
           {/* pre-wrap keeps the line breaks the user typed. */}
@@ -73,6 +76,11 @@ export function Turn({ turn }) {
             {turn.text}
           </Typography>
         </Box>
+        {turn.queued && (
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            {CONSOLE_COPY.queued}
+          </Typography>
+        )}
       </Stack>
     );
   }
@@ -108,6 +116,8 @@ Turn.propTypes = {
     title: PropTypes.string,
     text: PropTypes.string,
     steps: PropTypes.arrayOf(STEP_SHAPE),
+    // A user line still waiting for the builder.
+    queued: PropTypes.bool,
   }),
 };
 

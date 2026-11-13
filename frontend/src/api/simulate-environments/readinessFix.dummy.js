@@ -447,7 +447,7 @@ export const augmentReport = (envId, picks, report) => {
 };
 
 // What the builder chat would show for a dummy fix run, step by step in time.
-export const dummyChatTurns = (fix, replies = []) => {
+export const dummyChatTurns = (fix) => {
   if (!fix) return [];
   const elapsed = elapsedSince(new Date(fix.started_at).getTime());
   const at = (ms) => elapsed >= ms;
@@ -474,11 +474,6 @@ export const dummyChatTurns = (fix, replies = []) => {
   const turns = [
     { id: fix.message_id, role: "user", text: fix.message },
     { id: `${fix.id}-b1`, role: "builder", steps },
-    ...replies.map((text, i) => ({
-      id: `${fix.id}-r${i}`,
-      role: "user",
-      text,
-    })),
     ...(fix.picked || []).flatMap((item, i) => [
       { id: `${fix.id}-a${i}`, role: "user", text: item.message },
       {
@@ -524,10 +519,9 @@ export const dummyChatTurns = (fix, replies = []) => {
   return [...turns, { id: `${fix.id}-b2`, role: "builder", steps: later }];
 };
 
-// The popup chat's stand-in while the dummy is on: its turns, and replies kept
-// in the tab instead of reaching the real builder chat.
-export const useDummyChat = (fix) => {
-  const [replies, setReplies] = useState([]);
+// The builder chat's turns with the dummy fix's appended while the dummy is on.
+// Replies still go to the real builder chat.
+export const useDummyChat = (fix, turns = []) => {
   // Steps appear over time, so redraw every second while a run is going.
   const [, setTick] = useState(0);
   const going =
@@ -537,12 +531,7 @@ export const useDummyChat = (fix) => {
     const timer = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(timer);
   }, [going]);
-  if (!dummyOn()) return {};
-  return {
-    turns: dummyChatTurns(fix, replies),
-    send: (text) => setReplies((all) => [...all, text]),
-    busy: false,
-  };
+  return dummyOn() ? [...turns, ...dummyChatTurns(fix)] : turns;
 };
 
 // The default agent version as if its start check failed on a missing key, so

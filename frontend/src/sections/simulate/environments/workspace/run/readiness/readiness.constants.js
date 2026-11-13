@@ -87,12 +87,10 @@ export const READY_TO_RUN_COPY = {
     default: "Couldn't start the fix. Try again in a moment.",
   },
   sendsToChat: "Sends this to the builder chat:",
-  chatQueued: "Queued",
-  chatFixing: (labels) => `Fixing: ${labels.join(", ")}`,
-  chatLabel: "Builder chat",
-  chatReply: "Reply to the builder",
-  chatSend: "Send",
-  chatWorking: "Working",
+  chatFixing: (labels) =>
+    labels.length ? `Fixing: ${labels.join(", ")}` : "Fixing",
+  chatFollow: "follow it in the builder chat",
+  goToChat: "Go to chat",
   progress: {
     queued: "Queued",
     fixing: "Fixing…",
@@ -106,6 +104,9 @@ export const READY_TO_RUN_COPY = {
 
 export const RUN_PLAN_COPY = {
   title: "Run plan",
+  collapse: "Collapse run plan",
+  expand: "Expand run plan",
+  close: "Close",
   subtitle: (envName, envLabel) =>
     [envName, envLabel && `environment ${envLabel}`]
       .filter(Boolean)
