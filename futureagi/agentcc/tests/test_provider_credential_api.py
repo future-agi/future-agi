@@ -290,7 +290,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
         assert mock_push.call_count == 1
 
     @pytest.mark.parametrize("method", ["put", "patch"])
-    def test_update_cross_tenant_returns_404_without_writes_or_gateway_push(
+    def test_update_other_org_credential_returns_404_without_writes_or_gateway_push(
         self, user, secondary_org_client, method
     ):
         original = CredentialManager.encrypt({"api_key": "sk-synthetic-unchanged"})
