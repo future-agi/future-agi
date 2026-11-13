@@ -212,6 +212,7 @@ export default function SamplingPolicyEditor({ control, getValues }) {
           {policy.sampling_unit === "attribute" && (
             // Shown in place, not behind a disclosure: the attribute is
             // required whenever the project has no contact attribute set.
+            <>
             <SamplingFieldPicker
               project={project}
               label="Custom ID attribute"
@@ -225,6 +226,19 @@ export default function SamplingPolicyEditor({ control, getValues }) {
                 update(next);
               }}
             />
+            {live && (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                data-testid="live-custom-id-limit"
+              >
+                Each new contact is checked against every span since this
+                policy started. Once that passes about 20 million spans, new
+                contacts can&apos;t be added and the task stops with an error;
+                start a new live policy with a later start date to continue.
+              </Typography>
+            )}
+            </>
           )}
           {!unitInvalid && (
             <SamplingPickIllustration

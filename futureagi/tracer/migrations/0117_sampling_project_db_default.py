@@ -7,8 +7,9 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        # Existing collectors insert projects outside the Django ORM. Keep a
-        # database default so a schema-first rollout does not break ingestion.
+        # The database default now ships in 0117_cohort_sampling itself. This
+        # AlterField is kept (unchanged field, so no SQL) only so migration
+        # graphs that already recorded it stay consistent.
         migrations.AlterField(
             model_name="project",
             name="sampling_contact_attribute",

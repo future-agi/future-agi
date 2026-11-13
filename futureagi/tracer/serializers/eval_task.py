@@ -254,7 +254,9 @@ class EvalTaskUsageResponseSerializer(serializers.Serializer):
     result = EvalTaskUsageResultSerializer()
 
 
-class EvalTaskDetailsQuerySerializer(StrictInputSerializer):
+class EvalTaskDetailsQuerySerializer(serializers.Serializer):
+    # Not strict: clients (and browsers) add cache-busting query parameters
+    # to this GET; unknown keys are ignored, eval_id must still be a UUID.
     eval_id = serializers.UUIDField(required=True)
 
 
