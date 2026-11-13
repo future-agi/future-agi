@@ -20,6 +20,7 @@ import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import SvgColor from "src/components/svg-color";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { LogDetailDrawerColumnDefs } from "./common";

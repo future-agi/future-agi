@@ -1029,7 +1029,9 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
             control={
               <Switch
                 size="small"
-                checked={config.fail_open ?? config.failOpen ?? true}
+                checked={
+                  [true, "true"].includes(config.fail_open ?? config.failOpen)
+                }
                 onChange={(e) =>
                   handlePipelineChange("fail_open", e.target.checked)
                 }

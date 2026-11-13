@@ -42,10 +42,10 @@ type RowDetail = {
 const cellValue = (row: CompareRow, columnId: string) =>
   (row[columnId] as CompareCell).cell_value;
 
-test('DATA-E2E-003: compared datasets show joined rows across both result blocks', {
+test('DATA-E2E-005: compared datasets show joined rows across both result blocks', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'DATA-E2E-003',
+    id: 'DATA-E2E-005',
     area: 'datasets',
     userGoal: 'Compare two uploaded datasets and inspect every matching input with both outputs across result blocks and in row detail, including the word diff',
     steps: [

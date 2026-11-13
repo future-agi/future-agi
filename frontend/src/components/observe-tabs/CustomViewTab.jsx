@@ -108,14 +108,14 @@ const CustomViewTab = ({
             size="small"
             sx={{
               width: 100,
-              "& .MuiInput-input": { fontSize: 13, py: 0 },
+              "& .MuiInput-input": { fontSize: 12, py: 0 },
             }}
             InputProps={{ disableUnderline: false }}
           />
         ) : (
           <Typography
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 500,
               fontFamily: "'IBM Plex Sans', sans-serif",
               color: "text.primary",

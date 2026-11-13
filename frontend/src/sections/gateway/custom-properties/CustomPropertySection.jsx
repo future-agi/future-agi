@@ -389,7 +389,7 @@ const CustomPropertySection = () => {
               borderRadius: 1,
               p: 2,
               fontFamily: "monospace",
-              fontSize: "13px",
+              fontSize: "12px",
             }}
           >
             <pre style={{ margin: 0 }}>

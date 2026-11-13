@@ -71,7 +71,7 @@ function CategoryEditor({ categories, definitions, onChange }) {
               maxLength: MAX_DEFINITION_LENGTH,
               "aria-label": `Definition of ${category}`,
             }}
-            sx={{ "& .MuiInputBase-input": { py: 0.5, fontSize: 13 } }}
+            sx={{ "& .MuiInputBase-input": { py: 0.5, fontSize: 12 } }}
           />
           <Tooltip title={`Remove ${category}`}>
             <IconButton

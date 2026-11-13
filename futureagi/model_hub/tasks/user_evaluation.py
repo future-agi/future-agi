@@ -998,8 +998,11 @@ def _resolve_span_localization_workspace(
     project = observation_span.project
     config = eval_logger.custom_eval_config
     config_project = config.project
-    # Task targets need not belong to the config's author project. Legacy
-    # entries without a task still use the config project as their owner.
+    # The owning task's project is the target. Task create and update accept
+    # only configs from the task's own project, but an existing task may still
+    # reference a config from another project; that pairing is localized only
+    # within the same organization and workspace (checked below). Legacy
+    # entries without a task use the config project as their owner.
     target_project_id = config.project_id
     if eval_logger.eval_task_id:
         target_project_id = (
@@ -1044,13 +1047,20 @@ def _resolve_span_localization_workspace(
         and target_workspace.is_default
         and target_workspace.is_active
     )
-    if (
-        target_workspace.organization_id != project.organization_id
-        or not config_workspace_matches
-    ):
+    if target_workspace.organization_id != project.organization_id:
         logger.warning(
             "error_localizer_workspace_mismatch",
             eval_logger_id=str(eval_logger.id),
+            reason="target_workspace_organization",
+        )
+        return None
+    if not config_workspace_matches:
+        # A config whose project lies in another workspace is refused; one in
+        # another organization was refused by the span-context check above.
+        logger.warning(
+            "error_localizer_workspace_mismatch",
+            eval_logger_id=str(eval_logger.id),
+            reason="cross_workspace_config",
         )
         return None
     return target_workspace
@@ -1499,6 +1509,7 @@ def process_single_error_localization(task_id):
                 task_id=str(task.id),
                 source_id=str(task.source_id),
                 failure_code=failure_code,
+                error_type=type(e).__name__,
             )
             task.mark_as_failed(f"Error localization failed ({failure_code}).")
             if refund_cost_for_api_call is not None:

@@ -7553,6 +7553,14 @@ class GetUserCodeExampleView(APIView):
             if project_type != "observe":
                 return self._gm.bad_request("Project type must be 'observe'.")
 
+        # JSON's ASCII mode splits non-BMP characters into surrogate pairs,
+        # which Python literals do not recombine. Escape Unicode using Python's
+        # codec after JSON has safely quoted the ordinary string characters.
+        project_name_literal = (
+            json.dumps(project_name, ensure_ascii=False)
+            .encode("ascii", "backslashreplace")
+            .decode("ascii")
+        )
         code_example = f"""import openai
 from fi_instrumentation import FITracer, register, using_attributes
 from fi_instrumentation.fi_types import ProjectType
@@ -7560,7 +7568,7 @@ from traceai_openai import OpenAIInstrumentor
 
 trace_provider = register(
     project_type=ProjectType.OBSERVE,
-    project_name="{project_name}",
+    project_name={project_name_literal},
 )
 
 tracer = FITracer(trace_provider.get_tracer(__name__))
