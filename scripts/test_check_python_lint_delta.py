@@ -845,6 +845,194 @@ class EndToEndTests(RepositoryFixture, unittest.TestCase):
                 self.assertNotIn("Traceback", proc.stderr)
                 self.git("reset", "--hard", base)
 
+    def banned_config(self):
+        return (
+            CONFIG.replace(
+                'select = ["E", "F", "B"]', 'select = ["E", "F", "B", "TID251"]'
+            )
+            + "\n[tool.ruff.lint.flake8-tidy-imports.banned-api]\n"
+            + '"library.old_api" = { msg = "Use another API." }\n'
+        )
+
+    def assert_gate_stopped(self, base, path):
+        code, _, proc = self.gate(base)
+        self.assertEqual(code, 2, proc.stdout + proc.stderr)
+        self.assertIn("title=Python lint gate", proc.stdout)
+        self.assertIn(path, proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_committed_config_comparison_covers_root_and_nested_paths(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write("ruff.toml", "line-length = 88\n")
+        self.write("other/pyproject.toml", "[tool.ruff]\nline-length = 88\n")
+        self.write("other/deep/.ruff.toml", "line-length = 88\n")
+        base = self.commit()
+        self.write("ruff.toml", "line-length = 99\n")
+        self.write("other/pyproject.toml", "[tool.ruff]\nline-length = 99\n")
+        self.write("other/deep/.ruff.toml", "line-length = 99\n")
+        self.write("futureagi/pyproject.toml", CONFIG + '[project]\nname = "notes"\n')
+        self.commit()
+        before = gate.committed_configs(self.repo, base)
+        after = gate.committed_configs(self.repo, "HEAD")
+        self.assertEqual(
+            gate.changed_lint_configs(before, after),
+            {"ruff.toml", "other/pyproject.toml", "other/deep/.ruff.toml"},
+        )
+
+    def test_config_snapshot_uses_committed_bytes_not_checkout_contents(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        self.write(
+            "futureagi/pyproject.toml",
+            CONFIG.replace("line-length = 88", "line-length = 99"),
+        )
+        self.assertEqual(
+            gate.committed_configs(self.repo, base)["futureagi/pyproject.toml"],
+            CONFIG.encode(),
+        )
+
+    def test_config_only_symlink_stops_before_lint(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        self.write("futureagi/alternate.toml", CONFIG)
+        self.git("rm", "-q", "futureagi/pyproject.toml")
+        (self.repo / "futureagi/pyproject.toml").symlink_to("alternate.toml")
+        self.commit()
+        self.assert_gate_stopped(base, "futureagi/pyproject.toml")
+
+    def test_root_config_gitlink_stops_before_lint(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        self.write("futureagi/app/new.py", 'print("new")\n')
+        self.git("add", "-A")
+        self.git(
+            "update-index", "--add", "--cacheinfo", "160000," + base + ",ruff.toml"
+        )
+        self.git("commit", "-q", "-m", "c")
+        self.assert_gate_stopped(base, "ruff.toml")
+
+    @unittest.skipUnless(Path("/proc/self/cwd").exists(), "requires procfs")
+    def test_proc_cwd_config_at_root_stops_before_lint(self):
+        config = self.banned_config()
+        self.write("futureagi/pyproject.toml", config)
+        base = self.commit()
+        self.write("cfg.toml", config)
+        self.write("futureagi/cfg.toml", CONFIG)
+        self.git("rm", "-q", "futureagi/pyproject.toml")
+        (self.repo / "futureagi/pyproject.toml").symlink_to("/proc/self/cwd/cfg.toml")
+        self.write("futureagi/app/new.py", "from library import old_api\n\nold_api()\n")
+        self.commit()
+        self.assert_gate_stopped(base, "futureagi/pyproject.toml")
+
+    @unittest.skipUnless(Path("/proc/self/cwd").exists(), "requires procfs")
+    def test_proc_cwd_config_with_relative_import_stops_before_lint(self):
+        config = self.banned_config()
+        self.write("futureagi/pyproject.toml", config)
+        self.write("futureagi/app/__init__.py", "")
+        self.write("futureagi/app/library.py", "def old_api():\n    pass\n")
+        base = self.commit()
+        self.write("cfg.toml", config)
+        self.write("futureagi/cfg.toml", CONFIG)
+        self.git("rm", "-q", "futureagi/pyproject.toml")
+        (self.repo / "futureagi/pyproject.toml").symlink_to("/proc/self/cwd/cfg.toml")
+        self.write(
+            "futureagi/app/new.py", "from .library import old_api\n\nold_api()\n"
+        )
+        self.commit()
+        self.assert_gate_stopped(base, "futureagi/pyproject.toml")
+
+    @unittest.skipUnless(Path("/proc/self/cwd").exists(), "requires procfs")
+    def test_proc_cwd_nested_pyproject_stops_even_if_root_has_no_ruff_table(self):
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        base = self.commit()
+        self.write("lax.toml", '[project]\nname = "notes"\n')
+        self.write(
+            "futureagi/lax.toml",
+            '[tool.ruff]\nextend = "../pyproject.toml"\n'
+            '[tool.ruff.lint]\nignore = ["TID251"]\n',
+        )
+        path = self.repo / "futureagi/app/pyproject.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to("/proc/self/cwd/lax.toml")
+        self.write("futureagi/app/new.py", "from library import old_api\n\nold_api()\n")
+        self.commit()
+        self.assert_gate_stopped(base, "futureagi/app/pyproject.toml")
+
+    @unittest.skipUnless(Path("/proc/self/cwd").exists(), "requires procfs")
+    def test_proc_cwd_nested_pyproject_with_another_finding_stops(self):
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        base = self.commit()
+        self.write("lax.toml", '[project]\nname = "notes"\n')
+        self.write(
+            "futureagi/lax.toml",
+            '[tool.ruff]\nextend = "../pyproject.toml"\n[tool.ruff.lint]\nignore = ["TID251"]\n',
+        )
+        path = self.repo / "futureagi/app/pyproject.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to("/proc/self/cwd/lax.toml")
+        self.write("futureagi/app/new.py", "from library import old_api\n\nold_api()\n")
+        self.write("futureagi/printed.py", 'print("new")\n')
+        self.commit()
+        self.assert_gate_stopped(base, "futureagi/app/pyproject.toml")
+
+    def test_config_gitlink_stops_before_lint(self):
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        base = self.commit()
+        self.write("futureagi/app/new.py", "from library import old_api\n\nold_api()\n")
+        self.git("add", "-A")
+        self.git(
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000," + base + ",futureagi/app/ruff.toml",
+        )
+        self.git("commit", "-q", "-m", "c")
+        self.assert_gate_stopped(base, "futureagi/app/ruff.toml")
+
+    def test_extend_in_base_config_stops_before_lint(self):
+        self.write(
+            "futureagi/pyproject.toml",
+            self.banned_config().replace(
+                "line-length = 88", 'line-length = 88\nextend = "../shared.toml"'
+            ),
+        )
+        self.write("shared.toml", "[tool.ruff]\nline-length = 88\n")
+        base = self.commit()
+        self.write("futureagi/app/new.py", 'print("new")\n')
+        self.commit()
+        self.assert_gate_stopped(base, "futureagi/pyproject.toml")
+
+    def test_extend_in_head_config_stops_before_lint(self):
+        self.write("futureagi/pyproject.toml", self.banned_config())
+        base = self.commit()
+        self.write("futureagi/app/ruff.toml", 'extend = "../pyproject.toml"\n')
+        self.write("futureagi/app/new.py", 'print("new")\n')
+        self.commit()
+        self.assert_gate_stopped(base, "futureagi/app/ruff.toml")
+
+    def test_symlinked_python_file_outside_backend_reports_gate_error(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        self.write("outside_pkg/real.py", 'print("new")\n')
+        path = "futureagi/app/link.py"
+        self.link(path, "../../outside_pkg/real.py")
+        self.commit()
+        self.assert_gate_stopped(base, path)
+
+    def test_non_utf8_path_reports_gate_error(self):
+        self.write("futureagi/pyproject.toml", CONFIG)
+        base = self.commit()
+        folder = os.fsencode(self.repo) + b"/futureagi/\xffdir"
+        os.mkdir(folder)
+        with open(folder + b"/new.py", "wb") as fh:
+            fh.write(b'print("new")\n')
+        self.commit()
+        code, _, proc = self.gate(base)
+        self.assertEqual(code, 2, proc.stdout + proc.stderr)
+        self.assertIn("title=Python lint gate", proc.stdout)
+        self.assertIn("UTF-8", proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr)
+
     def test_overlay_stops_at_a_symlinked_config_directory(self):
         config = CONFIG.replace(
             'select = ["E", "F", "B"]', 'select = ["E", "F", "B", "TID251"]'
