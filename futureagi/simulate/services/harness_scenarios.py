@@ -544,28 +544,35 @@ def call_actor_entries(raw: object) -> list[ScenarioCallActor] | None:
     return entries or None
 
 
-def actor_reference_problems(doc: dict[str, Any], known: set[str]) -> list[str]:
-    """Why a scenario names an actor the environment does not list, or nothing: in its actors, its pre-run sessions or
-    its event start. Refused when the scenario is saved, the same rule the builder keeps.
-    """
-    name = str(doc.get("name") or doc.get("scenario_key") or "a scenario")
+def actor_ids_named(doc: Any) -> set[str]:
+    """Every actor id a scenario names: in its actors, its pre-run sessions (their actors and each line's speaker) and
+    its event start. The one list every reader of a scenario's actors uses."""
+    if not isinstance(doc, dict):
+        return set()
     named = [
-        str((one or {}).get("id") or "")
+        (one.get("id") if isinstance(one, dict) else one)
         for one in doc.get("actors") or []
-        if isinstance(one, dict)
     ]
     for session in doc.get("pre_run") or []:
         if isinstance(session, dict):
-            named += [str(one) for one in session.get("actors") or []]
+            named += list(session.get("actors") or [])
             named += [
-                str((one or {}).get("actor") or "")
+                (one or {}).get("actor")
                 for one in session.get("thread") or []
                 if isinstance(one, dict)
             ]
     starts = doc.get("starts_with")
     if isinstance(starts, dict):
-        named.append(str(starts.get("actor") or ""))
-    missing = sorted({one for one in named if one and one not in known})
+        named.append(starts.get("actor"))
+    return {str(one) for one in named if one and not isinstance(one, (dict, list))}
+
+
+def actor_reference_problems(doc: dict[str, Any], known: set[str]) -> list[str]:
+    """Why a scenario names an actor the environment does not list, or nothing: in its actors, its pre-run sessions or
+    its event start. Refused when the scenario is saved, the same rule the builder keeps.
+    """
+    name = str(doc.get("name") or doc.get("scenario_key") or "a scenario")
+    missing = sorted(one for one in actor_ids_named(doc) if one not in known)
     return [f"{name}: {one} is not an actor in this environment" for one in missing]
 
 

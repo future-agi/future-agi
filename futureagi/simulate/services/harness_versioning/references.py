@@ -22,7 +22,8 @@ def _steps(value: Any) -> Iterable[Mapping[str, Any]]:
 
 
 def scenario_uses(scenario: Mapping[str, Any]) -> dict[str, set[str]]:
-    """The tools, sub-goals and actors one scenario names."""
+    """The tools, sub-goals and actors one scenario names; actors wherever the scenario names one (its actors, pre-run
+    sessions and event start)."""
     tools = {
         str(step.get("tool") or step.get("name"))
         for field in ("solution", "alternatives")
@@ -34,11 +35,9 @@ def scenario_uses(scenario: Mapping[str, Any]) -> dict[str, set[str]]:
         for one in scenario.get("sub_goals") or []
         if (one.get("name") if isinstance(one, Mapping) else one)
     }
-    actors = {
-        str(one.get("id") if isinstance(one, Mapping) else one)
-        for one in scenario.get("actors") or []
-        if (one.get("id") if isinstance(one, Mapping) else one)
-    }
+    from simulate.services.harness_scenarios import actor_ids_named
+
+    actors = actor_ids_named(dict(scenario))
     return {"tool": tools, "sub_goal": sub_goals, "actor": actors}
 
 

@@ -672,6 +672,43 @@ def test_accepting_a_removal_while_rejecting_the_scenario_edit_it_needs_is_refus
     assert getattr(refused.value, "code", None) == "change_depends_on_rejected"
 
 
+@pytest.mark.parametrize(
+    "saved",
+    [
+        {"starts_with": {"actor": "manager", "says": "Approve it"}},
+        {"pre_run": [{"actors": ["manager"], "thread": []}]},
+        {"pre_run": [{"actors": [], "thread": [{"actor": "manager", "text": "Hi"}]}]},
+    ],
+    ids=["event_start", "pre_run_session", "pre_run_line"],
+)
+def test_removing_an_actor_a_scenario_names_only_outside_its_actors_list_needs_that_scenario_edit(
+    saved,
+):
+    from simulate.services.harness_versioning.references import depends_on
+    from simulate.services.harness_versioning.review import check_review
+
+    base = {"s": saved}
+    draft = {"s": {}}
+    removal = {
+        "id": "actor:manager",
+        "kind": "actor",
+        "key": "manager",
+        "action": "removed",
+    }
+    edit = {"id": "scenario:s", "kind": "scenario", "key": "s", "action": "changed"}
+    changes = [removal, edit]
+    for one in changes:
+        one["depends_on"] = depends_on(one, changes, draft, base)
+    assert removal["depends_on"] == ["scenario:s"]
+    removal["decision"], edit["decision"] = "accepted", "rejected"
+
+    with pytest.raises(Exception) as refused:
+        check_review(
+            {"changes": changes, "review_digest": "d"}, "d", digest_required=True
+        )
+    assert getattr(refused.value, "code", None) == "change_depends_on_rejected"
+
+
 def test_a_scenario_saved_with_a_suite_entry_its_document_disagrees_with_is_refused(
     monkeypatch,
 ):
