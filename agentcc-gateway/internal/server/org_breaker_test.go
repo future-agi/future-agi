@@ -18,16 +18,21 @@ import (
 )
 
 // keyedUpstream answers by the provider key it is called with, so one
-// upstream can serve several orgs' own keys. Keys in failing get a 503.
+// upstream can serve several orgs' own keys. Keys in failing get the status
+// in failStatus (503 by default).
 type keyedUpstream struct {
-	mu      sync.Mutex
-	calls   map[string]int
-	failing map[string]bool
+	mu         sync.Mutex
+	calls      map[string]int
+	failing    map[string]bool
+	failStatus int
 }
 
-func newKeyedUpstream(t *testing.T, failing ...string) (*keyedUpstream, *httptest.Server) {
+func newKeyedUpstream(t *testing.T, failStatus int, failing ...string) (*keyedUpstream, *httptest.Server) {
 	t.Helper()
-	k := &keyedUpstream{calls: map[string]int{}, failing: map[string]bool{}}
+	if failStatus == 0 {
+		failStatus = http.StatusServiceUnavailable
+	}
+	k := &keyedUpstream{calls: map[string]int{}, failing: map[string]bool{}, failStatus: failStatus}
 	for _, key := range failing {
 		k.failing[key] = true
 	}
@@ -39,8 +44,8 @@ func newKeyedUpstream(t *testing.T, failing ...string) (*keyedUpstream, *httptes
 		k.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if fail {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			io.WriteString(w, `{"error":{"message":"synthetic upstream unavailable","type":"server_error"}}`)
+			w.WriteHeader(k.failStatus)
+			io.WriteString(w, `{"error":{"message":"synthetic upstream failure","type":"server_error"}}`)
 			return
 		}
 		io.WriteString(w, `{"id":"synthetic-completion","object":"chat.completion","model":"adaptive-sample","choices":[{"index":0,"message":{"role":"assistant","content":"synthetic response"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
@@ -59,7 +64,14 @@ func (k *keyedUpstream) count(key string) int {
 // Requests are locked to primary first and fail over to backup.
 func orgBreakerGateway(t *testing.T, failing ...string) (*Server, *httptest.Server, *keyedUpstream) {
 	t.Helper()
-	keyed, primary := newKeyedUpstream(t, failing...)
+	return orgBreakerGatewayWithStatus(t, 0, failing...)
+}
+
+// orgBreakerGatewayWithStatus is orgBreakerGateway with the failing keys'
+// status. The breaker keeps the default on_status_codes (429 and 5xx).
+func orgBreakerGatewayWithStatus(t *testing.T, failStatus int, failing ...string) (*Server, *httptest.Server, *keyedUpstream) {
+	t.Helper()
+	keyed, primary := newKeyedUpstream(t, failStatus, failing...)
 	var backupCalls atomic.Int64
 	backup := adaptiveUpstream(t, false, 0, &backupCalls)
 	cfg := config.DefaultConfig()
@@ -131,4 +143,35 @@ func TestOrgBreakerOverHTTP(t *testing.T) {
 			}
 		}
 	})
+}
+
+// With the default breaker status codes, an org's own key answering 401 opens
+// that org's breaker (org breakers always count 401 and 403), while other
+// orgs and the shared operator breaker are unaffected. 401 does not trigger
+// failover by default, so org-a sees its key's 401 until its breaker opens.
+func TestOrgBreakerCountsRejectedOrgKeyByDefault(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			srv, gateway, keyed := orgBreakerGatewayWithStatus(t, status, "synthetic-org-a-key")
+			statuses := map[int]int{}
+			for i := 0; i < 12; i++ {
+				got, _ := adaptiveHTTP(t, gateway, "adaptive-sample", "synthetic-org-a-probe", false, http.Header{"X-Agentcc-Provider-Lock": {"primary"}})
+				statuses[got]++
+			}
+			if got := keyed.count("synthetic-org-a-key"); got != 2 {
+				t.Fatalf("org-a's rejected key was called %d times (statuses %v); its breaker should open after 2 failures", got, statuses)
+			}
+			if statuses[status] != 2 || statuses[http.StatusOK] != 10 {
+				t.Fatalf("org-a statuses %v, want 2 x %d then 10 x 200 via the backup", statuses, status)
+			}
+			sendOrgRequests(t, gateway, "synthetic-org-b-probe", 12)
+			if got := keyed.count("synthetic-org-b-key"); got < 3 {
+				t.Fatalf("org-b's key was called %d times after org-a's breaker opened", got)
+			}
+			health := srv.handlers.healthMonitor.GetHealth("primary")
+			if health.CircuitState != "closed" || !health.Healthy || health.ErrorCount != 0 {
+				t.Fatalf("org-a's key changed shared health: circuit=%s healthy=%t errors=%d", health.CircuitState, health.Healthy, health.ErrorCount)
+			}
+		})
+	}
 }

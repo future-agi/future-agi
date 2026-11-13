@@ -3,6 +3,7 @@ package routing
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -168,5 +169,36 @@ func TestFailoverAllAttemptsRefusedReturnsError(t *testing.T) {
 	})
 	if result != nil || err == nil {
 		t.Fatalf("all attempts refused: result=%v err=%v, want an error", result, err)
+	}
+}
+
+// Org breakers count 401 and 403 on top of the configured codes; the shared
+// breaker keeps exactly the configured codes, and the config is not mutated.
+func TestOrgBreakerCountsRejectedKeysByDefault(t *testing.T) {
+	for _, codes := range [][]int{nil, {500}} {
+		cfg := config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1, Cooldown: time.Hour, OnStatusCodes: codes}
+		shared := NewCircuitBreakerRegistry(cfg, nil)
+		orgs := NewScopedCircuitBreakerRegistry(cfg)
+		for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+			err := &models.APIError{Status: status, Type: "upstream_error", Message: "synthetic rejected key"}
+			org := orgs.Get(fmt.Sprintf("org-%d", status), "byok")
+			org.RecordFailure(err)
+			if org.State() != StateOpen {
+				t.Fatalf("codes=%v: org breaker ignored %d", codes, status)
+			}
+			op := shared.Get(fmt.Sprintf("operator-%d", status))
+			op.RecordFailure(err)
+			if op.State() != StateClosed {
+				t.Fatalf("codes=%v: shared breaker counted %d", codes, status)
+			}
+		}
+		org := orgs.Get("org-404", "byok")
+		org.RecordFailure(&models.APIError{Status: http.StatusNotFound, Type: "upstream_error", Message: "synthetic not found"})
+		if org.State() != StateClosed {
+			t.Fatalf("codes=%v: org breaker counted 404", codes)
+		}
+		if len(cfg.OnStatusCodes) != len(codes) {
+			t.Fatalf("config codes changed: %v", cfg.OnStatusCodes)
+		}
 	}
 }

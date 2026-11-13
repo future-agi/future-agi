@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"slices"
 	"sync"
 	"time"
 
@@ -14,6 +15,12 @@ const (
 	// minScopedBreakerIdleTTL is the shortest time an unused breaker is kept.
 	minScopedBreakerIdleTTL = 10 * time.Minute
 )
+
+// orgKeyFailureStatusCodes always count as failures for an org breaker, on
+// top of the configured codes: a rejected org key (401) or a key without
+// access (403) keeps failing until the org fixes it, so its breaker should
+// stop calling it. The shared operator breaker keeps the configured codes.
+var orgKeyFailureStatusCodes = []int{401, 403}
 
 type scopedBreakerKey struct {
 	scope      string
@@ -40,8 +47,11 @@ type ScopedCircuitBreakerRegistry struct {
 }
 
 // NewScopedCircuitBreakerRegistry creates a registry using cfg's thresholds.
+// Its breakers also count 401 and 403 as failures, in addition to cfg's
+// status codes (DefaultCBStatusCodes when none are set).
 // Entries unused for max(10 minutes, 2 × cooldown) are dropped.
 func NewScopedCircuitBreakerRegistry(cfg config.CircuitBreakerConfig) *ScopedCircuitBreakerRegistry {
+	cfg.OnStatusCodes = withOrgKeyFailureCodes(cfg.OnStatusCodes)
 	idle := 2 * cfg.Cooldown
 	if idle < minScopedBreakerIdleTTL {
 		idle = minScopedBreakerIdleTTL
@@ -53,6 +63,22 @@ func NewScopedCircuitBreakerRegistry(cfg config.CircuitBreakerConfig) *ScopedCir
 		maxEntries: defaultScopedBreakerMaxEntries,
 		now:        time.Now,
 	}
+}
+
+// withOrgKeyFailureCodes returns a new slice of codes (or the shared defaults)
+// plus 401 and 403, leaving the caller's slice untouched.
+func withOrgKeyFailureCodes(codes []int) []int {
+	if len(codes) == 0 {
+		codes = DefaultCBStatusCodes
+	}
+	out := make([]int, 0, len(codes)+len(orgKeyFailureStatusCodes))
+	out = append(out, codes...)
+	for _, extra := range orgKeyFailureStatusCodes {
+		if !slices.Contains(out, extra) {
+			out = append(out, extra)
+		}
+	}
+	return out
 }
 
 // Get returns the breaker for (scope, providerID), creating it if needed.
