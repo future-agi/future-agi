@@ -280,6 +280,9 @@ def merge_decision(pr, files, checks, statuses, metadata, config, now):
 
 
 CALLOUT_WORKFLOW = ".github/workflows/migrations-callout-check.yml"
+# The job that checks release notes. The workflow also runs for PRs into dev,
+# where this job is skipped and only its self-test job runs.
+CALLOUT_JOB = "check"
 ACTIVITY_ROWS = 100
 
 
@@ -306,6 +309,54 @@ def release_branch_pushes(activity, sha):
     return False, f"the release branch's creation is not among its newest {ACTIVITY_ROWS} pushes"
 
 
+def lists_release_pr(run, number):
+    """True if the run lists this release PR, into main, among its pull requests.
+
+    GitHub lists every open PR from the run's head branch on each of its runs,
+    so a second PR from the release branch shows on this PR's runs and the
+    reverse. This binds a run to the PR but cannot tell the two apart; the
+    check job's conclusion does.
+    """
+    entries = run.get("pull_requests")
+    return isinstance(entries, list) and any(
+        isinstance(entry, dict) and type(entry.get("number")) is int and entry["number"] == number
+        and isinstance(entry.get("base"), dict) and entry["base"].get("ref") == "main"
+        for entry in entries)
+
+
+def callout_job(run_id):
+    """The run's single check job from its latest attempt, or None if unknown."""
+    data = api(f"actions/runs/{run_id}/jobs?per_page=100")
+    jobs = data.get("jobs") if isinstance(data, dict) else None
+    if not isinstance(jobs, list) or type(data.get("total_count")) is not int or data["total_count"] != len(jobs):
+        return None
+    checks = [job for job in jobs if isinstance(job, dict) and job.get("name") == CALLOUT_JOB]
+    return checks[0] if len(checks) == 1 else None
+
+
+def callout_passed(runs, sha, number):
+    """Decide on the newest callout run of this release PR that ran its check job.
+
+    A completed run whose check job was skipped is a run for a PR into dev and
+    is passed over. The first other run decides: its run and its check job
+    must both have completed with success. A run still queued or running, or
+    one with no check job listed, decides too, so an older pass never counts.
+    """
+    callout = [run for run in runs if run.get("path") == CALLOUT_WORKFLOW and run.get("head_sha") == sha
+               and run.get("head_branch") == BRANCH
+               and (run.get("head_repository") or {}).get("full_name") == REPOSITORY
+               and type(run.get("id")) is int and lists_release_pr(run, number)]
+    for run in sorted(callout, key=lambda run: run["id"], reverse=True):
+        job = callout_job(run["id"])
+        completed = run.get("status") == "completed"
+        if (completed and job is not None and job.get("status") == "completed"
+                and job.get("conclusion") == "skipped"):
+            continue
+        return (completed and run.get("conclusion") == "success" and job is not None
+                and job.get("status") == "completed" and job.get("conclusion") == "success")
+    return False
+
+
 def release_gates(pr, config, now):
     """Live evidence beyond the PR itself: who pushed, the callout workflow and main's position."""
     sha = pr["head"]["sha"]
@@ -319,15 +370,10 @@ def release_gates(pr, config, now):
         return False, reason
     runs = pages(f"actions/runs?head_sha={sha}&event=pull_request", "workflow_runs")
     # Keep only runs of the release PR itself (its same-repository branch) before
-    # choosing the newest: a PR from a fork or another branch at the same commit
-    # can then neither pass nor block this gate.
-    callout = [run for run in runs if run.get("path") == CALLOUT_WORKFLOW and run.get("head_sha") == sha
-               and run.get("head_branch") == BRANCH
-               and (run.get("head_repository") or {}).get("full_name") == REPOSITORY
-               and type(run.get("id")) is int]
-    latest = max(callout, key=lambda run: run["id"], default=None)
-    # Identified by workflow path: its job is named "check", like other checks on release heads.
-    if not latest or latest.get("status") != "completed" or latest.get("conclusion") != "success":
+    # choosing: a PR from a fork or another branch at the same commit can then
+    # neither pass nor block this gate. Identified by workflow path, because its
+    # job is named "check", like other checks on release heads.
+    if type(pr.get("number")) is not int or not callout_passed(runs, sha, pr["number"]):
         return False, "the migrations-callout workflow has not passed on this head"
     main_sha = (api("git/ref/heads/main").get("object") or {}).get("sha", "")
     if not SHA.fullmatch(main_sha):

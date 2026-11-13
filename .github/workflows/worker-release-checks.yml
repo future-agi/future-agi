@@ -12,6 +12,8 @@ on:
       - ".github/workflows/sdk-sync.yml"
       - "scripts/release_autopilot.py"
       - "scripts/test_release_autopilot.py"
+      # The release gate decides on this workflow's check job; a test pins its triggers and job.
+      - ".github/workflows/migrations-callout-check.yml"
       # test_release_autopilot.py checks that this doc quotes the autopilot's reasons.
       - "docs/release-autopilot.md"
       # test_release_autopilot.py runs this script with -I, as size-report does.

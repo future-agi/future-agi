@@ -1481,11 +1481,19 @@ class ReleaseBranchPushTests(unittest.TestCase):
 class ReleaseGateTests(unittest.TestCase):
     NOW = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
 
-    def gates(self, runs, behind=0, main_date="2026-11-11T10:00:00Z", config=None, pr=None, activity=None):
+    def gates(self, runs, behind=0, main_date="2026-11-11T10:00:00Z", config=None, pr=None, activity=None,
+              jobs=None):
         responses = {"git/ref/heads/main": {"object": {"sha": "c" * 40}},
                      f"compare/{'c' * 40}...{SHA}": {"behind_by": behind},
                      f"commits/{'c' * 40}": {"commit": {"committer": {"date": main_date}}},
                      ACTIVITY_PATH: ACTIVITY if activity is None else activity}
+        # Each run's jobs, as the jobs endpoint lists them (latest attempt). By
+        # default the check job ends like its run; `jobs` overrides by run id.
+        for run in runs:
+            if isinstance(run, dict) and type(run.get("id")) is int:
+                listed = (jobs[run["id"]] if jobs and run["id"] in jobs
+                          else self.callout_jobs(run.get("status"), run.get("conclusion")))
+                responses[f"actions/runs/{run['id']}/jobs?per_page=100"] = listed
         with patch.object(policy, "pages", return_value=runs) as pages, \
                 patch.object(policy, "api", side_effect=lambda path, **kw: responses[path]):
             self.pages = pages
@@ -1502,10 +1510,31 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertTrue(self.gates([self.callout_run()])[0])
         self.assertIsNone(re.search(r"[?&]page=", ACTIVITY_PATH))
 
+    # A run's pull_requests entry, in the shape of run 43330391546 (PR #3872).
+    RELEASE_PR_ENTRY = {"id": 1, "number": PR["number"], "url": "https://api.github.com/repos/x/pulls/42",
+                        "head": {"ref": policy.BRANCH, "sha": SHA}, "base": {"ref": "main", "sha": BASE}}
+    # A second PR from the release branch into dev. GitHub lists every open PR
+    # from a branch on each of its runs (seen on PRs #549 and #550), so both
+    # PRs' runs carry both entries.
+    DEV_PR_ENTRY = {**RELEASE_PR_ENTRY, "id": 2, "number": 77, "base": {"ref": "dev", "sha": "d" * 40}}
+
     def callout_run(self, **fields):
         return {"id": 5, "path": policy.CALLOUT_WORKFLOW, "head_sha": SHA, "status": "completed",
                 "conclusion": "success", "head_branch": policy.BRANCH,
-                "head_repository": {"full_name": policy.REPOSITORY}, **fields}
+                "head_repository": {"full_name": policy.REPOSITORY},
+                "pull_requests": [self.RELEASE_PR_ENTRY], **fields}
+
+    @staticmethod
+    def callout_jobs(check_status="completed", check_conclusion="success", self_test=True):
+        """The jobs endpoint's shape for dev's callout workflow (run 43330391546)."""
+        rows = [{"id": 11, "name": "self-test", "status": "completed", "conclusion": "success"}] if self_test else []
+        if check_status is not None:
+            rows.append({"id": 12, "name": policy.CALLOUT_JOB, "status": check_status, "conclusion": check_conclusion})
+        return {"total_count": len(rows), "jobs": rows}
+
+    def dev_pr_run(self, **fields):
+        """A run for a PR from the release branch into dev: check skipped, run green."""
+        return self.callout_run(id=6, pull_requests=[self.RELEASE_PR_ENTRY, self.DEV_PR_ENTRY], **fields)
 
     FOREIGN = ({"head_repository": {"full_name": "outsider/future-agi"}},
                {"head_branch": "release-please--x"}, {"head_repository": None}, {"head_branch": None})
@@ -1530,6 +1559,70 @@ class ReleaseGateTests(unittest.TestCase):
                      [self.callout_run(), self.callout_run(id=6, conclusion="failure")]):
             with self.subTest(runs=runs):
                 self.assertFalse(self.gates(runs)[0])
+
+    def test_a_newer_run_for_a_pr_into_dev_neither_passes_nor_blocks(self):
+        skipped = {6: self.callout_jobs("completed", "skipped")}
+        # The release PR's own check failed. A writer's later PR from the release
+        # branch into dev has the same head, branch and repository, a higher id
+        # and a green run, but its check job was skipped: it does not pass.
+        allowed, reason = self.gates([self.callout_run(conclusion="failure"), self.dev_pr_run()], jobs=skipped)
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "the migrations-callout workflow has not passed on this head")
+        # Its run alone, with nothing older, is no pass either.
+        self.assertFalse(self.gates([self.dev_pr_run()], jobs=skipped)[0])
+        # It does not block a release PR whose own check passed.
+        self.assertTrue(self.gates([self.callout_run(), self.dev_pr_run()], jobs=skipped)[0])
+        # Until the dev run completes, it is not passed over: the gate waits.
+        running = {6: self.callout_jobs("completed", "skipped")}
+        self.assertFalse(self.gates([self.callout_run(), self.dev_pr_run(status="in_progress", conclusion=None)],
+                                    jobs=running)[0])
+
+    def test_the_check_job_must_succeed_not_only_the_run(self):
+        # Main's old workflow had only the check job; its run shape still passes.
+        self.assertTrue(self.gates([self.callout_run()], jobs={5: self.callout_jobs(self_test=False)})[0])
+        for jobs in (self.callout_jobs("completed", "failure"), self.callout_jobs("completed", "cancelled"),
+                     self.callout_jobs("completed", "neutral"), self.callout_jobs("in_progress", None),
+                     self.callout_jobs(check_status=None)):
+            with self.subTest(jobs=jobs):
+                self.assertFalse(self.gates([self.callout_run()], jobs={5: jobs})[0])
+        # A failed self-test fails the run, even with the check job green.
+        self.assertFalse(self.gates([self.callout_run(conclusion="failure")],
+                                    jobs={5: self.callout_jobs("completed", "success")})[0])
+
+    def test_a_newer_run_that_is_not_finished_or_has_no_check_job_waits(self):
+        # An older pass never counts while the newest run is undecided.
+        for run, jobs in ((self.dev_pr_run(status="queued", conclusion=None), {"total_count": 0, "jobs": []}),
+                          (self.dev_pr_run(), self.callout_jobs(check_status=None)),
+                          (self.dev_pr_run(conclusion="startup_failure"), {"total_count": 0, "jobs": []}),
+                          (self.dev_pr_run(), self.callout_jobs("in_progress", None))):
+            with self.subTest(run=run, jobs=jobs):
+                self.assertFalse(self.gates([self.callout_run(), run], jobs={6: jobs})[0])
+
+    def test_malformed_job_lists_refuse(self):
+        two_checks = self.callout_jobs("completed", "skipped")
+        two_checks = {"total_count": 3, "jobs": two_checks["jobs"] + [dict(two_checks["jobs"][-1], id=13)]}
+        short_page = dict(self.callout_jobs(), total_count=5)
+        for jobs in (two_checks, short_page, {"jobs": self.callout_jobs()["jobs"]}, {"total_count": 0},
+                     {"total_count": "2", "jobs": self.callout_jobs()["jobs"]}, [], None,
+                     {"total_count": 1, "jobs": [None]}):
+            with self.subTest(jobs=jobs):
+                # Neither as the release PR's own run nor as a newer one to pass over.
+                self.assertFalse(self.gates([self.callout_run()], jobs={5: jobs})[0])
+                self.assertFalse(self.gates([self.callout_run(), self.dev_pr_run()], jobs={6: jobs})[0])
+
+    def test_a_run_must_list_this_release_pr_into_main(self):
+        other = {**self.RELEASE_PR_ENTRY, "number": 41}
+        for entries in ([], None, "42", [None], [self.DEV_PR_ENTRY], [other],
+                        [{**self.RELEASE_PR_ENTRY, "base": {"ref": "dev"}}],
+                        [{**self.RELEASE_PR_ENTRY, "number": "42"}], [{**self.RELEASE_PR_ENTRY, "base": None}]):
+            with self.subTest(entries=entries):
+                self.assertFalse(self.gates([self.callout_run(pull_requests=entries)])[0])
+                # A newer unlisted run is ignored, not counted.
+                self.assertTrue(self.gates([self.callout_run(),
+                                            self.callout_run(id=6, pull_requests=entries, conclusion="failure")])[0])
+        self.assertTrue(self.gates([self.callout_run(pull_requests=[self.DEV_PR_ENTRY, self.RELEASE_PR_ENTRY])])[0])
+        # The PR's own number must be known.
+        self.assertFalse(self.gates([self.callout_run()], pr={**PR, "number": None})[0])
 
     def test_behind_main_waits_for_the_cooldown(self):
         self.assertFalse(self.gates([self.callout_run()], behind=1, main_date="2026-11-11T11:50:00Z")[0])
@@ -1667,6 +1760,33 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("E2E Tests Pass", names)
         self.assertEqual(workflows["e2e-ci.yml"]["name"], "E2E CI")
 
+    def test_the_callout_workflow_runs_its_check_job_on_every_release_pr_event(self):
+        import yaml
+
+        # The release gate reads this file's runs by path and decides on its
+        # job named check, which must run for release PRs into main only.
+        workflow = yaml.safe_load((self.WORKFLOWS.parents[1] / policy.CALLOUT_WORKFLOW).read_text())
+        trigger = workflow[True]["pull_request"]
+        # A migration-free release PR often gets only its `opened` run.
+        self.assertEqual(trigger["types"], ["opened", "edited", "synchronize", "reopened"])
+        self.assertIn("main", trigger["branches"])
+        jobs = workflow["jobs"]
+        self.assertEqual([key for key, job in jobs.items() if job.get("name", key) == policy.CALLOUT_JOB],
+                         [policy.CALLOUT_JOB])
+        check = jobs[policy.CALLOUT_JOB]
+        condition = " ".join(check["if"].split())
+        for fragment in ("github.event_name == 'pull_request'", "github.base_ref == 'main'",
+                         "startsWith(github.head_ref, 'release-please--')"):
+            self.assertIn(fragment, condition)
+        # Full history and tags, at the default ref: the PR merge preview whose
+        # id the script reads from GITHUB_SHA.
+        checkout = [step for step in check["steps"] if str(step.get("uses", "")).startswith("actions/checkout@")]
+        self.assertEqual(len(checkout), 1)
+        self.assertEqual(checkout[0]["with"].get("fetch-depth"), 0)
+        self.assertNotIn("ref", checkout[0]["with"])
+        self.assertIn("python3 -I .github/scripts/migrations_callout.py",
+                      " ".join(step.get("run", "") for step in check["steps"]))
+
     def test_autopilot_is_default_branch_only_and_has_required_triggers(self):
         text = self.AUTOPILOT.read_text()
         for fragment in ('cron: "*/15 * * * *"', 'workflows: ["Backend CI", "E2E CI"]', "workflow_dispatch:",
@@ -1748,7 +1868,7 @@ class WorkflowContractTests(unittest.TestCase):
     # Files the release tests read besides their own modules; a change to any of them must run the tests.
     READ_INPUTS = (".github/workflows/release-images.yml", ".github/workflows/release-autopilot.yml",
                    ".github/workflows/sdk-sync.yml", ".github/workflows/worker-release-checks.yml",
-                   "docs/release-autopilot.md")
+                   ".github/workflows/migrations-callout-check.yml", "docs/release-autopilot.md")
     # Scripts the release tests run whose own tests are elsewhere, with those tests.
     RUN_ONLY = {"scripts/image_size_budget.py": "deploy/tests/test_image_size_budget.py"}
 
