@@ -61,7 +61,7 @@ it('approves exactly the renewed revision it created, bound to the inspected fin
   const onClose = vi.fn();
   const onApproved = vi.fn();
   render(<ReleaseRenewalDialog open requestId="request" onClose={onClose} onApproved={onApproved} />);
-  expect(screen.getByText(/No evidence remains attached/)).toBeVisible();
+  expect(screen.getByText(/renewed packet keeps no evidence/)).toBeVisible();
   const approve = screen.getByRole('button', { name: 'Approve renewed revision' });
   expect(approve).toBeDisabled();
   fireEvent.click(screen.getByRole('checkbox', { name: 'I inspected every change. Approval is required again.' }));

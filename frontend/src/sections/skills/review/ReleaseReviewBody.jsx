@@ -11,7 +11,8 @@ import {
   Tooltip,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
 } from "@mui/material";
-import { relativeReviewTime, outcomeLabel } from '../utils/review-display';
+import EvidenceSummary from '../components/EvidenceSummary';
+import { evidenceTitle, relativeReviewTime, outcomeLabel } from '../utils/review-display';
 import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
@@ -282,9 +283,7 @@ export function TypedEvidenceList({
                 </Typography>
               </TechnicalDetails>
               {reasons.map((reason) => (
-                <Alert severity="warning" key={reason}>
-                  {reason}
-                </Alert>
+                reason.startsWith('Private') ? <Typography variant="s3" color="text.secondary" key={reason}>Only you can see this result. Share it with the workspace to attach it.</Typography> : <Alert severity="warning" key={reason}>{reason}</Alert>
               ))}
               <Stack direction="row" spacing={1} flexWrap="wrap">
                 {onInspect && (
@@ -433,6 +432,7 @@ export default function ReleaseReviewBody({
   moreChanges = false,
   onLoadMore,
 }) {
+  const [inspecting, setInspecting] = useState(null);
   const ordered = [...changes].sort((a, b) =>
     a.path === "AGENTS.md" || a.path === "SKILL.md"
       ? -1
@@ -443,7 +443,7 @@ export default function ReleaseReviewBody({
   );
   return (
     <Stack spacing={3} sx={{ minWidth: 0 }}>
-      <Section title="Exact release">
+      <Section title="Release">
         <Stack spacing={1}>
           <Typography variant="m3">
             Move {packet.transition.label} from{" "}
@@ -452,7 +452,7 @@ export default function ReleaseReviewBody({
               : `v${packet.transition.expectedVersion}`}{" "}
             to v{packet.transition.version}
           </Typography>
-          {packet.target && <IdentityChip label={`Target configuration r${packet.target.revision}`} value={packet.target.configurationDigest} />}
+          {packet.target && <Typography variant="s3" color="text.secondary">Application configuration r{packet.target.revision}</Typography>}
           <TechnicalDetails title="Release identities">
           <IdentityValue
             label="Candidate version ID"
@@ -489,6 +489,14 @@ export default function ReleaseReviewBody({
           </TechnicalDetails>
 
         </Stack>
+      </Section>
+      <Section id="review-evidence" title="Evidence">
+        <EvidenceSummary items={evidence.map((ref) => {
+          const summary = summaries?.find((item) => evidenceKey(item) === evidenceKey(ref));
+          return { id: ref.sourceId, source: ref.source, title: evidenceTitle(ref, packet.transition.version, packet.transition.expectedVersion), outcome: ref.outcome || (ref.source === 'skills_text' ? summary?.answer : undefined), results: ref.source === 'simulation_native' && summary ? ['answer', 'selection', 'delivery', 'tools'].map((key) => ({ label: key.charAt(0).toUpperCase() + key.slice(1), status: summary[key] })) : undefined, status: ref.status, visibility: ref.visibility, expiresAt: ref.payloadExpiresAt, counts: ref.counts || (summary && { graded: summary.graded, planned: summary.planned, regressed: summary.regressions, disagreements: summary.disagreements }) };
+        })} onInspect={(item) => { setInspecting(`${item.source}:${item.id}`); onInspect?.(evidence.find((ref) => evidenceKey(ref) === `${item.source}:${item.id}`)); }} />
+        {selected.filter((ref) => !evidence.some((item) => evidenceKey(item) === evidenceKey(ref))).map((ref) => <Alert key={evidenceKey(ref)} severity="warning">Selected evidence {ref.sourceId} is unavailable. It will not be silently dropped.</Alert>)}
+        {inspecting && <TechnicalDetails title="Inspected result" defaultOpen><TypedEvidenceList {...{ packet, onShare, summaries }} selected={selected.filter((ref) => evidenceKey(ref) === inspecting)} onSelectionChange={onSelectionChange ? (refs) => onSelectionChange([...selected.filter((ref) => evidenceKey(ref) !== inspecting), ...refs]) : undefined} evidence={evidence.filter((ref) => evidenceKey(ref) === inspecting)} /></TechnicalDetails>}
       </Section>
       <Section id="review-files" title="File changes">
         <Stack spacing={1.5}>
@@ -548,19 +556,6 @@ export default function ReleaseReviewBody({
             Checks unavailable. This is not a successful check.
           </Typography>
         )}
-      </Section>
-      <Section id="review-evidence" title="Evidence">
-        <TypedEvidenceList
-          {...{
-            packet,
-            evidence,
-            selected,
-            onSelectionChange,
-            onShare,
-            onInspect,
-            summaries,
-          }}
-        />
       </Section>
       <Section title="Retained regression pipeline">
         <ExternalPipeline reference={packet.externalPipeline} />

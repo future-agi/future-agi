@@ -30,7 +30,8 @@ it('exposes only explicit renewal when detailed evidence expired', async () => {
     request_id: 'request', revision: 3, status: 'approved', subject_id: 'context', previous_fingerprint: 'reviewed', fingerprint: 'renewed', packet, changes: [], removed_evidence: [] } } });
   const value = await loadReleaseRequest('request', 'context', {});
   expect(value).toMatchObject({ renewalRequired: 'evidence_expired', canExecute: false, request: { id: 'request', revision: 3 } });
-  expect(value.preview).toBeUndefined();
+  expect(value.preview).toMatchObject({ current: false, packet: { candidateVersionId: 'candidate' } });
+  expect(value.review.complete).toBe(false);
 });
 
 it('never treats authorization or unrelated failures as stale', async () => {

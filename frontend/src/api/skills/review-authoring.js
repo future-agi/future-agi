@@ -22,9 +22,13 @@ export function useReviewSubjects(kind, page, search = '') {
 }
 export function useReviewOptions(kind, resourceId, candidateId) {
   return useSkillV11Query({ parts: ['review-options', kind, resourceId, candidateId], enabled: Boolean(resourceId && candidateId),
-    url: () => apiPath('/model-hub/skills/release-requests/options/'),
-    params: { resource_id: resourceId, kind, candidate_version_id: candidateId },
-    mapper: (value) => ({ ...value, evidence: value.evidence.map(mapEvidenceRef), targets: value.targets.map((item) => ({ ...item, target: mapTargetConfiguration(item.target) })) }) });
+    load: async (config) => {
+      const [value, resource] = await Promise.all([
+        axios.get(apiPath('/model-hub/skills/release-requests/options/'), { ...config, params: { resource_id: resourceId, kind, candidate_version_id: candidateId } }).then(skillV11Result),
+        axios.get(kind === 'agent_context' ? contextEndpoints.detail(resourceId) : endpoints.detail(resourceId), config).then(skillV11Result).catch(() => null),
+      ]);
+      return { ...value, subject: resource?.context || resource, evidence: value.evidence.map(mapEvidenceRef), targets: value.targets.map((item) => ({ ...item, target: mapTargetConfiguration(item.target) })) };
+    } });
 }
 export async function prepareReleaseReview(input, config) {
   const body = { resource_id: input.resourceId, kind: input.kind, candidate_version_id: input.candidateId,

@@ -21,10 +21,8 @@ export default function ReleaseReceipt({ receipt, request }) {
   const receiptUrl = `${paths.dashboard.skills.reviews}?request=${encodeURIComponent(receipt.requestId)}`;
   return <Stack spacing={1.5} aria-label="Release receipt">
       <Typography variant="s3" color="text.secondary">Release receipt</Typography>
-      <StatusBadge status="released" label="Released" sx={{ alignSelf: 'flex-start' }} />
-      <Typography variant="m3">{labelName} moved {before != null ? `from v${before} ` : ''}to v{after.version}</Typography>
-      {(request?.name || receipt.name) && <Typography variant="s1">{request?.name || receipt.name}</Typography>}
-      <Typography variant="s1">Released by {reviewPersonName(receipt.executedByName)} {receipt.recordedAt && <Tooltip title={receipt.recordedAt}><span>{relativeReviewTime(receipt.recordedAt)}</span></Tooltip>} · Approved by {reviewPersonName(receipt.approvedByName)}</Typography>
+      <Stack direction="row" gap={1} alignItems="center"><StatusBadge status="released" label="Released" /><Typography variant="m3">{labelName} moved {before != null ? `from v${before} ` : ''}to v{after.version}</Typography></Stack>
+      <Typography variant="s3" color="text.secondary">Released by {reviewPersonName(receipt.executedByName)} · Approved by {reviewPersonName(receipt.approvedByName)}{receipt.recordedAt && <> · <Tooltip title={receipt.recordedAt}><span>{relativeReviewTime(receipt.recordedAt)}</span></Tooltip></>}</Typography>
       <Typography variant="s1" color="text.secondary">Recorded at release time — production may have moved since.</Typography>
       <Stack direction="row" flexWrap="wrap" gap={1}>
         <Button variant="contained" color="primary" href={resourceUrl ? `${resourceUrl}?version=${after.version}` : undefined} disabled={!resourceUrl}>View version</Button>
@@ -36,6 +34,11 @@ export default function ReleaseReceipt({ receipt, request }) {
       </Stack>
       {!resourceUrl && <Typography variant="s3" color="text.secondary">Version links are unavailable because this retained receipt does not include its resource.</Typography>}
       {copyError && <Alert severity="warning">Couldn&apos;t copy. Receipt link: {receiptUrl}</Alert>}
+      <TechnicalDetails title="What was approved"><Stack spacing={1}>
+        <Typography variant="s1">{request?.name || receipt.name || 'This resource'} · revision {receipt.revision ?? request?.revision ?? 'not reported'}</Typography>
+        <Typography variant="s3">Approval covered this candidate, target and attached evidence. This receipt records the release; it does not imply that expired evidence is still available.</Typography>
+        {request?.packet && <Typography variant="s3">{request.packet.evidence.length} attached results · candidate v{request.packet.transition.version}</Typography>}
+      </Stack></TechnicalDetails>
       <TechnicalDetails title="Audit details">
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3}>
         <Stack spacing={0.5}><Typography variant="s3" color="text.secondary">Currentness before the move</Typography><Typography variant="s1">Release revision {receipt.currentnessAtAction?.release_revision ?? 'Not reported'} · Security policy revision {receipt.currentnessAtAction?.security_revision ?? 'Not reported'}</Typography></Stack>

@@ -10,7 +10,7 @@ const output = path.resolve(process.argv[2] || '/tmp/r7-review-shots');
 await fs.mkdir(output, { recursive: true });
 const fixture = `
 import { packet, preview, textEvidence } from 'src/sections/skills/__tests__/r3_l09/fixtures';
-const options = { recipients: [{ id: 'reviewer', name: 'Independent reviewer', email: 'reviewer@example.invalid' }], targets: [], evidence: [{ ...textEvidence, payloadExpiresAt: new Date(Date.now()+3*86400000).toISOString() }] };
+const options = { subject: { labels: [{ name: 'production', version: 4 }] }, recipients: [{ id: 'reviewer', name: 'Independent reviewer', email: 'reviewer@example.invalid' }], targets: [], evidence: [{ ...textEvidence, payloadExpiresAt: new Date(Date.now()+3*86400000).toISOString() }] };
 export const useSkillV11Scope = () => ({ enabled: true, identity: 'fixture', scope: { userId: 'author' } });
 export const spendPolicyReady = () => false;
 export const campaignsContractReady = () => false;
@@ -48,10 +48,10 @@ const screen = params.get('screen') || 'inbox';
 const state = params.get('state') || 'ready';
 try { localStorage.removeItem('settings'); } catch {}
 const receipt = { executedByName: 'Erin Releaser', approvedByName: 'Robin Reviewer', recordedAt: new Date(Date.now() - 3600000).toISOString(), previousVersion: 1, requestId: ID, decisionId: ID, executedBy: ID, currentnessAtAction: { release_revision: 2 }, postMoveState: { label: 'production', version: 2, releaseRevision: 3, eventId: ID } };
-const req = { ...request, authorName: 'Alex Author', recipients: [{id:'reviewer',name:'Robin Reviewer'}], name: 'Support agent', subjectKind: 'agent_context', subjectId: ID };
+const req = { ...request, createdAt: new Date(Date.now()-3*3600000).toISOString(), decidedAt: new Date(Date.now()-2*3600000).toISOString(), authorName: 'Alex Author', decidedByName: 'Robin Reviewer', recipients: [{id:'reviewer',name:'Robin Reviewer'}], name: 'Support agent', subjectKind: 'agent_context', subjectId: ID };
 const body = { complete: true, changes, dependencyChanges: [], checks: { errors: [], warnings: [] } };
 function Scene() { return <Box sx={{ minWidth: 0 }}>
-  {screen === 'inbox' && <ReleaseInbox scopeKey="fixture" state={state} data={{ ...inbox, results: inbox.results.map(row => ({ ...row, updatedAt: new Date(Date.now() - 3 * 86400000).toISOString() })) }} onStatusChange={() => {}} onPageChange={() => {}} onOpen={() => {}} onRetry={() => {}} onCompose={() => {}} onToggleAuthored={() => {}} />}
+  {screen === 'inbox' && <ReleaseInbox scopeKey="fixture" state={state} data={{ ...inbox, results: inbox.results.map(row => ({ ...row, authorName: 'Alex Author', transition: { label: 'production', expectedVersion: 1, version: 2 }, updatedAt: new Date(Date.now() - 3 * 86400000).toISOString() })) }} onStatusChange={() => {}} onPageChange={() => {}} onOpen={() => {}} onRetry={() => {}} onCompose={() => {}} onToggleAuthored={() => {}} />}
   {screen === 'receipt' && <Box sx={{ px: {xs:2, sm:3}, py:2 }}><ObjectHeader title={req.name} crumbs={[{ label: 'Reviews', to: paths.dashboard.skills.reviews }, {label:req.name}]} /><ReleaseReceipt receipt={receipt} request={req} /></Box>}
   {screen.startsWith('composer') && <ReleaseRequestComposer scopeKey="fixture" state={state} prefill={{ kind: packet.subjectKind, subjectId: packet.subjectId, name: 'Support agent', candidate: { id: packet.candidateVersionId, number: packet.transition.version, digest: packet.candidateDigest } }} />}
   {screen.startsWith('review') && <Box sx={{px:{xs:2,sm:3},py:2}}><ObjectHeader title={req.name + ': production v' + packet.transition.expectedVersion + ' → v' + packet.transition.version} crumbs={[{label:'Reviews',to:paths.dashboard.skills.reviews},{label:req.name+' v7'}]} /><ReleaseRequestPanel scopeKey="fixture" state={state} preview={preview} request={{ ...req, status: screen === 'review-approved' ? 'approved' : 'pending' }} permissions={{ canDecide: true, canExecute: true }} review={body} onDecide={async () => ({})} onExecute={async () => receipt} /></Box>}

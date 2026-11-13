@@ -27,12 +27,12 @@ it('does not carry a stored reviewer across logins or auto-submit for a sole eli
   const props = { scopeKey: 'new-login', state: 'ready', preview: { packet, fingerprint: 'fp', current: true }, review: { complete: true, dependencyChanges: [] }, onSubmit: submit };
   const { rerender } = render(<ReleaseRequestPanel {...props} recipients={[{ id: 'eligible', name: 'Independent reviewer' }]} permissions={{ canSubmit: true }} />);
   expect(screen.getByRole('combobox', { name: 'Assigned reviewer' })).toHaveTextContent('Independent reviewer');
-  expect(screen.getByRole('button', { name: 'Send for review' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Send review request' })).toBeDisabled();
   expect(submit).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('checkbox'));
-  expect(screen.getByRole('button', { name: 'Send for review' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Send review request' })).toBeEnabled();
   rerender(<ReleaseRequestPanel {...props} scopeKey="another-login" recipients={[]} permissions={{ canSubmit: true }} />);
-  expect(screen.getByRole('button', { name: 'Send for review' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Send review request' })).toBeDisabled();
   expect(screen.getByRole('checkbox')).not.toBeChecked();
 });
 it('resolves carried refs against fresh options, never URL annotation revisions', () => {

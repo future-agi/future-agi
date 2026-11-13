@@ -5,9 +5,11 @@ import { useSkillV11Scope, useSkillV11Query } from 'src/api/skills/testing';
 import { useContextDetail, useContextDraft } from 'src/api/skills/context-authoring';
 import { contextReviewReady, loadContextReview, useAcknowledgeContextHead, usePublishContext } from 'src/api/skills/context-production';
 import { Alert, Button, Stack } from '@mui/material';
-import { reviewsReady, useReviewInbox, useMarkReviewSeen, useReleaseRequest, useDecideReleaseRequest, useExecuteReleaseRequest } from 'src/api/skills/review-production';
+import { isStaleReview, reviewsReady, useReviewInbox, useMarkReviewSeen, useReleaseRequest, useDecideReleaseRequest, useExecuteReleaseRequest } from 'src/api/skills/review-production';
 import { paths } from 'src/routes/paths';
 import ObjectHeader from '../components/ObjectHeader';
+import StatusBadge from 'src/components/status-badge';
+import ReleaseReviewBody from './ReleaseReviewBody';
 import { reviewComposerUrl } from '../utils/review-links';
 import ReleaseRequestPanel, { useReviewedOperation } from './ReleaseRequestPanel';
 import ReleaseRequestComposer from './ReleaseRequestComposer';
@@ -24,6 +26,7 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   const decide = useDecideReleaseRequest();
   const execute = useExecuteReleaseRequest();
   const [renewing, setRenewing] = useState(false);
+  const [executedReceipt, setExecutedReceipt] = useState(null);
   // J4: the reviewer's attestation for one exact revision/fingerprint survives
   // the pending -> approved refresh; a renewal approved in the dialog attests
   // the renewed revision it created. Nothing carries across revisions.
@@ -35,7 +38,7 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   const revise = () => navigate(`${paths.dashboard.skills.reviews}?${new URLSearchParams({ compose: '1', renew: request.id, revision: String(request.revision), subject: request.subjectId, kind: request.subjectKind })}`);
   const transition = query.data?.preview?.packet.transition;
   const resourceName = request?.name || query.data?.receipt?.name || 'Release review';
-  const header = <ObjectHeader crumbs={[{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: transition ? `${resourceName} v${transition.version}` : resourceName }]} title={transition ? `${resourceName}: ${transition.label} ${transition.expectedVersion == null ? 'unassigned' : `v${transition.expectedVersion}`} → v${transition.version}` : resourceName} actions={author && request.status !== 'released' ? <Button variant="outlined" onClick={revise}>Revise request</Button> : undefined} />;
+  const header = <ObjectHeader crumbs={[{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: transition ? `${resourceName} v${transition.version}` : resourceName }]} badge={query.data?.renewalRequired ? <StatusBadge status="stale" label="Paused" /> : undefined} title={transition ? `${resourceName}: ${transition.label} ${transition.expectedVersion == null ? 'unassigned' : `v${transition.expectedVersion}`} → v${transition.version}` : resourceName} actions={author && request.status !== 'released' ? <Button variant="outlined" onClick={revise}>Revise request</Button> : undefined} />;
 
   // The dialog approval attests only the changes it showed; the renewed packet
   // itself is attested on the page before release. One stable parent keeps
@@ -48,15 +51,19 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
       {header}
       <Alert severity="warning">Release paused — {query.data.renewalRequired === 'evidence_expired' ? 'detailed evidence expired.' : 'the reviewed evidence is no longer available.'} Inspect the changes before approving a new revision.</Alert>
       <Stack direction="row"><Button variant="contained" color="primary" onClick={() => setRenewing(true)}>Renew review</Button></Stack>
+      {query.data.preview && <ReleaseReviewBody packet={query.data.preview.packet} {...query.data.review} />}
     </Stack>
     {renewal}
   </>;
   return <Stack spacing={1.5} sx={{ px: { xs: 2, md: 3 }, py: 2, minWidth: 0 }}>
     {header}
-    <View scopeKey={scopeKey} state={state} {...query.data} onRetry={query.refetch} onRefresh={query.refetch} onRenew={() => setRenewing(true)}
+    <View scopeKey={scopeKey} state={state} {...query.data} receipt={query.data?.receipt || (executedReceipt?.requestId === requestId && executedReceipt?.scopeKey === scopeKey ? executedReceipt.value : null)} onRetry={query.refetch} onRefresh={query.refetch} onRenew={() => setRenewing(true)}
       renewalOpen={renewing} permissions={{ canDecide, canExecute: !author && query.data?.canExecute === true }} reviewedIdentity={reviewedIdentity} onReviewedChange={setReviewedIdentity}
       onDecide={(input, options) => decide.mutateAsync({ ...input, ...options })}
-      onExecute={(input, options) => execute.mutateAsync({ ...input, ...options })} />
+      onExecute={async (input, options) => {
+        try { const receipt = await execute.mutateAsync({ ...input, ...options }); setExecutedReceipt({ requestId, scopeKey, value: receipt }); return receipt; }
+        catch (error) { if (isStaleReview(error)) setRenewing(true); throw error; }
+      }} />
     {renewal}
   </Stack>;
 }

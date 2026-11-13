@@ -15,7 +15,7 @@ export default function CapabilityChanges({ changes, onOpenFile }) {
             <Stack direction="row" flexWrap="wrap" gap={1}><IdentityChip label="Before" value={changes.beforeDigest} /><IdentityChip label="Candidate" value={changes.afterDigest} /></Stack>
             {!changes.changes.length && (
               <Typography variant="s1">
-                No permission changes found in recognized declarations.
+                No changes in recognized static declarations. This is not a safety certification.
               </Typography>
             )}
             {changes.changes.map((item) => (

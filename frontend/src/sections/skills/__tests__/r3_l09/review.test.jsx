@@ -94,14 +94,15 @@ describe("typed release evidence", () => {
         ]}
       />,
     );
-    expect(screen.getByText("Text comparison")).toBeVisible();
-    expect(screen.getByText("Native application evidence")).toBeVisible();
+    expect(screen.getByText("Text comparison · v7 vs v4")).toBeVisible();
+    expect(screen.getByText("Application verification · v7 vs v4")).toBeVisible();
+    fireEvent.click(screen.getAllByRole("button", { name: "Inspect", exact: true })[1]);
     expect(
       screen.getByText(/2\/4 attempts graded · 2 incomplete · 1 regressions/),
     ).toBeVisible();
-    expect(screen.getByText(/human disagreement/)).toBeVisible();
+    expect(screen.getAllByText(/human disagreement/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Operator-recorded, unimported/)).toBeVisible();
-    expect(screen.getAllByText(/Outcome details not loaded/)).toHaveLength(1);
+    expect(screen.getAllByText(/Result not recorded; inspect before relying on it/)).toHaveLength(1);
     expect(
       screen.getByRole("link", { name: "Open retained pipeline result" }),
     ).toHaveAttribute("rel", "noopener noreferrer");
@@ -478,7 +479,7 @@ describe("reviewer arrival and annotation", () => {
     render(<Arrival />);
     expect(screen.getByText("1 request waiting for you")).toBeVisible();
     click("refund-context");
-    expect(screen.getByText("Exact release")).toBeVisible();
+    expect(screen.getByText("Release")).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Approve release" }),
     ).toBeDisabled();
@@ -497,7 +498,7 @@ describe("reviewer arrival and annotation", () => {
     rerender(<ReleaseInbox scopeKey="scope" state="forbidden" data={inbox} />);
     expect(screen.queryByText(/1 unread/)).not.toBeInTheDocument();
     expect(screen.queryByText("refund-context")).not.toBeInTheDocument();
-    expect(screen.getByText(/no longer have access/)).toBeVisible();
+    expect(screen.getByText(/don't have access to reviews in this workspace/)).toBeVisible();
   });
   it("marks only the observed revision seen, without pretending that it is approved", async () => {
     const seen = vi.fn().mockResolvedValue({});

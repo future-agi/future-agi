@@ -154,6 +154,10 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     if (process.env.J4_FALLIBILITY === 'policy') beforeRenewal.push({ id: 'unexpected-event' });
     expect(beforeRenewal).toHaveLength(0);
     await page.screenshot({ path: `${output}/shots/05-stale-policy-refused.png` });
+    await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByText('This changed since you opened it. Refresh and review again.', { exact: true })).toBeVisible();
+    await page.screenshot({ path: `${output}/shots/review-stale.png` });
     const renewalContext = await scopeActors.openContext(browser, author);
     const renewalPage = await renewalContext.newPage();
     renewalPage.setDefaultTimeout(60_000);
@@ -205,6 +209,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     expect(durable).toEqual(receipt);
     await page.reload();
     await expect(page.getByText('Release receipt', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Audit details', exact: true }).click();
     await expect(page.getByText('Currentness before the move', { exact: true })).toBeVisible();
     await expect(page.getByText('Pointer state after the move', { exact: true })).toBeVisible();
     await expect(page.getByText('Review is stale or unavailable.', { exact: false })).not.toBeVisible();

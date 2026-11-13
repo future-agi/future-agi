@@ -10,7 +10,8 @@ afterEach(cleanup);
 it('renders author and assigned reviewer names mapped from the server, not their IDs', () => {
   const request = mapRequest({ id: 'request', author_id: 'author-id', author_name: 'Alex Author', name: 'Support agent', revision: 1, status: 'pending', recipients: [{ id: 'reviewer-id', name: 'Robin Reviewer' }] });
   render(<ReleaseRequestPanel scopeKey="scope" state="ready" request={request} preview={{ packet, current: true, fingerprint: 'fp' }} review={{ complete: true }} permissions={{ canDecide: true }} onDecide={vi.fn()} />);
-  expect(screen.getByText(/Author: Alex Author · Reviewer: Robin Reviewer/)).toBeVisible();
+  expect(screen.getByText(/Submitted by Alex Author/)).toBeVisible();
+  expect(screen.getByText(/Approval pending · Robin Reviewer/)).toBeVisible();
   expect(screen.queryByText(/Unavailable member/)).not.toBeInTheDocument();
 });
 it('maps recorded execution time, approver, executor and both versions into the receipt', () => {
@@ -38,4 +39,17 @@ it('chooses relative-time units by magnitude and does not infer deleted membersh
   expect(relativeReviewTime('2026-11-12T11:55:00Z', now)).toBe('5 minutes ago');
   expect(reviewPersonName(null, false)).not.toBe('Former member');
   expect(reviewPersonName(null, true)).toBe('Former member');
+});
+
+it('closes the move confirmation before a stale response can open renewal', async () => {
+  let reject;
+  const execute = vi.fn(() => new Promise((resolve, fail) => { reject = fail; }));
+  render(<ReleaseRequestPanel scopeKey="scope" state="ready" request={{ id: 'request', revision: 1, status: 'approved' }} preview={{ packet, current: true, fingerprint: 'fp' }} review={{ complete: true }} permissions={{ canExecute: true }} onExecute={execute} />);
+  fireEvent.click(screen.getByRole('checkbox'));
+  fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Move production', exact: true }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  reject({ statusCode: 409, code: 'release_conflict' });
+  expect(await screen.findByText('This changed since you opened it. Refresh and review again.')).toBeVisible();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });

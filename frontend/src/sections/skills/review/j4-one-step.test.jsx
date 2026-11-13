@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import PropTypes from 'prop-types';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ContextReviewController, RequestReviewController } from './SkillsReviewControllers';
 import ReleaseRequestComposer from './ReleaseRequestComposer';
@@ -37,7 +37,7 @@ Runner.propTypes = { onExecute: PropTypes.func.isRequired, onRenew: PropTypes.fu
 
 const withRequest = () => useReleaseRequest.mockReturnValue({ data: { request: { id: 'request', authorId: 'author', revision: 1 } }, refetch: vi.fn() });
 
-it('opens renewal only after an explicit action, never on top of a move confirmation', async () => {
+it('opens renewal after a definite stale release refusal', async () => {
   withRequest();
   const mutateAsync = vi.fn().mockRejectedValueOnce({ statusCode: 409, code: 'release_conflict' });
   useExecuteReleaseRequest.mockReturnValue({ mutateAsync });
@@ -45,8 +45,6 @@ it('opens renewal only after an explicit action, never on top of a move confirma
   expect(useRenewalPreview).toHaveBeenLastCalledWith('request', false);
   fireEvent.click(screen.getByRole('button', { name: 'Run release' }));
   await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
-  expect(useRenewalPreview).toHaveBeenLastCalledWith('request', false);
-  fireEvent.click(screen.getByRole('button', { name: 'Inspect renewal' }));
   await waitFor(() => expect(useRenewalPreview).toHaveBeenLastCalledWith('request', true));
   expect(screen.getByText('Renew release review')).toBeVisible();
 });
@@ -65,7 +63,7 @@ const ref = (id, visibility = 'private') => ({ source: 'skills_text', sourceId: 
   visibility, status: 'completed', payloadExpiresAt: '2999-01-01T00:00:00Z', annotationRevision: 1, executionFingerprint: 'exec', configuration: { text: { model: 'm' }, digest: 'cfg' } });
 
 it('carries the published candidate forward, preselects the only target and shares the named results in one decision', async () => {
-  useReviewSubjects.mockReturnValue({ data: { results: [{ id: 'context', name: 'Refund policy' }], total_pages: 1 } });
+  useReviewSubjects.mockReturnValue({ data: { results: [{ id: 'context', name: 'Refund policy', labels: [{ name: 'production', version: 1 }] }], total_pages: 1 } });
   useReviewCandidates.mockReturnValue({ data: { results: [{ id: 'v1', number: 1, digest: 'sha256:old' }], total_pages: 2 } });
   const shared = { targets: [{ name: 'refund_agent', target: { bindingId: 'binding', revision: 1 } }], evidence: [ref('run-a', 'workspace'), ref('run-b', 'workspace')], recipients: [] };
   const refetch = vi.fn().mockResolvedValue({ data: shared });
@@ -77,15 +75,16 @@ it('carries the published candidate forward, preselects the only target and shar
   useShareReleaseEvidence.mockReturnValue({ mutateAsync: share });
   render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Refund policy', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
   // Carried forward even when the version list has not loaded this candidate.
-  expect(screen.getByText('Refund policy · production → v2')).toBeVisible();
+  expect(screen.getByText('Refund policy · production v1 → v2')).toBeVisible();
   expect(useReviewOptions).toHaveBeenLastCalledWith('agent_context', 'context', 'v2');
-  expect(screen.getAllByRole('checkbox', { name: /^Attach text evidence / })).toHaveLength(2);
-  screen.getAllByRole('checkbox', { name: /^Attach text evidence / }).forEach((checkbox) => expect(checkbox).toBeDisabled());
+  expect(screen.getAllByRole('checkbox', { name: /^Attach Text comparison/ })).toHaveLength(2);
+  screen.getAllByRole('checkbox', { name: /^Attach Text comparison/ }).forEach((checkbox) => expect(checkbox).toBeDisabled());
   fireEvent.click(screen.getByRole('button', { name: 'Share and attach 2 results' }));
-  expect(screen.getAllByText('run-a').length).toBeGreaterThan(0);
-  expect(screen.getAllByText('run-b').length).toBeGreaterThan(0);
+  expect(screen.getAllByTitle('run-a').length).toBeGreaterThan(0);
+  expect(screen.getAllByTitle('run-b').length).toBeGreaterThan(0);
+  expect(screen.queryByText('No matching test evidence. Not tested is not a pass.')).not.toBeInTheDocument();
   expect(share).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Share and attach' }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Share and attach' }));
   await waitFor(() => expect(share).toHaveBeenCalledTimes(2));
   expect(share).toHaveBeenCalledWith(expect.objectContaining({ sourceId: 'run-a', acknowledgeSnapshotSharing: true }));
   // The batch decision continues to the exact packet without another click;
@@ -157,8 +156,22 @@ it('keeps the form open instead of preparing when the optional pipeline record i
   render(<MemoryRouter><ReleaseRequestComposer scopeKey="org:ws:author" prefill={{ kind: 'agent_context', subjectId: 'context', name: 'Refund policy', candidate: { id: 'v2', number: 2, digest: 'sha256:candidate' } }} /></MemoryRouter>);
   fireEvent.click(screen.getByRole('button', { name: 'External pipeline (optional)' }));
   fireEvent.change(screen.getByLabelText('Pipeline result URL'), { target: { value: 'https://ci.example.invalid/run/1' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Attach 1 result' }));
+  expect(screen.queryByRole('button', { name: 'Attach 1 result' })).not.toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole('checkbox', { name: /^Attach Text comparison/ })).toBeChecked());
   expect(prepare).not.toHaveBeenCalled();
-  expect(screen.getByRole('button', { name: 'Review changes' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Prepare exact review' })).toBeDisabled();
+});
+
+it('fences a confirmed receipt to its request and authenticated scope while queries refresh', async () => {
+  withRequest();
+  const receipt = { requestId: 'request', postMoveState: { version: 2 } };
+  useExecuteReleaseRequest.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue(receipt) });
+  const View = vi.fn(() => null);
+  const { rerender } = render(<MemoryRouter><RequestReviewController scopeKey="org:ws:reviewer" requestId="request" View={View} /></MemoryRouter>);
+  await act(async () => { await View.mock.calls.at(-1)[0].onExecute({}); });
+  expect(View.mock.calls.at(-1)[0].receipt).toEqual(receipt);
+  rerender(<MemoryRouter><RequestReviewController scopeKey="org:ws:reviewer" requestId="another-request" View={View} /></MemoryRouter>);
+  expect(View.mock.calls.at(-1)[0].receipt).toBeNull();
+  rerender(<MemoryRouter><RequestReviewController scopeKey="org:ws:another-login" requestId="request" View={View} /></MemoryRouter>);
+  expect(View.mock.calls.at(-1)[0].receipt).toBeNull();
 });
