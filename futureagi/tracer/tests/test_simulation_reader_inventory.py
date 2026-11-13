@@ -876,6 +876,16 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             row="tracer.CustomEvalConfig",
         ),
     },
+    "model_hub.utils.optimization_feedback": {
+        "_FEEDBACK_VECTOR_IDS_QUERY": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "looks up the feedback vector ids of an explicit set of feedback "
+                "rows, for one eval, before a similarity search limited to them"
+            ),
+            table="feedbacks",
+        ),
+    },
     "model_hub.utils.clickhouse": {
         "create_empty_conversation": _RECORD_UPSERT,
         "update_eval_record": _RECORD_UPSERT,
