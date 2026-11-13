@@ -113,6 +113,10 @@ type Handlers struct {
 	conditionalRouter atomic.Pointer[routing.ConditionalRouter]
 	modelTimeouts     atomic.Pointer[map[string]time.Duration]
 	mirror            atomic.Pointer[routing.Mirror]
+
+	// mirrorSlots counts in-flight mirror requests across reloads: the
+	// requests a replaced mirror started still count against the new one.
+	mirrorSlots *routing.MirrorSlots
 }
 
 func setAuthMetadataFromRequest(rc *models.RequestContext, r *http.Request) {
@@ -232,6 +236,8 @@ func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodyS
 	if len(modelTimeouts) > 0 {
 		h.modelTimeouts.Store(&modelTimeouts)
 	}
+	h.mirrorSlots = &routing.MirrorSlots{}
+	mirror.ShareSlots(h.mirrorSlots)
 	h.mirror.Store(mirror)
 	return h
 }
@@ -300,6 +306,7 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 			return registry.GetProvider(providerID)
 		}
 		m := routing.NewMirror(cfg.Routing.Mirror, mirrorLookup)
+		m.ShareSlots(h.mirrorSlots)
 		h.mirror.Store(m)
 	} else {
 		h.mirror.Store(nil)
