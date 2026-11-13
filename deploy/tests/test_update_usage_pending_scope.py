@@ -1,4 +1,4 @@
-"""Complete 31/36-pending-migration A9 intersection regression, without Django.
+"""Complete 34/39-pending-migration A9 intersection regression, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -54,6 +54,9 @@ LATEST = (
     ('tracer','0132_attachment_control_records'),
     ('simulate','0102_agent_fix_engine_notes'),
     ('simulate','0103_harness_job_verify_of'),
+    ('tracer','0098_useralertmonitor_webhook_url'),
+    ('tracer','0131_merge_alert_webhook'),
+    ('tracer','0132_merge_alert_webhook_and_sql_workbench'),
 ) + SQL_ADDITIONS
 FLOOR_ONLY = (
     ('simulate','0099_harness_versioning'),('simulate','0100_agent_fix'),
@@ -63,7 +66,7 @@ FLOOR_ONLY = (
 )
 
 
-BASELINES = ((REVISIONS[1], LATEST, 31), (REVISIONS[0], LATEST + FLOOR_ONLY, 36))
+BASELINES = ((REVISIONS[1], LATEST, 34), (REVISIONS[0], LATEST + FLOOR_ONLY, 39))
 
 
 def added_migration_identities(revision):
