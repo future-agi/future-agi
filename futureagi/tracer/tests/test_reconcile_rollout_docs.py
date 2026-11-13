@@ -44,6 +44,9 @@ def test_helm_chart_and_runbook_reconcile_on_both_sides_of_rollout():
             assert "--show-only templates/bootstrap/job.yaml" in section
             assert 'job["spec"].pop("activeDeadlineSeconds", None)' in section
             assert 'job["spec"]["backoffLimit"] = 0' in section
+            # A short inherited TTL could delete the Job before either wait
+            # sees it finish, losing its logs and looping forever.
+            assert 'job["spec"].pop("ttlSecondsAfterFinished", None)' in section
             assert "--for=condition=complete" in section
             assert "--for=condition=failed" in section
             assert "logs job/futureagi-reconcile-legacy-tags" in section

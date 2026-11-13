@@ -89,8 +89,9 @@ mounts and operator environment (`SERVICE_TYPE=bootstrap` and
 Render only the bootstrap Job from the verified chart. The following one-off
 Job reuses its backend image, service account, env and volume configuration,
 changes its name and command, removes hook annotations and the bootstrap's
-18-minute `activeDeadlineSeconds`, and disables automatic retries by setting
-`backoffLimit` to `0`. A large scan may run longer than the bootstrap Job;
+18-minute `activeDeadlineSeconds` and its `ttlSecondsAfterFinished` (so the
+Job and its logs stay until this function deletes it), and disables automatic
+retries by setting `backoffLimit` to `0`. A large scan may run longer than the bootstrap Job;
 watch its progress logs from another shell if needed.
 Python 3 with PyYAML is already a prerequisite for preparing the signed release.
 Check any release-specific schema prerequisites before running it against the
@@ -118,6 +119,7 @@ job["metadata"]["name"] = "futureagi-reconcile-legacy-tags"
 job["metadata"].pop("annotations", None)
 job["spec"].pop("activeDeadlineSeconds", None)
 job["spec"]["backoffLimit"] = 0
+job["spec"].pop("ttlSecondsAfterFinished", None)
 container = job["spec"]["template"]["spec"]["containers"][0]
 container["command"] = ["python", "manage.py", "reconcile_legacy_trace_tags"]
 container["args"] = sys.argv[1:]
